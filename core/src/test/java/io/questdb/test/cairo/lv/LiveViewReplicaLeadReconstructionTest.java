@@ -379,6 +379,168 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
         });
     }
 
+    // Exact boundary (a replicated flush lands precisely the lead). The replica reconstructs batch 1 as
+    // an un-flushed lead over empty disk (row_number() 1, 2). A replicated flush then materialises
+    // EXACTLY that batch on the LV disk (rn 1, 2) and advances the applied watermark to the same base
+    // seqTxn the loop already reached, so refreshedUpToSeqTxn == appliedWatermark with the 2-row lead
+    // still published. The slot rows are now the just-flushed disk rows, so reconcileLeadWithDisk takes
+    // the exact-boundary branch: it re-stamps the slot as a disk subset (restampSlotAfterFlush) and drops
+    // the lead to 0, arming no catch-up seam because the accumulators already sit at disk. size() must
+    // then equal disk alone (2), not disk plus a lead that re-counts the same 2 durable rows (4).
+    @Test
+    public void testExactBoundaryFlushRestampsSlotWithoutDoubleCounting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 lands and the replica reconstructs it as a 2-row lead over empty disk
+                // (accumulator -> 2, frontier at base seqTxn 1).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('" + TS1 + "', 10), ('" + TS2 + "', 20)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("batch 1 reconstructed as a 2-row lead", 2, instance.getLeadRowCount());
+                Assert.assertEquals("loop frontier at batch 1", 1, instance.getRefreshedUpToSeqTxn());
+
+                // A replicated flush materialises EXACTLY batch 1 on the LV disk (rn 1, 2) and advances the
+                // applied watermark to base seqTxn 1 -- the same point the loop reached. This is the exact
+                // boundary: refreshedUpToSeqTxn(1) == appliedWatermark(1), with the 2-row lead still
+                // published (the flush advanced disk on a different path than this loop).
+                injectReplicatedFlush(
+                        lvToken,
+                        1,
+                        new String[]{TS1, TS2},
+                        new int[]{10, 20},
+                        new long[]{1, 2}
+                );
+                Assert.assertEquals("flush advanced the applied watermark to the loop frontier",
+                        1, instance.getAppliedWatermark());
+                Assert.assertEquals("loop frontier unchanged", 1, instance.getRefreshedUpToSeqTxn());
+                Assert.assertEquals("lead still published before reconcile", 2, instance.getLeadRowCount());
+
+                // Run the replica lead loop: isLeadSlotStale fires (the on-disk seqTxn advanced past the
+                // slot's stamp), so reconcile takes the exact-boundary branch and re-stamps the slot as a
+                // disk subset, dropping the lead to 0.
+                drainJob(job);
+                Assert.assertEquals("exact-boundary flush drops the lead to zero", 0, instance.getLeadRowCount());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:01.000000Z\t10\t1
+                    2026-05-12T00:00:02.000000Z\t20\t2
+                    """;
+            // Content is exactly the flushed disk rows (rn 1, 2) ...
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+
+            // ... and size() equals disk alone: the re-stamped slot carries a zero lead, so the 2 durable
+            // rows are not re-counted (before the re-stamp size() would report 4).
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertEquals("size() equals disk with the lead dropped to zero", 2, cursor.size());
+            }
+        });
+    }
+
+    // Partial-overlap (a replicated flush covers only a prefix of the lead). The replica drives BOTH
+    // batch 1 and batch 2 through the window pipeline in one pass, reconstructing a 4-row lead over empty
+    // disk (row_number() 1..4, frontier at base seqTxn 2). A replicated flush then materialises only
+    // batch 1 on the LV disk (rn 1, 2) and advances the applied watermark to base seqTxn 1, leaving a
+    // genuine un-flushed remainder above it: appliedWatermark(1) < refreshedUpToSeqTxn(2). reconcile takes
+    // the partial-overlap branch: it binary-searches the ts-ascending slot for the first row above the
+    // on-disk max ts (TS2), so the batch-1 prefix (TS1, TS2) counts as durable overlap and only the
+    // batch-2 remainder (TS3, TS4) stays lead. The slot is re-stamped to the reader's seqTxn with the
+    // trimmed 2-row lead, so size() is disk (2) + the genuine remainder (2) == 4, not the whole 4-row lead
+    // on top of the 2 durable rows (6).
+    @Test
+    public void testPartialOverlapFlushTrimsDurablePrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 and batch 2 land as two separate base commits; a single lead pass drives BOTH
+                // through the window pipeline, reconstructing a 4-row lead over empty disk (accumulator ->
+                // 4, frontier at base seqTxn 2).
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS1 + "', 10), ('" + TS2 + "', 20)");
+                drainWalQueue();
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS3 + "', 30), ('" + TS4 + "', 40)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("both batches reconstructed as a 4-row lead", 4, instance.getLeadRowCount());
+                Assert.assertEquals("loop frontier advanced past both batches", 2, instance.getRefreshedUpToSeqTxn());
+
+                // A replicated flush materialises only batch 1 on the LV disk (rn 1, 2) and advances the
+                // applied watermark to base seqTxn 1 -- a prefix of the lead. This is partial-overlap:
+                // appliedWatermark(1) < refreshedUpToSeqTxn(2), with batch 2 still a genuine un-flushed
+                // remainder above disk.
+                injectReplicatedFlush(
+                        lvToken,
+                        1,
+                        new String[]{TS1, TS2},
+                        new int[]{10, 20},
+                        new long[]{1, 2}
+                );
+                Assert.assertEquals("flush advanced the applied watermark to the prefix",
+                        1, instance.getAppliedWatermark());
+                Assert.assertEquals("loop frontier still spans both batches", 2, instance.getRefreshedUpToSeqTxn());
+
+                // Run the replica lead loop: reconcile binary-searches the slot for the first row above the
+                // on-disk max ts (TS2), so the now-durable batch-1 prefix drops out and only batch 2 stays
+                // lead.
+                drainJob(job);
+                Assert.assertEquals("partial-overlap trims the durable prefix, keeping batch 2 as lead",
+                        2, instance.getLeadRowCount());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:01.000000Z\t10\t1
+                    2026-05-12T00:00:02.000000Z\t20\t2
+                    2026-05-12T00:00:03.000000Z\t30\t3
+                    2026-05-12T00:00:04.000000Z\t40\t4
+                    """;
+            // Content is exact global rn 1..4: the batch-1 prefix served from disk, the batch-2 remainder
+            // from the trimmed lead ...
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+
+            // ... and size() is disk (2) + the genuine 2-row remainder, NOT disk (2) + the whole 4-row
+            // lead (which would report 6). The binary-search seam split is what keeps size() at 4.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("size() must not double-count the durable prefix", 4, cursor.size());
+            }
+        });
+    }
+
     // Partitioned + anchored lead reconstruction. A snapshot-capable window that both PARTITIONs BY a
     // key and carries an ANCHOR clause used to serve disk-only on a replica: its stalled-publish
     // rollback needs to round-trip the per-partition function maps and the anchor bucket map, which the

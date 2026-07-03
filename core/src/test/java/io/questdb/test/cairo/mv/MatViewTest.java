@@ -8915,19 +8915,24 @@ public class MatViewTest extends AbstractCairoTest {
                     Assert.fail(e.getMessage());
                 }
             }
-            Assert.assertTrue(queryId > 0);
-
-            assertQuery("select view_name, view_status from materialized_views")
-                    .noRandomAccess()
-                    .noLeakCheck()
-                    .returns("""
-                            view_name\tview_status
-                            price_1h\trefreshing
-                            """);
-
-            // unblock the parked refresh so the worker thread can finish
-            execute("cancel query " + queryId);
-            stopped.await();
+            // Observe the 'refreshing' status while the worker is parked, then unblock it
+            // in a finally so a failed assertion cannot leave mat_view_refresh_thread parked
+            // in sleep(120000) - that would stall assertMemoryLeak teardown for up to two
+            // minutes and mask the real assertion failure with a secondary leak/close error.
+            try {
+                Assert.assertTrue(queryId > 0);
+                assertQuery("select view_name, view_status from materialized_views")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("""
+                                view_name\tview_status
+                                price_1h\trefreshing
+                                """);
+            } finally {
+                // unblock the parked refresh so the worker thread can finish
+                execute("cancel query " + queryId);
+                stopped.await();
+            }
             Assert.assertFalse(refreshed.get());
         });
     }

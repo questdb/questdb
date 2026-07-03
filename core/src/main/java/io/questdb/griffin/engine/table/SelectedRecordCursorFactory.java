@@ -525,6 +525,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public boolean hasActivePushdownFilter() {
+            return baseCursor.hasActivePushdownFilter();
+        }
+
+        @Override
         public boolean hasIntervalFilter() {
             return baseCursor.hasIntervalFilter();
         }

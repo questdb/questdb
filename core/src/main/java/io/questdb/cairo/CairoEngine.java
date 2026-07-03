@@ -823,28 +823,43 @@ public class CairoEngine implements Closeable, WriterSource {
                             try {
                                 reader.of(path.$());
                                 stateReader.of(reader, tableToken);
-                            } catch (CairoException stateEx) {
-                                if (stateEx.getErrno() == CairoException.LV_FILE_VERSION_UNSUPPORTED) {
+                            } catch (Exception stateEx) {
+                                if (stateEx instanceof CairoException ce
+                                        && ce.getErrno() == CairoException.LV_FILE_VERSION_UNSUPPORTED) {
                                     // A too-new state format is not corruption; let the outer
                                     // catch surface it as version_unsupported.
-                                    throw stateEx;
+                                    throw ce;
                                 }
-                                // The _lv.s is torn / corrupt (a non-version read error), but the
-                                // _lv table data and any head .cp accumulators are intact. Every
-                                // lost durable watermark is a base seqTxn, and they track the
-                                // applied point together (see LiveViewRefreshJob.finishLeadRefresh /
-                                // tryRestoreFromHead), so reconstruct them from the last applied
-                                // LIVE_VIEW_DATA block recorded in the LV's own WAL sequencer log.
-                                // If that is gone too (purged / unreadable), there is no safe resume
-                                // floor - registering ACTIVE with a too-low floor would replay the
-                                // base from the start and duplicate rows - so fall back to a
-                                // droppable state_unreadable stub.
+                                // The _lv.s is torn / corrupt, but the _lv table data and any head
+                                // .cp accumulators are intact. The read fails in two shapes: a
+                                // CairoException (a non-version read error), or a plain runtime
+                                // exception thrown while decoding garbage bytes at a bad offset
+                                // (e.g. IndexOutOfBounds). Both mean the same thing here, so catch
+                                // Exception and treat any non-version failure as torn. (Errors such
+                                // as OOM still propagate.) Every lost durable watermark is a base
+                                // seqTxn, and they track the applied point together (see
+                                // LiveViewRefreshJob.finishLeadRefresh / tryRestoreFromHead), so
+                                // reconstruct them from the last applied LIVE_VIEW_DATA block
+                                // recorded in the LV's own WAL sequencer log. If that is gone too
+                                // (purged / unreadable), there is no safe resume floor - registering
+                                // ACTIVE with a too-low floor would replay the base from the start
+                                // and duplicate rows - so fall back to a droppable state_unreadable
+                                // stub.
+                                final int stateErrno;
+                                final CharSequence stateMsg;
+                                if (stateEx instanceof CairoException cairoEx) {
+                                    stateErrno = cairoEx.getErrno();
+                                    stateMsg = cairoEx.getFlyweightMessage();
+                                } else {
+                                    stateErrno = 0;
+                                    stateMsg = stateEx.getMessage();
+                                }
                                 final long appliedFloor = readLiveViewAppliedMaxBaseSeqTxn(tableToken);
                                 if (appliedFloor < 0) {
                                     LOG.error().$("live view state unreadable and no recoverable floor, surfacing as state_unreadable [view=")
                                             .$(tableToken)
-                                            .$(", errno=").$(stateEx.getErrno())
-                                            .$(", msg=").$safe(stateEx.getFlyweightMessage())
+                                            .$(", errno=").$(stateErrno)
+                                            .$(", msg=").$safe(stateMsg)
                                             .I$();
                                     registerLiveViewStubIfAbsent(tableToken, LiveViewLifecycleState.STATE_UNREADABLE);
                                     continue;
@@ -852,8 +867,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                 LOG.info().$("live view state unreadable, recovering durable floor from applied WAL [view=")
                                         .$(tableToken)
                                         .$(", appliedMaxBaseSeqTxn=").$(appliedFloor)
-                                        .$(", errno=").$(stateEx.getErrno())
-                                        .$(", msg=").$safe(stateEx.getFlyweightMessage())
+                                        .$(", errno=").$(stateErrno)
+                                        .$(", msg=").$safe(stateMsg)
                                         .I$();
                                 // clear() defaults backfillState to ACTIVE. A view torn
                                 // mid-backfill therefore recovers as ACTIVE and resumes the
