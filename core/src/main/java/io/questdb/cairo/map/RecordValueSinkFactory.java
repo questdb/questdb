@@ -218,8 +218,9 @@ public class RecordValueSinkFactory {
                     // stack: []
                     break;
                 default:
-                    // Unreachable when the caller guards on isSupportedColumnType (see
-                    // SqlCodeGenerator's full-fat join guard). Keep the two in sync.
+                    // Unreachable: both callers reject unsupported types up front -- the
+                    // full-fat join guard via isSupportedColumnType, and RankFunctionFactory
+                    // by asserting fixed-size-or-static-symbol streaming ORDER BY columns.
                     throw new UnsupportedOperationException();
             }
         }
