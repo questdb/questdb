@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.ForwardingLiveViewStateStore;
@@ -326,6 +327,107 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
             ) {
                 Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
                 Assert.assertEquals("size() equals the reconstructed lead over empty disk", 4, cursor.size());
+            }
+        });
+    }
+
+    // Out-of-order base commit on a replica. The replica reconstructs batch 1 (strictly increasing ts)
+    // as an un-flushed lead over empty disk, driving the row_number() accumulator to 2. Then a base row
+    // lands below the frontier (TS3 < the seen TS4): the primary rewrites its LV disk via o3Replay and
+    // replicates the REPLACE_RANGE, which the replica must NOT do (read-only). drainAppliedBaseForLead
+    // detects the overlap off the WAL-E event min-ts and signals o3Detected, so finishLeadRefresh's
+    // replica hatch drops the tentative lead, resets the window accumulators to identity and clears
+    // latestSeenTs (the O3 reordered rows the accumulators already counted, so a forward-only re-derive
+    // would keep drifting), and serves disk-only. The corrected rows then land as a replicated flush;
+    // once a later in-order batch arrives, the replica re-seeds the accumulator over the whole corrected
+    // history (rn 1..3 on disk, not staged) and stages only the genuine lead above disk (rn 4, 5) -- so
+    // the reconstructed read is exactly disk + genuine lead, global rn 1..5, with no drift.
+    //
+    // Without the accumulator reset the row_number() counter would still sit at 2 after the O3, so the
+    // re-derived batch-3 lead would number TS5, TS6 as rn 3, 4 (duplicating the disk's rn 3 and never
+    // reaching rn 5) instead of rn 4, 5.
+    @Test
+    public void testReplicaReconstructsLeadAfterOutOfOrderBaseCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 lands strictly in order; the replica reconstructs it as a 2-row lead over
+                // empty disk (accumulator -> 2, frontier at TS4).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('" + TS2 + "', 20), ('" + TS4 + "', 40)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("batch 1 reconstructed as a 2-row lead", 2, instance.getLeadRowCount());
+                Assert.assertEquals("frontier advanced past the seen row",
+                        MicrosFormatUtils.parseUTCTimestamp(TS4), instance.getLatestSeenTs());
+
+                // An out-of-order base row (TS3 < the seen TS4) applies to the base table. The replica's
+                // lead loop detects the overlap and drops the tentative lead WITHOUT rewriting disk.
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS3 + "', 30)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("O3 drops the tentative lead", 0, instance.getLeadRowCount());
+                Assert.assertEquals("O3 resets the accumulator frontier to cold start",
+                        Numbers.LONG_NULL, instance.getLatestSeenTs());
+                try (TableReader lvReader = engine.getReader(lvToken)) {
+                    Assert.assertEquals("the replica never rewrites its own LV disk on O3", 0, lvReader.size());
+                }
+
+                // The primary's o3Replay correction lands as a replicated flush: the LV disk now holds
+                // the corrected TS2, TS3, TS4 (rn 1, 2, 3) and the applied watermark reaches base
+                // seqTxn 2.
+                injectReplicatedFlush(
+                        lvToken,
+                        2,
+                        new String[]{TS2, TS3, TS4},
+                        new int[]{20, 30, 40},
+                        new long[]{1, 2, 3}
+                );
+                Assert.assertEquals("correction advanced the applied watermark", 2, instance.getAppliedWatermark());
+                drainJob(job);
+
+                // Batch 3 is the genuine un-flushed lead above the corrected disk. The replica re-seeds
+                // the accumulator over the corrected history (rn 1..3, on disk, not staged) and stages
+                // TS5, TS6 as the lead (rn 4, 5) -- not rn 3, 4 as a drifted counter would.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('" + TS5 + "', 50), ('" + TS6 + "', 60)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("batch 3 reconstructed as a 2-row lead above disk", 2, instance.getLeadRowCount());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:02.000000Z\t20\t1
+                    2026-05-12T00:00:03.000000Z\t30\t2
+                    2026-05-12T00:00:04.000000Z\t40\t3
+                    2026-05-12T00:00:05.000000Z\t50\t4
+                    2026-05-12T00:00:06.000000Z\t60\t5
+                    """;
+            // Content is exact global rn 1..5 -- the accumulator reset kept the re-derived lead in step
+            // with disk's numbering rather than duplicating rn 3 ...
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+
+            // ... and size() is exact: disk (3) + the genuine 2-row lead.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("size() equals disk plus the genuine lead", 5, cursor.size());
             }
         });
     }

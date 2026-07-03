@@ -1555,9 +1555,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (leadReconstruction) {
                 // The replica must not rewrite its on-disk tier. The primary handles the
                 // out-of-order base commit via o3Replay and replicates the REPLACE_RANGE, which the
-                // apply job lands here. Drop the tentative lead and serve disk-only until then.
+                // apply job lands here. An O3 commit reorders rows the accumulators already processed
+                // in arrival order, so the in-RAM window state (the row_number() counter, running
+                // aggregates) and latestSeenTs now disagree with the corrected ordering the primary
+                // will replicate; a forward-only re-derive would carry that drift into every later
+                // lead row. Reset the window state to identity and clear latestSeenTs so the reconcile
+                // treats the view as cold-started: once the corrected rows land on disk, the next
+                // drain re-seeds the accumulators over the whole applied base history (the reconcile
+                // seam keeps the durable band out of the lead, so size() does not double-count), and
+                // the staged lead's low seam ts shadows any stale disk rows meanwhile. Drop the
+                // tentative lead and serve disk-only until then.
                 // (TODO §3: gate the retry on the disk watermark advancing past o3SeqTxn so the scan
                 // does not re-detect the same O3 every tick.)
+                clearWindowState(windowFactory, instance.getAnchorWindow());
+                // forceSetLatestSeenTs, not setLatestSeenTs: the latter is monotonic (it ignores a
+                // lower ts to keep an O3 row from retroactively lowering the frontier), so it would
+                // no-op on LONG_NULL. The reset back to cold start is the one intentional non-monotonic
+                // move, exactly what forceSetLatestSeenTs exists for.
+                instance.forceSetLatestSeenTs(Numbers.LONG_NULL);
                 instance.setLeadRowCount(0);
                 instance.setTierStale(true);
                 instance.setRefreshedUpToSeqTxn(advanceTo);
