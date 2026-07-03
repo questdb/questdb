@@ -403,6 +403,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Handles a refresh-cycle failure while a read-only replica reconstructs the lead. A replica must
+     * never invalidate the view on such a failure -- invalidation is durable ({@link CairoEngine#invalidateLiveView}
+     * rewrites {@code _lv.s} via a {@code BlockFileWriter} with no read-only gate) and sticky
+     * ({@link CairoEngine#applyLiveViewData} preserves the local invalid flag as the in-band watermark
+     * advances), so a transient lead-loop fault would leave the view invalid forever even against a
+     * healthy primary, with no replica-side recovery (the documented DROP + CREATE cannot run on a
+     * read-only node). {@link #handleRefreshFailure} routes here and returns {@code null} instead of an
+     * invalidation reason. The base default is unreachable on a primary ({@link #isLeadReconstruction()}
+     * is false there); EntLiveViewRefreshJob overrides it to arm a wall-clock back-off so
+     * {@link #scanForLaggingViews} idles the view instead of re-draining into the same fault every tick.
+     */
+    protected void onReplicaLeadRefreshFailure(LiveViewInstance instance) {
+    }
+
+    /**
      * Builds the compiled scan pipeline (timestamp lower-bound + optional filter + optional anchor
      * dispatch + window) over {@code pageCursor}, returning the incremental window cursor. Hides the
      * package-private cursor helpers from the enterprise subclass, which composes over the returned
@@ -4467,7 +4482,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.recordRefreshSuccess();
                 }
             } catch (Throwable t) {
-                invalidationReason = handleRefreshFailure(instance, t);
+                invalidationReason = handleRefreshFailure(instance, t, leadReconstruction);
             }
         } finally {
             instance.unlockAfterRefresh();
@@ -4495,15 +4510,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Flush retry budget: count consecutive failures and the elapsed
-     * wall-clock time since the streak began. On budget exhaustion, returns
-     * the reason string so the caller can drive the invalidation outside the
-     * refresh latch; otherwise returns null. The view stops refreshing but
-     * stays queryable; recovery is operator-driven (DROP + CREATE).
+     * Flush retry budget (primary path): count consecutive failures and the
+     * elapsed wall-clock time since the streak began. On budget exhaustion,
+     * returns the reason string so the caller can drive the invalidation
+     * outside the refresh latch; otherwise returns null. The view stops
+     * refreshing but stays queryable; recovery is operator-driven (DROP +
+     * CREATE). A {@code leadReconstruction} (read-only-replica) failure takes a
+     * separate branch that never invalidates -- see {@link #onReplicaLeadRefreshFailure}.
      */
-    private String handleRefreshFailure(LiveViewInstance instance, Throwable t) {
+    private String handleRefreshFailure(LiveViewInstance instance, Throwable t, boolean leadReconstruction) {
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);
+        if (leadReconstruction) {
+            // Read-only-replica lead reconstruction: NEVER invalidate. The lead is derived, in-RAM state
+            // rebuilt every tick off the applied base, and the failure is typically transient (e.g. a
+            // reader failure storm while a large replicated ALTER applies to the base). Invalidation, by
+            // contrast, is durable and sticky with no replica-side recovery (see onReplicaLeadRefreshFailure),
+            // so a transient lead-loop fault must not brick the view locally while the primary stays
+            // healthy. Arm a back-off (the enterprise subclass mirrors the publish-stall floor) so the scan
+            // idles instead of re-draining into the same fault every tick; the view stays active and serves
+            // disk-only via the seqTxn fence, and a later tick past the floor re-drains and resumes once the
+            // fault clears.
+            onReplicaLeadRefreshFailure(instance);
+            LOG.error().$("live view lead reconstruction failed, backing off [view=").$(instance.getDefinition().getViewName())
+                    .$(", retryCount=").$(instance.getFlushRetryCount())
+                    .$(", error=").$(t).I$();
+            return null;
+        }
         int retryCount = instance.getFlushRetryCount();
         long retryStartUs = instance.getFlushRetryStartUs();
         int maxRetry = engine.getConfiguration().getLiveViewFlushRetryMax();
