@@ -38,6 +38,32 @@ import org.junit.Test;
 public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
+    public void testNullBoundOffsetPushdownReturnsEmpty() throws Exception {
+        // A NULL timestamp bound makes the inner predicate unsatisfiable, so the temp interval model
+        // becomes an empty set. mergeWithAddMethod must intersect this model to empty rather than consume
+        // the predicate with no constraint; otherwise the offset pushdown returns every row instead of
+        // none (the mirror of the multi-interval bug fixed in testMultiIntervalOffsetPushdown).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z'), " +
+                    "(150, '2022-01-02T12:00:00.000000Z'), (200, '2023-01-01T12:00:00.000000Z');");
+
+            final String greater = "SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts > null::timestamp";
+            // The consumed predicate leaves an empty interval scan, matching the no-offset baseline (0 rows).
+            assertQuery(greater)
+                    .timestamp("ts")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .returns("ts\tprice\n");
+            assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts < null::timestamp")
+                    .timestamp("ts")
+                    .returns("ts\tprice\n");
+            assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts = cast(null as timestamp)")
+                    .timestamp("ts")
+                    .returns("ts\tprice\n");
+        });
+    }
+
+    @Test
     public void testDayOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");

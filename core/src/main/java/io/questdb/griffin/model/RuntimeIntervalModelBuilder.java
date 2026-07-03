@@ -705,6 +705,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
         final LongList otherIntervals = other.staticIntervals;
         if (otherIntervals.size() == 0) {
+            // We already passed the !other.intervalApplied guard, so a zero-length source interval list
+            // means other is an empty set (e.g. the inner predicate compared the timestamp to a NULL
+            // bound and reached intersectEmpty()). The offset shift of an empty set is still empty, so
+            // this model must intersect to empty rather than stay unconstrained - otherwise the caller
+            // consumes the predicate and the scan returns every row instead of none.
+            intersectEmpty();
             return true;
         }
         final int dynamicStart = otherIntervals.size() - other.dynamicRangeList.size() * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
