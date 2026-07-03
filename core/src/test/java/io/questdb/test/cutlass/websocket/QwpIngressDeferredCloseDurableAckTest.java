@@ -33,11 +33,13 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -47,8 +49,10 @@ import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.tools.LogCapture;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -91,6 +95,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * from {@code QwpIngressUpgradeProcessorResumeRecvTest}.
  */
 public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
+    private static final Log SENTINEL_LOG = LogFactory.getLog(QwpIngressDeferredCloseDurableAckTest.class);
     private static final byte[] DEFAULT_MASK_KEY = {0x12, 0x34, 0x56, 0x78};
     private static final int RECV_BUFFER_SIZE = 1024;
     private static final int SEND_BUFFER_SIZE = 1024;
@@ -355,6 +360,207 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Grace-expiry diagnostics, PING re-entry: {@code handlePing} completes a
+     * deferred role-change close through an inline copy of the completion
+     * predicate and skips the "role-change close upload grace expired"
+     * LOG.error that the equivalent exit in
+     * {@code roleChangeCloseWithUploadGrace} emits. PING is the designated
+     * recv-driven re-entry poll for a quiesced client (data frames are refused
+     * by the deferral gate), so the one close the operator must see -- the
+     * grace budget exhausting while committed work is still not durably
+     * uploaded, exposing the client to replay duplicates -- happens silently.
+     * <p>
+     * Invariant (fix-agnostic): a grace-expired close with un-acked durable
+     * work logs the grace-expired diagnostic no matter which re-entry point
+     * observes the expiry.
+     */
+    @Test
+    public void testGraceExpiredPingCloseMustLogAbandonedDurableWork() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L); // uploads lag for the whole test
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabd (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabd", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabd", 200L, 2_000_000L));
+                byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+                byte[] wire = concat(frame0, frame1, ping);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phase A: PRIMARY. seq=0 commits; the chunk-end
+                    // cumulative ACK drains cleanly (send side stays READY).
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage
+                    // (registry watermark lags at -1).
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: uploads STALL past the grace budget; committed
+                    // work is still not durably uploaded.
+                    nowMicros[0] += QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS;
+                    Assert.assertTrue(
+                            "test setup: grace budget must be exhausted",
+                            state.isRoleChangeCloseGraceExpired()
+                    );
+                    Assert.assertFalse(
+                            "test setup: durable work must NOT be fully uploaded",
+                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                    );
+
+                    // Phase D: the keepalive PING -- the designated deferral
+                    // re-entry poll -- observes the expiry; the close proceeds
+                    // abandoning un-acked durable work.
+                    capture.start();
+                    try {
+                        nf.release(ping.length);
+                        try {
+                            processor.resumeRecv(context);
+                            Assert.fail("Expected ServerDisconnectException (grace-expired close)");
+                        } catch (ServerDisconnectException expected) {
+                        }
+                        drainLogQueue(capture, "sentinel: grace-expired PING close done");
+                    } finally {
+                        capture.stop();
+                    }
+
+                    // Behavioural lock (green before and after the fix): the
+                    // close is still the reconnect-eligible NORMAL_CLOSURE.
+                    int closeIdx = indexOfCloseFrame(rawSocket.sentFrames);
+                    Assert.assertTrue("CLOSE frame must be sent", closeIdx >= 0);
+                    Assert.assertEquals(
+                            "CLOSE frame must carry the reconnect-eligible close code",
+                            1000 /* NORMAL_CLOSURE */, closeCode(rawSocket.sentFrames.getQuick(closeIdx))
+                    );
+
+                    // RED until fixed: handlePing's inline completion
+                    // predicate closes without emitting the diagnostic that
+                    // roleChangeCloseWithUploadGrace emits on the same exit.
+                    capture.assertLogged("role-change close upload grace expired");
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * Grace-expiry diagnostics, false alarm: {@code roleChangeCloseWithUploadGrace}
+     * raises "closing with un-acked durable work, client replay may duplicate"
+     * purely on grace expiry, without consulting
+     * {@code isDurableWorkFullyUploaded}. A slow-but-clean close -- uploads
+     * catching up AFTER the deadline but BEFORE the next re-entry -- leaves an
+     * empty replay window (the final durable ack precedes the CLOSE, locked
+     * below), yet still fires the duplicate-risk alarm.
+     * <p>
+     * Invariant (fix-agnostic): a grace-expired close whose durable work is
+     * fully uploaded must NOT claim un-acked durable work.
+     */
+    @Test
+    public void testGraceExpiredCleanCloseMustNotRaiseFalseDuplicateAlarm() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabe (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabe", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabe", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabe", 300L, 3_000_000L));
+                byte[] wire = concat(frame0, frame1, frame2);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the slow-but-clean close. Uploads catch up,
+                    // but only after the grace deadline has passed.
+                    durableWatermark.set(Long.MAX_VALUE);
+                    nowMicros[0] += QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS;
+                    Assert.assertTrue(
+                            "test setup: grace budget must be exhausted",
+                            state.isRoleChangeCloseGraceExpired()
+                    );
+                    Assert.assertTrue(
+                            "test setup: durable work must be fully uploaded",
+                            state.isDurableWorkFullyUploaded(demotableEngine.getDurableAckRegistry())
+                    );
+
+                    // Phase D: a data frame re-enters through the deferral
+                    // gate into roleChangeCloseWithUploadGrace; the close
+                    // proceeds with an empty replay window.
+                    capture.start();
+                    try {
+                        nf.release(frame2.length);
+                        try {
+                            processor.resumeRecv(context);
+                            Assert.fail("Expected ServerDisconnectException (grace-expired clean close)");
+                        } catch (ServerDisconnectException expected) {
+                        }
+                        drainLogQueue(capture, "sentinel: grace-expired clean close done");
+                    } finally {
+                        capture.stop();
+                    }
+
+                    // Behavioural lock (green before and after the fix): the
+                    // close is clean -- final durable ack precedes the
+                    // reconnect-eligible CLOSE, replay window empty.
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+
+                    // RED until fixed: the grace-expired branch claims
+                    // un-acked durable work without checking upload coverage.
+                    capture.assertNotLogged("closing with un-acked durable work");
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * The invariant all tests assert: durable coverage was confirmed at
      * close time, so a {@code STATUS_DURABLE_ACK} frame must precede the
      * CLOSE frame in the outbound frame log.
@@ -412,6 +618,19 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
             frame[offset + i] = (byte) (payload[i] ^ DEFAULT_MASK_KEY[i % 4]);
         }
         return frame;
+    }
+
+    /**
+     * QuestDB logging is asynchronous: {@code LOG.error()} enqueues and a
+     * single writer job drains. Both grace-expiry diagnostics under test are
+     * ERROR level, so logging an ERROR-level sentinel AFTER the action and
+     * waiting for it guarantees the writer has drained every earlier record
+     * of the same level -- making assertLogged/assertNotLogged race-free
+     * without a blind timeout.
+     */
+    private static void drainLogQueue(LogCapture capture, String sentinel) {
+        SENTINEL_LOG.error().$(sentinel).$();
+        capture.waitFor(sentinel);
     }
 
     private static void drive(
@@ -542,6 +761,39 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         message[11] = 0;
         System.arraycopy(payload, 0, message, QwpConstants.HEADER_SIZE, payload.length);
         return message;
+    }
+
+    /**
+     * Same as {@link #setupState}, but the state's deferral clock is the
+     * test-owned {@code nowMicros[0]}, so the grace deadline
+     * ({@link QwpIngressProcessorState#ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS})
+     * can be crossed deterministically. Clock-override pattern from
+     * {@code QwpIngressProcessorStateTest#testRoleChangeCloseDeferralLifecycle}.
+     */
+    private static QwpIngressProcessorState setupClockedState(
+            HttpFullFatServerConfiguration httpConfig,
+            TestableContext context,
+            CairoEngine engine,
+            long[] nowMicros
+    ) throws Exception {
+        LineHttpProcessorConfiguration lineConfig =
+                new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return () -> nowMicros[0];
+                    }
+                };
+        QwpIngressProcessorState state = new QwpIngressProcessorState(
+                RECV_BUFFER_SIZE,
+                httpConfig.getSendBufferSize(),
+                engine,
+                lineConfig
+        );
+        state.of(-1, AllowAllSecurityContext.INSTANCE);
+        // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
+        state.setDurableAckEnabled(true);
+        getLV().set(context, state);
+        return state;
     }
 
     private static QwpIngressProcessorState setupState(
