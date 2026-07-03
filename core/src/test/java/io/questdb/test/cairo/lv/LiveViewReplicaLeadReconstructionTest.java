@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.ReplicaLiveViewStateStore;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
@@ -537,6 +538,118 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
             ) {
                 Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
                 Assert.assertEquals("size() must not double-count the durable prefix", 4, cursor.size());
+            }
+        });
+    }
+
+    // Out-of-order via a REPLACE_RANGE delete band on a replica (the D6 ghost-row shape reached through
+    // the replica lead loop). The replica reconstructs batch 1 (TS1, TS2, TS3 in order) as an un-flushed
+    // lead over empty disk, driving the row_number() accumulator to 3 with the frontier at TS3. A
+    // non-dedup REPLACE_RANGE commit then deletes [TS2, TS5) from the base but its only inserted row
+    // (TS4) sits ABOVE the frontier, so the raw event min ts reads TS4 > TS3 and hides the deletion.
+    // Only the delete-band substitution catches it: drainAppliedBaseForLead clamps the range low (TS2)
+    // to the view lower bound and treats it as the batch minimum, TS2 <= the frontier fires the o3
+    // hatch, and finishLeadRefresh's replica hatch drops the tentative lead WITHOUT rewriting disk.
+    // Before the fix the drain compared only getMinTimestamp() (TS4), missed the overlap, and
+    // forward-appended TS4 on top of the now-deleted TS2, TS3 rows -- a stale lead the replica would
+    // serve until the primary's replicated correction subsumed the band.
+    //
+    // The primary's o3Replay correction then lands as a replicated flush (post-replace base TS1, TS4 as
+    // rn 1, 2); a later in-order batch (TS6) reconstructs the genuine lead above disk (rn 3), so the
+    // replica converges to the exact post-replace result with global rn 1..3.
+    @Test
+    public void testReplicaConvergesAfterReplaceRangeDeletingBelowFrontier() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+            final TableToken baseToken = engine.verifyTableName("base");
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 lands strictly in order; the replica reconstructs it as a 3-row lead over empty
+                // disk (accumulator -> 3, frontier at TS3).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('" + TS1 + "', 10), ('" + TS2 + "', 20), ('" + TS3 + "', 30)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("batch 1 reconstructed as a 3-row lead", 3, instance.getLeadRowCount());
+                Assert.assertEquals("frontier advanced past the seen rows",
+                        MicrosFormatUtils.parseUTCTimestamp(TS3), instance.getLatestSeenTs());
+
+                // A REPLACE_RANGE commit deletes [TS2, TS5) from the base but its only inserted row (TS4)
+                // sits ABOVE the frontier (TS3). getMinTimestamp() reads TS4 > TS3, so only the delete-band
+                // substitution (clamped range low TS2 <= TS3) fires the overlap. The replica drops the
+                // tentative lead WITHOUT rewriting disk and serves disk-only.
+                try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                    TableWriter.Row row = walWriter.newRow(MicrosFormatUtils.parseUTCTimestamp(TS4));
+                    row.putInt(1, 40);
+                    row.append();
+                    walWriter.commitWithParams(
+                            MicrosFormatUtils.parseUTCTimestamp(TS2),
+                            MicrosFormatUtils.parseUTCTimestamp(TS5),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("the delete-band overlap drops the tentative lead",
+                        0, instance.getLeadRowCount());
+                Assert.assertEquals("O3 resets the accumulator frontier to cold start",
+                        Numbers.LONG_NULL, instance.getLatestSeenTs());
+                try (TableReader lvReader = engine.getReader(lvToken)) {
+                    Assert.assertEquals("the replica never rewrites its own LV disk on O3", 0, lvReader.size());
+                }
+
+                // The primary's o3Replay correction lands as a replicated flush: the post-replace base
+                // (TS1, TS4) materialises on the LV disk as rn 1, 2 and the applied watermark reaches base
+                // seqTxn 2 (the replace commit).
+                injectReplicatedFlush(
+                        lvToken,
+                        2,
+                        new String[]{TS1, TS4},
+                        new int[]{10, 40},
+                        new long[]{1, 2}
+                );
+                Assert.assertEquals("correction advanced the applied watermark", 2, instance.getAppliedWatermark());
+                drainJob(job);
+
+                // A later in-order batch (TS6) is the genuine un-flushed lead above the corrected disk. The
+                // replica re-seeds the accumulator over the corrected history (rn 1, 2, on disk, not staged)
+                // and stages TS6 as the lead (rn 3).
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS6 + "', 60)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("batch 3 reconstructed as a 1-row lead above disk",
+                        1, instance.getLeadRowCount());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:01.000000Z\t10\t1
+                    2026-05-12T00:00:04.000000Z\t40\t2
+                    2026-05-12T00:00:06.000000Z\t60\t3
+                    """;
+            // Content is exactly the post-replace base numbered global rn 1..3 -- the delete-band detection
+            // kept the deleted TS2, TS3 rows out of the reconstructed lead ...
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+
+            // ... and size() is exact: disk (2) + the genuine 1-row lead, with no ghost rows.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("size() equals disk plus the genuine lead", 3, cursor.size());
             }
         });
     }

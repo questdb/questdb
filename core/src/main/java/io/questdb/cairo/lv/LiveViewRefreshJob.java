@@ -1114,7 +1114,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (!WalTxnType.isDataType(eventCursor.getType())) {
                         continue;
                     }
-                    final long txnMinTs = eventCursor.getDataInfo().getMinTimestamp();
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    long txnMinTs = dataInfo.getMinTimestamp();
+                    if (dataInfo.getDedupMode() == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                        // A REPLACE_RANGE commit deletes [rangeLo, rangeHi) beyond its own
+                        // inserted rows, which may all sit above the frontier - or be absent
+                        // entirely in a pure-delete commit whose min timestamp reads
+                        // Long.MAX_VALUE. The range low, clamped to the view's lower bound,
+                        // is the commit's true overlap minimum. Mirrors drainAppliedBase /
+                        // drainBaseWal O3 detection so a below-frontier range-replace on a
+                        // non-dedup base fires the replica o3 hatch instead of leaving the
+                        // in-RAM accumulators counting the now-deleted rows.
+                        final long deleteLo = Math.max(dataInfo.getReplaceRangeTsLow(), viewLowerBoundTimestamp);
+                        if (deleteLo < dataInfo.getReplaceRangeTsHi()) {
+                            txnMinTs = deleteLo;
+                        }
+                    }
                     if (batchMinTs == Numbers.LONG_NULL || txnMinTs < batchMinTs) {
                         batchMinTs = txnMinTs;
                     }
