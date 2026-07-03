@@ -676,7 +676,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "FROM long_sequence(122)");
             // Previously diverging shapes: fold root under a genuine LONG op with a
             // FLOAT comparison. Still JIT-compiled, now correct.
-            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (258558 * -259815))", true);
+            // Absolute pin: the fold is a large negative long, so no float c9 is <= it and Java
+            // returns 0 rows; the pre-fix JIT wrapped it to a small I4 and returned every row.
+            assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 + (258558 * -259815))", true,
+                    "c0\tc8\tc9\tts\n");
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= (c0 - (258558 * -259815))", true);
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((258558 * -259815) + c0)", true);
             // Control: direct float-vs-overflow comparison still wraps via
@@ -708,7 +711,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     " x::int ci, x::long cl, 1.0f f32" +
                     " from long_sequence(3)) timestamp(k)");
             // Previously diverging shapes, both directions.
-            assertJitMatchesJava("select id from x where (1000000 * 1000000 > i64) = (f32 > 0)", true);
+            // Absolute pin: Java keeps ids 1 and 2; the pre-fix JIT wrapped the fold and
+            // returned 0 rows.
+            assertJitMatchesJava("select id from x where (1000000 * 1000000 > i64) = (f32 > 0)", true,
+                    "id\n1\n2\n");
             assertJitMatchesJava("select id from x where (ci > 1000000 * 1000000) = (cl > 0)", true);
             // Controls: single comparison, AND, OR each split into separate
             // predicate contexts and were always correct.
@@ -743,7 +749,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "(null, null, 3000000)");
             // Previously diverging shapes: an in-range constant operand on the wrap
             // side of an INT-width comparison, paired with a LONG-width comparison.
-            assertJitMatchesJava("t where (i32 * 3000000000 > 0) = (i32 * 2 > 5)", true);
+            // Absolute pin: Java keeps 2 rows (i32=3 and the null row); the pre-fix JIT widened
+            // the in-range "2" operand and returned 4.
+            assertJitMatchesJava("t where (i32 * 3000000000 > 0) = (i32 * 2 > 5)", true,
+                    "i32\ti64\tts\n" +
+                            "3\t3\t1970-01-01T00:00:02.000000Z\n" +
+                            "null\tnull\t1970-01-01T00:00:03.000000Z\n");
             assertJitMatchesJava("t where (i32 * 2 > 5) = (i32 * 3000000000 > 0)", true); // operand order
             assertJitMatchesJava("t where (i32 * 3000000000 > 0) <> (i32 * 2 > 5)", true);
             // The LONG-comparison side is an out-of-INT-range constant equality.
@@ -913,7 +924,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Previously diverging shapes fixed by this change: an out-of-INT-range integer
             // constant as a bare (non-negated) arithmetic operand, alongside a FLOAT column.
             // Still JIT-compiled, now correct.
-            assertJitMatchesJava("t where i32 * 3000000000 > fcol", true);
+            // Absolute pin: the i32=7 boundary row (21000000000 > 20999999488.0 at long width)
+            // survives; the pre-fix JIT computed it as a float multiply and dropped it.
+            assertJitMatchesJava("t where i32 * 3000000000 > fcol", true,
+                    "i32\ti64\tfcol\tdcol\tts\n" +
+                            "7\t7\t2.1E10\t2.0999999488E10\t1970-01-01T00:00:00.000000Z\n" +
+                            "46341\t46341\t5.0\t5.0\t1970-01-01T00:00:03.000000Z\n" +
+                            "0\t0\t-1.0\t-1.0\t1970-01-01T00:00:04.000000Z\n");
             assertJitMatchesJava("t where i32 + 2000000000000 > fcol", true);
             // An AND chain with a LONG column splits into per-comparison predicate contexts,
             // so the "i32 * 3000000000 > fcol" comparison is again pure INT+FLOAT and diverged.
@@ -953,7 +970,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "(5.0, 5.0, 2000000)," +
                     "(null, null, 3000000)");
             // Operators that diverged on the boundary row before the fix.
-            assertJitMatchesJava("t where fcol > 3000000200", true);
+            // Absolute pin: at float width 3000000256f > 3000000256f is false, but the stored
+            // fcol promotes to double (3000000256.0 > 3000000200.0 is true), so Java keeps the
+            // boundary row; the pre-fix JIT dropped it.
+            assertJitMatchesJava("t where fcol > 3000000200", true,
+                    "fcol\tdcol\tts\n" +
+                            "3.0000003E9\t3.000000256E9\t1970-01-01T00:00:00.000000Z\n");
             assertJitMatchesJava("t where fcol >= 3000000200", true);
             assertJitMatchesJava("t where fcol = 3000000200", true);
             assertJitMatchesJava("t where fcol <> 3000000200", true);
