@@ -221,12 +221,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
     public void testHorizonJoinFloatSumStorageReductionOrderToleratedByOracle() throws Exception {
         // Bug from multi-table HORIZON JOIN fuzzing (storage diff): a non-keyed
         // HORIZON JOIN that sums a FLOAT slave column diverged between a native
-        // master/slave and a parquet shadow -- native returned 374.97897, parquet
+        // master/slave and a parquet shadow - native returned 374.97897, parquet
         // 374.98038 (one row each, ~32x FLOAT epsilon). The parallel non-keyed path
         // accumulates a per-worker partial FLOAT sum per frame and merges the
         // partials (SumFloatGroupByFunction.merge is FLOAT + FLOAT) in an order set
         // by the worker/frame partition. Native page frames and parquet row groups
-        // have different boundaries, so the partials -- and the merge order -- differ,
+        // have different boundaries, so the partials - and the merge order - differ,
         // and FLOAT addition is not associative. The result is reduction-order noise,
         // not a row-set difference: count(p.c6) and sum(p.c6::double) are bit-identical
         // across the two storages, so every storage layout sums the same multiset of
@@ -238,7 +238,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         //     the single-threaded float sum is storage-independent (master-driven
         //     accumulation order), so native and parquet agree bit for bit on count,
         //     the FLOAT sum, and the DOUBLE sum. This confirms the frame row-set is
-        //     identical -- not an off-by-one frame boundary -- which is the premise
+        //     identical - not an off-by-one frame boundary - which is the premise
         //     for tolerating the parallel divergence.
         //  2. Oracle tolerance: the refined per-cell FLOAT tolerance accepts the
         //     reported divergence and still rejects a real one.
@@ -282,7 +282,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final boolean[] exactMask = {false};
             Assert.assertTrue("reported FLOAT-sum reduction-order drift must be tolerated",
                     QueryRunner.rowEqualsWithFpTolerance("374.97897", "374.98038", fpMask));
-            // A real row-set divergence -- e.g. one storage dropped a whole FLOAT term --
+            // A real row-set divergence - e.g. one storage dropped a whole FLOAT term -
             // shifts the sum by thousands of FLOAT epsilons, far beyond reduction noise,
             // and must still be flagged.
             Assert.assertFalse("a real FLOAT-sum divergence must still be flagged",
@@ -318,8 +318,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // exercise the real storage-axis classification path.
         //
         // Parallel HORIZON JOIN is disabled below so the planner takes the
-        // single-threaded path deterministically -- the same path the engine uses
-        // whenever it has no shared query workers -- regardless of how many workers
+        // single-threaded path deterministically - the same path the engine uses
+        // whenever it has no shared query workers - regardless of how many workers
         // the test pool happens to advertise. (With parallel HORIZON JOIN on, the
         // covering index supplies a page-frame cursor and the parallel path
         // accepts it; the rejection is specific to the single-threaded path.)

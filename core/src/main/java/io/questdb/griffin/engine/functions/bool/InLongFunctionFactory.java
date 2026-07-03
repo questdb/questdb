@@ -476,13 +476,13 @@ public class InLongFunctionFactory implements FunctionFactory {
         private final long inVal;
         // Read the key at INT width (wrap) against an INT-width element, else at
         // long width (widen). Int width is only ever set for a narrow-integer key.
-        private final boolean keyReadInt;
+        private final boolean isKeyReadInt;
         private final Function longFunc;
 
-        public InLongSingleConstFunction(Function longFunc, long inVal, boolean keyReadInt) {
+        public InLongSingleConstFunction(Function longFunc, long inVal, boolean isKeyReadInt) {
             this.longFunc = longFunc;
             this.inVal = inVal;
-            this.keyReadInt = keyReadInt;
+            this.isKeyReadInt = isKeyReadInt;
         }
 
         @Override
@@ -492,7 +492,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long val = keyReadInt ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
+            long val = isKeyReadInt ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
             return negated != (val == inVal);
         }
 
@@ -509,17 +509,17 @@ public class InLongFunctionFactory implements FunctionFactory {
     private static class InLongTwoConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final long inVal0;
         private final long inVal1;
-        // Per-element key read width; see InLongSingleConstFunction#keyReadInt.
-        private final boolean keyRead0Int;
-        private final boolean keyRead1Int;
+        // Per-element key read width; see InLongSingleConstFunction#isKeyReadInt.
+        private final boolean isKeyRead0Int;
+        private final boolean isKeyRead1Int;
         private final Function longFunc;
 
-        public InLongTwoConstFunction(Function longFunc, long inVal0, long inVal1, boolean keyRead0Int, boolean keyRead1Int) {
+        public InLongTwoConstFunction(Function longFunc, long inVal0, long inVal1, boolean isKeyRead0Int, boolean isKeyRead1Int) {
             this.longFunc = longFunc;
             this.inVal0 = inVal0;
             this.inVal1 = inVal1;
-            this.keyRead0Int = keyRead0Int;
-            this.keyRead1Int = keyRead1Int;
+            this.isKeyRead0Int = isKeyRead0Int;
+            this.isKeyRead1Int = isKeyRead1Int;
         }
 
         @Override
@@ -529,12 +529,12 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final long val0 = keyRead0Int ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
+            final long val0 = isKeyRead0Int ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec);
             // Both elements read the key at the same width in the common case, so
             // reuse val0 rather than reading the key a second time.
-            final long val1 = keyRead1Int == keyRead0Int
+            final long val1 = isKeyRead1Int == isKeyRead0Int
                     ? val0
-                    : (keyRead1Int ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec));
+                    : (isKeyRead1Int ? Numbers.intToLong(longFunc.getInt(rec)) : longFunc.getLong(rec));
             return negated != (val0 == inVal0 || val1 == inVal1);
         }
 
@@ -550,18 +550,18 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     private static class InLongVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final ObjList<Function> args;
-        private final boolean keyIsNarrowInt;
         // Whether some element needs the key read at INT width (wrap) / long width (widen).
         // A string-like element may need either, so both reads are enabled and the parsed
         // value picks the width per row; a purely INT or LONG list reads the key once per row.
-        private final boolean keyReadInt;
-        private final boolean keyReadLong;
+        private final boolean isKeyReadInt;
+        private final boolean isKeyReadLong;
+        private final boolean keyIsNarrowInt;
 
         public InLongVarFunction(ObjList<Function> args, boolean keyIsNarrowInt) {
             this.args = args;
             this.keyIsNarrowInt = keyIsNarrowInt;
-            this.keyReadInt = keyIsNarrowInt && hasNarrowIntElement(args);
-            this.keyReadLong = !keyIsNarrowInt || hasLongWidthElement(args);
+            this.isKeyReadInt = keyIsNarrowInt && hasNarrowIntElement(args);
+            this.isKeyReadLong = !keyIsNarrowInt || hasLongWidthElement(args);
         }
 
         @Override
@@ -572,9 +572,9 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Function keyFunc = args.getQuick(0);
-            // Read the key only at the width(s) some element needs (see keyReadInt/keyReadLong).
-            final long keyLong = keyReadLong ? keyFunc.getLong(rec) : 0L;
-            final long keyInt = keyReadInt ? Numbers.intToLong(keyFunc.getInt(rec)) : keyLong;
+            // Read the key only at the width(s) some element needs (see isKeyReadInt/isKeyReadLong).
+            final long keyLong = isKeyReadLong ? keyFunc.getLong(rec) : 0L;
+            final long keyInt = isKeyReadInt ? Numbers.intToLong(keyFunc.getInt(rec)) : keyLong;
 
             for (int i = 1, n = args.size(); i < n; i++) {
                 Function func = args.getQuick(i);

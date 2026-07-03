@@ -160,7 +160,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // INT overflow widening: an overflowing INT arithmetic arg wraps mod 2^32 in getInt() but
         // widens to the full-width product in getLong()/getTimestamp() (the dual behavior the
         // constant folder preserves). The wrapper must serve the widened value, not re-wrap the
-        // cached int -- otherwise a LONG-promoting context (e.g. INT*LONG) over the memoized
+        // cached int - otherwise a LONG-promoting context (e.g. INT*LONG) over the memoized
         // constant disagrees with the same expression over a column. -2_856_928_958 wraps to
         // +1_438_038_338 as INT.
         {
@@ -197,7 +197,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // INT NULL: an IntFunction arg whose getInt() returns INT_NULL. init() reads getInt() directly,
         // so the cached int is INT_NULL with no LONG_NULL round-trip. getLong() fills the widened value
         // lazily from the arg's inherited IntFunction.getLong(), which maps INT_NULL to LONG_NULL, and the
-        // inherited getDouble() widens INT_NULL to NaN -- exactly like a real INT function over a NULL column.
+        // inherited getDouble() widens INT_NULL to NaN - exactly like a real INT function over a NULL column.
         {
             final RuntimeConstFunction f = RuntimeConstFunction.newInstance(new IntFunction() {
                 @Override
@@ -582,7 +582,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
     public void testIntRuntimeConstIsNeverThreadSafeWhileOthersInherit() throws SqlException {
         // IntRuntimeConstFunction fills its widened long lazily in getLong() (see its comments),
         // mutating state outside init(), so it must declare isThreadSafe()=false even over a
-        // thread-safe arg -- the engine then hands each parallel worker its own clone instead of
+        // thread-safe arg - the engine then hands each parallel worker its own clone instead of
         // sharing one instance and racing on the lazy fill. The other foldable wrappers carry no
         // lazy state and simply inherit the arg's thread-safety (UnaryFunction.isThreadSafe). This
         // pins the override: dropping it would let the INT wrapper inherit a thread-safe arg's true
@@ -634,7 +634,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
             longFnSafe.close();
         }
 
-        // ... and inherits a non-thread-safe arg too -- pure delegation, no override.
+        // ... and inherits a non-thread-safe arg too - pure delegation, no override.
         final RuntimeConstFunction longFnUnsafe = RuntimeConstFunction.newInstance(new LongFunction() {
             @Override
             public long getLong(Record rec) {

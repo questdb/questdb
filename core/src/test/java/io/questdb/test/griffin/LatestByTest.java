@@ -331,8 +331,8 @@ public class LatestByTest extends AbstractCairoTest {
         // A WHERE predicate over an INDEXED SYMBOL combined with LATEST ON ... PARTITION BY
         // a non-symbol key used to be silently dropped. WhereClauseParser extracted the
         // indexed-symbol predicate into a key-column intrinsic (expecting an index scan to
-        // serve it), but the LatestByAllFiltered path -- chosen because the partition key is
-        // not a symbol -- ignores that intrinsic and applies only the residual filter, which
+        // serve it), but the LatestByAllFiltered path - chosen because the partition key is
+        // not a symbol - ignores that intrinsic and applies only the residual filter, which
         // was then empty. The indexed table enumerated rows the WHERE should have removed and
         // diverged from its non-indexed sibling. Cross-check the two and pin the SQL-correct
         // answer for several predicate shapes and both index families.
@@ -776,8 +776,8 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByOverSubQueryRejectedKeyDoesNotLeak() throws Exception {
-        // generateLatestBy used to leak its input factory -- and the async page-frame circuit
-        // breaker (NATIVE_CB2) the factory transitively owns -- when latest by over a sub-query was
+        // generateLatestBy used to leak its input factory - and the async page-frame circuit
+        // breaker (NATIVE_CB2) the factory transitively owns - when latest by over a sub-query was
         // rejected at codegen because the partition key is an unsupported type (DECIMAL). The
         // CTE keeps latest by over a sub-query (not pushed into the table scan), and under a worker
         // pool the WHERE compiles to an async filter that allocates the breaker at compile time, so

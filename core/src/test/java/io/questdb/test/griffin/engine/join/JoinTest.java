@@ -2357,7 +2357,7 @@ public class JoinTest extends AbstractCairoTest {
         // any slave column the value sink cannot store up front with a user-facing
         // SqlException, matching the graceful array rejection. INTERVAL is expression-only
         // (no stored column), so an interval slave column only comes from a sub-query
-        // projection with no random access -- always full-fat, always rejected (unlike a
+        // projection with no random access - always full-fat, always rejected (unlike a
         // var-size array, which still has a light path that returns the row).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

@@ -224,7 +224,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testColumnArithmeticWidthUnderBooleanEquality() throws Exception {
         // The column analog of testConstantFoldWidthUnderBooleanEquality. A boolean
-        // equality of two comparisons -- (cmp) = (cmp) -- forms a SINGLE predicate
+        // equality of two comparisons - (cmp) = (cmp) - forms a SINGLE predicate
         // context, so a sibling LONG comparison turns the predicate-global narrow-i64
         // widening on for the whole predicate. An overflowing narrow-int arithmetic
         // COLUMN product on the wrap-side of the INT-width comparison was then
@@ -240,7 +240,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     " from long_sequence(5)) timestamp(k)");
             // Previously diverging shapes: an INT-width comparison of a narrow-int
             // product, ANDed as a boolean equality with a LONG comparison.
-            assertJitMatchesJava("p where ((a*b) = -727379968) = (nl > 0)", true);
+            // Absolute pin: only rows 1 and 3 (nl > 0) survive; the pre-fix JIT returned {2,4,5}.
+            assertJitMatchesJava("p where ((a*b) = -727379968) = (nl > 0)", true,
+                    "a\tb\trid\tnl\tcs\tcbyte\tk\n" +
+                            "1000000\t1000000\t1\t1000000000000\t1\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "1000000\t1000000\t3\t5\t3\t3\t1970-01-01T00:00:02.000000Z\n");
             assertJitMatchesJava("p where ((a*b) > 0) = (nl > 0)", true);           // no magic constant
             assertJitMatchesJava("p where (nl > 0) = ((a*b) = -727379968)", true);  // operand order
             assertJitMatchesJava("p where ((a*b) <> -727379968) = (nl > 0)", true);
@@ -613,7 +617,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     " from long_sequence(5)) timestamp(k)");
             // INT-width comparisons: inner 65536 * 32768 wraps to INT_NULL, so
             // the whole fold is NULL and no row matches.
-            assertJitMatchesJava("x where i8 > (65536 * 32768) * 2", true);
+            // Absolute pin: the fold collapses to NULL, so no row matches (header only); the
+            // pre-fix JIT read i8 > 0 and returned rows.
+            assertJitMatchesJava("x where i8 > (65536 * 32768) * 2", true, "k\ti8\ti16\ti32\ti64\n");
             assertJitMatchesJava("x where i16 > (65536 * 32768) * 2", true);
             assertJitMatchesJava("x where i32 > (65536 * 32768) * 2", true);
             // LONG column promotes to long width: getLong() never wraps onto the
@@ -639,7 +645,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // 4611686018427387904 = 2^62; 2^62 * -2 = Long.MIN (intermediate),
             // + 5 a non-sentinel final. The fold collapses to LONG_NULL on both
             // paths, so only the null row matches '='.
-            assertJitMatchesJava("lp where i64 = (4611686018427387904 * -2) + 5", true);
+            // Absolute pin: the fold collapses to LONG_NULL, so only the null row matches '=';
+            // the pre-fix JIT computed Long.MIN + 5 and matched nothing.
+            assertJitMatchesJava("lp where i64 = (4611686018427387904 * -2) + 5", true,
+                    "k\ti64\n" +
+                            "1970-01-01T00:00:00.000000Z\tnull\n");
             assertJitMatchesJava("lp where i64 <> (4611686018427387904 * -2) + 5", true);
             assertJitMatchesJava("lp where i64 in (1, (4611686018427387904 * -2) + 5)", true);
             assertJitMatchesJava("lp where i64 not in (1, (4611686018427387904 * -2) + 5)", true);
@@ -679,15 +689,15 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testConstantFoldWidthUnderBooleanEquality() throws Exception {
-        // A boolean equality of two comparisons -- (cmp) = (cmp) -- forms a
+        // A boolean equality of two comparisons - (cmp) = (cmp) - forms a
         // SINGLE predicate context, so a predicate-global width signal applies
         // one width to both comparisons. An overflowing INT fold then took the
         // wrong width:
-        //   - I4-where-I8: (1000000 * 1000000 > i64) = (f32 > 0) -- the fold
+        //   - I4-where-I8: (1000000 * 1000000 > i64) = (f32 > 0) - the fold
         //     feeds a LONG comparison and must read at long width, but the float
         //     suppressed global widening and the fold root went unmarked, so the
         //     JIT emitted a wrapped I4 (Java 2 rows, JIT 0).
-        //   - I8-where-I4: (ci > 1000000 * 1000000) = (cl > 0) -- the fold feeds
+        //   - I8-where-I4: (ci > 1000000 * 1000000) = (cl > 0) - the fold feeds
         //     an INT comparison and must wrap, but the predicate-global
         //     long-widening (driven by the sibling LONG comparison) forced it to
         //     I8 (Java 3 rows, JIT 0).
@@ -713,14 +723,14 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     @Test
     public void testConstantOperandWidthUnderBooleanEquality() throws Exception {
         // The constant-operand analog of testColumnArithmeticWidthUnderBooleanEquality.
-        // A boolean equality of two comparisons -- (cmp) = (cmp) -- forms a SINGLE
+        // A boolean equality of two comparisons - (cmp) = (cmp) - forms a SINGLE
         // predicate context, so a sibling LONG comparison (here i32*3000000000, whose
         // out-of-INT-range constant promotes to long) turns the predicate-global
         // narrow-i64 widening on for the whole predicate. The narrow-int COLUMN leaf
         // on the wrap-side comparison is already kept at i32 (i64WrapLeaves), but the
         // in-range CONSTANT operand it multiplies with (the 2 in i32*2) was still
         // widened to i64 by serializeConstant, so the JIT promoted the whole product
-        // to long width and never wrapped -- MulInt#getInt wraps mod 2^32 in the Java
+        // to long width and never wrapped - MulInt#getInt wraps mod 2^32 in the Java
         // filter. For (i32*3000000000 > 0) = (i32*2 > 5) the Java filter returned
         // 2 rows and the JIT 4. serializeConstant now keeps an i64WrapLeaves constant
         // at i32, matching the wrap-side column, so both agree. JIT stays enabled.
@@ -912,7 +922,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // that descend() folds via its own long-width path, so it was already correct.
             assertJitMatchesJava("t where i32 * -3000000000 > fcol", true);
             // Control: a DOUBLE column makes the predicate mixed-size (INT 4B, DOUBLE 8B),
-            // which already runs scalar and emits the constant as I8 -- correct before too.
+            // which already runs scalar and emits the constant as I8 - correct before too.
             assertJitMatchesJava("t where i32 * 3000000000 > dcol", true);
             // Control: a direct FLOAT-vs-out-of-range-constant comparison is not an
             // arithmetic operand; it stays vectorized and unchanged.
@@ -1099,7 +1109,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorOverflowFoldMatchesJavaOnConstantKey() throws Exception {
         // C1 regression: an overflowing INT arithmetic CONSTANT key on the left of a multi-value
         // IN() list. `k IN (e0, e1, ...)` is `k = e0 OR k = e1 OR ...`, and the Java filter reads
-        // the key at EACH element's '=' width -- widened (getLong, 10^12) against a LONG/TIMESTAMP
+        // the key at EACH element's '=' width - widened (getLong, 10^12) against a LONG/TIMESTAMP
         // element, wrapped (getInt, -727379968) against an INT element. The JIT re-serializes the
         // key per element (serializeIn) but folded it to a single wrapped I4 IMM for the whole list
         // (one width per node), so against a LONG element it matched the wrapped image instead of
@@ -1207,7 +1217,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("x where i32b not in (1, 1000000 * 1000000)", true);  // inverse
             assertJitMatchesJava("x where i32b = 1000000 * 1000000", true);            // control: '='
 
-            // The Java (JIT-disabled) IN must agree with '=' -- it widened before the fix.
+            // The Java (JIT-disabled) IN must agree with '=' - it widened before the fix.
             Assert.assertEquals(1, runQuery("x where i32b in (1000000 * 1000000)"));
             Assert.assertEquals(1, runQuery("x where i32b = 1000000 * 1000000"));
 
@@ -1231,7 +1241,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // the narrow key's width (getInt -> wrap), so the JIT must too. But
         // markI64WidenFoldRoots used to fold ONE comparison width across the whole IN list,
         // so a single coexisting LONG element (3000000000) promoted the list to I8 and WIDENED
-        // the overflowing INT element to its full-width product -- the JIT then read 10^12
+        // the overflowing INT element to its full-width product - the JIT then read 10^12
         // while the Java filter wrapped to -727379968 == the stored key, so the row matched in
         // Java but not in the JIT. The width is now derived per element (key vs that element),
         // so the INT element wraps (matching the key) while the LONG element stays at long
@@ -1258,7 +1268,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorOverflowNullElementForcesScalar() throws Exception {
         // C3: a value-correct SX_I64 escaping to the vectorized (AVX2) path. A NULL (or overflow-INT
         // constant) IN element widens a narrow-int arithmetic key via inKeyWidthOverride == I8, which
-        // emits SX_I64 -- but NULL does not flip needsNarrowI64Widening, so the predicate-exit
+        // emits SX_I64 - but NULL does not flip needsNarrowI64Widening, so the predicate-exit
         // forceScalarMode stayed false and the filter ran AVX2, which has no SX_I64 opcode (it bails
         // with a bare return), leaving a partial value stack and wrong rows. forceScalarMode is now a
         // hard consequence of any SX_I64 emission, so such a filter always runs the scalar backend.
@@ -1274,7 +1284,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     " from long_sequence(64)) timestamp(k)");
 
             // NULL element paired with an INT constant: the key widens against NULL (matches nothing)
-            // and wraps against -727379968 (matches row 1). RED on HEAD -- AVX2 dropped the SX_I64.
+            // and wraps against -727379968 (matches row 1). RED on HEAD - AVX2 dropped the SX_I64.
             assertJitMatchesJava("select a from y where (a*b) in (null, -727379968)", true);
             assertJitMatchesJava("select a from y where (a*b) in (-727379968, null)", true);
             assertJitMatchesJava("select a from y where (a*b) not in (null, -727379968)", true);
@@ -1341,7 +1351,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorOverflowSingleValueKeyUnderBooleanEquality() throws Exception {
         // C2 regression (level-3 review): the SINGLE-VALUE IN form never set inKeyWidthOverride,
         // so the key column leaves fell back to the predicate-global widening decision. A boolean
-        // equality of an IN check and a LONG comparison -- ((a*b) in (c)) = (nl > 0) -- is a single
+        // equality of an IN check and a LONG comparison - ((a*b) in (c)) = (nl > 0) - is a single
         // predicate, so the LONG sibling turned needsNarrowI64Widening on and the JIT computed the
         // overflowing narrow-int key at 64 bits (10^12) where the Java InLong path wraps it to the
         // INT element's width (-727379968). Bugfix 40 fixed this shape for '=' comparisons and
@@ -1393,7 +1403,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorOverflowWidenColumnArithKeyPerElement() throws Exception {
         // C2 regression: a COLUMN-arithmetic IN key (a * b) whose product overflows INT, in a
         // multi-value list that mixes a genuine-LONG element with an overflowing-INT element.
-        // The Java InLong path reads the key per element -- widened (getLong) against the LONG
+        // The Java InLong path reads the key per element - widened (getLong) against the LONG
         // element, wrapped (getInt) against the INT element. But the JIT decided narrow-int
         // widening once for the WHOLE predicate: a single coexisting LONG element flipped
         // needsNarrowI64Widening on, so the JIT sign-extended a and b for EVERY comparison,
@@ -1420,7 +1430,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             Assert.assertEquals("a\n", runJavaToString("select a from y where (a * b) not in (el, -727379968)"));
 
             // controls that already agreed: an all-INT list wraps the key, a single LONG element
-            // widens it, and '=' wraps -- none of these mix widths across the list.
+            // widens it, and '=' wraps - none of these mix widths across the list.
             assertJitMatchesJava("select a from y where (a * b) = -727379968", true);           // '=' wraps
             assertJitMatchesJava("select a from y where (a * b) in (-727379968)", true);        // single INT: wraps
             assertJitMatchesJava("select a from y where (a * b) in (5, -727379968)", true);     // all-INT list: wraps
@@ -1446,7 +1456,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             execute("insert into y values (1000000, 1000000, 1000000, 1000000, 999, 1)," +
                     " (2, 1073741824, 1, 1, 999, 2)");
 
-            // C1: the INT-arith element must wrap with the key. RED on HEAD -- the key wrapped
+            // C1: the INT-arith element must wrap with the key. RED on HEAD - the key wrapped
             // but the element widened, so the (key = c*d) pairing missed the wrapped match.
             assertJitMatchesJava("select a from y where (a*b) in (c*d, el)", true);
             assertJitMatchesJava("select a from y where (a*b) in (el, c*d)", true);
@@ -1455,7 +1465,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a*b) in (c*d, el)"));
 
             // C2: the key must widen against a NULL element, not wrap into INT_MIN and match the
-            // NULL sentinel. RED on HEAD -- row2's wrapped key (INT_MIN == INT_NULL) matched null.
+            // NULL sentinel. RED on HEAD - row2's wrapped key (INT_MIN == INT_NULL) matched null.
             assertJitMatchesJava("select a from y where (a*b) in (null, el)", true);
             assertJitMatchesJava("select a from y where (a*b) in (el, null)", true);
             assertJitMatchesJava("select a from y where (a*b) not in (null, el)", true);
@@ -1472,7 +1482,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // LONG element. 'in (LONG)' is 'key = LONG', which promotes to long, so the key must
         // WIDEN via getLong() (a * b = 10^12), NOT wrap via getInt() (= -727379968). The
         // narrow-int IN fix read the key at INT width for every element, so a LONG-column
-        // element wrongly matched the wrapped key -- IN returned a different row than '=',
+        // element wrongly matched the wrapped key - IN returned a different row than '=',
         // CAST and the JIT even with the JIT disabled. The IN path now derives the compare
         // width per element: a LONG/TIMESTAMP element widens the key, an INT element wraps it.
         //
@@ -1520,7 +1530,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("select id from x where (a * b) = :p", true);
             Assert.assertEquals("id\n1\n2\n", runJavaToString("select id from x where (a * b) in (:p)"));
 
-            // Control -- an INT element must still WRAP the key (matching EqInt and the JIT).
+            // Control - an INT element must still WRAP the key (matching EqInt and the JIT).
             // master read the key via getLong() and WIDENED it, so IN wrongly returned no row
             // where '=' matched both; the wrapped key now matches the stored wrapped image.
             assertJitMatchesJava("select id from x where (a * b) in (ei)", true);
@@ -2318,6 +2328,14 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * fallback.
      */
     private void assertJitMatchesJava(CharSequence query, boolean expectJit) throws SqlException {
+        assertJitMatchesJava(query, expectJit, null);
+    }
+
+    // Runs the query with JIT off then on, asserts the two agree and that JIT usage matches
+    // expectJit. When expected is non-null it also pins the absolute result: parity alone would
+    // pass even if BOTH paths shared the same bug, so the expected rows lock the actual result
+    // the divergence was about.
+    private void assertJitMatchesJava(CharSequence query, boolean expectJit, CharSequence expected) throws SqlException {
         StringSink javaSink = new StringSink();
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         try (RecordCursorFactory factory = select(query)) {
@@ -2337,6 +2355,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             }
         }
         TestUtils.assertEquals("JIT vs Java result mismatch for query: " + query, javaSink, jit);
+        if (expected != null) {
+            TestUtils.assertEquals("absolute result mismatch for query: " + query, expected, javaSink);
+        }
     }
 
     private void assertJitCountQuery(CharSequence countQuery, long expectedCount) throws SqlException {

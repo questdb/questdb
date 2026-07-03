@@ -456,8 +456,8 @@ public interface RuntimeConstFunction extends UnaryFunction {
 
     final class IntRuntimeConstFunction extends IntFunction implements RuntimeConstFunction {
         private final Function arg;
+        private boolean isLongValueComputed;
         private long longValue;
-        private boolean longValueComputed;
         private int value;
 
         IntRuntimeConstFunction(Function arg) {
@@ -488,9 +488,9 @@ public interface RuntimeConstFunction extends UnaryFunction {
             // LONG-promoting context asks for it, then serves it for the remaining rows. The lazy
             // fill mutates state outside init(), so this subclass is not read thread-safe (see
             // isThreadSafe()) and runs on a per-worker copy.
-            if (!longValueComputed) {
+            if (!isLongValueComputed) {
                 longValue = arg.getLong(null);
-                longValueComputed = true;
+                isLongValueComputed = true;
             }
             return longValue;
         }
@@ -503,7 +503,7 @@ public interface RuntimeConstFunction extends UnaryFunction {
             // pays a second evaluation while the common INT read stays single-evaluation. NULL
             // flows through unchanged: getInt() yields INT_NULL and getLong() yields LONG_NULL.
             value = arg.getInt(null);
-            longValueComputed = false;
+            isLongValueComputed = false;
         }
 
         @Override

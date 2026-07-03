@@ -325,7 +325,7 @@ public class FlyweightCompactMapValue implements FlyweightMapValue {
     // putLong128 and putLong256 carry values wider than 8 bytes, which this 8-byte-slot
     // layout cannot hold. FlyweightMapValueFactory routes any value-type set containing a
     // larger-than-8-byte column (LONG128, UUID, LONG256) to FlyweightMapValueImpl, so these
-    // never run here -- including the LONG128/UUID/LONG256 puts RecordValueSinkFactory emits.
+    // never run here - including the LONG128/UUID/LONG256 puts RecordValueSinkFactory emits.
     // Reaching them means that selection invariant was broken.
     @Override
     public void putLong128(int index, long lo, long hi) {

@@ -218,7 +218,7 @@ public class RecordValueSinkFactory {
                     // stack: []
                     break;
                 default:
-                    // Unreachable: both callers reject unsupported types up front -- the
+                    // Unreachable: both callers reject unsupported types up front - the
                     // full-fat join guard via isSupportedColumnType, and RankFunctionFactory
                     // by asserting fixed-size-or-static-symbol streaming ORDER BY columns.
                     throw new UnsupportedOperationException();
@@ -247,7 +247,7 @@ public class RecordValueSinkFactory {
 
     /**
      * Reports whether {@link #getInstance} can materialize a column of this type into
-     * a {@link MapValue}. Mirrors the switch in getInstance() -- keep in sync. The
+     * a {@link MapValue}. Mirrors the switch in getInstance() - keep in sync. The
      * caller must reject unsupported types up front (see SqlCodeGenerator's full-fat
      * join guard) rather than hit getInstance()'s throwing default.
      */

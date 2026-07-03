@@ -51,9 +51,9 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * full-scan storage shadow (only a {@code LIMIT} without a fully
  * disambiguating {@code ORDER BY} downgrades to a row-count compare).
  * <p>
- * {@code LATEST ON} always names the source's designated timestamp -- the
+ * {@code LATEST ON} always names the source's designated timestamp - the
  * engine rejects any other column with "latest by over a table requires
- * designated TIMESTAMP" -- so the caller routes here only when the source
+ * designated TIMESTAMP" - so the caller routes here only when the source
  * carries one. The clause skips the table alias (like {@link SampleByClause})
  * so the timestamp literal and the bare key list stay unqualified. Partition
  * keys are drawn from the non-array columns other than the timestamp, biased

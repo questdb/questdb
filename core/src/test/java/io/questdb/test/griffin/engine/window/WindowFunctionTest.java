@@ -17741,7 +17741,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // rank() OVER (ORDER BY <uuid|long256>) puts a fixed-size 128/256-bit column in the window
         // ORDER BY, which the streaming path would sink through RecordValueSinkFactory. That path is only
         // taken when the ORDER BY matches the designated timestamp (or a static indexed symbol), so a
-        // UUID/LONG256 order key always routes to the cached path -- assert that routing here, and pin the
+        // UUID/LONG256 order key always routes to the cached path - assert that routing here, and pin the
         // rank values (including ties) so the cached path's ordering of these types cannot regress. The
         // streaming sink of these types is exercised separately, as pass-through columns, in
         // testRankWithUnserializablePassThroughColumn.

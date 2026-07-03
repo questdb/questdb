@@ -327,8 +327,8 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
      * Upper timestamp bound for building the per-symbol slave index.
      * {@link #INDEX_LOOKAHEAD} prefetches rows past the window so later master rows
      * can reuse the index, but must not fall below the window's own upper bound
-     * ({@code masterTimestamp + windowHi}). A negative {@code windowHi} -- a
-     * past-only window, e.g. {@code 4 HOURS PRECEDING AND 2 HOURS PRECEDING} --
+     * ({@code masterTimestamp + windowHi}). A negative {@code windowHi} - a
+     * past-only window, e.g. {@code 4 HOURS PRECEDING AND 2 HOURS PRECEDING} -
      * would do exactly that and drop the window's most recent rows, so clamp to
      * {@code windowHi}.
      */

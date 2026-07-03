@@ -54,6 +54,19 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeepConstantChainFoldsAndGuardsViaCachedFold() throws Exception {
+        // A long left-associative chain drives the O(n) cached-fold path: each level reads the
+        // accumulating constant subtree's cached triple in O(1) rather than re-walking it, so the
+        // whole chain reassociates in O(n) instead of O(n^2). A deep, all-safe chain regroups fully.
+        assertReassociation("d + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8", "d + (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8)");
+
+        // The NULL-sentinel guard must still fire deep in the chain, using the cached running fold:
+        // 1 + 2 + 3 + 2147483641 accumulates to 2147483647, and the next '+ 1' wraps that cached
+        // value onto INT_NULL (-2^31). Only that final pair is blocked; the safe prefix regroups.
+        assertReassociation("d + 1 + 2 + 3 + 2147483641 + 1", "d + (1 + 2 + 3 + 2147483641) + 1");
+    }
+
+    @Test
     public void testDivisionModuloPairWrappingToIntNullIsNotReassociated() throws Exception {
         // DivInt / RemInt are INT-typed and propagate INT_NULL just like + - *, so a
         // constant pair element built with '/' or '%' that folds to the INT_NULL sentinel
@@ -74,7 +87,7 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     public void testIntegerDecimalMixIsNotReassociated() throws Exception {
         // Regrouping an integer constant with a DECIMAL one widens the inner operation to
         // DECIMAL. For an INT column that overflows, (col + intConst) wraps mod 2^32, but
-        // col + (intConst + decimalConst) does not -- it evaluates at DECIMAL width. The
+        // col + (intConst + decimalConst) does not - it evaluates at DECIMAL width. The
         // widening guard classified only DOUBLE / FLOAT, so a DECIMAL literal ('m' suffix)
         // looked non-widening and the int/decimal pair regrouped. It now recognizes DECIMAL.
         assertReassociationNoOp("d + 3 + 1.5m");
@@ -96,7 +109,7 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // Regrouping an integer constant with a floating-point one widens the
         // inner operation to floating point. For an INT column that overflows,
         // (col + intConst) wraps mod 2^32, but col + (intConst + floatConst) does
-        // not -- it evaluates at double width. The literal form folds the inner
+        // not - it evaluates at double width. The literal form folds the inner
         // INT arithmetic and wraps, so reassociating only the column form makes
         // the two disagree. These shapes must therefore stay un-regrouped.
         assertReassociation("d + 3 + 0.0", "d + 3 + 0.0");
@@ -111,7 +124,7 @@ public class ConstantReassociationTest extends AbstractCairoTest {
 
         // Same-category pairs still regroup. Integer addition is associative modulo 2^32 in
         // the absence of the INT_NULL sentinel, and floating pairs evaluate at floating point
-        // regardless of grouping. (Integer-pair regrouping is not fully safe -- an intermediate
+        // regardless of grouping. (Integer-pair regrouping is not fully safe - an intermediate
         // col op C1 can still wrap onto the sentinel for a particular column value; see
         // testIntegerPairWrappingToIntNullIsNotReassociated for that known limitation.)
         assertReassociation("d + 3 + 4", "d + (3 + 4)");
@@ -130,10 +143,10 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // IntArithmeticOverflowFoldingTest.testReassociationIntPairWrappingToIntNullWrapsLikeColumnAndLiteral;
         // this pins the same guard structurally, one level closer to the rewrite.
 
-        // addition: 2147483647 + 1 wraps to -2^31 == INT_NULL -- stays un-regrouped in every pattern.
+        // addition: 2147483647 + 1 wraps to -2^31 == INT_NULL - stays un-regrouped in every pattern.
         // Pattern A: (A op C1) op C2
         assertReassociation("d + 2147483647 + 1", "d + 2147483647 + 1");
-        // Pattern B: (C1 op A) op C2 (commutative) -- the column is NOT moved to the front
+        // Pattern B: (C1 op A) op C2 (commutative) - the column is NOT moved to the front
         assertReassociation("(2147483647 + d) + 1", "2147483647 + d + 1");
         // Mirror A: C2 op (A op C1) (commutative)
         assertReassociation("1 + (d + 2147483647)", "1 + (d + 2147483647)");
@@ -154,7 +167,7 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // wraps to -2147483647, which is NOT the INT_NULL sentinel, so the guard does not
         // fire and the pair regroups. But the left-associative intermediate d + 2147483647
         // DOES wrap onto INT_NULL for d == 1, so the un-regrouped and fully-literal forms
-        // return NULL while this regrouped form returns -2147483646 -- the regroup silently
+        // return NULL while this regrouped form returns -2147483646 - the regroup silently
         // changes the result for that column value. Detecting it needs a column value the
         // optimizer does not have (see the "Known limitation" note on reassociateConstants).
         // These assertions pin the current, pre-existing behaviour, not a correct outcome.

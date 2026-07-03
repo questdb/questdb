@@ -38,7 +38,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
 
 /**
  * WINDOW JOIN across two WAL tables. A WINDOW JOIN preserves the master
- * row count -- one output row per master row -- and for each master row
+ * row count - one output row per master row - and for each master row
  * aggregates the slave rows whose timestamp falls in
  * {@code [master.ts - lo, master.ts + hi]} (a {@code RANGE BETWEEN ... AND
  * ...} frame). Master columns project bare; slave columns must be wrapped
@@ -54,8 +54,8 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * [ORDER BY ...]
  * [LIMIT N]
  * </pre>
- * Bounds use static forms only -- {@code UNBOUNDED PRECEDING}, {@code
- * CURRENT ROW}, and {@code N <unit> PRECEDING/FOLLOWING} -- with units
+ * Bounds use static forms only - {@code UNBOUNDED PRECEDING}, {@code
+ * CURRENT ROW}, and {@code N <unit> PRECEDING/FOLLOWING} - with units
  * biased to minutes/hours so a frame actually spans several 30-minute-spaced
  * slave rows. The {@code hi} bound is chosen to respect the parser's
  * ordering rules ({@code start row is CURRENT/FOLLOWING, end row must not be

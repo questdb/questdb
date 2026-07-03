@@ -5828,7 +5828,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         // v is LONG256, whose first/last are thread-unsafe, so the planner builds
-                        // per-worker group-by function copies -- the path the bug lives on. n is INT for
+                        // per-worker group-by function copies - the path the bug lives on. n is INT for
                         // the second, distinct column slot.
                         engine.execute(
                                 "create table trades (ts timestamp, sym symbol, v long256, n int) " +

@@ -1008,9 +1008,9 @@ public final class QueryRunner {
             // legitimately differs between an indexed scan and a full scan,
             // between parquet and native partitions, and even run to run
             // under work stealing. The drift is a small multiple of FLOAT
-            // epsilon relative to the magnitude -- a HORIZON JOIN sum over a
+            // epsilon relative to the magnitude - a HORIZON JOIN sum over a
             // FLOAT slave column drifted ~32x FLOAT epsilon between a native
-            // and a parquet shadow -- so allow 64x to cover the tail with
+            // and a parquet shadow - so allow 64x to cover the tail with
             // margin. This stays far below the shift a real row-set error
             // produces (dropping or adding even one FLOAT term moves the sum
             // by thousands of FLOAT epsilons). The mask check above already

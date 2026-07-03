@@ -253,10 +253,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * intervals once. Only static intervals are supported.
      *
      * @param model    the RuntimeIntervalModel to merge from
-     * @param loOffset the window frame lo offset, subtracted from each master interval lo; {@code LONG_NULL}
-     *                 or {@code Long.MAX_VALUE} leaves the lower bound open (include-prevailing)
-     * @param hiOffset the window frame hi offset, added to each master interval hi; {@code LONG_NULL}
-     *                 or {@code Long.MAX_VALUE} leaves the upper bound open
+     * @param loOffset the window frame lo offset, subtracted from each master interval lo. The open-lower
+     *                 sentinel {@code LONG_NULL} leaves the lower bound open (include-prevailing); only that
+     *                 natural lower sentinel opens the bound, since a {@code Long.MAX_VALUE} loOffset yields a
+     *                 {@code Long.MAX_VALUE} lo that reads as an empty interval, not an open lower bound.
+     * @param hiOffset the window frame hi offset, added to each master interval hi. The open-upper sentinel
+     *                 {@code Long.MAX_VALUE} leaves the upper bound open; only that natural upper sentinel
+     *                 opens the bound, since a {@code LONG_NULL} hiOffset yields a {@code LONG_NULL} hi that
+     *                 reads as an empty interval, not an open upper bound.
      */
     public void merge(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         if (model == null || isEmptySet()) {
@@ -284,6 +288,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // designated-timestamp filter, so the builder is static and this branch carries a single
             // interval, but guard the multi-interval case rather than rely on that invariant: leaving the
             // slave unconstrained is always a safe superset.
+            // Unlike the union branch below, this path has no lo > hi empty-offset-interval guard: with the
+            // single guarded interval, intersect(lo, hi) collapses to empty exactly as an empty union would,
+            // so the guard is unnecessary here. A future ASOF/SPLICE/LT extension that unions multiple
+            // master intervals through this branch must add that guard (and real union logic) first.
             if (dynamicStart > 2) {
                 return;
             }

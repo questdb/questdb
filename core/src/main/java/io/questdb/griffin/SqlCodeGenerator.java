@@ -6412,10 +6412,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
-        // From here on the factory is ours to wrap. Every step below can reject the query --
+        // From here on the factory is ours to wrap. Every step below can reject the query -
         // getTimestampIndex on a missing designated timestamp, prepareLatestByColumnIndexes on an
         // unsupported latest-by key type (e.g. DECIMAL), the record sink compiler, or the wrapping
-        // cursor factory constructors -- so free the input on any failure to avoid leaking it (and the
+        // cursor factory constructors - so free the input on any failure to avoid leaking it (and the
         // async page-frame circuit breaker it may transitively own) when latest by sits over a subquery.
         try {
             // We require timestamp with any order.
@@ -10240,7 +10240,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 // A LATEST ON query consumes an index key column only when that key is
                 // the single, symbol-typed latest-by column itself (preferredKeyColumn).
-                // With no such column -- a non-symbol or multi-column latest by -- no
+                // With no such column - a non-symbol or multi-column latest by - no
                 // latest-by factory reads the key intrinsic, so suppress key extraction.
                 // Otherwise the parser pulls an unrelated indexed-symbol predicate (e.g.
                 // 'sym IS NOT NULL') out of the residual filter into the key intrinsic and

@@ -1060,7 +1060,7 @@ public final class WhereClauseParser implements Mutable {
         // Note: "preferred" is an unfortunate name, the actual meaning is a "column from a 'LATEST ON' clause".
         // Moreover, it is only populated when "latest on" has a single SYMBOL column.
         // Q: Why does isKeyColumnSuppressed gate index usage here?
-        // A: isKeyColumnSuppressed is set whenever no latest-by factory can consume a key intrinsic -- a multi-column
+        // A: isKeyColumnSuppressed is set whenever no latest-by factory can consume a key intrinsic - a multi-column
         //    or a non-symbol single-column LATEST ON. A multi-column LATEST BY cannot use index-based scans
         //    because one indexed column alone does not identify the "latest" record (that needs all the
         //    LATEST BY columns); a non-symbol key has no symbol index to scan at all. In both cases the
@@ -1928,7 +1928,7 @@ public final class WhereClauseParser implements Mutable {
     // A column qualifies as the intrinsic key column when key extraction is enabled
     // (isKeyColumnSuppressed is false) and the column is either the preferred key column or, absent
     // a preferred one, an indexed column. isKeyColumnSuppressed is set when the caller has no factory
-    // that can consume a key intrinsic -- a multi-column or non-symbol LATEST ON -- so the
+    // that can consume a key intrinsic - a multi-column or non-symbol LATEST ON - so the
     // predicate stays a residual filter instead of being silently dropped.
     private boolean columnIsPreferredOrIndexedAndKeyColumnAllowed(
             CharSequence columnName,

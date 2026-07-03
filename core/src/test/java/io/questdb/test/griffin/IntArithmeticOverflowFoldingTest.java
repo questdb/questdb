@@ -151,7 +151,7 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             assertQuery("SELECT (abs(y * y))::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n1000000000000\n");
 
             // control: the plain INT projection (no widening cast) still wraps mod 2^32
-            // on both paths -- getInt() is unchanged.
+            // on both paths - getInt() is unchanged.
             assertQuery("SELECT (1000000 * 1000000) % 7 AS v").noLeakCheck().expectSize().returns("v\n0\n");
             assertQuery("SELECT (y * y) % 7 AS v FROM u").noLeakCheck().expectSize().returns("v\n0\n");
         });
@@ -162,7 +162,7 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
         // (intCol + intConst) + floatConst: the constant-reassociation pass used to
         // regroup the column form into intCol + (intConst + floatConst), folding the
         // two constants to a single DOUBLE and evaluating intCol + intConst at double
-        // width -- so an overflowing INT addition widened instead of wrapping. The
+        // width - so an overflowing INT addition widened instead of wrapping. The
         // literal form folds the inner INT arithmetic first (wrapping) and never
         // regroups, so the two diverged. The reassociation now leaves an integer/
         // floating-point constant pair un-regrouped, so both paths wrap alike. An
@@ -201,7 +201,7 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
 
     @Test
     public void testReassociationDivModPairWrappingToIntNullWrapsLikeColumnAndLiteral() throws Exception {
-        // (intCol + C1) + (C2 / C3) -- the inner constant element uses '/' (DivInt) or
+        // (intCol + C1) + (C2 / C3) - the inner constant element uses '/' (DivInt) or
         // '%' (RemInt). Both are INT-typed and propagate INT_NULL exactly like + - *, so a
         // regrouped pair (C1 + (C2 op C3)) can land on the INT_NULL sentinel and poison the
         // column to NULL. reassociateConstants modeled only + - * & | ^ when folding the
@@ -232,7 +232,7 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     public void testReassociationIntDecimalMixWrapsLikeColumnAndLiteral() throws Exception {
         // (intCol + intConst) + decimalConst: the constant-reassociation pass used to regroup
         // the column form into intCol + (intConst + decimalConst), folding the two constants to
-        // a single DECIMAL and evaluating intCol + intConst at DECIMAL width -- so an
+        // a single DECIMAL and evaluating intCol + intConst at DECIMAL width - so an
         // overflowing INT addition widened instead of wrapping. The literal form folds the
         // inner INT arithmetic first (wrapping) and never regroups, so the two diverged. The
         // widening guard classified only DOUBLE / FLOAT; it now recognizes DECIMAL ('m' suffix)
@@ -258,7 +258,7 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     public void testReassociationIntPairWrappingToIntNullWrapsLikeColumnAndLiteral() throws Exception {
         // (intCol op C1) op C2 where the regrouped constant pair (C1 op C2) wraps exactly
         // onto the INT_NULL sentinel (-2^31). The constant-reassociation pass used to hoist
-        // that pair under the column -- intCol op (C1 op C2) = intCol op INT_NULL -- and
+        // that pair under the column - intCol op (C1 op C2) = intCol op INT_NULL - and
         // AddInt/MulInt then return INT_NULL for every row, so the column poisoned to NULL.
         // The fully-constant literal folds left-associatively and never regroups, keeping the
         // real wrapped value. reassociateConstants now refuses to regroup an integer pair that
@@ -368,8 +368,8 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
 
     @Test
     public void testRuntimeConstWidensLikeColumnAndLiteral() throws Exception {
-        // A runtime-constant (but not compile-time-constant) overflowing INT arithmetic subtree --
-        // here a string bind variable cast to INT -- gets memoized by IntRuntimeConstFunction. The
+        // A runtime-constant (but not compile-time-constant) overflowing INT arithmetic subtree -
+        // here a string bind variable cast to INT - gets memoized by IntRuntimeConstFunction. The
         // wrapper must preserve the dual getInt()-wraps / getLong()-widens behavior of its arg, so
         // that a LONG-promoting context over the memoized constant agrees with the literal and the
         // column forms. Before the fix the wrapper cached only the INT (wrapped) value and re-widened
