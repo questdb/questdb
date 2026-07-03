@@ -2061,6 +2061,43 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     Assert.assertEquals("Expected no failed parquet exports", 0, errorCount.get());
                     Assert.assertEquals("Expected all parquet exports to succeed", threadCount, successCount.get());
+
+                    // The concurrent phase proves the connections survive; this phase
+                    // proves the exported bytes and the plans. The IN list drives
+                    // MultiKeyCoveringPageFrameCursor and the single literal drives
+                    // SingleKeyCoveringPageFrameCursor -- both park partially-drained
+                    // posting cursors across fragments, and on a multi-worker server a
+                    // single /exp request is enough for the parquet copy to close them
+                    // off the operating thread.
+                    final String singleKeyQuery = "SELECT timestamp, open, high, low, close, symbol FROM deriv " +
+                            "WHERE symbol = 'S3'";
+                    final String[] verifyQueries = {query, singleKeyQuery};
+                    final StringSink planSink = new StringSink();
+                    for (String verifyQuery : verifyQueries) {
+                        planSink.clear();
+                        TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + verifyQuery, planSink);
+                        TestUtils.assertContains(planSink, "CoveringIndex on: symbol");
+                    }
+                    try (
+                            TestHttpClient testHttpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(1 << 20)
+                    ) {
+                        for (int i = 0; i < verifyQueries.length; i++) {
+                            HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                            req.GET().url("/exp")
+                                    .query("query", verifyQueries[i])
+                                    .query("fmt", "parquet");
+                            sink.clear();
+                            testHttpClient.reqToSink(req, sink, null, null, null, null);
+                            assertParquetMatchesQuery(
+                                    engine,
+                                    sqlExecutionContext,
+                                    sink,
+                                    verifyQueries[i],
+                                    "posting_covering_verify_" + i + ".parquet"
+                            );
+                        }
+                    }
                 });
     }
 
