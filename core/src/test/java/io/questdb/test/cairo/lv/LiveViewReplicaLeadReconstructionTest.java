@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.mp.Job;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -172,6 +173,93 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
             ) {
                 Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
                 Assert.assertEquals("size() must not double-count the durable batch-2 band", 6, cursor.size());
+            }
+        });
+    }
+
+    // Cold start (the replica boots at a non-zero applied watermark). The replica comes up with batch
+    // 1 already flushed on the LV disk (rn 1, 2) but has never driven a base commit through the window
+    // pipeline this session, so latestSeenTs is unset, the row_number() accumulator sits at identity,
+    // and refreshedUpToSeqTxn has never been computed. When batch 2 arrives as the genuine un-flushed
+    // lead, a plain drain scans the whole history from the view lower bound (correctly re-seeding the
+    // accumulator) but would ALSO stage the already-durable batch-1 band as lead, so size() would
+    // double-count it (6 instead of 4). reconcileLeadWithDisk detects the unseeded loop over a
+    // non-empty disk and arms the catch-up seam at the on-disk max ts, so the drain drives the
+    // accumulator over batch 1 without staging it, then stages only batch 2 as the genuine lead (rn 3,
+    // 4) -- the reconstructed read is exactly disk + genuine lead, 4 rows with global rn 1..4 and
+    // size() == 4.
+    @Test
+    public void testColdStartSeedsAccumulatorsWithoutDoubleCounting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 lands on the base and applies (the base table now reflects it) but the
+                // replica lead loop never runs over it -- no drainJob -- so the window accumulator
+                // stays at identity and refreshedUpToSeqTxn is never computed. This is the cold-start
+                // gap: the replica boots into a state it never drove through the pipeline.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('" + TS1 + "', 10), ('" + TS2 + "', 20)");
+                drainWalQueue();
+
+                // A replicated flush materialises batch 1 on the LV disk (rn 1, 2) and advances the
+                // applied watermark to base seqTxn 1 -- exactly the state a freshly booted replica sees.
+                injectReplicatedFlush(
+                        lvToken,
+                        1,
+                        new String[]{TS1, TS2},
+                        new int[]{10, 20},
+                        new long[]{1, 2}
+                );
+                Assert.assertEquals("replicated flush advanced the applied watermark", 1, instance.getAppliedWatermark());
+                Assert.assertEquals("no lead reconstructed yet", 0, instance.getLeadRowCount());
+                Assert.assertEquals("loop never computed a frontier -> falls back to the applied point",
+                        1, instance.getRefreshedUpToSeqTxn());
+                Assert.assertEquals("accumulators unseeded (cold start)", Numbers.LONG_NULL, instance.getLatestSeenTs());
+
+                // Batch 2 is the genuine un-flushed lead above disk.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('" + TS3 + "', 30), ('" + TS4 + "', 40)");
+                drainWalQueue();
+
+                // Run the replica lead loop for the first time: it seeds the row_number() accumulator
+                // over batch 1 (on disk, not staged) and reconstructs batch 2 as the genuine lead.
+                drainJob(job);
+
+                Assert.assertEquals("batch 2 reconstructed as a 2-row lead", 2, instance.getLeadRowCount());
+                Assert.assertEquals("loop frontier advanced to batch 2", 2, instance.getRefreshedUpToSeqTxn());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:01.000000Z\t10\t1
+                    2026-05-12T00:00:02.000000Z\t20\t2
+                    2026-05-12T00:00:03.000000Z\t30\t3
+                    2026-05-12T00:00:04.000000Z\t40\t4
+                    """;
+            // Content is exact (global rn 1..4, no duplicate batch-1 rows) ...
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+
+            // ... and size() is exact: disk (2) + the genuine 2-row lead, NOT disk (2) + a lead that
+            // re-counts the 2 durable batch-1 rows. The cold-start seam is what keeps size() at 4.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("size() must not double-count the durable batch-1 band", 4, cursor.size());
             }
         });
     }

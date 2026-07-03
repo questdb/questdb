@@ -1880,7 +1880,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setTierStale(true);
             // Arm the seam only when the accumulators actually trail disk. latestSeenTs == LONG_NULL is
             // cold start (no lead computed yet), which does not reach this branch anyway
-            // (getRefreshedUpToSeqTxn falls back to the applied point, so refreshedUpTo == applied);
+            // (getRefreshedUpToSeqTxn falls back to the applied point, so refreshedUpTo == applied) --
+            // the exact-boundary branch below arms the seam for cold start;
             // latestSeenTs == diskMaxTs means the flushed commits produced no rows above the frontier,
             // so the plain ts > latestSeenTs scan already excludes the on-disk band and no seam is
             // needed.
@@ -1894,16 +1895,43 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         if (refreshedUpTo == applied) {
-            // Exact boundary: the flush landed precisely the lead, so the slot rows are exactly the
-            // just-flushed disk rows. Re-stamp the slot as a disk subset and drop the lead. The
-            // accumulators already sit at disk (latestSeenTs == diskMaxTs), so no catch-up is pending.
-            instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
             if (instance.getLeadRowCount() > 0) {
+                // Exact boundary: the flush landed precisely the lead, so the slot rows are exactly
+                // the just-flushed disk rows. Re-stamp the slot as a disk subset and drop the lead.
+                // The accumulators already sit at disk (latestSeenTs == diskMaxTs), so no catch-up is
+                // pending.
+                instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
                 final long lvDiskSeqTxn = engine.getTableSequencerAPI()
                         .getTxnTracker(instance.getLiveViewToken()).getWriterTxn();
                 restampSlotAfterFlush(instance, lvDiskSeqTxn);
                 instance.setLeadRowCount(0);
+                return;
             }
+            if (instance.getLatestSeenTs() != Numbers.LONG_NULL) {
+                // Steady state caught up: the loop already drove commits through the window pipeline
+                // (latestSeenTs set) and the lead is empty. No catch-up is pending; clear any seam.
+                instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
+                return;
+            }
+            // Cold start: the replica booted at a non-zero applied watermark -- disk already holds the
+            // primary's flushed rows -- but this session has never driven a base commit through the
+            // window pipeline (latestSeenTs unset), so the accumulators (row_number(), running
+            // aggregates) sit at identity. The first drain scans from the view lower bound
+            // (drainAppliedBaseForLead floors the scan there when latestSeenTs is unset), which
+            // correctly re-seeds the accumulators over the whole history -- but a plain drain would
+            // also stage the already-durable disk band as lead, double-counting it in size(). Arm the
+            // seam at the on-disk max ts so that drain drives the accumulators over the durable band
+            // WITHOUT staging it, then stages only the genuine lead above disk. Same single-pass shape
+            // as Case B, triggered by an unseeded loop rather than a flush that outran a seeded one.
+            // Disk empty -> a genuinely fresh view (nothing flushed yet); the first drain correctly
+            // stages the whole history as lead, so leave the seam clear (diskMaxTs stays LONG_NULL).
+            long diskMaxTs = Numbers.LONG_NULL;
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                if (lvReader.size() > 0) {
+                    diskMaxTs = lvReader.getMaxTimestamp();
+                }
+            }
+            instance.setLeadReconcileSeamTs(diskMaxTs);
             return;
         }
         // Partial-overlap: a genuine un-flushed remainder sits above the applied point. Only act once
