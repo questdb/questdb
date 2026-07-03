@@ -472,6 +472,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final CairoConfiguration configuration;
+    private final ObjList<WindowFunction> deferredWindowFunctions = new ObjList<>();
     private final ObjList<TableColumnMetadata> deferredWindowMetadata = new ObjList<>();
     private final boolean enableJitDebug;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
@@ -9674,6 +9675,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // not main metadata to avoid partitionBy functions accidentally looking up
             // window columns recursively
 
+            deferredWindowFunctions.clear();
             deferredWindowMetadata.clear();
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
@@ -9823,6 +9825,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 false,
                                 null
                         ));
+                        deferredWindowFunctions.extendAndSet(i, windowFunction);
 
                         listColumnFilterA.extendAndSet(i, -i - 1);
                     } catch (Throwable th) {
@@ -9836,12 +9839,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // after all columns are processed we can re-insert deferred metadata
             boolean isAllWindowOutputFixedWidth = true;
+            ObjList<SymbolFunction> windowSymbolFunctions = null;
             for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
                 TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
                 if (m != null) {
                     chainTypes.add(i, m.getColumnType());
                     factoryMetadata.add(i, m);
                     isAllWindowOutputFixedWidth &= !isVarSize(m.getColumnType());
+                    if (ColumnType.isSymbol(m.getColumnType())) {
+                        if (windowSymbolFunctions == null) {
+                            windowSymbolFunctions = new ObjList<>();
+                        }
+                        windowSymbolFunctions.extendAndSet(i, (SymbolFunction) deferredWindowFunctions.getQuick(i));
+                    }
                 }
             }
 
@@ -9895,7 +9905,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnIndexes,
                         keys,
                         chainMetadata,
-                        sourceMap
+                        sourceMap,
+                        windowSymbolFunctions
                 );
             }
 
@@ -9921,7 +9932,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     naturalOrderFunctions,
                     columnIndexes,
                     keys,
-                    chainMetadata
+                    chainMetadata,
+                    windowSymbolFunctions
             );
         } catch (Throwable th) {
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {

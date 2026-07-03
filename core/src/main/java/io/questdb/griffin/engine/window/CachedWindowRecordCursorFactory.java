@@ -42,6 +42,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
@@ -64,6 +65,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     private final ObjList<IntList> sortKeys;
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
+    private final ObjList<SymbolFunction> windowSymbolFunctions;
+    @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
     private boolean isClosed;
 
@@ -78,13 +81,15 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             @Nullable ObjList<WindowFunction> unorderedFunctions,
             @NotNull IntList columnIndexes,
             @NotNull final ObjList<IntList> sortKeys,
-            @NotNull GenericRecordMetadata chainMetadata
+            @NotNull GenericRecordMetadata chainMetadata,
+            @Nullable ObjList<SymbolFunction> windowSymbolFunctions
     ) {
         super(metadata);
         RecordArray recordChain = null;
         ObjList<WindowSortBuffer> sortBuffers = null;
         try {
             this.base = base;
+            this.windowSymbolFunctions = windowSymbolFunctions;
             this.orderedGroupCount = comparators.size();
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
@@ -357,6 +362,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
+            if (windowSymbolFunctions != null) {
+                final SymbolFunction function = windowSymbolFunctions.getQuiet(columnIndex);
+                if (function != null) {
+                    return function;
+                }
+            }
             return baseCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
@@ -371,6 +382,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
+            if (windowSymbolFunctions != null) {
+                final SymbolFunction function = windowSymbolFunctions.getQuiet(columnIndex);
+                if (function != null) {
+                    return function.newSymbolTable();
+                }
+            }
             return baseCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 

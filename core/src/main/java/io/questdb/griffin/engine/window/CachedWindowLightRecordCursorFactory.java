@@ -37,9 +37,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -57,11 +59,15 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     private final GenericRecordMetadata chainMetadata;
     private final CachedWindowLightRecordCursor cursor;
     private final ObjList<WindowFunction> forwardUnorderedFunctions;
+    @Nullable
+    private final SymbolTableSource narrowSymbolTableResolver;
     private final ObjList<ObjList<WindowFunction>> ordered2PassFunctions;
     private final ObjList<ObjList<WindowFunction>> orderedFunctions;
     private final int orderedGroupCount;
     private final ObjList<IntList> sortKeys;
     private final ObjList<WindowFunction> unordered2PassFunctions;
+    @Nullable
+    private final ObjList<SymbolFunction> windowSymbolFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
     private boolean isClosed;
@@ -76,7 +82,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             @NotNull IntList columnIndexes,
             @NotNull final ObjList<IntList> sortKeys,
             @NotNull GenericRecordMetadata chainMetadata,
-            @NotNull IntList sourceMap
+            @NotNull IntList sourceMap,
+            @Nullable ObjList<SymbolFunction> windowSymbolFunctions
     ) {
         super(metadata);
         RecordArray narrowChain = null;
@@ -84,6 +91,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         DirectLongList baseRowIds = null;
         try {
             this.base = base;
+            this.windowSymbolFunctions = windowSymbolFunctions;
             this.orderedGroupCount = sortKeys.size();
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
@@ -97,6 +105,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;
             this.allFunctions = new ObjList<>();
+            this.narrowSymbolTableResolver = createNarrowSymbolTableResolver(sourceMap, windowSymbolFunctions);
 
             // Caller guarantees every group is encoded-sort-eligible; the LIGHT factory does not
             // accept the tree fallback (see SqlCodeGenerator's isAllGroupsEncodedEligible gate).
@@ -337,6 +346,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             this.recordA = new WindowLightRecord(sourceMap);
             this.recordB = new WindowLightRecord(sourceMap);
             this.lightSpi = new LightWindowSPI(sourceMap, narrowChain, baseRowIds);
+            if (narrowSymbolTableResolver != null) {
+                this.narrowChain.setSymbolTableResolver(narrowSymbolTableResolver);
+            }
             // Lazy: the first of() binds the tracker and reopens the chain, row-id list,
             // sort buffers and window-function maps. Starting open would skip that first
             // reopen() and read a closed partition map.
@@ -378,6 +390,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
+            if (windowSymbolFunctions != null) {
+                final SymbolFunction function = windowSymbolFunctions.getQuiet(columnIndex);
+                if (function != null) {
+                    return function;
+                }
+            }
             return baseCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
@@ -396,6 +414,12 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
+            if (windowSymbolFunctions != null) {
+                final SymbolFunction function = windowSymbolFunctions.getQuiet(columnIndex);
+                if (function != null) {
+                    return function.newSymbolTable();
+                }
+            }
             return baseCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
         }
 
@@ -565,6 +589,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             size = 0;
             circuitBreaker = executionContext.getCircuitBreaker();
             narrowChain.clear();
+            if (narrowSymbolTableResolver != null) {
+                narrowChain.setSymbolTableResolver(narrowSymbolTableResolver);
+            }
             baseRowIds.clear();
             if (!isOpen) {
                 isOpen = true;
@@ -622,6 +649,50 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 buffer.setMemoryTracker(memoryTracker);
                 buffer.reopen();
             }
+        }
+    }
+
+    @Nullable
+    private static SymbolTableSource createNarrowSymbolTableResolver(
+            IntList sourceMap,
+            @Nullable ObjList<SymbolFunction> windowSymbolFunctions
+    ) {
+        if (windowSymbolFunctions == null) {
+            return null;
+        }
+
+        ObjList<SymbolFunction> narrowSymbolFunctions = null;
+        for (int i = 0, n = sourceMap.size(); i < n; i++) {
+            final int encoded = sourceMap.getQuick(i);
+            if (encoded < 0) {
+                final SymbolFunction function = windowSymbolFunctions.getQuiet(i);
+                if (function != null) {
+                    if (narrowSymbolFunctions == null) {
+                        narrowSymbolFunctions = new ObjList<>();
+                    }
+                    narrowSymbolFunctions.extendAndSet(-encoded - 1, function);
+                }
+            }
+        }
+
+        return narrowSymbolFunctions != null ? new NarrowSymbolTableResolver(narrowSymbolFunctions) : null;
+    }
+
+    private static class NarrowSymbolTableResolver implements SymbolTableSource {
+        private final ObjList<SymbolFunction> symbolFunctions;
+
+        private NarrowSymbolTableResolver(ObjList<SymbolFunction> symbolFunctions) {
+            this.symbolFunctions = symbolFunctions;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return symbolFunctions.getQuick(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return symbolFunctions.getQuick(columnIndex).newSymbolTable();
         }
     }
 }

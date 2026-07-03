@@ -19539,8 +19539,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnSupportImplicitCast() throws Exception {
-        assertQuery("SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+    public void testUnsupportedImplicitCast() throws Exception {
+        assertQuery("SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
                 "AS next_price FROM trades ")
                 .ddl("create table trades as " +
                         "(" +
@@ -19551,10 +19551,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         (timestampType == TestTimestampType.MICRO ? " timestamp_sequence(0, 100000000000) ts" : " timestamp_sequence_ns(0, 100000000000000) ts") +
                         " from long_sequence(10)" +
                         ") timestamp(ts) partition by day")
-                .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
-
-        assertQuery("SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
-                "AS next_price FROM trades ")
                 .fails(0, "inconvertible value: `ZZ` [SYMBOL -> TIMESTAMP_NS]");
     }
 
