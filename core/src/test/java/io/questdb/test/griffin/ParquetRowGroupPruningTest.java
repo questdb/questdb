@@ -453,6 +453,73 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBloomFilterDroppedColumnO3Rewrite() throws Exception {
+        // Regression: after DROP COLUMN, an O3 insert rewrites the parquet
+        // partition and raw-copies the row groups the O3 data does not touch.
+        // The updater extracts bloom bitsets in source-file order but writes
+        // the survivors in target order; without the remap, dropping the
+        // leading bloomed column shifted every bloom one slot (a's bloom onto
+        // b, b's onto c), so an equality filter probed the wrong column's
+        // bloom and silently pruned row groups holding matching rows.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, b INT, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Disjoint, gapped value ranges per column: a misattributed bloom
+            // reports every value of its neighbor as absent. 12 rows make 3
+            // row groups of 4.
+            execute("""
+                    INSERT INTO x
+                    SELECT (1000 + 10 * x)::INT, (2000 + 10 * x)::INT, (3000 + 10 * x)::INT,
+                           timestamp_sequence('2024-01-01', 3_600_000_000)
+                    FROM long_sequence(12)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("INSERT INTO x VALUES (1, 9999, 9999, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01' WITH (bloom_filter_columns = 'a,b,c')");
+            drainWalQueue();
+
+            // Drop the leading bloomed column: survivors b, c, ts shift down one slot.
+            execute("ALTER TABLE x DROP COLUMN a");
+            drainWalQueue();
+            // The O3 row lands in the first row group only; the schema change
+            // forces a rewrite that copies row groups 1 and 2 with their blooms.
+            execute("INSERT INTO x(b, c, ts) VALUES (5000, 6000, '2024-01-01T00:30:00.000000Z')");
+            drainWalQueue();
+
+            // Equality on values that live only in the copied row groups must
+            // return their rows instead of pruning on a misattributed bloom.
+            assertQuery("SELECT b, c FROM x WHERE b = 2100")
+                    .noLeakCheck()
+                    .returns("""
+                            b\tc
+                            2100\t3100
+                            """);
+            assertQuery("SELECT b, c FROM x WHERE c = 3060")
+                    .noLeakCheck()
+                    .returns("""
+                            b\tc
+                            2060\t3060
+                            """);
+            // The merged row group re-encodes its bloom and must find the O3 row.
+            assertQuery("SELECT b, c FROM x WHERE b = 5000")
+                    .noLeakCheck()
+                    .returns("""
+                            b\tc
+                            5000\t6000
+                            """);
+
+            // A value inside a copied row group's min/max range but absent from
+            // its data must still prune, proving the copied blooms stay live.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 2095")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testBloomFilterFloat() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
