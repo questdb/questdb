@@ -1637,6 +1637,18 @@ public class CairoEngine implements Closeable, WriterSource {
         return walPurgeJobLock.isLocked();
     }
 
+    /**
+     * True while a table's on-disk sequencer files are being replaced out-of-band (the
+     * enterprise RECONCILE TABLE apply). {@link io.questdb.cairo.wal.WalPurgeJob} skips such a
+     * table so it never re-opens the sequencer mid-swap. Unlike {@link #isWalApplySuspended},
+     * this is NOT set by {@code ALTER TABLE ... SUSPEND WAL} or the
+     * {@code cairo.wal.apply.suspended.tables} config list, so operator-suspended tables keep
+     * getting their applied WAL segments reclaimed.
+     */
+    public boolean isWalPurgeLocked(TableToken tableToken) {
+        return tableSequencerAPI.isWalPurgeLocked(tableToken);
+    }
+
     public boolean isWalTable(TableToken tableToken) {
         return tableToken.isWal();
     }

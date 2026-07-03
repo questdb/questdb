@@ -183,18 +183,18 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // on this worker.
             return;
         }
-        if (engine.isWalApplySuspended(tableToken)) {
-            // Skip hard-suspended tables. The hard-suspend flag is the SeqTxnTracker bit
-            // (ALTER TABLE ... SUSPEND WAL, or the runtime override RECONCILE TABLE sets
-            // for the duration of its round-trip) plus the reloadable
-            // cairo.wal.apply.suspended.tables config list. The sequencer state for such
-            // a table is by-contract being held still by whatever set the flag --
-            // touching fetchSequencerPairs() under reconcile, for instance, would race
-            // the responder's _txnlog rewrite and trip an assertion against a half-swapped
-            // sequencer view. The next purge pass picks the table back up once the flag
-            // clears, so no segment leaks permanently -- the skip just defers reclamation
-            // for the duration of the gate.
-            LOG.debug().$("skipping hard-suspended table during broad sweep [table=")
+        if (engine.isWalPurgeLocked(tableToken)) {
+            // Skip a table whose on-disk sequencer files are being replaced out-of-band. The
+            // WAL-purge lock is the narrow SeqTxnTracker bit RECONCILE TABLE apply holds only
+            // while it swaps _meta/_meta.0/_txnlog* non-atomically -- touching
+            // fetchSequencerPairs() during that swap would re-open the sequencer and read a
+            // half-swapped view, tripping an assertion. This gate is deliberately NOT the broad
+            // isWalApplySuspended predicate: that also fires for ALTER TABLE ... SUSPEND WAL and
+            // the cairo.wal.apply.suspended.tables config list -- long-lived operator states
+            // whose applied segments must keep getting reclaimed. The next purge pass picks the
+            // table back up once the flag clears (a few hundred ms), so the skip defers nothing
+            // beyond the swap window.
+            LOG.debug().$("skipping wal-purge-locked table during broad sweep [table=")
                     .$(tableToken).I$();
             return;
         }

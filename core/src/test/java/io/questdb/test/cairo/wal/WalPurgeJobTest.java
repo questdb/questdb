@@ -566,6 +566,36 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHardSuspendedWalTableStillPurged() throws Exception {
+        // Regression: ALTER TABLE ... SUSPEND WAL sets the hard-suspend bit
+        // (engine.isWalApplySuspended == true), but that must NOT stop WalPurgeJob from
+        // reclaiming already-applied WAL segments. Purge now skips only the narrow,
+        // reconcile-only wal-purge lock; the broad isWalApplySuspended gate it used before
+        // (which also covers ALTER ... SUSPEND WAL and cairo.wal.apply.suspended.tables) left a
+        // suspended table's applied segments on disk for the whole suspension window.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            drainWalQueue();
+            TableToken tableToken = engine.verifyTableName(tableName);
+            assertWalExistence(true, tableName, 1);
+
+            execute("alter table " + tableName + " suspend wal");
+            Assert.assertTrue("SUSPEND WAL must set the hard-suspend bit",
+                    engine.isWalApplySuspended(tableToken));
+            Assert.assertFalse("SUSPEND WAL must NOT set the wal-purge lock",
+                    engine.isWalPurgeLocked(tableToken));
+
+            engine.releaseInactive();
+            drainPurgeJob();
+
+            // The applied wal1 must be reclaimed despite the hard-suspend.
+            assertWalExistence(false, tableName, 1);
+        });
+    }
+
+    @Test
     public void testInterval() throws Exception {
         AtomicInteger counter = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
@@ -1473,6 +1503,32 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 assertSegmentExistence(false, tableName, 1, 0);
                 assertWalExistence(false, tableName, 1);
             }
+        });
+    }
+
+    @Test
+    public void testWalPurgeLockDefersBroadSweep() throws Exception {
+        // The narrow wal-purge lock (held by RECONCILE TABLE apply while it swaps the on-disk
+        // sequencer files) makes WalPurgeJob skip the table, then reclaim it once the flag clears.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into " + tableName + " values (1, '2022-02-24T00:00:00.000000Z')");
+            drainWalQueue();
+            TableToken tableToken = engine.verifyTableName(tableName);
+            engine.releaseInactive();
+
+            engine.getTableSequencerAPI().setWalPurgeLocked(tableToken, true);
+            Assert.assertTrue(engine.isWalPurgeLocked(tableToken));
+            drainPurgeJob();
+            // Purge is deferred while the lock is held: the applied segment survives.
+            assertWalExistence(true, tableName, 1);
+
+            engine.getTableSequencerAPI().setWalPurgeLocked(tableToken, false);
+            Assert.assertFalse(engine.isWalPurgeLocked(tableToken));
+            drainPurgeJob();
+            // Once the lock clears, the next pass reclaims it.
+            assertWalExistence(false, tableName, 1);
         });
     }
 

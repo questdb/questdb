@@ -63,6 +63,13 @@ public class SeqTxnTracker {
     private volatile int suspendedState = 0;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long waiterRegistrationCount;
+    // WAL-purge lock: when set, WalPurgeJob skips this table's broad-sweep pass. Held by an
+    // out-of-band maintenance operation (RECONCILE TABLE apply) while it replaces the on-disk
+    // sequencer files (_meta/_meta.0/_txnlog*) non-atomically, so purge must not re-open the
+    // sequencer and read a half-swapped view. Distinct from hardSuspended (which also gates WAL
+    // apply and is set long-term by ALTER TABLE ... SUSPEND WAL): this is a short, purge-only
+    // fence cleared as soon as the swap completes.
+    private volatile boolean walPurgeLocked;
     private volatile long writerTxn = UNINITIALIZED_TXN;
 
     public SeqTxnTracker(CairoConfiguration configuration) {
@@ -131,6 +138,10 @@ public class SeqTxnTracker {
 
     public boolean isSuspended() {
         return suspendedState < 0;
+    }
+
+    public boolean isWalPurgeLocked() {
+        return walPurgeLocked;
     }
 
     public boolean notifyOnCheck(long newSeqTxn) {
@@ -215,6 +226,10 @@ public class SeqTxnTracker {
         this.errorMessage = "";
 
         metrics.tableWriterMetrics().decSuspendedTables();
+    }
+
+    public void setWalPurgeLocked(boolean walPurgeLocked) {
+        this.walPurgeLocked = walPurgeLocked;
     }
 
     /**
