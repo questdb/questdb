@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Uuid;
 
 public class CurrentDataIdFunctionFactory implements FunctionFactory {
     @Override
@@ -47,6 +48,11 @@ public class CurrentDataIdFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         DataID id = sqlExecutionContext.getCairoEngine().getDataID();
-        return new UuidConstant(id.getLo(), id.getHi());
+        // Read both halves atomically: getLo()/getHi() are individually synchronized, but reading them
+        // as two separate calls can tear across the one-shot replica DataID publish, producing a
+        // UuidConstant that is neither SQL NULL nor the correct id. getSnapshot() reads the pair under
+        // a single monitor acquisition.
+        final Uuid snapshot = id.getSnapshot();
+        return new UuidConstant(snapshot.getLo(), snapshot.getHi());
     }
 }
