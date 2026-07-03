@@ -1560,11 +1560,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // aggregates) and latestSeenTs now disagree with the corrected ordering the primary
                 // will replicate; a forward-only re-derive would carry that drift into every later
                 // lead row. Reset the window state to identity and clear latestSeenTs so the reconcile
-                // treats the view as cold-started: once the corrected rows land on disk, the next
-                // drain re-seeds the accumulators over the whole applied base history (the reconcile
-                // seam keeps the durable band out of the lead, so size() does not double-count), and
-                // the staged lead's low seam ts shadows any stale disk rows meanwhile. Drop the
-                // tentative lead and serve disk-only until then.
+                // treats the view as cold-started: with latestSeenTs unset, the next reconcileLeadWithDisk
+                // tick takes its unseeded-cold-start branch and arms the catch-up seam at the on-disk max
+                // ts (over non-empty disk), so when the corrected rows land the next drain re-seeds the
+                // accumulators over the whole applied base history yet keeps the durable band out of the
+                // lead -- size() does not double-count. The staged lead's low seam ts shadows any stale
+                // disk rows meanwhile. Drop the tentative lead and serve disk-only until then.
                 // (TODO §3: gate the retry on the disk watermark advancing past o3SeqTxn so the scan
                 // does not re-detect the same O3 every tick.)
                 clearWindowState(windowFactory, instance.getAnchorWindow());
@@ -1852,6 +1853,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * stamped seqTxn no longer matches the advanced disk reader, so the read-path fence routes
      * disk-only until the slot is re-stamped.
      * <p>
+     * <b>Unseeded cold start</b> ({@code latestSeenTs == LONG_NULL}, checked first): no base commit has
+     * been driven through the window pipeline this session -- a fresh / restarted instance booted at a
+     * non-zero applied watermark, or an O3 reset that cleared the frontier. The next drain re-derives
+     * the whole applied history from the view lower bound, so drop any lead, force a clean tier rebuild,
+     * and arm {@code leadReconcileSeamTs = diskMaxTs} over non-empty disk so the re-derive drives the
+     * accumulators over the durable band without staging it (an empty disk leaves the seam clear). This
+     * precedes the three branches below because the O3 reset sets {@code refreshedUpToSeqTxn}
+     * explicitly, so an unseeded loop can land in any of them -- and none of them arms the seam for an
+     * unseeded loop.
+     * <p>
      * <b>Disk outran the loop / Case B</b> ({@code refreshedUpToSeqTxn < appliedWatermark}): the
      * applied point covers base commits the loop never drove through the window pipeline, so the
      * accumulators trail disk over the {@code (latestSeenTs, diskMaxTs]} band. Drop the lead, force a
@@ -1879,6 +1890,38 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void reconcileLeadWithDisk(LiveViewInstance instance) {
         final long applied = instance.getAppliedWatermark();
         final long refreshedUpTo = instance.getRefreshedUpToSeqTxn();
+        if (instance.getLatestSeenTs() == Numbers.LONG_NULL) {
+            // No base commit has been driven through the window pipeline this session -- an unseeded
+            // loop. Two ways in: a fresh / restarted instance booted at a non-zero applied watermark
+            // (disk already holds the primary's flushed rows), or finishLeadRefresh's O3 reset cleared
+            // the frontier back to cold start after an out-of-order base commit. Either way the next
+            // drain cold-starts from the view lower bound (drainAppliedBaseForLead floors the scan there
+            // when latestSeenTs is unset) and re-derives the whole applied history, so any prior lead is
+            // void. Drop it, force a clean tier rebuild (the slot is missing the re-derived band), and --
+            // when disk already holds flushed rows -- arm the catch-up seam at the on-disk max ts so the
+            // re-derive drives the accumulators over the durable band WITHOUT staging it; otherwise it
+            // would stage the re-derived history as lead on top of the same rows on disk and size() /
+            // count() would double-count. Disk empty -> a genuinely fresh view (nothing flushed yet):
+            // leave the seam clear (diskMaxTs stays LONG_NULL) so the first drain stages the whole
+            // history as lead.
+            //
+            // Handle this here, ahead of the three refreshedUpTo-vs-applied branches below, because the
+            // O3 reset sets refreshedUpToSeqTxn explicitly -- so an unseeded loop can land in ANY of
+            // them (Case B when the correction flush batched extra seqTxns, partial-overlap when new base
+            // data applied before the correction replicated), and none of those branches arms the seam
+            // for latestSeenTs == LONG_NULL. Only the exact-boundary path used to, which is why a cold
+            // start over disk that skewed off the boundary re-staged the durable band.
+            long diskMaxTs = Numbers.LONG_NULL;
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                if (lvReader.size() > 0) {
+                    diskMaxTs = lvReader.getMaxTimestamp();
+                }
+            }
+            instance.setLeadRowCount(0);
+            instance.setTierStale(true);
+            instance.setLeadReconcileSeamTs(diskMaxTs);
+            return;
+        }
         if (refreshedUpTo < applied) {
             // Disk outran the loop (Case B): a replicated flush advanced the on-disk tier (and the
             // applied watermark) past the point the lead loop has computed -- the loop fell behind, or
@@ -1904,16 +1947,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             instance.setLeadRowCount(0);
             instance.setTierStale(true);
-            // Arm the seam only when the accumulators actually trail disk. latestSeenTs == LONG_NULL is
-            // cold start (no lead computed yet), which does not reach this branch anyway
-            // (getRefreshedUpToSeqTxn falls back to the applied point, so refreshedUpTo == applied) --
-            // the exact-boundary branch below arms the seam for cold start;
-            // latestSeenTs == diskMaxTs means the flushed commits produced no rows above the frontier,
-            // so the plain ts > latestSeenTs scan already excludes the on-disk band and no seam is
-            // needed.
-            if (diskMaxTs != Numbers.LONG_NULL
-                    && instance.getLatestSeenTs() != Numbers.LONG_NULL
-                    && instance.getLatestSeenTs() < diskMaxTs) {
+            // Arm the seam only when the accumulators actually trail disk. latestSeenTs is non-null here
+            // (the unseeded cold-start / O3-reset case returned at the top of this method, arming the
+            // seam over non-empty disk). latestSeenTs == diskMaxTs means the flushed commits produced no
+            // rows above the frontier, so the plain ts > latestSeenTs scan already excludes the on-disk
+            // band and no seam is needed.
+            if (diskMaxTs != Numbers.LONG_NULL && instance.getLatestSeenTs() < diskMaxTs) {
                 instance.setLeadReconcileSeamTs(diskMaxTs);
             } else {
                 instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
@@ -1933,31 +1972,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 instance.setLeadRowCount(0);
                 return;
             }
-            if (instance.getLatestSeenTs() != Numbers.LONG_NULL) {
-                // Steady state caught up: the loop already drove commits through the window pipeline
-                // (latestSeenTs set) and the lead is empty. No catch-up is pending; clear any seam.
-                instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
-                return;
-            }
-            // Cold start: the replica booted at a non-zero applied watermark -- disk already holds the
-            // primary's flushed rows -- but this session has never driven a base commit through the
-            // window pipeline (latestSeenTs unset), so the accumulators (row_number(), running
-            // aggregates) sit at identity. The first drain scans from the view lower bound
-            // (drainAppliedBaseForLead floors the scan there when latestSeenTs is unset), which
-            // correctly re-seeds the accumulators over the whole history -- but a plain drain would
-            // also stage the already-durable disk band as lead, double-counting it in size(). Arm the
-            // seam at the on-disk max ts so that drain drives the accumulators over the durable band
-            // WITHOUT staging it, then stages only the genuine lead above disk. Same single-pass shape
-            // as Case B, triggered by an unseeded loop rather than a flush that outran a seeded one.
-            // Disk empty -> a genuinely fresh view (nothing flushed yet); the first drain correctly
-            // stages the whole history as lead, so leave the seam clear (diskMaxTs stays LONG_NULL).
-            long diskMaxTs = Numbers.LONG_NULL;
-            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                if (lvReader.size() > 0) {
-                    diskMaxTs = lvReader.getMaxTimestamp();
-                }
-            }
-            instance.setLeadReconcileSeamTs(diskMaxTs);
+            // Steady state caught up: the loop already drove commits through the window pipeline
+            // (latestSeenTs is non-null -- the unseeded cold-start / O3-reset case returned at the top
+            // of this method) and the lead is empty. No catch-up is pending; clear any seam.
+            instance.setLeadReconcileSeamTs(Numbers.LONG_NULL);
             return;
         }
         // Partial-overlap: a genuine un-flushed remainder sits above the applied point. Only act once

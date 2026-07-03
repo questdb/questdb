@@ -89,6 +89,120 @@ public class LiveViewReplicaLeadReconstructionTest extends AbstractCairoTest {
         setCurrentMicros(0L);
     }
 
+    // Case B reached through an O3 reset. This is the F1 regression: the O3 reset in finishLeadRefresh
+    // clears latestSeenTs back to cold start but sets refreshedUpToSeqTxn explicitly, so the next
+    // reconcile tick can land in Case B (refreshedUpToSeqTxn < appliedWatermark) with latestSeenTs
+    // still unset -- a state the exact-boundary O3 test never produces. Before the fix, Case B's
+    // seam-arming guard required latestSeenTs != LONG_NULL, so it left the catch-up seam un-armed; the
+    // ensuing cold-start drain (scan from the view lower bound with no seam) re-staged the entire
+    // re-derived history as lead on top of the durable disk rows, so size() reported 9 (disk 4 + a
+    // 5-row lead) instead of 5. reconcileLeadWithDisk now detects the unseeded loop ahead of the
+    // Case B / partial-overlap branches and arms the seam at the on-disk max ts, so the drive-past
+    // catch-up keeps the durable band out of the lead and only the genuine TS6 row stays lead.
+    //
+    // Timeline: batch 1 (TS2, TS4) is reconstructed as a 2-row lead; an O3 row (TS3 < TS4) trips the
+    // reset (latestSeenTs -> unset, refreshedUpToSeqTxn -> 2); batch 3 (TS5) applies to the base but
+    // the loop does not drive it; the primary's correction flush materialises the corrected
+    // TS2..TS5 (rn 1..4) on the LV disk and advances the applied watermark to base seqTxn 3 -- past the
+    // loop's frontier of 2, so refreshedUpToSeqTxn(2) < appliedWatermark(3); batch 4 (TS6) is the
+    // genuine un-flushed lead above disk.
+    @Test
+    public void testCaseBAfterO3ResetDoesNotDoubleCount() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+
+            final LiveViewStateStore primaryStore = switchToReplicaMode();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+
+                // Batch 1 lands strictly in order; the replica reconstructs it as a 2-row lead over
+                // empty disk (accumulator -> 2, frontier at TS4).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('" + TS2 + "', 20), ('" + TS4 + "', 40)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("batch 1 reconstructed as a 2-row lead", 2, instance.getLeadRowCount());
+                Assert.assertEquals("loop frontier at batch 1", 1, instance.getRefreshedUpToSeqTxn());
+
+                // An out-of-order base row (TS3 < the seen TS4) applies. The replica's lead loop drops
+                // the tentative lead WITHOUT rewriting disk, resets the accumulators to identity and
+                // clears latestSeenTs, but pins refreshedUpToSeqTxn at the base seqTxn it reached (2).
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS3 + "', 30)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("O3 drops the tentative lead", 0, instance.getLeadRowCount());
+                Assert.assertEquals("O3 resets the accumulator frontier to cold start",
+                        Numbers.LONG_NULL, instance.getLatestSeenTs());
+                Assert.assertEquals("O3 pins the loop frontier at the base seqTxn it reached", 2,
+                        instance.getRefreshedUpToSeqTxn());
+
+                // Batch 3 (TS5) applies to the base but the loop never drives it (no drainJob), so the
+                // primary's correction flush can batch it together with the O3 correction.
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS5 + "', 50)");
+                drainWalQueue();
+
+                // The primary's correction flush materialises the corrected TS2..TS5 (rn 1..4) on the
+                // LV disk and advances the applied watermark to base seqTxn 3 -- PAST the loop's
+                // frontier of 2. This is Case B reached with latestSeenTs unset: refreshedUpToSeqTxn(2)
+                // < appliedWatermark(3), the disk holds 4 rows, and the loop is cold.
+                injectReplicatedFlush(
+                        lvToken,
+                        3,
+                        new String[]{TS2, TS3, TS4, TS5},
+                        new int[]{20, 30, 40, 50},
+                        new long[]{1, 2, 3, 4}
+                );
+                Assert.assertEquals("correction flush advanced the applied watermark past the frontier",
+                        3, instance.getAppliedWatermark());
+                Assert.assertEquals("loop frontier still trails the flush", 2, instance.getRefreshedUpToSeqTxn());
+
+                // Batch 4 (TS6) is the genuine un-flushed lead above disk.
+                execute("INSERT INTO base (ts, x) VALUES ('" + TS6 + "', 60)");
+                drainWalQueue();
+
+                // Run the replica lead loop: reconcile arms the catch-up seam at the on-disk max ts
+                // (TS5) because the loop is cold over non-empty disk, and the re-derive drives the
+                // accumulator over the durable TS2..TS5 band WITHOUT staging it, then stages only TS6
+                // as the genuine lead (rn 5). Before the fix the seam stayed unarmed and all 5 re-derived
+                // rows were staged as lead.
+                drainJob(job);
+                Assert.assertEquals("only the genuine TS6 row stays lead, not the whole re-derived history",
+                        1, instance.getLeadRowCount());
+            } finally {
+                switchToStore(primaryStore);
+            }
+
+            final String expected = """
+                    ts\tx\trn
+                    2026-05-12T00:00:02.000000Z\t20\t1
+                    2026-05-12T00:00:03.000000Z\t30\t2
+                    2026-05-12T00:00:04.000000Z\t40\t3
+                    2026-05-12T00:00:05.000000Z\t50\t4
+                    2026-05-12T00:00:06.000000Z\t60\t5
+                    """;
+            // Content is exact global rn 1..5 (no re-staged durable rows) ...
+            StringSink actual = new StringSink();
+            printSql("SELECT * FROM lv ORDER BY ts", actual);
+            Assert.assertEquals(expected, actual.toString());
+
+            // ... and size() is exact: disk (4) + the genuine 1-row lead, NOT disk (4) + a lead that
+            // re-counts the 4 durable rows (which reported 9 before the fix). The O3-reset catch-up
+            // seam is what keeps size() at 5.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("reconstructed lead must be routing-eligible", cursor.isRoutingEligible());
+                Assert.assertEquals("size() must not double-count the re-derived durable band", 5, cursor.size());
+            }
+        });
+    }
+
     // Case B (disk outran the loop). The replica reconstructs batch 1 as an un-flushed lead over
     // empty disk, then a replicated flush materialises batches 1+2 on the LV disk and advances the
     // applied watermark past the loop's frontier (refreshedUpToSeqTxn < appliedWatermark) while the
