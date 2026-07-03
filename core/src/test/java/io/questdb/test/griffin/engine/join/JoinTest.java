@@ -2348,6 +2348,32 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullFatTemporalJoinRejectsIntervalSlaveColumn() throws Exception {
+        // A full-fat ASOF/LT join materializes the slave's non-key columns into the map
+        // value via RecordValueSinkFactory. MapValue cannot hold an INTERVAL (there is no
+        // putInterval), and INTERVAL is not comparable so it is never a join key, so a
+        // projected interval slave column reached the factory's default branch and threw a
+        // bare UnsupportedOperationException at compile time. The full-fat guard now rejects
+        // any slave column the value sink cannot store up front with a user-facing
+        // SqlException, matching the graceful array rejection; the light (random-access)
+        // path still returns the row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES (1, '1970-01-01T00:00:00.000002Z')");
+            execute("INSERT INTO s VALUES (1, '1970-01-01T00:00:00.000001Z')");
+
+            for (String join : new String[]{"LT", "ASOF"}) {
+                final String sql = "SELECT a.ts, b.iv FROM m a " + join
+                        + " JOIN (SELECT k, ts, rnd_interval() iv FROM s) b ON a.k = b.k";
+                // The position points at the join keyword; the prefix "SELECT a.ts, b.iv
+                // FROM m a " is identical for LT and ASOF, so the keyword starts at 27.
+                assertExceptionNoLeakCheck(sql, 27, "right side column 'iv' is of unsupported type", true);
+            }
+        });
+    }
+
+    @Test
     public void testFullFatTemporalJoinSinksUuidAndLong256SlaveColumns() throws Exception {
         // A full-fat ASOF/LT join materializes the slave's non-key columns into the map
         // value via RecordValueSinkFactory. That factory had no case for UUID/LONG128 or

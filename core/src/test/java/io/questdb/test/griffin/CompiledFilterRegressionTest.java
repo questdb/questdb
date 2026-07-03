@@ -1609,6 +1609,53 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntColumnVsOutOfRangeConstant() throws Exception {
+        // A narrow-int column compared against an integer constant beyond INT range
+        // reads at long width in the Java filter (the constant is a LONG literal that
+        // promotes the INT column via getLong), so no INT value equals it. The JIT
+        // type observer sees only columns, so it typed the constant down to the INT
+        // width, and serializeNumber emitted it as a 32-bit float on the int-parse
+        // overflow; floats near 2^31 are spaced 256 apart, so distinct INT rows
+        // (2147483647 / 2147483646) collapsed onto one float and matched spuriously.
+        // The serializer now sign-extends the narrow leaf and emits the constant as a
+        // full I8 IMM, keeping the comparison at long width so both paths agree.
+        assertMemoryLeak(() -> {
+            execute("create table t (i8 byte, i16 short, i32 int, i64 long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values " +
+                    "(127, 32767, 2147483647, 9223372036854775806, 0)," +
+                    "(126, 32766, 2147483646, 9223372036854775805, 1000000)," +
+                    "(null, null, null, null, 2000000)");
+            // All-narrow path (only i32 observed): the constant would fall back to float.
+            assertJitMatchesJava("t where i32 = 2147483648", true);
+            assertJitMatchesJava("t where i32 >= 2147483648", true);
+            assertJitMatchesJava("t where i32 > 2147483648", true);
+            assertJitMatchesJava("t where i32 <= 2147483648", true);
+            assertJitMatchesJava("t where i32 < 2147483648", true);
+            assertJitMatchesJava("t where i32 <> 2147483648", true);
+            assertJitMatchesJava("t where i32 = 5000000000", true);
+            // Negative out-of-range constant (unary minus of an overflowing literal).
+            assertJitMatchesJava("t where i32 = -3000000000", true);
+            assertJitMatchesJava("t where i32 > -3000000000", true);
+            // Mixed-size path (i32 + i64 observed): the column must sign-extend too.
+            assertJitMatchesJava("t where i32 = 2147483648 and i64 > 0", true);
+            assertJitMatchesJava("t where i32 = 5 and i64 > 0", true);
+            // Single- and multi-value IN, including mixed in-range / out-of-range elements.
+            assertJitMatchesJava("t where i32 in (2147483648)", true);
+            assertJitMatchesJava("t where i32 in (2147483648, 5)", true);
+            assertJitMatchesJava("t where i32 in (5, 2147483648)", true);
+            assertJitMatchesJava("t where i32 not in (2147483648, 5)", true);
+            // OR chain: the same column appears at two widths in one predicate.
+            assertJitMatchesJava("t where i32 = 2147483648 or i32 = 2147483647", true);
+            // BYTE / SHORT column vs an out-of-INT-range constant: previously declined
+            // JIT (serializeNumber threw on the int-parse overflow); now stays on JIT.
+            assertJitMatchesJava("t where i8 = 2147483648", true);
+            assertJitMatchesJava("t where i16 = 3000000000", true);
+            // Control: a pure LONG column already computes at long width.
+            assertJitMatchesJava("t where i64 = 2147483648", true);
+        });
+    }
+
+    @Test
     public void testIntColumnsCount() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +

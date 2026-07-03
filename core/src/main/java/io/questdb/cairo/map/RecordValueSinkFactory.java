@@ -218,6 +218,8 @@ public class RecordValueSinkFactory {
                     // stack: []
                     break;
                 default:
+                    // Unreachable when the caller guards on isSupportedColumnType (see
+                    // SqlCodeGenerator's full-fat join guard). Keep the two in sync.
                     throw new UnsupportedOperationException();
             }
         }
@@ -240,5 +242,44 @@ public class RecordValueSinkFactory {
         asm.putShort(0);
 
         return asm.newInstance();
+    }
+
+    /**
+     * Reports whether {@link #getInstance} can materialize a column of this type into
+     * a {@link MapValue}. Mirrors the switch in getInstance() -- keep in sync. The
+     * caller must reject unsupported types up front (see SqlCodeGenerator's full-fat
+     * join guard) rather than hit getInstance()'s throwing default.
+     */
+    public static boolean isSupportedColumnType(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.INT:
+            case ColumnType.SYMBOL:
+            case ColumnType.IPv4:
+            case ColumnType.GEOINT:
+            case ColumnType.LONG:
+            case ColumnType.LONG128:
+            case ColumnType.UUID:
+            case ColumnType.LONG256:
+            case ColumnType.GEOLONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+            case ColumnType.CHAR:
+            case ColumnType.BOOLEAN:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                return true;
+            default:
+                return false;
+        }
     }
 }

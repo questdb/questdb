@@ -2023,9 +2023,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
             if (intHashSet.excludes(k)) {
-                // if a slave column is not in key, it must be of fixed length.
-                // why? our maps do not support variable length types in values, only in keys
-                if (isVarSize(slaveMetadata.getColumnType(k))) {
+                // A non-key slave column is materialized into the map value, so it must be a
+                // type the value sink can store. That excludes variable-length types and
+                // fixed-size types the map value cannot hold (e.g. INTERVAL). Reject them here
+                // with a user-facing message instead of letting RecordValueSinkFactory throw a
+                // bare UnsupportedOperationException.
+                if (!RecordValueSinkFactory.isSupportedColumnType(slaveMetadata.getColumnType(k))) {
                     throw SqlException
                             .position(joinPosition).put("right side column '")
                             .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");

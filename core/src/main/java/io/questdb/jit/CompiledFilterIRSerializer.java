@@ -397,6 +397,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    // Adds a leaf / constant node to the i64-widen set once (identity dedup): the
+    // same node can be reached by more than one marker pass.
+    private void addI64WidenLeaf(ExpressionNode node) {
+        if (!isI64WidenLeaf(node)) {
+            i64WidenLeaves.add(node);
+        }
+    }
+
     private void addNarrowLeaf(ExpressionNode node) {
         int typeCode = arithExprType(node);
         if (typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE) {
@@ -607,6 +615,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         return Chars.equals(token, '+') || Chars.equals(token, '-')
                 || Chars.equals(token, '*') || Chars.equals(token, '/');
+    }
+
+    // A binary numeric comparison operator: the shapes where a narrow-int leaf and
+    // an out-of-INT-range constant read at long width in the Java filter.
+    private static boolean isComparisonToken(CharSequence token) {
+        return Chars.equals(token, "=")
+                || Chars.equals(token, "<>") || Chars.equals(token, "!=")
+                || Chars.equals(token, "<") || Chars.equals(token, "<=")
+                || Chars.equals(token, ">") || Chars.equals(token, ">=");
     }
 
     /**
@@ -1094,6 +1111,37 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return ColumnType.isTimestamp(predicateContext.columnType);
     }
 
+    // A bare or unary-minus-wrapped integer CONSTANT node (I4- or I8-typed). Returns
+    // false for float, keyword, and non-numeric constants, and for columns.
+    private boolean isIntegerConst(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        final ExpressionNode constNode;
+        if (node.type == ExpressionNode.CONSTANT) {
+            constNode = node;
+        } else if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            constNode = node.rhs != null ? node.rhs : node.lhs;
+        } else {
+            return false;
+        }
+        if (constNode == null || constNode.type != ExpressionNode.CONSTANT) {
+            return false;
+        }
+        final int t = arithExprType(node);
+        return t == I4_TYPE || t == I8_TYPE;
+    }
+
+    // A narrow-int (BYTE / SHORT / INT) column or bind-variable leaf. Sign-extending
+    // one to i64 is value-preserving (no arithmetic to wrap).
+    private boolean isNarrowIntLeaf(ExpressionNode node) {
+        if (node == null || (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.BIND_VARIABLE)) {
+            return false;
+        }
+        final int t = arithExprType(node);
+        return t == I1_TYPE || t == I2_TYPE || t == I4_TYPE;
+    }
+
     /**
      * Checks if the expression tree is a pure AND chain (no OR at top level).
      */
@@ -1403,6 +1451,92 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
+    /**
+     * Tags a narrow-int column / bind-variable leaf and the out-of-INT-range integer
+     * constant it is compared against for i64 widening.
+     * <p>
+     * The type observer sees only columns, so a predicate whose widest observed type
+     * is an INT column types an out-of-INT-range constant down to I4;
+     * {@link #serializeNumber} then emits it as a 32-bit float on the int-parse
+     * overflow, and floats near 2^31 are spaced 256 apart, so distinct INT rows
+     * collapse onto one float and match spuriously (e.g. {@code i32 = 2147483648}
+     * admits 2147483647 / 2147483646). The Java filter reads the comparison at long
+     * width (the constant is a LONG literal that promotes the column via getLong), so
+     * no INT value equals it. Mirror that: sign-extend the leaf (value-preserving --
+     * see {@link #markI64WrapArithLeaves}) and emit the constant as a full I8 IMM. The
+     * mark is per node, so a sibling in-range comparison is unaffected; it forces
+     * scalar mode (SX_I64 has no AVX2 path).
+     * <p>
+     * For an IN whose key is a narrow-int leaf and any element is out-of-INT-range,
+     * the Java InLong path reads the key at long width for that element, so widen the
+     * key and every integer-constant element (all value-preserving) to keep each
+     * pairing at one width. The single-value form keeps key / element in lhs / rhs.
+     */
+    private void markNarrowConstCmpWidenLeaves(ExpressionNode node) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
+            if (node.args.size() > 0) {
+                final ExpressionNode key = node.args.getLast();
+                if (isNarrowIntLeaf(key)) {
+                    boolean anyOutOfRange = false;
+                    for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                        if (isIntegerConst(node.args.getQuick(i)) && arithExprType(node.args.getQuick(i)) == I8_TYPE) {
+                            anyOutOfRange = true;
+                            break;
+                        }
+                    }
+                    if (anyOutOfRange) {
+                        addI64WidenLeaf(key);
+                        for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                            final ExpressionNode element = node.args.getQuick(i);
+                            if (isIntegerConst(element)) {
+                                addI64WidenLeaf(element);
+                            }
+                        }
+                    }
+                }
+            } else {
+                markNarrowConstCmpWidenPair(node.lhs, node.rhs);
+            }
+            return;
+        }
+        if (node.type == ExpressionNode.OPERATION) {
+            if (node.paramCount == 2 && isComparisonToken(node.token)) {
+                markNarrowConstCmpWidenPair(node.lhs, node.rhs);
+            }
+            markNarrowConstCmpWidenLeaves(node.lhs);
+            markNarrowConstCmpWidenLeaves(node.rhs);
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                markNarrowConstCmpWidenLeaves(node.args.getQuick(i));
+            }
+        }
+    }
+
+    // Widens a narrow-int leaf and the out-of-INT-range integer constant it is
+    // paired with (either operand order). See markNarrowConstCmpWidenLeaves.
+    private void markNarrowConstCmpWidenPair(ExpressionNode a, ExpressionNode b) {
+        final ExpressionNode leaf;
+        final ExpressionNode constNode;
+        if (isNarrowIntLeaf(a) && isIntegerConst(b)) {
+            leaf = a;
+            constNode = b;
+        } else if (isNarrowIntLeaf(b) && isIntegerConst(a)) {
+            leaf = b;
+            constNode = a;
+        } else {
+            return;
+        }
+        // Only an out-of-INT-range constant diverges; an in-range one already compares
+        // at int width on both paths, and widening it would needlessly force scalar mode.
+        if (arithExprType(constNode) != I8_TYPE) {
+            return;
+        }
+        addI64WidenLeaf(leaf);
+        addI64WidenLeaf(constNode);
+    }
+
     private void putDoubleOperand(long offset, int type, double payload) {
         memory.putInt(offset, CompiledFilterIRSerializer.IMM);
         memory.putInt(offset + Integer.BYTES, type);
@@ -1629,8 +1763,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // an overflowing long literal (e.g. 1000000000000) truncates to int here (the observer
             // saw only the narrow key columns) and never equals the widened key. The mixed-size
             // path above already widens via serializeUntypedNumber; this covers the all-narrow case.
+            // widenToI64 also covers a plain out-of-INT-range constant vs a narrow-int leaf: the
+            // observer typed it down to I4, so serializeNumber would emit a lossy float on overflow.
+            // markNarrowConstCmpWidenLeaves tags both sides to widen to i64.
             int numberTypeCode = typeCode;
-            if (predicateContext.needsNarrowI64Widening
+            if ((predicateContext.needsNarrowI64Widening || widenToI64)
                     && (numberTypeCode == I1_TYPE || numberTypeCode == I2_TYPE || numberTypeCode == I4_TYPE)) {
                 numberTypeCode = I8_TYPE;
             }
@@ -2682,6 +2819,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // a LONG-width one, and a narrow product on the INT-width side
                     // must not sign-extend. See markI64WrapArithLeaves.
                     markI64WrapArithLeaves(node, false);
+                    // Tag a narrow-int leaf compared against an out-of-INT-range constant so
+                    // both widen to i64. See markNarrowConstCmpWidenLeaves.
+                    markNarrowConstCmpWidenLeaves(node);
                     // A float suppresses the global narrow-i64 widening, but a
                     // LONG-width arithmetic subtree still computes at 64 bits in
                     // the Java filter. Tag the narrow leaves under such subtrees
