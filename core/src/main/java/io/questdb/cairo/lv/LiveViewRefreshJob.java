@@ -1228,8 +1228,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // txnCursor via the resource list (no-op when null).
         final LiveViewSymbolCache symbolCache = populateTier ? instance.getInMemoryTier().getSymbolCache() : null;
         final boolean internSymbols = symbolCache != null && stagingSymbolColumnIndexes.size() > 0;
-        final TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null;
-        try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn); committedSymbolReader) {
+        try (
+                TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
+                TableReader committedSymbolReader = internSymbols ? engine.getReader(instance.getLiveViewToken()) : null
+        ) {
             if (internSymbols) {
                 // Re-anchor each SYMBOL column's next-new-id to the committed symbol
                 // count, so a flush (or O3) that advanced the count moves new-id

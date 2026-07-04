@@ -1403,6 +1403,18 @@ public class SqlParser {
         }
 
         if (!inMemorySpecified) {
+            // IN MEMORY defaults to FLUSH EVERY when omitted, so the same
+            // cairo.live.view.in.memory.max cap that bounds the explicit clause
+            // must bound the default too. Otherwise a large FLUSH EVERY (which
+            // has no upper bound of its own) silently retains more than the cap
+            // in the in-memory tier.
+            if (inMemoryMicros > configuration.getLiveViewInMemoryMaxMicros()) {
+                SqlException ex = SqlException.position(flushPos)
+                        .put("live view FLUSH EVERY must be at most cairo.live.view.in.memory.max (");
+                appendDurationFromMicros(ex, configuration.getLiveViewInMemoryMaxMicros());
+                ex.put(") because IN MEMORY defaults to FLUSH EVERY");
+                throw ex;
+            }
             builder.setInMemoryInterval(inMemoryValue);
             builder.setInMemoryIntervalUnit(inMemoryUnit);
         }

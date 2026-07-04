@@ -523,6 +523,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return;
         }
         synchronized (instance) {
+            // Queue this _lv.s rewrite behind any in-progress checkpoint freeze so
+            // the snapshot agent's raw file copy is not raced by the rewrite below,
+            // matching the invalidation paths and the waitForUnfrozen() contract.
+            instance.waitForUnfrozen();
             LiveViewStateReader reader = instance.getStateReader();
             if (maxBaseSeqTxn <= reader.getLvConsumedSeqTxn()) {
                 return;
@@ -590,6 +594,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return;
         }
         synchronized (instance) {
+            // Queue this _lv.s rewrite behind any in-progress checkpoint freeze so
+            // the snapshot agent's raw file copy is not raced by the rewrite below,
+            // matching the invalidation paths and the waitForUnfrozen() contract.
+            instance.waitForUnfrozen();
             LiveViewStateReader reader = instance.getStateReader();
             if (maxBaseSeqTxn <= reader.getLastProcessedSeqTxn()) {
                 return;

@@ -2338,6 +2338,25 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectDefaultInMemoryAboveCap() throws Exception {
+        // When IN MEMORY is omitted it defaults to FLUSH EVERY. FLUSH EVERY has no
+        // upper bound of its own, so a large FLUSH EVERY with no explicit IN MEMORY
+        // must still hit the cairo.live.view.in.memory.max cap (default 60min = 1h)
+        // rather than silently retaining 2h of computed output in RAM.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 2h AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected defaulted IN MEMORY > cap reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "FLUSH EVERY must be at most cairo.live.view.in.memory.max (1h) because IN MEMORY defaults to FLUSH EVERY"));
+            }
+        });
+    }
+
+    @Test
     public void testRejectInMemoryBelowFlushEvery() throws Exception {
         // The asserted message requires the FLUSH EVERY value in parentheses so the
         // operator sees what the floor was (1s in this case).
