@@ -168,6 +168,7 @@ import io.questdb.griffin.engine.functions.memoization.SymbolFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.TimestampFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.UuidFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.VarcharFunctionMemoizer;
+import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
@@ -320,6 +321,7 @@ import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
+import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
@@ -10672,6 +10674,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                // Index fast path for a positive LIKE/ILIKE/regex on an indexed static-symbol column.
+                // Fires only when no discrete key column ('='/'IN') was lifted (so this does not compete
+                // with the keyColumn branch above), the feature is enabled, not opted out, and not an UPDATE.
+                if (intrinsicModel.keyColumn == null
+                        && intrinsicModel.filter != null
+                        && intrinsicModel.keySubQuery == null
+                        && configuration.isSymbolPatternIndexEnabled()
+                        && !SqlHints.hasNoSymbolPatternIndexHint(model)
+                        && !model.isUpdate()) {
+                    RecordCursorFactory f = tryGenerateSymbolPatternIndex(
+                            model, executionContext, intrinsicModel, reader, queryMeta, dfcFactory,
+                            columnIndexes, columnSizeShifts
+                    );
+                    if (f != null) {
+                        dfcFactory = null; // ownership transferred to f
+                        return f;
+                    }
+                }
+
                 // Skip the symbol-index sort optimization when an outer time-series
                 // join needs the master in timestamp order. SortedSymbolIndexRecordCursorFactory
                 // emits rows in symbol order and zeroes the timestamp index, which would
@@ -11240,6 +11261,166 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return masterIndex != masterMetadata.getTimestampIndex() || slaveIndex != slaveMetadata.getTimestampIndex();
         }
         return listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0;
+    }
+
+    /**
+     * Collects the top-level AND-spine conjuncts of {@code node} into {@code out}. A node whose token is
+     * {@code AND} is decomposed into its two operands (recursively); any other node is a leaf conjunct.
+     */
+    private void collectAndConjuncts(ExpressionNode node, ObjList<ExpressionNode> out) {
+        if (node == null) {
+            return;
+        }
+        if (node.paramCount == 2 && node.type == OPERATION && isAndKeyword(node.token)) {
+            collectAndConjuncts(node.lhs, out);
+            collectAndConjuncts(node.rhs, out);
+        } else {
+            out.add(node);
+        }
+    }
+
+    /**
+     * Returns {@code true} when {@code node} is a positive {@code LIKE}/{@code ILIKE}/{@code ~} predicate
+     * ({@code paramCount == 2}) whose left operand is a literal naming an indexed static-symbol column.
+     * Negation ({@code not(...)} / {@code !~}) is deliberately not recognized; those stay in the filter.
+     */
+    private boolean isPatternOnIndexedSymbol(
+            ExpressionNode node,
+            RecordMetadata queryMeta,
+            TableReader reader,
+            IntList columnIndexes
+    ) {
+        if (node.paramCount != 2 || node.token == null) {
+            return false;
+        }
+        if (!(isLikeKeyword(node.token)
+                || Chars.equalsIgnoreCase(node.token, "ilike")
+                || Chars.equals(node.token, "~"))) {
+            return false;
+        }
+        final ExpressionNode lhs = node.lhs;
+        if (lhs == null || lhs.type != LITERAL || lhs.token == null) {
+            return false;
+        }
+        final int keyColumnIndex = queryMeta.getColumnIndexQuiet(lhs.token);
+        if (keyColumnIndex < 0 || !isSymbol(queryMeta.getColumnType(keyColumnIndex))) {
+            return false;
+        }
+        // Ground truth for "is indexed" is the reader's metadata at the base (reader) column index.
+        final int baseIdx = columnIndexes.getQuick(keyColumnIndex);
+        return reader.getMetadata().isColumnIndexed(baseIdx);
+    }
+
+    /**
+     * Attempts to build the index fast path for a positive LIKE/ILIKE/regex predicate on an indexed
+     * static-symbol column. Returns {@code null} (leaking nothing) when the filter has no qualifying
+     * conjunct or the qualifying conjunct does not compile to a {@link SymbolKeySetProvider}; in that case
+     * the caller keeps {@code dfcFactory} and continues with the ordinary scan+filter path.
+     * <p>
+     * On success the returned factory owns {@code dfcFactory}, the provider function, the residual filter
+     * and the full filter (all freed in the factory's {@code _close()}); the caller nulls its
+     * {@code dfcFactory} reference so the outer catch does not double-free it.
+     */
+    private RecordCursorFactory tryGenerateSymbolPatternIndex(
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            IntrinsicModel intrinsicModel,
+            TableReader reader,
+            GenericRecordMetadata queryMeta,
+            PartitionFrameCursorFactory dfcFactory,
+            IntList columnIndexes,
+            IntList columnSizeShifts
+    ) throws SqlException {
+        // 1) split the filter into top-level AND conjuncts
+        final ObjList<ExpressionNode> conjuncts = new ObjList<>();
+        collectAndConjuncts(intrinsicModel.filter, conjuncts);
+
+        // 2) find the first qualifying positive pattern conjunct on an indexed symbol column
+        int patternIdx = -1;
+        for (int i = 0, n = conjuncts.size(); i < n; i++) {
+            if (isPatternOnIndexedSymbol(conjuncts.getQuick(i), queryMeta, reader, columnIndexes)) {
+                patternIdx = i;
+                break;
+            }
+        }
+        if (patternIdx < 0) {
+            return null; // nothing compiled yet, nothing to free
+        }
+
+        final ExpressionNode patternNode = conjuncts.getQuick(patternIdx);
+        final int keyColumnIndex = queryMeta.getColumnIndexQuiet(patternNode.lhs.token);
+
+        Function providerFunction = null;
+        Function residualFilter = null;
+        Function fullFilter = null;
+        try {
+            // 4) compile the pattern predicate; bail out (freeing it) unless it is a key-set provider
+            providerFunction = functionParser.parseFunction(patternNode, queryMeta, executionContext);
+            if (!(providerFunction instanceof SymbolKeySetProvider)) {
+                providerFunction = Misc.free(providerFunction);
+                return null;
+            }
+
+            // 5) residual = AND of the other conjuncts (null when the pattern is the only conjunct)
+            ExpressionNode residualRoot = null;
+            for (int i = 0, n = conjuncts.size(); i < n; i++) {
+                if (i == patternIdx) {
+                    continue;
+                }
+                final ExpressionNode conjunct = conjuncts.getQuick(i);
+                if (residualRoot == null) {
+                    residualRoot = conjunct;
+                } else {
+                    final OperatorExpression andOp = OperatorExpression.chooseRegistry(
+                            configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+                    final ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
+                    newRoot.paramCount = 2;
+                    newRoot.lhs = conjunct;
+                    newRoot.rhs = residualRoot;
+                    residualRoot = newRoot;
+                }
+            }
+            if (residualRoot != null) {
+                residualFilter = compileBooleanFilter(residualRoot, queryMeta, executionContext);
+            }
+
+            // 6) full filter (pattern AND residual) drives the > threshold fallback scan
+            fullFilter = compileFilter(intrinsicModel, queryMeta, executionContext);
+
+            // 7) ordering: only the designated-timestamp-only advice lets us skip a sort; DESC flips
+            // the per-key index scan direction. A single pattern predicate means one merged key stream,
+            // so (unlike the multi-value IN path) no ascending-only restriction is needed.
+            boolean orderByTimestamp = false;
+            int indexDirection = IndexReader.DIR_FORWARD;
+            if (isOrderByDesignatedTimestampOnly(model)) {
+                orderByTimestamp = true;
+                if (getOrderByDirectionOrDefault(model, 0) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                    indexDirection = IndexReader.DIR_BACKWARD;
+                }
+            }
+
+            return new SymbolPatternIndexRecordCursorFactory(
+                    configuration,
+                    queryMeta,
+                    dfcFactory,
+                    keyColumnIndex,
+                    providerFunction,
+                    residualFilter,
+                    fullFilter,
+                    model.getOrderByAdviceMnemonic(),
+                    orderByTimestamp,
+                    indexDirection,
+                    configuration.getSymbolPatternIndexThreshold(),
+                    columnIndexes,
+                    columnSizeShifts
+            );
+        } catch (Throwable th) {
+            // dfcFactory stays owned by the caller; free only what this method compiled
+            Misc.free(providerFunction);
+            Misc.free(residualFilter);
+            Misc.free(fullFilter);
+            throw th;
+        }
     }
 
     private boolean isOrderByDesignatedTimestampOnly(IQueryModel model) {

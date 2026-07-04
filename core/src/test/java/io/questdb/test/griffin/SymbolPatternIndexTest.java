@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -116,5 +117,111 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             IntList keys = matchedKeys("sym like 'A%'");
             Assert.assertEquals("[0,1]", keys.toString());
         });
+    }
+
+    /**
+     * End-to-end row parity: the index fast path (unhinted) must return exactly the same rows as the
+     * scan+filter path forced by the opt-out hint. The hint is the ground truth; the two must agree.
+     */
+    @Test
+    public void testStartsWithMatchesScanFilter_indexPath() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            // Ground truth: force the scan+filter plan with the opt-out hint (hints go right after SELECT).
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%' order by ts, v");
+            String actual = select("select sym, v, ts from t where sym like 'A%' order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
+     * Proves recognition fired: the unhinted plan routes through the SymbolPatternIndex fast path, while
+     * the hinted (opt-out) plan does not. This is the meaningful RED-&gt;GREEN signal for the codegen branch,
+     * because the row-parity test alone passes even when both queries scan+filter.
+     */
+    @Test
+    public void testPlanUsesSymbolPatternIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA'), x, timestamp_sequence(0, 60000000) from long_sequence(100)");
+            assertQuery("select sym, v from t where sym like 'A%'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+            assertQuery("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym like 'A%'").noLeakCheck().assertsPlanNotContaining("SymbolPatternIndex");
+        });
+    }
+
+    /**
+     * Residual conjunct ({@code AND v > 1000}) must be applied on the index rows: index-path result must
+     * equal the scan+filter (hinted) ground truth.
+     */
+    @Test
+    public void testResidualFilterMatchesScanFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%' and v > 1000 order by ts, v");
+            String actual = select("select sym, v, ts from t where sym like 'A%' and v > 1000 order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+            assertQuery("select sym, v from t where sym like 'A%' and v > 1000").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+        });
+    }
+
+    /**
+     * Regex ({@code ~}) and ILIKE variants must also route through the index and match ground truth.
+     */
+    @Test
+    public void testRegexAndIlikeMatchScanFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','ab','BA','Bb','aC'), x, timestamp_sequence(0, 60000000) from long_sequence(1500)");
+            String reExpected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym ~ '^A' order by ts, v");
+            String reActual = select("select sym, v, ts from t where sym ~ '^A' order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(reExpected, reActual);
+
+            String ilExpected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym ilike 'a%' order by ts, v");
+            String ilActual = select("select sym, v, ts from t where sym ilike 'a%' order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(ilExpected, ilActual);
+        });
+    }
+
+    /**
+     * Descending designated-timestamp order flips the index scan direction; index-path result must still
+     * equal the scan+filter ground truth (same rows, same DESC order).
+     */
+    @Test
+    public void testDescOrderMatchesScanFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%' order by ts desc");
+            String actual = select("select sym, v, ts from t where sym like 'A%' order by ts desc");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
+     * Negation ({@code NOT LIKE}) must NOT be lifted to the index fast path; the plan must fall back to
+     * scan+filter and still be correct.
+     */
+    @Test
+    public void testNegationNotLiftedToIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(1500)");
+            assertQuery("select sym, v from t where sym not like 'A%'").noLeakCheck().assertsPlanNotContaining("SymbolPatternIndex");
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym not like 'A%' order by ts, v");
+            String actual = select("select sym, v, ts from t where sym not like 'A%' order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
+     * Runs {@code sql} and returns its printed text (header + rows) captured into a private sink, so two
+     * queries can be compared without clobbering the shared static test sink.
+     */
+    private String select(String sql) throws SqlException {
+        StringSink localSink = new StringSink();
+        printSql(sql, localSink);
+        return localSink.toString();
     }
 }
