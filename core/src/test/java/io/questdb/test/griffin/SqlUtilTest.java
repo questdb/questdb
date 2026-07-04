@@ -61,6 +61,27 @@ import java.util.concurrent.TimeUnit;
 public class SqlUtilTest {
 
     @Test
+    public void testExprColumnAliasDedupOperatorTokenDropsStaleQuotes() {
+        // An operator-token alias is quote-protected, but once a dedup suffix makes it a plain
+        // identifier the protection is no longer needed: the quotes must be dropped, not left to
+        // leak into the result-set column name (regression for the PIVOT operator-token leak).
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        CharSequence first = SqlUtil.createExprColumnAlias(store, "in", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("\"in\"", first.toString());
+        aliasMap.put(first.toString(), null);
+
+        CharSequence second = SqlUtil.createExprColumnAlias(store, "in", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("in_2", second.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(second));
+        // the visible names carry no leaked quotes
+        Assert.assertEquals("in", SqlUtil.toColumnName(first));
+        Assert.assertEquals("in_2", SqlUtil.toColumnName(second));
+    }
+
+    @Test
     public void testExprColumnAliasDisallowedAlias() {
         OperatorRegistry registry = OperatorExpression.getRegistry();
         CharacterStore store = new CharacterStore(32, 1);
@@ -132,6 +153,20 @@ public class SqlUtilTest {
                 "longstr",
                 SqlUtil.createExprColumnAlias(store, "longstring", aliasMap, seqMap, 7, false).toString()
         );
+    }
+
+    @Test
+    public void testExprColumnAliasTruncationDropsStaleQuotes() {
+        // The alias is quote-protected because of its dot, but truncation to maxLength cuts the
+        // dot off. The bare remainder needs no protection, so the wrapping quotes must not survive
+        // into the column name (regression for the long-dotted-alias leak).
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+        CharSequence alias = SqlUtil.createExprColumnAlias(store, "aaaaaaaa.b", aliasMap, seqMap, 6, true);
+        Assert.assertEquals("aaa", alias.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(alias));
+        Assert.assertEquals("aaa", SqlUtil.toColumnName(alias));
     }
 
     @Test

@@ -596,6 +596,54 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotStaticListWithCaseVariantOperatorTokenValues() throws Exception {
+        // 'in' and 'IN' are distinct values (the duplicate-value guard is case-sensitive) but
+        // collide in the case-insensitive alias space, so the second gets a dedup suffix. The
+        // suffix turns the operator token into a plain identifier, so the protective quotes must
+        // not leak into the column name (regression: the old name was the literal "IN_2", which
+        // also broke CREATE TABLE AS SELECT over the pivot).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'IN', 20),
+                        ('B', 'in', 30),
+                        ('B', 'IN', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'IN') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	IN_2
+                            A	10	20
+                            B	30	40
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) FOR cat IN ('in', 'IN') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("""
+                    SELECT grp, "in", "IN_2" FROM pivoted ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	IN_2
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotStaticListWithDottedValues() throws Exception {
         // A static IN-list dotted value goes through the SqlParser alias path (distinct from the
         // dynamic subquery path the *Type tests cover); its column name must be clean.

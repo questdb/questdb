@@ -285,21 +285,22 @@ public class SqlUtil {
         }
 
         final int start = prefixedLiteral ? indexOfDot + 1 : 0;
-        int len = baseLen - start;
-        final CharacterStoreEntry entry = store.newEntry();
-        final int entryLen = entry.length();
-        if (quote) {
-            entry.put('"');
-            len += 2;
-        }
-        entry.put(base, start, baseLen);
 
-        final int truncatedLen = Math.min(len, maxLength - (quote ? 1 : 0));
-        // Save the base entry length for sequence tracking (before any sequence suffix)
-        final int baseEntryLen = entry.length();
+        // Track the per-base sequence under a stable key: the protected base,
+        // keeping the historical (quote-prefixed when protecting) form so suffix
+        // numbering is unchanged. Built once and never overwritten, since the
+        // loop below only ever appends to the store (never trims it back).
+        final CharacterStoreEntry keyEntry = store.newEntry();
+        if (quote) {
+            keyEntry.put('"');
+        }
+        keyEntry.put(base, start, baseLen);
+        final CharSequence seqKey = keyEntry.toImmutable();
+
+        final int truncatedLen = Math.min(baseLen - start + (quote ? 2 : 0), maxLength - (quote ? 1 : 0));
 
         // Look up the starting sequence for this base alias
-        int sequence = nextAliasSequenceMap.get(entry.toImmutable());
+        int sequence = nextAliasSequenceMap.get(seqKey);
         if (sequence == -1) {
             sequence = 1;
         }
@@ -309,33 +310,41 @@ public class SqlUtil {
             if (sequence > 1) {
                 seqSize = (int) Math.log10(sequence) + 2; // Remember the _
             }
-            len = Math.min(truncatedLen, maxLength - seqSize - (quote ? 1 : 0));
+            final int len = Math.min(truncatedLen, maxLength - seqSize - (quote ? 1 : 0));
+            int contentLen = Math.max(0, len - (quote ? 2 : 0));
 
             // We don't want the alias to finish with a space.
-            if (!quote && len > 0 && base.charAt(start + len - 1) == ' ') {
-                final int lastSpace = Chars.lastIndexOfDifferent(base, start, start + len, ' ') - start;
+            if (!quote && contentLen > 0 && base.charAt(start + contentLen - 1) == ' ') {
+                final int lastSpace = Chars.lastIndexOfDifferent(base, start, start + contentLen, ' ') - start;
                 if (lastSpace > 0) {
-                    len = lastSpace + 1;
+                    contentLen = lastSpace + 1;
                 }
             }
 
-            entry.trimTo(entryLen + len - (quote ? 1 : 0));
+            // Emit the protective quotes only when the FINAL content still needs
+            // them. Truncation may have dropped the discriminating dot, and a
+            // dedup suffix turns an operator token into a plain identifier; in
+            // both cases the bare name is unambiguous, so keeping the quotes would
+            // only leak them into result-set metadata (see toColumnName).
+            final boolean emitQuote = quote && aliasContentNeedsQuoting(base, start, start + contentLen, sequence > 1);
+
+            final CharacterStoreEntry entry = store.newEntry();
+            if (emitQuote) {
+                entry.put('"');
+            }
+            entry.put(base, start, start + contentLen);
             if (sequence > 1) {
                 entry.put('_');
                 entry.put(sequence);
             }
-            if (quote) {
+            if (emitQuote) {
                 entry.put('"');
             }
             final CharSequence alias = entry.toImmutable();
-            if (len > 0 && aliasToColumnMap.excludes(alias)) {
+            if (contentLen > 0 && aliasToColumnMap.excludes(alias)) {
                 // Update the sequence tracker for next time
-                final int aliasLen = entry.length();
-                entry.trimTo(baseEntryLen);
-                nextAliasSequenceMap.put(entry.toImmutable(), sequence + 1);
-                // Revert entry to the alias
-                entry.trimTo(aliasLen);
-                return entry.toImmutable();
+                nextAliasSequenceMap.put(seqKey, sequence + 1);
+                return alias;
             }
             sequence++;
         }
@@ -1553,6 +1562,23 @@ public class SqlUtil {
             depMap.put(tableName, columns);
         }
         columns.add(columnName);
+    }
+
+    /**
+     * Returns true when the {@code [lo, hi)} slice, used as a bare alias body, would still need
+     * the compiler's protective double quotes: it contains an unquoted dot (which the optimiser
+     * would split into a {@code table.column} reference) or, unless a dedup suffix has already
+     * been appended, it collides with an operator token. A dedup suffix (e.g. {@code in -> in_2})
+     * turns an operator token into a plain identifier that no longer needs protection, so quoting
+     * it would only leak the quotes into result-set metadata. Mirrors {@link #isQuoteProtectedAlias}
+     * so a generated alias is quoted exactly when that method would later recognise it as protected.
+     */
+    private static boolean aliasContentNeedsQuoting(CharSequence alias, int lo, int hi, boolean deduped) {
+        if (hi <= lo) {
+            return false;
+        }
+        return Chars.indexOfLastUnquoted(alias, '.', lo, hi) > -1
+                || (!deduped && disallowedAliases.contains(alias, lo, hi));
     }
 
     private static void collectColumnReferencesFromExpression(
