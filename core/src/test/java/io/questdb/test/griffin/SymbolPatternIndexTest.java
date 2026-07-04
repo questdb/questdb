@@ -31,6 +31,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
+import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
@@ -251,6 +252,66 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             String fastPath = "select sym, v, ts from t where sym like 'A%%' order by ts, sym, v";
             String hinted = "select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%%' order by ts, sym, v";
             io.questdb.test.tools.TestUtils.assertEquals("order=[unordered-stabilised]", select(hinted), select(fastPath));
+        });
+    }
+
+    /**
+     * When matched-key count exceeds the default threshold (100), the factory must fall back to a
+     * full scan+filter cursor. We trigger this by inserting 150 distinct symbols that all match the
+     * pattern {@code 'A%'}, giving 150 matched keys &gt; 100. The fallback counter must increment and
+     * the index counter must stay at zero; rows must match the hinted scan+filter ground truth.
+     */
+    @Test
+    public void testHighSelectivityFallsBackToScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            // 'A' || (x % 150) produces A0..A149 = 150 distinct symbols, all matching 'A%'.
+            // 150 > default threshold (100), so the factory must choose the fallback path.
+            execute("insert into t select cast('A' || (x % 150) as symbol), x, timestamp_sequence(0, 60000000) from long_sequence(1500)");
+            // Ground truth: force scan+filter with the opt-out hint immediately after SELECT.
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, count() from t where sym like 'A%' order by sym");
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            String actual = select("select sym, count() from t where sym like 'A%' order by sym");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+            // Prove the fallback branch actually fired (not just that rows are correct).
+            Assert.assertTrue(
+                    "expected fallbackInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations,
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0
+            );
+            Assert.assertEquals(
+                    "expected indexInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations
+            );
+        });
+    }
+
+    /**
+     * When matched-key count is at or below the default threshold (100), the factory must use the
+     * index-merge path. With only 3 matching symbol keys (AA, AB, AC out of AA/AB/BA/BB/AC), the
+     * index counter must increment and the fallback counter must stay at zero.
+     */
+    @Test
+    public void testLowSelectivityUsesIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            // rnd_symbol gives 5 distinct values; 3 match 'A%': AA, AB, AC.  3 <= 100 => index path.
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            // Ground truth: hint goes immediately after SELECT (not in WHERE).
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%' order by ts, v");
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            String actual = select("select sym, v, ts from t where sym like 'A%' order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+            // Prove the index branch actually fired.
+            Assert.assertTrue(
+                    "expected indexInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0
+            );
+            Assert.assertEquals(
+                    "expected fallbackInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations,
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations
+            );
         });
     }
 
