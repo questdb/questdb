@@ -11387,17 +11387,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // 6) full filter (pattern AND residual) drives the > threshold fallback scan
             fullFilter = compileFilter(intrinsicModel, queryMeta, executionContext);
 
-            // 7) ordering: only the designated-timestamp-only advice lets us skip a sort; DESC flips
-            // the per-key index scan direction. A single pattern predicate means one merged key stream,
-            // so (unlike the multi-value IN path) no ascending-only restriction is needed.
-            boolean orderByTimestamp = false;
+            // 7) ordering: only the designated-timestamp-only advice requests a heap-based merge.
+            // followedOrderByAdvice() is false (sort-elision deferred), so DESC direction cannot be
+            // satisfied by flipping the per-key scan to DIR_BACKWARD — doing so would be inert and
+            // misleading. Always pass DIR_FORWARD.
+            boolean orderByTimestamp = isOrderByDesignatedTimestampOnly(model);
             int indexDirection = IndexReader.DIR_FORWARD;
-            if (isOrderByDesignatedTimestampOnly(model)) {
-                orderByTimestamp = true;
-                if (getOrderByDirectionOrDefault(model, 0) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                    indexDirection = IndexReader.DIR_BACKWARD;
-                }
-            }
 
             return new SymbolPatternIndexRecordCursorFactory(
                     configuration,
@@ -11407,7 +11402,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     providerFunction,
                     residualFilter,
                     fullFilter,
-                    model.getOrderByAdviceMnemonic(),
                     orderByTimestamp,
                     indexDirection,
                     configuration.getSymbolPatternIndexThreshold(),

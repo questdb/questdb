@@ -216,6 +216,45 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * Unordered queries (no ORDER BY, no timestamp requirement) should use the cheaper
+     * SequentialRowCursorFactory ("Cursor-order scan") rather than the heap-based merge.
+     */
+    @Test
+    public void testUnorderedUsesSequentialScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA'), x, timestamp_sequence(0, 60000000) from long_sequence(100)");
+            // No ORDER BY and no timestamp requirement => cheaper Sequential (Cursor-order) scan.
+            assertQuery("select sym, v from t where sym like 'A%'").noLeakCheck().assertsPlanContaining("Cursor-order scan");
+        });
+    }
+
+    /**
+     * For all orderings (none, ASC ts, DESC ts) the fast-path must return exactly the same rows as the
+     * hinted scan+filter ground truth. Hint goes right after SELECT (a WHERE-clause hint is a silent no-op).
+     * For the unordered case ("") both queries are given a stable tiebreaker sort so that the comparison
+     * is deterministic regardless of cursor-order differences between the index and full-scan paths.
+     */
+    @Test
+    public void testOrderByTimestampParity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB'), x, timestamp_sequence(0, 60000000) from long_sequence(3000)");
+            for (String order : new String[]{"order by ts", "order by ts desc"}) {
+                String fastPath = "select sym, v, ts from t where sym like 'A%%' " + order;
+                String hinted = "select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%%' " + order;
+                String expected = select(hinted.trim());
+                String actual = select(fastPath.trim());
+                io.questdb.test.tools.TestUtils.assertEquals("order=[" + order + "]", expected, actual);
+            }
+            // Unordered: apply a stable sort on both sides so the row-set comparison is deterministic.
+            String fastPath = "select sym, v, ts from t where sym like 'A%%' order by ts, sym, v";
+            String hinted = "select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%%' order by ts, sym, v";
+            io.questdb.test.tools.TestUtils.assertEquals("order=[unordered-stabilised]", select(hinted), select(fastPath));
+        });
+    }
+
+    /**
      * Runs {@code sql} and returns its printed text (header + rows) captured into a private sink, so two
      * queries can be compared without clobbering the shared static test sink.
      */

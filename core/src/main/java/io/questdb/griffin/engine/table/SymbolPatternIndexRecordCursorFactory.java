@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,6 +57,15 @@ import org.jetbrains.annotations.TestOnly;
  * </ol>
  * SP1 accelerates only the single-threaded, non-page-frame path: {@link #supportsPageFrameCursor()} is
  * {@code false}, so parallel/page-frame consumers keep using the surrounding scan+filter pipeline.
+ * <p>
+ * <b>Ordering note:</b> this factory does NOT override {@code followedOrderByAdvice()} (stays {@code false}).
+ * Full sort-elision (so that an outer Sort node is dropped entirely for {@code ORDER BY ts} or
+ * {@code ORDER BY ts DESC}) is deferred. Correctness for all orderings is guaranteed by the retained outer
+ * Sort; {@link #getScanDirection()} advertises {@code SCAN_DIRECTION_FORWARD} for the ASC+heap case only,
+ * matching the behaviour of {@link FilterOnValuesRecordCursorFactory}. The per-key index scan always runs
+ * {@code DIR_FORWARD} — passing {@code DIR_BACKWARD} when {@code orderByTimestamp} is set would be inert
+ * (no {@code followedOrderByAdvice()} short-circuit) and therefore misleading.
+ * </p>
  */
 public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
@@ -86,7 +94,6 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
             @NotNull Function providerFunction,
             @Nullable Function residualFilter,
             @NotNull Function fallbackFilter,
-            int orderByMnemonic,
             boolean orderByTimestamp,
             int indexDirection,
             int threshold,
@@ -101,13 +108,16 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         this.fallbackFilter = fallbackFilter;
         this.indexDirection = indexDirection;
         this.threshold = threshold;
-        // Ordered output only when a consumer relies on it (mirror FilterOnValues).
-        if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
-            heapCursorUsed = false;
-            rowCursorFactory = new SequentialRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
-        } else {
+        // Use the timestamp-merge heap only when the planner explicitly requested timestamp ordering.
+        // For unordered queries (ORDER_BY_UNKNOWN) and symbol-key-ordered queries (ORDER_BY_INVARIANT
+        // without timestamp), Sequential is cheaper: the outer Sort node (retained because
+        // followedOrderByAdvice() is false) will provide any ordering the consumer needs.
+        if (orderByTimestamp) {
             heapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
+        } else {
+            heapCursorUsed = false;
+            rowCursorFactory = new SequentialRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
         }
         indexCursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, residualFilter);
         fallbackCursor = new PageFrameRecordCursorImpl(
@@ -143,6 +153,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         sink.type("SymbolPatternIndex");
         sink.attr("on").putColumnName(columnIndex);
         sink.child(providerFunction);
+        sink.child(rowCursorFactory);   // emits "Cursor-order scan" when !heapCursorUsed
         sink.child(partitionFrameCursorFactory);
     }
 
