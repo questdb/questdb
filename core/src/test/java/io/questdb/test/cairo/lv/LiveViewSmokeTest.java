@@ -4480,6 +4480,83 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartWithTornStateStubDoesNotBreakFallbackScan() throws Exception {
+        // Regression: the refresh worker's registry fallback scan (scanForLaggingViews)
+        // iterates every registered view, including a definition-less state_unreadable
+        // stub left by a torn _lv.s with no recoverable floor. The stub is neither
+        // dropped nor invalid, so it slipped past the scan's skip guard and NPE'd on
+        // getDefinition().getBaseTableToken() - crashing the shared worker turn every
+        // fallback tick and starving healthy sibling views of their fallback services.
+        // The scan must skip the stub (like the catalogue reader does) and still refresh
+        // a healthy sibling.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // lv_ok is a healthy sibling; lv_stub becomes the torn stub. Neither is
+            // refreshed before the fault, so lv_stub commits no LIVE_VIEW_DATA block and
+            // thus has no recoverable floor once its _lv.s is torn (-> state_unreadable).
+            execute("CREATE LIVE VIEW lv_ok FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            execute("CREATE LIVE VIEW lv_stub FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final TableToken stubToken = engine.getLiveViewRegistry().getViewInstance("lv_stub").getLiveViewToken();
+
+            // Base commits land while both views sit un-refreshed, so after the restart
+            // lv_ok lags the base head and the fallback scan (not a notification) is what
+            // must drive its first refresh.
+            execute("INSERT INTO base VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 'a', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 'b', 2)");
+            drainWalQueue();
+
+            // Tear lv_stub's _lv.s and restart: it registers as a droppable
+            // state_unreadable stub, lv_ok reloads as a healthy ACTIVE view.
+            truncateLiveViewStateFile(configuration.getFilesFacade(), stubToken);
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            final LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv_stub");
+            Assert.assertNotNull(stub);
+            Assert.assertTrue(stub.isStub());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stub.getLifecycleState());
+            final LiveViewInstance ok = engine.getLiveViewRegistry().getViewInstance("lv_ok");
+            Assert.assertNotNull(ok);
+            Assert.assertFalse(ok.isStub());
+
+            // Drive the fallback scan. Pre-fix this NPEs on the stub inside the worker
+            // turn; the fix skips the stub so the drain completes and lv_ok refreshes.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // The healthy sibling refreshed forward past the stub in the same scan.
+            assertQuery("SELECT ts, sym, x, s FROM lv_ok ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tsym\tx\ts\n" +
+                            "2026-04-01T00:00:00.000000Z\ta\t1\t1.0\n" +
+                            "2026-04-01T00:00:01.000000Z\tb\t2\t2.0\n");
+
+            // The stub was never spuriously refreshed - still a droppable state_unreadable
+            // stub, and DROP LIVE VIEW removes it.
+            final LiveViewInstance stubAfter = engine.getLiveViewRegistry().getViewInstance("lv_stub");
+            Assert.assertNotNull(stubAfter);
+            Assert.assertTrue(stubAfter.isStub());
+            Assert.assertEquals(LiveViewLifecycleState.STATE_UNREADABLE, stubAfter.getLifecycleState());
+            assertQuery("SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv_stub'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_name\tview_status\nlv_stub\tstate_unreadable\n");
+            execute("DROP LIVE VIEW lv_stub");
+            assertQuery("SELECT count() FROM live_views() WHERE view_name = 'lv_stub'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testRestartWithTornStateButValidHeadCheckpoint() throws Exception {
         // Torn-_lv.s recovery (the "head .cp valid but _lv.s write was torn" durability
         // case). A torn _lv.s throws a CairoException whose errno is NOT

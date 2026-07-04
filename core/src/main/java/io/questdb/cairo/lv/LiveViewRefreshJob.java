@@ -4176,7 +4176,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean didWork = false;
         for (int i = 0, n = viewInstanceSink.size(); i < n; i++) {
             LiveViewInstance instance = viewInstanceSink.getQuick(i);
-            if (instance.isDropped() || instance.isInvalid()) {
+            // A definition-less stub (torn / too-new _lv or _lv.s, registered by
+            // buildViewGraphs so DROP LIVE VIEW can still remove it) lives in the
+            // registry that getViews iterates, so it reaches this scan even though it
+            // must never refresh. Skip it before the getDefinition() deref below, which
+            // would NPE on its null definition (getDefinition() == null, and a stub is
+            // neither dropped nor invalid). The catalogue reader guards it the same way.
+            if (instance.isStub() || instance.isDropped() || instance.isInvalid()) {
                 continue;
             }
             TableToken baseToken = instance.getDefinition().getBaseTableToken();
