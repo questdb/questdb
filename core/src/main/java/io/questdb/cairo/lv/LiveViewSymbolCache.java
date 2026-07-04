@@ -112,7 +112,10 @@ public class LiveViewSymbolCache implements QuietCloseable {
     private final IntList symbolColumns = new IntList();
     // Per output column, null for non-SYMBOL columns. Writer-side only: the
     // current flush window's value -> id map for O(1) interning of a value seen
-    // more than once before it is flushed. Cleared at flush / O3.
+    // more than once before it is flushed. Cleared at flush / O3 on the primary;
+    // a read-only replica never flushes, so {@link #intern} instead drops an entry
+    // lazily once the committed count advances past its id (see the stale-entry
+    // note there).
     private final ObjList<CharSequenceIntHashMap> windowNewToId;
 
     public LiveViewSymbolCache(IntList columnTypes) {
@@ -186,9 +189,22 @@ public class LiveViewSymbolCache implements QuietCloseable {
             return committedKey;
         }
         final CharSequenceIntHashMap windowMap = windowNewToId.getQuick(col);
-        final int ki = windowMap.keyIndex(value);
+        int ki = windowMap.keyIndex(value);
         if (ki < 0) {
-            return windowMap.valueAt(ki);
+            final int cachedId = windowMap.valueAt(ki);
+            // A window entry maps a value new to the lead to the provisional id a flush will commit it
+            // at. That id is at or above the committed count when assigned. On a read-only replica the
+            // flush is external (replicated) and the lead loop never resets the window map (no
+            // onFlush/onO3), so a committed flush that re-sequenced the symbol id space - e.g. an O3 or
+            // delete stranded this value before it was flushed, and a different value took its id - can
+            // leave a stale entry whose id now belongs to an already-committed value (id below the
+            // committed count). Serving that id resolves the value to the wrong committed string, so drop
+            // the stale entry and re-intern above the committed count.
+            if (cachedId >= committedReader.getSymbolCount()) {
+                return cachedId;
+            }
+            windowMap.removeAt(ki);
+            ki = windowMap.keyIndex(value);
         }
         final int id = nextNewId.getQuick(col);
         nextNewId.setQuick(col, id + 1);
