@@ -53,8 +53,13 @@ import org.jetbrains.annotations.Nullable;
  *     <li>{@code appliedWatermark} — T_w expressed as a <em>base</em> table seqTxn (the
  *     highest base seqTxn whose output has been applied to the LV's on-disk tier), not a
  *     live-view seqTxn; reconstructable from {@code _txn} but persisted for catalogue /
- *     restart speed. Note the head-checkpoint {@code lvSeqTxn} field lives in a different
- *     sequence space (the LV's own seqTxn) despite the similar name</li>
+ *     restart speed. The head-checkpoint {@code <lvSeqTxn>.cp} key sits in the <em>same</em>
+ *     base-seqTxn space despite its name: {@code maybeWriteHeadCheckpoint} stamps it from
+ *     the same {@code advanceTo}, which is why {@code LiveViewRecovery} compares the parsed
+ *     {@code .cp} key directly against {@code appliedWatermark}. The genuinely LV-space
+ *     seqTxn is a different field entirely - the tier read fence
+ *     ({@code LiveViewInMemoryBuffer.lvSeqTxn}, stamped from the LV table reader's
+ *     {@code getSeqTxn()})</li>
  *     <li>{@code lvConsumedSeqTxn} — WAL purge floor this view publishes</li>
  * </ul>
  */

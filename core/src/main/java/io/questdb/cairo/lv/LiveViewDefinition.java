@@ -172,7 +172,13 @@ public class LiveViewDefinition {
         }
         // Version 2+: the dependency columns' compile-time types, positionally
         // parallel to the names above (same count). Read back only when the CORE
-        // block stamps version >= 2.
+        // block stamps version >= 2. The reader pulls exactly depCount types, so a
+        // types list shorter than the names list would both read OOB here and emit a
+        // malformed block; the two are always built together at CREATE, and this
+        // assert pins that invariant against any future re-append path.
+        assert definition.dependencyColumnTypes.size() == depCount
+                : "dependencyColumnTypes count (" + definition.dependencyColumnTypes.size()
+                + ") must equal dependencyColumnNames count (" + depCount + ")";
         for (int i = 0; i < depCount; i++) {
             block.putInt(definition.dependencyColumnTypes.getQuick(i));
         }
@@ -265,8 +271,13 @@ public class LiveViewDefinition {
     }
 
     private static int endOfDigits(CharSequence tok, int len, int position) throws SqlException {
+        // Advance over the numeric run, admitting '_' thousands separators (e.g.
+        // "3_600s") so FLUSH EVERY / IN MEMORY stay consistent with mat-view strides
+        // and the CLAUDE.md underscore convention. Placement of the separators is not
+        // checked here; parseDurationValue's Numbers.parseLong over [0, k) rejects a
+        // leading, trailing, or doubled '_', so a malformed value still fails closed.
         int k = 0;
-        while (k < len && tok.charAt(k) >= '0' && tok.charAt(k) <= '9') {
+        while (k < len && ((tok.charAt(k) >= '0' && tok.charAt(k) <= '9') || tok.charAt(k) == '_')) {
             k++;
         }
         if (k == 0) {

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
@@ -131,6 +132,49 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDurationUnderscoreSeparators() throws Exception {
+        // FLUSH EVERY / IN MEMORY durations accept '_' thousands separators, matching
+        // mat-view strides, Numbers.parseLong, and the CLAUDE.md convention. The parsed
+        // value is the underscore-free number; placement of the separators is validated
+        // by parseLong, so leading / trailing / doubled '_' still fail closed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // A single-letter and a two-letter unit, both with an underscore, round-trip
+            // to the plain numeric value (1_200s -> 1200s, 1_800s -> 1800s, both under the
+            // 60-minute IN MEMORY cap; 1_500ms -> 1500ms exercises the "ms" unit path).
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1_200s IN MEMORY 1_800s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertEquals(1200L, lv.getDefinition().getFlushEveryInterval());
+            Assert.assertEquals('s', lv.getDefinition().getFlushEveryIntervalUnit());
+            Assert.assertEquals(1800L, lv.getDefinition().getInMemoryInterval());
+            Assert.assertEquals('s', lv.getDefinition().getInMemoryIntervalUnit());
+            execute("DROP LIVE VIEW lv");
+
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1_500ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance lv2 = engine.getLiveViewRegistry().getViewInstance("lv2");
+            Assert.assertNotNull(lv2);
+            Assert.assertEquals(1500L, lv2.getDefinition().getFlushEveryInterval());
+            // 'T' is the millisecond unit char (see LiveViewDefinition.toMicros).
+            Assert.assertEquals('T', lv2.getDefinition().getFlushEveryIntervalUnit());
+            execute("DROP LIVE VIEW lv2");
+
+            // Misplaced separators fail closed with the "invalid duration value" reject.
+            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY _600s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY 3__600s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY 600_s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            Assert.assertNull("no view should survive a malformed-duration reject",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+        });
+    }
+
+    @Test
     public void testRejectNonDeterministicFunctionInWhere() throws Exception {
         // WHERE is the worst case: a row admitted on one random draw cannot be
         // un-emitted, so the row set diverges permanently from any recompute.
@@ -200,6 +244,21 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + createSql,
                     Chars.contains(e.getFlyweightMessage(), "live view duration is out of range")
+            );
+        }
+    }
+
+    private void assertInvalidDurationValueRejected(String createSql) throws Exception {
+        try {
+            execute(createSql);
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected invalid-duration reject for: " + createSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + createSql,
+                    Chars.contains(e.getFlyweightMessage(), "invalid duration value")
             );
         }
     }

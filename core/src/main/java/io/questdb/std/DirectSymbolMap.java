@@ -76,13 +76,23 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         this.bufPtr = Unsafe.malloc(this.initialBufCapacity, memoryTag);
         this.bufCapacity = this.initialBufCapacity;
         this.bufSize = 0L;
-        this.keyToOffset = new DirectIntIntHashMap(
-                this.initialMapCapacity,
-                0.5,
-                NO_ENTRY_KEY,
-                NO_ENTRY_VALUE,
-                memoryTag
-        );
+        try {
+            this.keyToOffset = new DirectIntIntHashMap(
+                    this.initialMapCapacity,
+                    0.5,
+                    NO_ENTRY_KEY,
+                    NO_ENTRY_VALUE,
+                    memoryTag
+            );
+        } catch (Throwable th) {
+            // The keyToOffset allocation can throw (OOM) after the primary buffer
+            // was malloc'd. A ctor that throws leaves no reachable instance to
+            // close(), so free the buffer here or bufPtr leaks.
+            Unsafe.free(bufPtr, bufCapacity, memoryTag);
+            bufPtr = 0;
+            bufCapacity = 0;
+            throw th;
+        }
     }
 
     @Override
