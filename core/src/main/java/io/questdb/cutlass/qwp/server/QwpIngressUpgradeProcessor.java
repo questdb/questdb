@@ -873,6 +873,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         boolean roleChangeClose = false;
 
         boolean deferCommit = false;
+        boolean closesDeferredGroup = false;
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
@@ -883,10 +884,27 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             state.processMessage();
 
             if (state.isOk() && !deferCommit) {
+                // Capture BEFORE commit(): a successful commitAll() clears the
+                // uncommitted-deferred-rows flag, and this frame's ack must then
+                // flush eagerly -- the group's deferred frames were never
+                // individually acked, so the client's store-and-forward slots
+                // (and, in durable-ack mode, seqTxn tracking) all hinge on the
+                // ack that covers this group-closing sequence.
+                closesDeferredGroup = state.hasUncommittedDeferredRows();
                 state.commit();
             }
             if (state.isOk() && deferCommit) {
                 state.commitIfMaxUncommittedRowsReached();
+                if (state.isOk()) {
+                    // Rows are buffered in WAL writers but NOT committed (the
+                    // force-commit above fires per-table at the
+                    // max-uncommitted-rows cap and gives no full-coverage
+                    // guarantee). Until the group-closing commit or a rollback,
+                    // the cumulative-ack watermark must not move past this
+                    // frame -- an OK ack would let the client trim rows the
+                    // server can still roll back (#7144's replay contract).
+                    state.markUncommittedDeferredRows();
+                }
             }
             // Read AFTER the commit calls: processMessage's read-only gate AND the
             // commit path's authorization-refusal containment (rejectCairoError)
@@ -951,10 +969,29 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         // Send response using cumulative ACK strategy
         if (responseStatus == STATUS_OK) {
-            // Success - update tracking, send ACK if batch size reached
-            state.setHighestProcessedSequence(seq);
-            if (state.shouldSendAck(ACK_BATCH_SIZE)) {
-                trySendAck(context, state);
+            if (deferCommit) {
+                // Deferred frame: rows appended but uncommitted. NO watermark
+                // advance and NO ack -- a cumulative OK ack at this sequence
+                // would let the store-and-forward client trim slots whose rows
+                // the server rolls back on any error, demote, or disconnect.
+                // Coverage for this frame arrives with the ack of the
+                // group-closing commit frame (cumulative semantics), which also
+                // carries the group's real per-table seqTxns for durable-ack
+                // tracking. Until then the frame stays replayable client-side,
+                // exactly as #7144's error-handling contract requires.
+                LOG.debug().$("WebSocket deferred frame ack withheld until group commit [fd=").$(context.getFd())
+                        .$(", seq=").$(seq).I$();
+            } else {
+                // Success - update tracking, send ACK if batch size reached.
+                // A group-closing commit flushes eagerly (hasPendingAck) instead
+                // of waiting for the batch threshold: the deferred frames it
+                // covers were never individually acked, and the client's
+                // transaction confirmation should not wait for unrelated
+                // follow-up traffic.
+                state.setHighestProcessedSequence(seq);
+                if (closesDeferredGroup ? state.hasPendingAck() : state.shouldSendAck(ACK_BATCH_SIZE)) {
+                    trySendAck(context, state);
+                }
             }
         } else {
             // Error - first ACK all successful messages (if in READY state), then send error

@@ -2678,14 +2678,19 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
 
-            // Table may not even exist, or if auto-created it should have 0 committed rows
+            // Table may not even exist, or if auto-created it should have 0 committed rows.
+            // Both are correct rollback outcomes: since the client stopped waiting for
+            // acks of uncommitted deferred frames on close (they are withheld by the
+            // server on purpose), close() may return before the frames were ever
+            // transmitted -- in which case the table is never auto-created and the
+            // query throws SqlException instead of failing the row-count assert.
             try {
                 assertQuery("SELECT count() FROM defer_drop")
                         .noLeakCheck()
                         .returnsOnce("count\n0\n");
-            } catch (AssertionError e) {
+            } catch (AssertionError | io.questdb.griffin.SqlException e) {
                 // Table was never created — that's also correct
-                if (!e.getMessage().contains("defer_drop")) {
+                if (e.getMessage() == null || !e.getMessage().contains("defer_drop")) {
                     throw e;
                 }
             }

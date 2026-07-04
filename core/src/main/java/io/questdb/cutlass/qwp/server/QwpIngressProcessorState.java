@@ -159,6 +159,20 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // server never wrote. Enforced in setHighestProcessedSequence.
     private long firstUnresolvedSequence = -1;
     private SecurityContext securityContext;
+    // True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
+    // uncommitted. Set when a deferred frame's rows are buffered, cleared when
+    // commitAll() succeeds (the group-closing commit frame) or when clear()
+    // rolls the rows back. While true, the cumulative-ack watermark must not
+    // advance: a cumulative OK ack confirms every sequence up to and including
+    // its value, so covering an uncommitted deferred frame would let a
+    // store-and-forward client trim slots whose rows the server can still roll
+    // back -- silent data loss. This is the contract stated (but previously not
+    // enforced) by the deferred-commit feature (#7144): "the client's
+    // store-and-forward replays all unacknowledged messages on reconnect" --
+    // deferred frames must therefore stay unacknowledged until their group
+    // commits. Enforced in setHighestProcessedSequence as a last resort; the
+    // upgrade processor's ack path must not attempt the advance to begin with.
+    private boolean uncommittedDeferredRows;
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
@@ -233,6 +247,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         handshakeFlushPending = false;
         pendingHandshakeBytes = 0;
         roleChangeClosePending = false;
+        // tudCache.clear() above rolled back any uncommitted deferred rows;
+        // the deferred group is gone, its frames were never acked, and the
+        // client replays them from its acked watermark.
+        uncommittedDeferredRows = false;
     }
 
     /**
@@ -291,6 +309,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     public void commit() {
         try {
             tudCache.commitAll(committedTxnConsumer);
+            // commitAll covers every table this connection buffered rows for,
+            // including rows accumulated by FLAG_DEFER_COMMIT frames -- the
+            // deferred group (if any) is now durable in the WAL and the
+            // cumulative-ack watermark may advance over it.
+            uncommittedDeferredRows = false;
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
@@ -384,6 +407,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public boolean hasPendingAck() {
         return sendState == SEND_STATE_READY && highestProcessedSequence > lastAckedSequence;
+    }
+
+    /**
+     * True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
+     * uncommitted. While true, no cumulative OK ack may cover the deferred
+     * frames' sequences -- see {@link #setHighestProcessedSequence}.
+     */
+    public boolean hasUncommittedDeferredRows() {
+        return uncommittedDeferredRows;
     }
 
     public boolean isDeferCommit() {
@@ -491,6 +523,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         if (firstUnresolvedSequence == -1 || seq < firstUnresolvedSequence) {
             firstUnresolvedSequence = seq;
         }
+    }
+
+    /**
+     * Records that a FLAG_DEFER_COMMIT frame buffered rows into WAL writers
+     * without a covering commit. Cleared by {@link #commit()} (successful
+     * commitAll) or {@link #clear()} (rollback). The per-table force-commit
+     * at the max-uncommitted-rows cap does NOT clear this: it commits single
+     * tables and gives no full-coverage guarantee, so the watermark stays put
+     * and those rows are simply replayed (at-least-once) after a reconnect.
+     */
+    public void markUncommittedDeferredRows() {
+        uncommittedDeferredRows = true;
     }
 
     public long nextMessageSequence() {
@@ -925,6 +969,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     .$(", firstUnresolved=").$(firstUnresolvedSequence)
                     .$(']').$();
             this.highestProcessedSequence = Math.max(this.highestProcessedSequence, firstUnresolvedSequence - 1);
+            return;
+        }
+        // LAST-RESORT CONTAINMENT for the deferred-commit ack hole (#7144): while
+        // FLAG_DEFER_COMMIT rows sit uncommitted in WAL writers, a cumulative OK
+        // ack covering their frames would let the client trim slots the server
+        // can still roll back. The upgrade processor's ack path skips the
+        // advance for deferred frames entirely; if the watermark still tries to
+        // move while deferred rows are uncommitted, that path has regressed.
+        // Clamp and scream: the client stalls on acks and replays after the
+        // close -- an availability hit, never data loss.
+        if (uncommittedDeferredRows && highestProcessedSequence > this.highestProcessedSequence) {
+            LOG.critical().$('[').$(fd)
+                    .$("] cumulative-ack watermark tried to advance over uncommitted deferred rows; clamping [requested=")
+                    .$(highestProcessedSequence)
+                    .$(", current=").$(this.highestProcessedSequence)
+                    .$(']').$();
             return;
         }
         this.highestProcessedSequence = highestProcessedSequence;

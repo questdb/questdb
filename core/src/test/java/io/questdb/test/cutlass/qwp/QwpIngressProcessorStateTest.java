@@ -128,6 +128,99 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitReleasesDeferredWatermarkClamp() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Deferred rows buffered -> clamp armed.
+                state.markUncommittedDeferredRows();
+                Assert.assertTrue(state.hasUncommittedDeferredRows());
+
+                // The group-closing commit (commitAll) releases the clamp and
+                // the watermark may then cover the whole deferred group.
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
+                state.commit();
+                Assert.assertTrue(state.isOk());
+                Assert.assertFalse(state.hasUncommittedDeferredRows());
+
+                state.setHighestProcessedSequence(7);
+                Assert.assertEquals(7, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredClampResetOnClearAndDisconnect() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // clear() rolls the deferred rows back -> clamp released (the
+                // frames were never acked; the client replays them).
+                state.markUncommittedDeferredRows();
+                state.clear();
+                Assert.assertFalse(state.hasUncommittedDeferredRows());
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals(3, state.getHighestProcessedSequence());
+
+                // clearMessageState() (between deferred frames of one group)
+                // must NOT release the clamp -- the rows are still uncommitted.
+                state.markUncommittedDeferredRows();
+                state.clearMessageState();
+                Assert.assertTrue(state.hasUncommittedDeferredRows());
+
+                // onDisconnected() resets everything.
+                state.onDisconnected();
+                Assert.assertFalse(state.hasUncommittedDeferredRows());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testWatermarkClampedWhileDeferredRowsUncommitted() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Committed traffic advances the watermark normally.
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals(2, state.getHighestProcessedSequence());
+
+                // FLAG_DEFER_COMMIT rows buffered but uncommitted: the
+                // cumulative-ack watermark must refuse to advance -- an OK ack
+                // covering these frames would let a store-and-forward client
+                // trim slots whose rows the server can still roll back (the
+                // #7144 ack hole).
+                state.markUncommittedDeferredRows();
+                Assert.assertTrue(state.hasUncommittedDeferredRows());
+                state.setHighestProcessedSequence(5);
+                Assert.assertEquals("watermark must not advance over uncommitted deferred rows",
+                        2, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testCollectDurableProgressMultiTable() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
