@@ -51,6 +51,7 @@ import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -2619,6 +2620,210 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.close();
             }
         });
+    }
+
+    @Test
+    public void testOnFatalCloseBlockedFromResumeCloseClearsDeferredClose() throws Exception {
+        // The already-RESUME_CLOSE branch of onFatalCloseBlocked: a previous fatal close was partially
+        // flushed (onFatalCloseSendBlocked parked the CLOSE frame bytes and moved sendState to
+        // RESUME_CLOSE). A second fatal-close attempt behind it must NOT re-defer a code/reason -- the
+        // parked bytes ARE the CLOSE frame; the resume path finishes flushing them and disconnects. So
+        // the branch clears the just-stored deferred code/reason and leaves sendState at RESUME_CLOSE.
+        // Driven through the public API (no reflection) to pin the real production path.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Park a partially-flushed CLOSE frame: sendState -> RESUME_CLOSE, deferred close cleared.
+                state.onFatalCloseSendBlocked();
+                final int resumeClose = state.getSendState();
+                Assert.assertFalse("precondition: must not be READY", state.isSendReady());
+                Assert.assertEquals(-1, state.getDeferredCloseCode());
+
+                // A second fatal close arrives while the CLOSE frame is still parked.
+                state.onFatalCloseBlocked(1011, "internal error");
+
+                // The branch is idempotent: the parked CLOSE frame stands, the redundant code/reason are
+                // discarded, and the state stays RESUME_CLOSE (never re-deferred).
+                Assert.assertEquals("sendState must stay RESUME_CLOSE", resumeClose, state.getSendState());
+                Assert.assertEquals("deferred close code must be cleared", -1, state.getDeferredCloseCode());
+                Assert.assertEquals("deferred close reason must be cleared", 0, state.getDeferredCloseReason().length());
+
+                // Idempotent under repetition (a re-entered deferral must not resurrect a code/reason).
+                state.onFatalCloseBlocked(1013, "try again later");
+                Assert.assertEquals(resumeClose, state.getSendState());
+                Assert.assertEquals(-1, state.getDeferredCloseCode());
+                Assert.assertEquals(0, state.getDeferredCloseReason().length());
+
+                // Null reason path through the same branch.
+                state.onFatalCloseBlocked(1000, null);
+                Assert.assertEquals(resumeClose, state.getSendState());
+                Assert.assertEquals(-1, state.getDeferredCloseCode());
+                Assert.assertEquals(0, state.getDeferredCloseReason().length());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testOnFatalCloseBlockedTransitionTableCoversAllSendStates() throws Exception {
+        // Exhaustive transition table for onFatalCloseBlocked across every input sendState. Pins the
+        // full routing contract, including the RESUME_CLOSE idempotent branch and the ack/durable-ack
+        // collapse-to-*_THEN_CLOSE arms that keep the deferred code/reason for the resume path.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                final int READY = sendStateConst("SEND_STATE_READY");
+                final int RESUME_ACK = sendStateConst("SEND_STATE_RESUME_ACK");
+                final int RESUME_ERROR = sendStateConst("SEND_STATE_RESUME_ERROR");
+                final int RESUME_ACK_THEN_ERROR = sendStateConst("SEND_STATE_RESUME_ACK_THEN_ERROR");
+                final int RESUME_DURABLE_ACK = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK");
+                final int RESUME_DURABLE_ACK_THEN_ERROR = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR");
+                final int RESUME_CLOSE = sendStateConst("SEND_STATE_RESUME_CLOSE");
+                final int RESUME_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_ACK_THEN_CLOSE");
+                final int RESUME_DURABLE_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE");
+                final int RESUME_PONG = sendStateConst("SEND_STATE_RESUME_PONG");
+                final int RESUME_DRAIN_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DRAIN_THEN_CLOSE");
+
+                // ACK-family inputs collapse to RESUME_ACK_THEN_CLOSE, RETAINING the deferred code/reason.
+                for (int in : new int[]{RESUME_ACK, RESUME_ACK_THEN_ERROR, RESUME_ACK_THEN_CLOSE}) {
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(1011, "boom");
+                    Assert.assertEquals("input=" + in, RESUME_ACK_THEN_CLOSE, state.getSendState());
+                    Assert.assertEquals("input=" + in, 1011, state.getDeferredCloseCode());
+                    Assert.assertEquals("input=" + in, "boom", state.getDeferredCloseReason().toString());
+                }
+
+                // DURABLE-ACK-family inputs collapse to RESUME_DURABLE_ACK_THEN_CLOSE, RETAINING code/reason.
+                for (int in : new int[]{RESUME_DURABLE_ACK, RESUME_DURABLE_ACK_THEN_ERROR, RESUME_DURABLE_ACK_THEN_CLOSE}) {
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(1012, "later");
+                    Assert.assertEquals("input=" + in, RESUME_DURABLE_ACK_THEN_CLOSE, state.getSendState());
+                    Assert.assertEquals("input=" + in, 1012, state.getDeferredCloseCode());
+                    Assert.assertEquals("input=" + in, "later", state.getDeferredCloseReason().toString());
+                }
+
+                // RESUME_CLOSE stays put and CLEARS the redundant code/reason (parked bytes ARE the CLOSE).
+                setSendState(state, RESUME_CLOSE);
+                state.onFatalCloseBlocked(1011, "boom");
+                Assert.assertEquals(RESUME_CLOSE, state.getSendState());
+                Assert.assertEquals(-1, state.getDeferredCloseCode());
+                Assert.assertEquals(0, state.getDeferredCloseReason().length());
+
+                // All other inputs park behind a non-ack response: drain-then-close, RETAINING code/reason.
+                for (int in : new int[]{READY, RESUME_ERROR, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE}) {
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(1001, "going away");
+                    Assert.assertEquals("input=" + in, RESUME_DRAIN_THEN_CLOSE, state.getSendState());
+                    Assert.assertEquals("input=" + in, 1001, state.getDeferredCloseCode());
+                    Assert.assertEquals("input=" + in, "going away", state.getDeferredCloseReason().toString());
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testOnFatalCloseBlockedFuzz() throws Exception {
+        // Property fuzz over onFatalCloseBlocked: for a random input sendState, random close code and
+        // random reason (null / empty / non-empty), the method must never throw, must always leave the
+        // connection in a terminal close-bearing state, and must obey the retain-vs-clear contract:
+        //   RESUME_CLOSE   -> stays RESUME_CLOSE, deferred code/reason CLEARED
+        //   ACK family     -> RESUME_ACK_THEN_CLOSE, code/reason RETAINED
+        //   DURABLE family -> RESUME_DURABLE_ACK_THEN_CLOSE, code/reason RETAINED
+        //   everything else-> RESUME_DRAIN_THEN_CLOSE, code/reason RETAINED
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                final int READY = sendStateConst("SEND_STATE_READY");
+                final int RESUME_ACK = sendStateConst("SEND_STATE_RESUME_ACK");
+                final int RESUME_ERROR = sendStateConst("SEND_STATE_RESUME_ERROR");
+                final int RESUME_ACK_THEN_ERROR = sendStateConst("SEND_STATE_RESUME_ACK_THEN_ERROR");
+                final int RESUME_DURABLE_ACK = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK");
+                final int RESUME_DURABLE_ACK_THEN_ERROR = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR");
+                final int RESUME_CLOSE = sendStateConst("SEND_STATE_RESUME_CLOSE");
+                final int RESUME_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_ACK_THEN_CLOSE");
+                final int RESUME_DURABLE_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE");
+                final int RESUME_PONG = sendStateConst("SEND_STATE_RESUME_PONG");
+                final int RESUME_DRAIN_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DRAIN_THEN_CLOSE");
+
+                final int[] inputs = {
+                        READY, RESUME_ACK, RESUME_ERROR, RESUME_ACK_THEN_ERROR, RESUME_DURABLE_ACK,
+                        RESUME_DURABLE_ACK_THEN_ERROR, RESUME_CLOSE, RESUME_ACK_THEN_CLOSE,
+                        RESUME_DURABLE_ACK_THEN_CLOSE, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE
+                };
+
+                final long seed = System.nanoTime();
+                final Rnd rnd = new Rnd(seed, seed ^ 0x9E3779B97F4A7C15L);
+                final String msg = "onFatalCloseBlocked fuzz seed=" + seed;
+                for (int iter = 0; iter < 50_000; iter++) {
+                    final int in = inputs[rnd.nextInt(inputs.length)];
+                    final int code = rnd.nextInt();
+                    final int reasonKind = rnd.nextInt(3);
+                    final String reason = reasonKind == 0 ? null : (reasonKind == 1 ? "" : "r" + rnd.nextInt(1000));
+
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(code, reason);
+
+                    final int out = state.getSendState();
+                    if (in == RESUME_ACK || in == RESUME_ACK_THEN_ERROR || in == RESUME_ACK_THEN_CLOSE) {
+                        Assert.assertEquals(msg, RESUME_ACK_THEN_CLOSE, out);
+                        Assert.assertEquals(msg, code, state.getDeferredCloseCode());
+                        assertReason(msg, reason, state.getDeferredCloseReason());
+                    } else if (in == RESUME_DURABLE_ACK || in == RESUME_DURABLE_ACK_THEN_ERROR || in == RESUME_DURABLE_ACK_THEN_CLOSE) {
+                        Assert.assertEquals(msg, RESUME_DURABLE_ACK_THEN_CLOSE, out);
+                        Assert.assertEquals(msg, code, state.getDeferredCloseCode());
+                        assertReason(msg, reason, state.getDeferredCloseReason());
+                    } else if (in == RESUME_CLOSE) {
+                        Assert.assertEquals(msg, RESUME_CLOSE, out);
+                        Assert.assertEquals(msg, -1, state.getDeferredCloseCode());
+                        Assert.assertEquals(msg, 0, state.getDeferredCloseReason().length());
+                    } else {
+                        Assert.assertEquals(msg, RESUME_DRAIN_THEN_CLOSE, out);
+                        Assert.assertEquals(msg, code, state.getDeferredCloseCode());
+                        assertReason(msg, reason, state.getDeferredCloseReason());
+                    }
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    private static void assertReason(String msg, String expected, CharSequence actual) {
+        if (expected == null || expected.isEmpty()) {
+            Assert.assertEquals(msg, 0, actual.length());
+        } else {
+            Assert.assertEquals(msg, expected, actual.toString());
+        }
+    }
+
+    private static int sendStateConst(String name) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.getInt(null);
+    }
+
+    private static void setSendState(QwpIngressProcessorState state, int value) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField("sendState");
+        f.setAccessible(true);
+        f.setInt(state, value);
     }
 
     private static FakeConsumerTudCache installFakeTudCache(
