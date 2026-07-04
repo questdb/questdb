@@ -700,6 +700,35 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotStaticListWithQuotedContentValue() throws Exception {
+        // Documented limitation: a pivot value whose data genuinely begins and ends with a double
+        // quote AND contains a dot (or matches an operator token) cannot be distinguished from a
+        // compiler-protected alias, so toColumnName strips those quotes and the column surfaces as
+        // 'a.b' rather than '"a.b"'. This pins the tradeoff so it cannot drift silently; preserving
+        // such quotes would require tracking alias provenance out-of-band.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', '"a.b"', 10),
+                        ('B', '"a.b"', 20);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('"a.b"') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	a.b
+                            A	10
+                            B	20
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotSubqueryReturnsEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);

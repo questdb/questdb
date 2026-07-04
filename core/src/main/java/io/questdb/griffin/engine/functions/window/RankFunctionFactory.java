@@ -52,6 +52,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
@@ -192,7 +193,14 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 listColumnFilter.clear();
                 for (int i = 0, size = orderBy.size(); i < size; i++) {
                     ExpressionNode tok = orderBy.getQuick(i);
-                    int index = metadata.getColumnIndexQuiet(tok.token);
+                    // Resolve through SqlUtil so a compiler-protected alias (dotted or operator
+                    // token) is unquoted, matching toOrderIndices in the else branch and every
+                    // other window factory; a bare metadata lookup would miss it and add(0) would
+                    // corrupt the sort key.
+                    int index = SqlUtil.getColumnIndexQuiet(metadata, tok.token);
+                    if (index < 0) {
+                        throw SqlException.invalidColumn(tok.position, tok.token);
+                    }
                     listColumnFilter.add(index + 1);
                 }
 
