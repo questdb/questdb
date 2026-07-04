@@ -36,6 +36,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
@@ -146,7 +147,7 @@ public class GroupByUtils {
                     } else {
                         // it's either a function key or an aggregate function
                         m = new TableColumnMetadata(
-                                Chars.toString(column.getName()),
+                                SqlUtil.toColumnName(column.getName()),
                                 func.getType(),
                                 IndexType.NONE,
                                 0,
@@ -182,7 +183,7 @@ public class GroupByUtils {
                         m = baseMetadata.getColumnMetadata(index);
                     } else {
                         m = new TableColumnMetadata(
-                                Chars.toString(column.getAlias()),
+                                SqlUtil.toColumnName(column.getAlias()),
                                 baseMetadata.getColumnType(index),
                                 baseMetadata.getColumnIndexType(index),
                                 baseMetadata.getIndexValueBlockCapacity(index),

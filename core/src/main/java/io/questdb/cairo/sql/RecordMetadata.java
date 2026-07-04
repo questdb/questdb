@@ -30,6 +30,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.str.Utf16Sink;
 
 /**
@@ -70,6 +71,12 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
      * @return index of the column
      */
     default int getColumnIndexQuiet(CharSequence columnName) {
+        // The compiler protects aliases it cannot process verbatim (dotted names, operator
+        // tokens) by wrapping them in double quotes; metadata stores such names unquoted,
+        // so the lookup must strip the protective quotes the same way (see SqlUtil.toColumnName).
+        if (SqlUtil.isQuoteProtectedAlias(columnName)) {
+            return getColumnIndexQuiet(columnName, 1, columnName.length() - 1);
+        }
         return getColumnIndexQuiet(columnName, 0, columnName.length());
     }
 

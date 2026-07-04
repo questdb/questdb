@@ -788,7 +788,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"2024-01-01T00:00:00.000Z"	"2024-01-02T00:00:00.000Z"
+                            grp	2024-01-01T00:00:00.000Z	2024-01-02T00:00:00.000Z
                             A	10	20
                             B	30	40
                             """);
@@ -976,7 +976,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"1.5"	"2.5"
+                            grp	1.5	2.5
                             A	10	20
                             B	30	40
                             """);
@@ -1039,7 +1039,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"1.5"	"2.5"
+                            grp	1.5	2.5
                             A	10	20
                             B	30	40
                             """);
@@ -1097,7 +1097,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"192.168.1.1"	"192.168.1.2"
+                            grp	192.168.1.1	192.168.1.2
                             A	10	20
                             B	30	40
                             """);
@@ -1455,7 +1455,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"2024-01-01T00:00:00.000000Z"	"2024-01-02T00:00:00.000000Z"
+                            grp	2024-01-01T00:00:00.000000Z	2024-01-02T00:00:00.000000Z
                             A	10	20
                             B	30	40
                             """);

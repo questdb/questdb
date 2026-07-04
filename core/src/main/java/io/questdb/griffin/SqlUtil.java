@@ -1250,6 +1250,22 @@ public class SqlUtil {
     }
 
     /**
+     * Returns true when the alias carries protective double quotes added by
+     * {@link #createExprColumnAlias(CharacterStore, CharSequence, AbstractLowerCaseCharSequenceHashSet, LowerCaseCharSequenceIntHashMap, int, boolean)}
+     * (or by the parser for user aliases), i.e. the quoted content contains a dot or collides
+     * with an operator token, so the compiler could not process the bare name. A double-quoted
+     * alias whose content needs no protection (e.g. a string alias '"f,g"') is not considered
+     * protected: there the quotes are genuine content.
+     */
+    public static boolean isQuoteProtectedAlias(CharSequence alias) {
+        if (alias == null || !Chars.isDoubleQuoted(alias) || alias.length() < 3) {
+            return false;
+        }
+        final int hi = alias.length() - 1;
+        return Chars.indexOfLastUnquoted(alias, '.', 1, hi) > -1 || disallowedAliases.contains(alias, 1, hi);
+    }
+
+    /**
      * Returns true if the given expression node is a timestamp_floor or
      * timestamp_floor_utc function call.
      */
@@ -1461,6 +1477,21 @@ public class SqlUtil {
             return 0;
         }
         return TableUtils.packParquetConfig(encoding, packedCompression, packedLevel, bloomFilter);
+    }
+
+    /**
+     * Converts a projection alias to the user-visible result set column name by removing
+     * the protective double quotes {@link #createExprColumnAlias(CharacterStore, CharSequence, AbstractLowerCaseCharSequenceHashSet, LowerCaseCharSequenceIntHashMap, int, boolean)}
+     * wraps around aliases the compiler cannot process verbatim. The quotes are
+     * compiler-internal syntax, not part of the name, and must not leak into result set
+     * metadata. Aliases whose quotes are genuine content (see {@link #isQuoteProtectedAlias(CharSequence)})
+     * are returned as-is.
+     */
+    public static String toColumnName(CharSequence alias) {
+        if (isQuoteProtectedAlias(alias)) {
+            return Chars.toString(alias, 1, alias.length() - 1);
+        }
+        return Chars.toString(alias);
     }
 
     public static int toPersistedType(@NotNull CharSequence tok, int tokPosition) throws SqlException {

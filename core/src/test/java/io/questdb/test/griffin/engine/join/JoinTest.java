@@ -4463,7 +4463,7 @@ public class JoinTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
-                        "foo.bar"	1
+                        foo.bar	1
                         1	1
                         2	1
                         3	1

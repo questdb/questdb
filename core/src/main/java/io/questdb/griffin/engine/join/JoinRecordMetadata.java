@@ -102,6 +102,23 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     public void add(CharSequence tableAlias, TableColumnMetadata m) {
+        if (tableAlias != null && Chars.indexOfLastUnquoted(m.getColumnName(), '.') > -1) {
+            // The name is a plain column of the aliased side, so its dots are content, not
+            // "table.column" separators. Base factory metadata stores such names unquoted
+            // (SqlUtil.toColumnName), but this map's dot-splitting convention relies on the
+            // protective quotes - restore them locally. With a null alias the name is an
+            // already-composed prefixed form and must keep splitting at the dot.
+            final TableColumnMetadata quoted = new TableColumnMetadata(
+                    Misc.getThreadLocalSink().put('"').put(m.getColumnName()).put('"').toString(),
+                    m.getColumnType(),
+                    m.getIndexType(),
+                    m.getIndexValueBlockCapacity(),
+                    m.isSymbolTableStatic(),
+                    m.getMetadata()
+            );
+            quoted.setParquetEncodingConfig(m.getParquetEncodingConfig());
+            m = quoted;
+        }
         final CharSequence columnName = m.getColumnName();
         final int dot = addAlias(tableAlias, columnName);
         final Utf16Sink b = Misc.getThreadLocalSink();
@@ -133,6 +150,13 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
             add(alias, fromMetadata.getColumnMetadata(i));
         }
+    }
+
+    @Override
+    public int getColumnIndexQuiet(CharSequence columnName) {
+        // This metadata keeps protected names quoted internally (see add), so tokens must
+        // reach the map lookup verbatim - bypass the unquoting interface default.
+        return getColumnIndexQuiet(columnName, 0, columnName.length());
     }
 
     @Override
