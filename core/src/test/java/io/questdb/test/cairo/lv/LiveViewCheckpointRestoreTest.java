@@ -300,6 +300,24 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoresFirstValueIgnoreNullsUnboundedDouble() throws Exception {
+        // first_value(DOUBLE) IGNORE NULLS over a RANGE frame with an UNBOUNDED PRECEDING lower bound
+        // and a non-current-row upper bound (frameLoBounded == false) captures the first non-null value
+        // at physical ring index 0 and then uses firstIdx as a 0/1 capture flag. The window function
+        // accumulator is snapshotted into the head .cp; restore must reload it so post-restore rows
+        // still report the captured value. Regression for the snapshot that serialized in logical
+        // (firstIdx + i) order and so read a never-written slot once the flag flipped.
+        assertFirstValueIgnoreNullsUnboundedRestore("DOUBLE", "1.0", "2.0", "3.0");
+    }
+
+    @Test
+    public void testCheckpointRestoresFirstValueIgnoreNullsUnboundedLong() throws Exception {
+        // As testCheckpointRestoresFirstValueIgnoreNullsUnboundedDouble but for first_value(LONG),
+        // which shares the same buggy inline snapshot/restore in FirstValueLongWindowFunctionFactory.
+        assertFirstValueIgnoreNullsUnboundedRestore("LONG", "10", "20", "30");
+    }
+
+    @Test
     public void testCheckpointRestoresNonEmptyLiveView() throws Exception {
         // Create a live view with data and let it fully flush to disk, CHECKPOINT CREATE, then
         // advance the base past the checkpoint (rows that restore must roll back), restore, and
@@ -594,6 +612,56 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
         row.putSym(1, sym);
         row.putDouble(2, x);
         row.append();
+    }
+
+    // Drives a first_value(valueType) IGNORE NULLS live view over a RANGE frame with an UNBOUNDED
+    // PRECEDING lower bound (frameLoBounded == false) through checkpoint/restore and asserts
+    // convergence to a from-scratch recompute. The three pre-checkpoint rows per partition are
+    // (null, v, w): the null exercises IGNORE NULLS, v is captured at physical ring index 0, and w
+    // (more than the '2' SECOND upper offset past v) flips the accumulator's firstIdx to its 0/1
+    // capture-flag state. After restore, a fourth row (x) still holds v in its frame, so the reloaded
+    // accumulator - not a fresh one - decides its first_value. Under the pre-fix snapshot the restored
+    // ring holds garbage at index 0 and the fourth row reports it instead of v, diverging from the
+    // recompute.
+    private void assertFirstValueIgnoreNullsUnboundedRestore(
+            String valueType,
+            String v,
+            String w,
+            String x
+    ) throws Exception {
+        final String viewSql = "SELECT ts, sym, first_value(val) IGNORE NULLS OVER w AS fv FROM base " +
+                "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, val " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, val) VALUES " +
+                        "('2026-01-01T00:00:00.000000Z', 'a', null), " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', " + v + "), " +
+                        "('2026-01-01T00:00:10.000000Z', 'a', " + w + "), " +
+                        "('2026-01-01T00:00:00.000000Z', 'b', null), " +
+                        "('2026-01-01T00:00:01.000000Z', 'b', " + v + "), " +
+                        "('2026-01-01T00:00:10.000000Z', 'b', " + w + ")");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+
+                execute("CHECKPOINT CREATE");
+            }
+
+            restoreFromCheckpoint();
+            drainWalQueue();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, val) VALUES " +
+                        "('2026-01-01T00:00:20.000000Z', 'a', " + x + "), " +
+                        "('2026-01-01T00:00:20.000000Z', 'b', " + x + ")");
+                driveRefreshToQuiescence(job);
+            }
+            assertViewMatchesRecompute(viewSql);
+
+            execute("CHECKPOINT RELEASE");
+        });
     }
 
     // The live view must equal the same window recomputed directly over the base table. The view's

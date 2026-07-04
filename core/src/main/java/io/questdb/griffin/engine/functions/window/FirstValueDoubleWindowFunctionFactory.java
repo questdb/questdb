@@ -739,20 +739,29 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            // Full physical-ring restore mirroring snapshotPartitionState. The
+            // unbounded-lo IGNORE NULLS path uses firstIdx as a 0/1 capture flag
+            // (the captured value lives at physical index 0, not at firstIdx), so
+            // we cannot rebase to firstIdx=0; preserve capacity, size and firstIdx
+            // verbatim and copy every slot.
             final long size = source.getLong(offset);
             offset += Long.BYTES;
-            final long capacity = Math.max(size, initialBufferSize);
+            final long capacity = source.getLong(offset);
+            offset += Long.BYTES;
+            final long firstIdx = source.getLong(offset);
+            offset += Long.BYTES;
             final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            for (long i = 0; i < size; i++) {
-                memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+            for (long i = 0; i < capacity; i++) {
+                final long rec = newStartOffset + i * RECORD_SIZE;
+                memory.putLong(rec, source.getLong(offset));
                 offset += Long.BYTES;
-                memory.putDouble(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getDouble(offset));
+                memory.putDouble(rec + Long.BYTES, source.getDouble(offset));
                 offset += Double.BYTES;
             }
             value.putLong(0, newStartOffset);
             value.putLong(1, size);
             value.putLong(2, capacity);
-            value.putLong(3, 0L);
+            value.putLong(3, firstIdx);
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -760,16 +769,37 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
+        public int snapshotFormatVersion() {
+            // Bumped from the inherited v1 (which serialized in logical order via
+            // (firstIdx + i) % capacity and so read garbage when firstIdx was used
+            // as the 0/1 capture flag) to the full physical-ring layout.
+            return 2;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            // The v1 blocks captured garbage in the flag path, so there is nothing
+            // safe to decode; reject them and let the LV recompute from scratch.
+            return 2;
+        }
+
+        @Override
         public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            // Full physical-ring snapshot. The unbounded-lo IGNORE NULLS path uses
+            // firstIdx as a 0/1 capture flag (the captured value lives at physical
+            // index 0, not at firstIdx), so we cannot rebase to firstIdx=0; persist
+            // capacity, size and firstIdx verbatim and copy every slot.
             final long startOffset = value.getLong(0);
             final long size = value.getLong(1);
             final long capacity = value.getLong(2);
             final long firstIdx = value.getLong(3);
             sink.putLong(size);
-            for (long i = 0; i < size; i++) {
-                final long idx = (firstIdx + i) % capacity;
-                sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
-                sink.putDouble(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES));
+            sink.putLong(capacity);
+            sink.putLong(firstIdx);
+            for (long i = 0; i < capacity; i++) {
+                final long rec = startOffset + i * RECORD_SIZE;
+                sink.putLong(memory.getLong(rec));
+                sink.putDouble(memory.getDouble(rec + Long.BYTES));
             }
         }
     }

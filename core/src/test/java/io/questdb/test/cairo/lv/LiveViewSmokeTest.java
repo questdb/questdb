@@ -473,6 +473,70 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
+    // Regression for the first_value(DOUBLE|LONG) IGNORE NULLS unbounded-preceding-lo range frame
+    // accumulator snapshot. That path (FirstNotNullValueOverPartitionRangeFrameFunction with
+    // frameLoBounded == false, reached by a RANGE frame whose lower bound is UNBOUNDED PRECEDING and
+    // whose upper bound is not the current row) stores the first non-null value at physical ring index
+    // 0 and then uses firstIdx as a 0/1 capture flag. The pre-fix snapshot serialized in logical
+    // (firstIdx + i) order over size elements, so once the flag flipped to 1 it read a never-written
+    // slot instead of index 0, losing the captured value on restore. This drives (null, v, w) so v is
+    // captured and the flag flips (w lands more than the '2' SECOND upper offset past v), restarts
+    // in-process (which rehydrates the accumulator from the head .cp), then appends a fourth row (x).
+    // The restored accumulator - not a fresh one - decides x's first_value, so a lost captured value
+    // diverges from the recompute over the base.
+    private void assertFirstValueIgnoreNullsUnboundedRestartThenAppend(
+            String valueType,
+            String v,
+            String w,
+            String x
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, val " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, first_value(val) IGNORE NULLS OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, val) VALUES " +
+                        "('2026-01-01T00:00:00.000000Z', 'a', null), " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', " + v + "), " +
+                        "('2026-01-01T00:00:10.000000Z', 'a', " + w + "), " +
+                        "('2026-01-01T00:00:00.000000Z', 'b', null), " +
+                        "('2026-01-01T00:00:01.000000Z', 'b', " + v + "), " +
+                        "('2026-01-01T00:00:10.000000Z', 'b', " + w + ")");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+                assertFirstValueUnboundedLvMatchesRecompute();
+            }
+
+            // Simulated restart: rebuild the registry from on-disk state, then drive one refresh so the
+            // head .cp rehydrates the accumulator (firstIdx capture flag + captured value at index 0).
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // Append a new row whose frame still holds the captured value; the restored accumulator
+                // must report it, not a never-written ring slot.
+                execute("INSERT INTO base (ts, sym, val) VALUES " +
+                        "('2026-01-01T00:00:20.000000Z', 'a', " + x + "), " +
+                        "('2026-01-01T00:00:20.000000Z', 'b', " + x + ")");
+                drainWalQueue();
+                setCurrentMicros(750_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            assertFirstValueUnboundedLvMatchesRecompute();
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     private void assertMaxMinDecimalFrameRoundTrip(
             String fnName,
             String decimalType,
@@ -1160,6 +1224,21 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 sqlExecutionContext,
                 "(SELECT ts, sym, v, sum(x) OVER (PARTITION BY sym ORDER BY ts) AS s FROM base) ORDER BY 2, 1",
                 "(SELECT ts, sym, v, s FROM lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+    }
+
+    // Differential oracle for the first_value IGNORE NULLS unbounded-lo range restart test: the LV must
+    // equal the same windowed first_value recomputed straight over the base with the identical frame.
+    // ORDER BY sym, ts is a total order (timestamps are unique per sym).
+    private void assertFirstValueUnboundedLvMatchesRecompute() throws SqlException {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(SELECT ts, sym, first_value(val) IGNORE NULLS OVER (PARTITION BY sym ORDER BY ts " +
+                        "RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING) AS a FROM base) ORDER BY 2, 1",
+                "(SELECT ts, sym, a FROM lv) ORDER BY 2, 1",
                 LOG,
                 true
         );
@@ -3135,6 +3214,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     @Test
     public void testVarcharOutputRoundTrip() throws Exception {
         assertVarLengthOutputRoundTrip("VARCHAR", "rnd_varchar(1, 12, 3)", true);
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsUnboundedRestartThenAppendDouble() throws Exception {
+        assertFirstValueIgnoreNullsUnboundedRestartThenAppend("DOUBLE", "1.5", "2.5", "3.5");
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsUnboundedRestartThenAppendLong() throws Exception {
+        assertFirstValueIgnoreNullsUnboundedRestartThenAppend("LONG", "15", "25", "35");
     }
 
     @Test
