@@ -4889,6 +4889,212 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFlushRetryBudgetTransientTableMissDoesNotInvalidate() throws Exception {
+        // A transient "table does not exist" must NOT count toward the COUNT
+        // budget. handleRefreshFailure gates the tableTransient case
+        // (CairoException.isTableDoesNotExist()) on the wall-clock DURATION
+        // budget only, so a fast refresh worker cannot brick a healthy view
+        // inside the sub-millisecond CREATE deferred-name window (getWalWriter
+        // throws "table does not exist" until the name commits) or a concurrent
+        // DROP. We reproduce the transient by locking the LV's WAL writer pool:
+        // getWalWriter then raises EntryLockedException -> tableDoesNotExist.
+        // Complements testFlushRetryBudgetExhaustionInvalidatesView, which
+        // injects a generic (non-transient) CairoException and drives the
+        // opposite branch (retryCount >= max invalidates).
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 2);
+        // Large duration cap: the count trigger would fire first if the gate
+        // wrongly counted the transient.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, Micros.HOUR_MICROS);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Happy-path drain seeds lastFlushTimeUs and lvConsumedSeqTxn.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("LV must be valid after happy path", instance.isInvalid());
+
+                // Lock the LV's WAL writer pool: any getWalWriter(lvToken) now
+                // throws EntryLockedException, which getWalWriterUnsafe converts
+                // to CairoException.tableDoesNotExist. get0() throws on any locked
+                // entry regardless of the calling thread, so this fires even
+                // though the refresh runs on the test thread.
+                final TableToken lvToken = instance.getLiveViewToken();
+                Assert.assertTrue("must lock LV WAL writers", engine.lockWalWriters(lvToken));
+                try {
+                    // Drive well past CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX failing
+                    // cycles while keeping elapsed under the duration cap.
+                    for (int i = 0; i < 5; i++) {
+                        setCurrentMicros(200_000L * (i + 1));
+                        execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.00000" + (i + 2) + "Z', " + (i + 2) + ")");
+                        drainWalQueue();
+                        drainJob(job);
+                    }
+                    Assert.assertTrue("retryCount must climb past the count budget on the transient",
+                            instance.getFlushRetryCount() > 2);
+                    Assert.assertFalse("a transient table miss must NOT invalidate under the duration cap",
+                            instance.isInvalid());
+                } finally {
+                    engine.unlockWalWriters(lvToken);
+                }
+
+                // Once the transient clears, the next refresh succeeds, resets
+                // the retry budget, and the view catches up while still valid.
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must stay valid once the table resolves", instance.isInvalid());
+                Assert.assertEquals("retry budget resets after a successful refresh",
+                        0, instance.getFlushRetryCount());
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushRetryBudgetTransientTableMissInvalidatesOnDurationCap() throws Exception {
+        // The tableTransient gate is duration-bounded, not infinite: a table
+        // that never resolves (WAL writers stay locked past the wall-clock cap)
+        // still invalidates once elapsedUs >= the duration budget, so a
+        // genuinely broken view does not spin forever. The count budget is set
+        // high so only the duration trigger can fire here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 500_000L);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("LV must be valid after happy path", instance.isInvalid());
+
+                final TableToken lvToken = instance.getLiveViewToken();
+                Assert.assertTrue("must lock LV WAL writers", engine.lockWalWriters(lvToken));
+                try {
+                    // First failing cycle seeds flushRetryStartUs at the current
+                    // clock (elapsedUs == 0), so it must not yet invalidate.
+                    setCurrentMicros(100_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000002Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    Assert.assertFalse("first transient failure must not yet invalidate", instance.isInvalid());
+                    Assert.assertTrue("first transient failure records a retry", instance.getFlushRetryCount() >= 1);
+
+                    // Advance past the duration cap and drive another cycle: the
+                    // transient now exceeds the wall-clock budget and invalidates.
+                    setCurrentMicros(1_000_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000003Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                    Assert.assertTrue("a never-resolving table must invalidate on the duration cap",
+                            instance.isInvalid());
+                    Assert.assertTrue(
+                            "invalidation reason must mention flush retry [reason=" + instance.getInvalidationReason() + "]",
+                            Chars.contains(instance.getInvalidationReason(), "flush retry budget")
+                    );
+                } finally {
+                    engine.unlockWalWriters(lvToken);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testSameTimestampAdditiveAcrossCommitsMatchesRecompute() throws Exception {
+        // Convergence guard for the additive O3 trigger's STRICT comparison.
+        // drainBaseWal treats a commit as cross-commit O3 only when its min ts
+        // is strictly below the frontier (txnMinTs < latestSeen, near
+        // LiveViewRefreshJob line 1301), so a row that repeats an
+        // already-materialized timestamp in a LATER commit is appended forward
+        // rather than replayed. A review raised this as a possible divergence
+        // for a peer-grouping RANGE frame, on the assumption that a full
+        // recompute equalizes same-ts peers to one aggregate.
+        //
+        // It does not: QuestDB's RANGE ... AND CURRENT ROW emits a running value
+        // per physical row (each row's frame is [ts - offset, its own ts], and
+        // within one ts the running total advances in physical order) - it does
+        // NOT retroactively equalize earlier same-ts peers. So the forward
+        // append produces exactly what a from-scratch recompute produces, and
+        // the strict trigger is correct: flipping it to <= would only force a
+        // needless O3 replay on every same-microsecond append. This test pins
+        // that equality (the LV fuzz oracle uses unique-increasing timestamps,
+        // so it never exercises the same-ts path).
+        assertMemoryLeak(() -> {
+            final String frame =
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW)";
+            final String recompute = "SELECT ts, sym, s FROM " +
+                    "(SELECT ts, sym, sum(x) OVER w AS s FROM base " + frame + ") ORDER BY ts, s";
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " + frame);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Commit 1: a single row at T for sym 'a'; latestSeenTs -> T.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-08-01T00:00:00.000000Z', 'a', 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Commit 2 (separate cycle): a SAME-ts peer row at T. txnMinTs
+                // (T) == latestSeen (T), so the strict trigger classifies it
+                // in-order and it is appended forward, not replayed.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-08-01T00:00:00.000000Z', 'a', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Commit 3: a strictly-later row inside the 2h range, forwarding
+                // the running total over both T peers plus itself.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-08-01T01:00:00.000000Z', 'a', 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The from-scratch recompute is the oracle: 3.0, then 3+5=8.0 at
+                // the second T peer, then 3+5+2=10.0 at T+1h.
+                assertQuery(recompute)
+                        .noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                                "2026-08-01T00:00:00.000000Z\ta\t3.0\n" +
+                                "2026-08-01T00:00:00.000000Z\ta\t8.0\n" +
+                                "2026-08-01T01:00:00.000000Z\ta\t10.0\n");
+                // The live view's incrementally-appended output matches it byte
+                // for byte - no stale same-ts peer.
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts, s")
+                        .noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                                "2026-08-01T00:00:00.000000Z\ta\t3.0\n" +
+                                "2026-08-01T00:00:00.000000Z\ta\t8.0\n" +
+                                "2026-08-01T01:00:00.000000Z\ta\t10.0\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSchemaChangeNarrowsToReferencedColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, z INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
