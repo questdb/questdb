@@ -4268,7 +4268,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long appliedMaxBaseSeqTxn = engine.readLiveViewAppliedMaxBaseSeqTxn(token);
         if (appliedMaxBaseSeqTxn > instance.getStateReader().getLastProcessedSeqTxn()) {
             try {
-                engine.applyLiveViewData(token, appliedMaxBaseSeqTxn, blockFileWriter, path);
+                // waitForUnfrozen=false: this runs on the refresh worker while it holds the
+                // refresh latch, so the startCheckpoint handshake already serialises the
+                // rewrite against the agent's copy. Parking here would deadlock the worker
+                // against a concurrent checkpoint freeze.
+                engine.applyLiveViewData(token, appliedMaxBaseSeqTxn, blockFileWriter, path, false);
                 LOG.info().$("reconciled live view floor to applied state on restart [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", maxBaseSeqTxn=").$(appliedMaxBaseSeqTxn).I$();

@@ -523,10 +523,14 @@ public class CairoEngine implements Closeable, WriterSource {
             return;
         }
         synchronized (instance) {
-            // Queue this _lv.s rewrite behind any in-progress checkpoint freeze so
-            // the snapshot agent's raw file copy is not raced by the rewrite below,
-            // matching the invalidation paths and the waitForUnfrozen() contract.
-            instance.waitForUnfrozen();
+            // No waitForUnfrozen() here: the only caller is the refresh worker, which holds
+            // the refresh latch across the whole turn. startCheckpoint sets freezeInProgress
+            // then takes-and-releases that same latch before its file copy, so the copy
+            // cannot begin until this rewrite's turn releases the latch -- the handshake
+            // already serialises the two. Parking on waitForUnfrozen() while holding the
+            // latch would instead deadlock: startCheckpoint spins for the latch this worker
+            // still holds, and only endCheckpoint (never reached) clears the freeze. This is
+            // the same lock-order inversion invalidateLiveView avoids by running off-latch.
             LiveViewStateReader reader = instance.getStateReader();
             if (maxBaseSeqTxn <= reader.getLvConsumedSeqTxn()) {
                 return;
@@ -586,6 +590,34 @@ public class CairoEngine implements Closeable, WriterSource {
             BlockFileWriter blockFileWriter,
             Path path
     ) {
+        // The replica apply job (ApplyWal2TableJob) holds no refresh latch, so it must
+        // wait out any in-progress checkpoint freeze itself before rewriting _lv.s.
+        applyLiveViewData(liveViewToken, maxBaseSeqTxn, blockFileWriter, path, true);
+    }
+
+    /**
+     * As {@link #applyLiveViewData(TableToken, long, BlockFileWriter, Path)}, but with an
+     * explicit choice of whether to park on {@link LiveViewInstance#waitForUnfrozen()}
+     * before the {@code _lv.s} rewrite.
+     * <p>
+     * Pass {@code waitForUnfrozen == true} from the out-of-band replica apply job, which
+     * holds no refresh latch: it must serialise its rewrite against a concurrent checkpoint
+     * copy the same way {@link #invalidateLiveView} does.
+     * <p>
+     * Pass {@code waitForUnfrozen == false} from the in-band refresh-worker caller
+     * ({@code reconcileAppliedFloorAfterRestart}), which runs while the worker holds the
+     * refresh latch. There the {@code startCheckpoint} latch handshake already serialises
+     * this rewrite against the agent's copy, and parking on {@code waitForUnfrozen()} while
+     * holding the latch would deadlock -- the agent spins for the latch this worker holds,
+     * and only {@code endCheckpoint} (never reached) clears the freeze.
+     */
+    public void applyLiveViewData(
+            TableToken liveViewToken,
+            long maxBaseSeqTxn,
+            BlockFileWriter blockFileWriter,
+            Path path,
+            boolean waitForUnfrozen
+    ) {
         if (maxBaseSeqTxn < 0) {
             return;
         }
@@ -594,10 +626,11 @@ public class CairoEngine implements Closeable, WriterSource {
             return;
         }
         synchronized (instance) {
-            // Queue this _lv.s rewrite behind any in-progress checkpoint freeze so
-            // the snapshot agent's raw file copy is not raced by the rewrite below,
-            // matching the invalidation paths and the waitForUnfrozen() contract.
-            instance.waitForUnfrozen();
+            if (waitForUnfrozen) {
+                // Off-latch caller: queue this _lv.s rewrite behind any in-progress checkpoint
+                // freeze so the snapshot agent's raw file copy is not raced by the rewrite below.
+                instance.waitForUnfrozen();
+            }
             LiveViewStateReader reader = instance.getStateReader();
             if (maxBaseSeqTxn <= reader.getLastProcessedSeqTxn()) {
                 return;

@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
@@ -53,6 +54,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -128,6 +130,24 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     private static final String CLOCK_START = "2026-01-01T00:00:00.000000Z";
     private static final String DATA_START = "2027-01-01T00:00:00.000000Z";
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
+
+    @Test
+    public void testCheckpointFreezeDuringLatchHeldRewriteDoesNotDeadlock() throws Exception {
+        // Deterministic regression for the CHECKPOINT <-> refresh-worker deadlock.
+        // advanceLiveViewConsumedSeqTxn (and the in-band applyLiveViewData reconcile
+        // path) rewrite _lv.s while the refresh worker holds the refresh latch.
+        // DatabaseCheckpointAgent.startCheckpoint sets freezeInProgress then spins for
+        // that same latch with no timeout. If the latch-held rewrite parked on
+        // waitForUnfrozen(), the worker would wait for an unfreeze only endCheckpoint
+        // delivers - and endCheckpoint is never reached because startCheckpoint is
+        // still spinning for the latch the parked worker holds. A permanent hang of
+        // CHECKPOINT plus the shared refresh worker. The startCheckpoint latch
+        // handshake already serialises the rewrite against the agent's file copy, so
+        // the latch-held path must not wait. This forces exactly the deadlock window:
+        // the worker takes the latch, the agent arms the freeze, then the worker runs
+        // the rewrite while frozen.
+        assertMemoryLeak(this::runCheckpointFreezeDuringLatchHeldRewrite);
+    }
 
     @Test
     public void testConcurrentCheckpointDuringRefresh() throws Exception {
@@ -222,6 +242,17 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         // surface, now from genuinely concurrent commits rather than shuffled inserts).
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runConcurrent(rnd, 1, 6, 600, false, false));
+    }
+
+    @Test
+    public void testOffLatchReplicaApplyWaitsForCheckpointFreeze() throws Exception {
+        // Companion to the deadlock regression: proves the M3 protection survives on
+        // the path that genuinely needs it. The replica apply job (ApplyWal2TableJob)
+        // rewrites _lv.s WITHOUT holding the refresh latch, so the startCheckpoint
+        // latch handshake cannot serialise it - it must park on waitForUnfrozen() and
+        // resume only after endCheckpoint. This drives a freeze, then an off-latch
+        // applyLiveViewData, and asserts the rewrite blocks until the freeze clears.
+        assertMemoryLeak(this::runOffLatchReplicaApplyWaitsForFreeze);
     }
 
     @Test
@@ -677,6 +708,106 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 LOG,
                 true
         );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    private void runCheckpointFreezeDuringLatchHeldRewrite() throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS "
+                + "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+
+        // One committed base row so the view carries a real durable _lv.s to rewrite.
+        final TableToken baseToken = engine.verifyTableName("base");
+        try (WalWriter w = engine.getWalWriter(baseToken)) {
+            appendRow(w, MicrosTimestampDriver.floor(DATA_START), 0, 1, 1.0);
+            w.commit();
+        }
+        drainWalQueue();
+
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final TableToken lvToken = instance.getLiveViewToken();
+        // Advance both floors so each rewrite runs its full body instead of
+        // short-circuiting at the <= guard (the guard sits after the removed wait).
+        final long advanceConsumed = instance.getStateReader().getLvConsumedSeqTxn() + 1;
+        final long advanceApplied = instance.getStateReader().getLastProcessedSeqTxn() + 1;
+
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final CountDownLatch latchHeld = new CountDownLatch(1);
+
+        // Worker: mirrors refreshInstance - takes the refresh latch for the whole
+        // turn, then (once the agent has armed the freeze mid-turn) runs the two
+        // latch-held _lv.s rewrites. Pre-fix, the first parks forever in
+        // waitForUnfrozen() while still holding the latch.
+        final Thread worker = new Thread(() -> {
+            try (
+                    BlockFileWriter bfw = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                    Path path = new Path()
+            ) {
+                Assert.assertTrue(instance.tryLockForRefresh());
+                try {
+                    latchHeld.countDown();
+                    // Spin until the agent publishes freezeInProgress=true, so the
+                    // rewrites below run strictly inside the freeze window.
+                    final long deadline = System.currentTimeMillis() + 60_000;
+                    while (!instance.isFreezeInProgress()) {
+                        if (System.currentTimeMillis() > deadline) {
+                            throw new AssertionError("checkpoint freeze was never armed");
+                        }
+                        Thread.onSpinWait();
+                    }
+                    engine.advanceLiveViewConsumedSeqTxn(lvToken, advanceConsumed, bfw, path);
+                    // The in-band reconcile caller uses the no-wait applyLiveViewData variant.
+                    engine.applyLiveViewData(lvToken, advanceApplied, bfw, path, false);
+                } finally {
+                    instance.unlockAfterRefresh();
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "lv-worker");
+
+        // Agent: mirrors DatabaseCheckpointAgent - once the worker holds the latch,
+        // startCheckpoint publishes freezeInProgress and then spins for that same
+        // latch, blocking until the worker releases it after its rewrites.
+        final Thread agent = new Thread(() -> {
+            try {
+                latchHeld.await();
+                instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+                instance.endCheckpoint();
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "lv-checkpoint-agent");
+
+        worker.start();
+        agent.start();
+
+        worker.join(60_000);
+        if (worker.isAlive()) {
+            // Pre-fix deadlock. Interrupt to unwind (waitForUnfrozen returns on
+            // interrupt), join both threads, then fail.
+            worker.interrupt();
+            worker.join(60_000);
+            agent.join(60_000);
+            Assert.fail("advanceLiveViewConsumedSeqTxn deadlocked against a concurrent checkpoint freeze while holding the refresh latch");
+        }
+        agent.join(60_000);
+        Assert.assertFalse("checkpoint agent thread did not finish", agent.isAlive());
+
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("worker thread failed", errors.peek());
+        }
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -1311,6 +1442,85 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 LOG,
                 true
         );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    private void runOffLatchReplicaApplyWaitsForFreeze() throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS "
+                + "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        try (WalWriter w = engine.getWalWriter(baseToken)) {
+            appendRow(w, MicrosTimestampDriver.floor(DATA_START), 0, 1, 1.0);
+            w.commit();
+        }
+        drainWalQueue();
+
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final TableToken lvToken = instance.getLiveViewToken();
+        final long advanceApplied = instance.getStateReader().getLastProcessedSeqTxn() + 1;
+
+        // Arm the freeze from the main thread. Nothing holds the refresh latch, so
+        // startCheckpoint takes-and-releases it at once and returns with
+        // freezeInProgress still set (cleared only by endCheckpoint below).
+        instance.startCheckpoint(instance.getStateReader().getAppliedWatermark());
+
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final AtomicBoolean applied = new AtomicBoolean(false);
+        final CountDownLatch entered = new CountDownLatch(1);
+
+        // Off-latch replica apply: the default (waiting) applyLiveViewData variant must
+        // park on waitForUnfrozen() while the freeze is in progress, since no refresh
+        // latch serialises it against the agent's copy.
+        final Thread replicaApply = new Thread(() -> {
+            try (
+                    BlockFileWriter bfw = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+                    Path path = new Path()
+            ) {
+                entered.countDown();
+                engine.applyLiveViewData(lvToken, advanceApplied, bfw, path);
+                applied.set(true);
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "lv-replica-apply");
+        replicaApply.start();
+
+        try {
+            entered.await();
+            // Wait until the thread parks on the instance monitor inside
+            // waitForUnfrozen(). Object.wait() surfaces as WAITING; poll until it
+            // settles there so the assertion is not racing thread startup.
+            final long deadline = System.currentTimeMillis() + 60_000;
+            while (replicaApply.getState() != Thread.State.WAITING) {
+                if (System.currentTimeMillis() > deadline) {
+                    throw new AssertionError("off-latch apply did not park on the freeze gate");
+                }
+                Thread.onSpinWait();
+            }
+            Assert.assertFalse("off-latch apply completed while the checkpoint freeze was active", applied.get());
+        } finally {
+            // Release the freeze; the parked apply must now complete.
+            instance.endCheckpoint();
+        }
+
+        replicaApply.join(60_000);
+        Assert.assertFalse("off-latch apply did not resume after endCheckpoint", replicaApply.isAlive());
+        Assert.assertTrue("off-latch apply did not complete after the freeze cleared", applied.get());
+
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("replica apply thread failed", errors.peek());
+        }
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
