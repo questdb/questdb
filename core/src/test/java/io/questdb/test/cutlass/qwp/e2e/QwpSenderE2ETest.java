@@ -2737,7 +2737,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT count() FROM defer_no_ack")
                     .noLeakCheck()
-                    .returnsOnce("count\n21\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n21\n");
         });
     }
 
@@ -2770,7 +2772,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertQuery("SELECT count() FROM defer_eager_ack")
                     .noLeakCheck()
-                    .returnsOnce("count\n4\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n4\n");
         });
     }
 
