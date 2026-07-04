@@ -596,6 +596,62 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotStaticListWithDottedValues() throws Exception {
+        // A static IN-list dotted value goes through the SqlParser alias path (distinct from the
+        // dynamic subquery path the *Type tests cover); its column name must be clean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 3.0', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 3.0', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('FNCL 2.5', 'FNCL 3.0') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	FNCL 2.5	FNCL 3.0
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithOperatorTokenValues() throws Exception {
+        // Values that collide with operator tokens ('in', 'and') are quote-protected internally;
+        // the result set surfaces the clean names, not "in" / "and".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'and') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	and
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotSubqueryReturnsEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
@@ -1490,6 +1546,39 @@ public class PivotTest extends AbstractSqlParserTest {
                             grp\tX\tY
                             A\t10\t20
                             B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotToTableWithOperatorTokenColumnNames() throws Exception {
+        // Operator-token pivot values now yield clean physical column names, so CREATE TABLE AS
+        // SELECT succeeds (the old "in"-with-quotes name was rejected as invalid) and the columns
+        // remain addressable via quoted identifiers.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) FOR cat IN ('in', 'and') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("""
+                    SELECT grp, "in", "and" FROM pivoted ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	and
+                            A	10	20
+                            B	30	40
                             """);
         });
     }

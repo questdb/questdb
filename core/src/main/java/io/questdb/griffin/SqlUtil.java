@@ -1662,11 +1662,20 @@ public class SqlUtil {
             return base;
         }
 
+        // A quote-protected base (e.g. the dotted user alias "a.b") must stay protected after
+        // deduplication so it keeps stripping to a clean display name. The sequence suffix goes
+        // inside the closing quote ("a.b" -> "a.b1"), never after it ("a.b"1 would fail
+        // isQuoteProtectedAlias and leak the quotes into the result set metadata).
+        final boolean quoteProtected = isQuoteProtectedAlias(base);
+
         final CharacterStoreEntry characterStoreEntry = store.newEntry();
 
         if (indexOfDot == -1) {
             if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NULL) {
                 characterStoreEntry.put("column");
+            } else if (quoteProtected) {
+                // drop the closing quote; the loop re-appends it after the sequence suffix
+                characterStoreEntry.put(base, 0, base.length() - 1);
             } else {
                 characterStoreEntry.put(base);
             }
@@ -1687,9 +1696,12 @@ public class SqlUtil {
         }
 
         while (true) {
+            characterStoreEntry.trimTo(baseAliasLen);
             if (sequence > 0) {
-                characterStoreEntry.trimTo(baseAliasLen);
                 characterStoreEntry.put(sequence);
+            }
+            if (quoteProtected) {
+                characterStoreEntry.put('"');
             }
             sequence++;
             if (aliasToColumnMap.excludes(characterStoreEntry.toImmutable())) {

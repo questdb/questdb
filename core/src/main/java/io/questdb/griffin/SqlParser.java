@@ -4479,7 +4479,10 @@ public class SqlParser {
                 do {
                     CharSequence colNameTok = tok(lexer, "column name");
                     assertNameIsQuotedOrNotAKeyword(colNameTok, lexer.lastTokenPosition());
-                    CharSequence colName = GenericLexer.immutableOf(unquote(colNameTok));
+                    // keep the protective quotes on a dotted name so its dots stay content,
+                    // not a table.column separator (matches the SELECT-alias convention)
+                    boolean unquoting = Chars.indexOf(colNameTok, '.') == -1;
+                    CharSequence colName = GenericLexer.immutableOf(unquoting ? unquote(colNameTok) : colNameTok);
                     CharSequence typeName = tok(lexer, "column type");
                     int type = ColumnType.typeOf(typeName);
                     if (type == -1) {
@@ -4551,7 +4554,10 @@ public class SqlParser {
                 tok = tok(lexer, "column alias");
                 int aliasPos = lexer.lastTokenPosition();
                 assertNameIsQuotedOrNotAKeyword(tok, aliasPos);
-                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(unquote(tok)));
+                // keep the protective quotes on a dotted alias so its dots stay content,
+                // not a table.column separator (matches the SELECT-alias convention)
+                boolean unquoting = Chars.indexOf(tok, '.') == -1;
+                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(unquoting ? unquote(tok) : tok));
                 if (firstExcessAliasPos == -1
                         && unnestModel.getUnnestColumnAliases().size() > maxAliases) {
                     firstExcessAliasPos = aliasPos;

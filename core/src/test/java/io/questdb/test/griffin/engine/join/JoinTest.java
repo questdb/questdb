@@ -4455,6 +4455,23 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoiningSubqueriesWithDuplicateDottedColumnNames() throws Exception {
+        // Two join sides project the same dotted alias; wildcard deduplication must keep the
+        // second name quote-protected so it also strips to a clean display name ("a.b" / "a.b1",
+        // not "a.b" / "a.b"1 with leaked quotes).
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT * FROM (SELECT 1 AS "a.b") t1 CROSS JOIN (SELECT 2 AS "a.b") t2
+                """)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        a.b	a.b1
+                        1	2
+                        """));
+    }
+
+    @Test
     public void testJoiningSubqueryWithDotInColumnName() throws Exception {
         assertMemoryLeak(() -> assertQuery("""
                 SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))

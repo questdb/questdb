@@ -76,6 +76,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             boolean symbolTableStatic,
             RecordMetadata metadata
     ) {
+        columnName = protectDottedColumnName(tableAlias, columnName);
         int dot = addAlias(tableAlias, columnName);
         final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
@@ -102,30 +103,14 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     public void add(CharSequence tableAlias, TableColumnMetadata m) {
-        if (tableAlias != null && Chars.indexOfLastUnquoted(m.getColumnName(), '.') > -1) {
-            // The name is a plain column of the aliased side, so its dots are content, not
-            // "table.column" separators. Base factory metadata stores such names unquoted
-            // (SqlUtil.toColumnName), but this map's dot-splitting convention relies on the
-            // protective quotes - restore them locally. With a null alias the name is an
-            // already-composed prefixed form and must keep splitting at the dot.
-            final TableColumnMetadata quoted = new TableColumnMetadata(
-                    Misc.getThreadLocalSink().put('"').put(m.getColumnName()).put('"').toString(),
-                    m.getColumnType(),
-                    m.getIndexType(),
-                    m.getIndexValueBlockCapacity(),
-                    m.isSymbolTableStatic(),
-                    m.getMetadata()
-            );
-            quoted.setParquetEncodingConfig(m.getParquetEncodingConfig());
-            m = quoted;
-        }
-        final CharSequence columnName = m.getColumnName();
+        final CharSequence columnName = protectDottedColumnName(tableAlias, m.getColumnName());
         final int dot = addAlias(tableAlias, columnName);
-        final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1 && tableAlias != null) {
+            // qualify the column with its side's alias; a re-quoted dotted name lands here too
+            // (dot == -1 after quoting), producing alias."a.b"
             cm = new TableColumnMetadata(
-                    b.put(tableAlias).put('.').put(columnName).toString(),
+                    Misc.getThreadLocalSink().put(tableAlias).put('.').put(columnName).toString(),
                     m.getColumnType(),
                     m.getIndexType(),
                     m.getIndexValueBlockCapacity(),
@@ -217,6 +202,18 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             // we would treat this lookup as if column hadn't been found.
             value.putInt(0, -1);
         }
+    }
+
+    // Restores the protective quotes around a plain column of an aliased side, whose dots are
+    // content rather than a "table.column" separator. Base factory metadata stores such names
+    // unquoted (SqlUtil.toColumnName), but this map's dot-splitting convention keys on the
+    // quotes; with a null alias the name is an already-composed prefixed form and must keep
+    // splitting at the dot, so it is left untouched.
+    private CharSequence protectDottedColumnName(CharSequence tableAlias, CharSequence columnName) {
+        if (tableAlias != null && Chars.indexOfLastUnquoted(columnName, '.') > -1) {
+            return Misc.getThreadLocalSink().put('"').put(columnName).put('"').toString();
+        }
+        return columnName;
     }
 
     static {

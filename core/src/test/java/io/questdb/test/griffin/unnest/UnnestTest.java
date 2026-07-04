@@ -245,6 +245,34 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDottedColumnAlias() throws Exception {
+        // A dotted UNNEST column alias keeps its dots as content, not a table.column separator:
+        // the column surfaces with a clean name and resolves through a qualified reference.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1))");
+            assertQuery("""
+                    SELECT u."a.b" FROM t, UNNEST(t.arr) u("a.b") ORDER BY u."a.b"
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a.b
+                            1.0
+                            2.0
+                            """);
+            assertQuery("""
+                    SELECT * FROM t, UNNEST(t.arr) u("a.b")
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            arr	a.b
+                            [1.0,2.0]	1.0
+                            [1.0,2.0]	2.0
+                            """);
+        });
+    }
+
+    @Test
     public void testEmptyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ARRAY[]::DOUBLE[] arr FROM long_sequence(1))");

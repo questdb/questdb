@@ -79,8 +79,10 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
     }
 
     /**
-     * Gets the numeric index of a column by name.
-     * Will not throw an exception if the column does not exist.
+     * Gets the numeric index of a column by name over the {@code [lo, hi)} slice of the
+     * given sequence. Like {@link #getColumnIndexQuiet(CharSequence)}, the lookup is verbatim:
+     * the slice is matched as-is, with no compiler-alias unquoting. Will not throw an exception
+     * if the column does not exist.
      *
      * @param columnName name of the column
      * @param lo         the low boundary index of the columnName chars, inclusive
