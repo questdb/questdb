@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
@@ -554,6 +555,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             try {
                 if (cleanupTable(tableToken, predicate)) {
                     workDone = true;
+                    // Advisory: reclaiming from an AGGREGATING (non-passthrough) view is best-effort - a later
+                    // incremental/full refresh can regenerate reclaimed rows from base rows that still exist.
+                    // Surface it so operators can align base-table retention with the EXPIRE ROWS horizon.
+                    final MatViewDefinition def = engine.getMatViewGraph().getViewDefinition(tableToken);
+                    if (def != null && !def.isPassthrough()) {
+                        LOG.advisory().$("reclaimed expired rows from an aggregating materialized view; a later refresh may regenerate them - align base-table retention with the EXPIRE ROWS horizon [view=")
+                                .$safe(tableKey).I$();
+                    }
                 }
             } catch (Throwable th) {
                 LOG.error().$("row-expiry cleanup failed [table=").$safe(tableKey)

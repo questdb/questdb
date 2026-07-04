@@ -5433,11 +5433,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (clause.nextTok != null && !isSemicolon(clause.nextTok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(clause.nextTok).put("] while trying to set row-expiry policy");
         }
-        // EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views, for EVERY mode
-        // (scalar WHEN included). (ALTER ... SET EXPIRE on a plain table is rejected earlier in the grammar.)
+        // EXPIRE ROWS is a materialized-view feature (a plain table uses TTL; ALTER ... SET EXPIRE on a base
+        // table is rejected earlier in the grammar). On an AGGREGATING (non-passthrough) view it is ALLOWED but
+        // advisory: physical cleanup reclaims rows a later incremental/full refresh can regenerate from the
+        // base, so reclamation only "sticks" when base-table retention is aligned with the expiry horizon.
+        // Reads stay correct regardless (the read filter is authoritative); warn rather than reject.
         final MatViewDefinition def = tableToken.isMatView() ? engine.getMatViewGraph().getViewDefinition(tableToken) : null;
-        if (def == null || !def.isPassthrough()) {
-            throw SqlException.$(tableNamePosition, "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views");
+        if (def == null) {
+            throw SqlException.$(tableNamePosition, "EXPIRE ROWS is only supported on materialized views");
+        }
+        if (!def.isPassthrough()) {
+            LOG.advisory().$("EXPIRE ROWS set on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
+                    .$safe(tableToken.getTableName()).I$();
         }
         // A view that other materialized views derive from must not gain an EXPIRE policy: those dependents
         // read this view's RAW rows on refresh (the read filter is disabled then), so they would copy rows
@@ -5540,12 +5547,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
         final int pos = createTableOp.getTableNamePosition();
-        // EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views, for EVERY mode
-        // (scalar WHEN included): the cleanup job physically reclaims rows, which only makes sense when the
-        // view mirrors base rows 1:1. An aggregating view's rows are derived, so deleting them would diverge
-        // from the defining query until a full refresh.
+        // EXPIRE ROWS on an AGGREGATING (non-passthrough) view is ALLOWED but advisory. The cleanup job
+        // physically reclaims rows; a passthrough view mirrors base rows 1:1 so reclamation is permanent, but
+        // an aggregating view's rows are DERIVED - a later incremental/full refresh can regenerate a reclaimed
+        // row from base rows that still exist. Reads stay correct (the read filter is authoritative); physical
+        // reclamation only "sticks" when base-table retention is aligned with the expiry horizon. Warn so the
+        // operator can tune retention rather than rejecting the policy outright.
         if (!createMatViewOp.isPassthrough()) {
-            throw SqlException.$(pos, "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views");
+            LOG.advisory().$("EXPIRE ROWS on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
+                    .$safe(createTableOp.getTableName()).I$();
         }
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             validateKeepLatestColumns(selectMetadata, predicate, pos);
