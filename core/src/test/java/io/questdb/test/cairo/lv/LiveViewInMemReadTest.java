@@ -258,6 +258,70 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInMemSymbolGetSymBIndependentOfGetSymA() throws Exception {
+        // getSymB must resolve through the symbol table's B-flyweight, not the A one.
+        // A consumer that holds getSymA of one in-mem row and getSymB of another (a
+        // self ASOF/LT-join RHS, an A/B comparator) reads both from the ONE overlay
+        // this cursor exposes via getSymbolTable(col). With a non-cached SYMBOL column
+        // the overlay's disk base returns two distinct reused flyweights for
+        // valueOf/valueBOf; routing getSymB through valueOf (the bug) would re-point
+        // the very flyweight getSymA still references, so the second read clobbers the
+        // first. This is the SYMBOL analogue of testInMemVarSizeRecordsAreIndependent.
+        assertMemoryLeak(() -> {
+            createSymbolSeamSplitLvNoCache();
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                LiveViewRecordCursorFactory lvf = unwrapLvFactory(factory);
+                try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) lvf.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue("view must serve the in-mem tier (Mode B)", cursor.isRoutingEligible());
+                    Record recordA = cursor.getRecord();
+
+                    // Forward pass: collect the in-mem row ids (sign-bit tagged) and a
+                    // stable copy of each in-mem row's symbol value. The slot rows are
+                    // flushed (overlap), so the symbol resolves via the disk base.
+                    LongList inMemIds = new LongList();
+                    ObjList<String> expectedSym = new ObjList<>();
+                    while (cursor.hasNext()) {
+                        long rowId = recordA.getRowId();
+                        if (rowId < 0) { // in-mem row
+                            inMemIds.add(rowId);
+                            CharSequence sym = recordA.getSymA(1);
+                            expectedSym.add(sym == null ? null : sym.toString());
+                        }
+                    }
+                    Assert.assertTrue(
+                            "need at least two in-mem rows with distinct symbols",
+                            inMemIds.size() >= 2
+                    );
+                    Assert.assertNotEquals(
+                            "the two probed in-mem symbols must differ",
+                            expectedSym.get(0), expectedSym.get(1)
+                    );
+
+                    Record recordB = cursor.getRecordB();
+
+                    // recordA reads the first in-mem row's symbol via getSymA.
+                    cursor.recordAt(recordA, inMemIds.getQuick(0));
+                    CharSequence symA = recordA.getSymA(1);
+                    Assert.assertEquals(expectedSym.get(0), symA.toString());
+
+                    // recordB reads a different in-mem row's symbol via getSymB. If
+                    // getSymB aliased the A-flyweight, this re-points the object symA
+                    // still references.
+                    cursor.recordAt(recordB, inMemIds.getQuick(1));
+                    CharSequence symB = recordB.getSymB(1);
+                    Assert.assertEquals(expectedSym.get(1), symB.toString());
+
+                    // symA must be unchanged by recordB's getSymB read.
+                    Assert.assertEquals(
+                            "recordA SYMBOL clobbered by recordB getSymB (A/B flyweight aliasing)",
+                            expectedSym.get(0), symA.toString()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testModeBDisabledForBackwardScan() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
@@ -487,8 +551,9 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
         // correctly fenced disk-only while stale. The bug: a later forward cycle
         // copies / appends onto those stale rows and re-stamps them with the new
         // (matching) seqTxn, so Mode B would then serve pre-O3 rows the O3 replay
-        // re-sequenced on disk. The tierStale flag forces that next publish to drop
-        // the retained rows, so the slot reflects only disk-consistent rows again.
+        // re-sequenced on disk. The tierStale flag routes that next lead publish
+        // through a flush-to-disk plus a full tier rebuild (see finishLeadRefresh),
+        // so the slot reflects only disk-consistent rows again.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
@@ -582,6 +647,173 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
                             "2026-05-12T00:00:03.000000Z\t3\t4\n" +
                             "2026-05-12T00:00:04.000000Z\t4\t5\n" +
                             "2026-05-12T00:00:05.000000Z\t5\t6\n");
+        });
+    }
+
+    @Test
+    public void testO3RebuildSkipThenAdditiveFrontierTieKeepsAllRows() throws Exception {
+        // M1a: the both-slots-pinned O3-rebuild-skip leaves tierStale set. The next
+        // lead publish used to take the dropRetained path, which drops the overlap
+        // and seams a pure-lead slot at the lead's minimum timestamp. When that
+        // minimum equals a disk row's timestamp - an additive same-ts row at the
+        // frontier, not diverted to O3 (its trigger is a strict below-frontier
+        // compare) - the disk row at exactly the seam is served by neither disk
+        // (which stops strictly below the seam) nor the slot (which holds only the
+        // lead), so it is silently lost and size() overcounts. The fix flushes the
+        // lead to disk and rebuilds the tier as a clean subset, keeping the overlap
+        // so no row falls in the gap.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2), " +
+                        "('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+
+                // Pin slot 0, slow-path swap to slot 1, then pin slot 1 too.
+                final int pinA = tier.acquireRead();
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:04.000000Z', 4)");
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+                final int pinB = tier.acquireRead();
+                Assert.assertNotEquals("both slots must be pinned", pinA, pinB);
+
+                // O3 row: a back-dated head-miss replay rewrites the LV table
+                // (frontier stays at ts=04) and tries to rebuild the tier. Both slots
+                // are pinned, so the rebuild is skipped and tierStale is set.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 99)");
+                drainWalQueue();
+                setCurrentMicros(750_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertTrue("tier must be stale after the rebuild skip", instance.isTierStale());
+
+                tier.releaseRead(pinA);
+                tier.releaseRead(pinB);
+
+                // Forward cycle: an ADDITIVE same-ts row at exactly the disk frontier
+                // (ts=04). leadMin == diskMaxTs - the case a pure-lead seam would drop
+                // the existing disk row at ts=04.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:04.000000Z', 6)");
+                drainWalQueue();
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Both rows at ts=04 must survive: Mode B must equal disk-only and size()
+            // must match the iterated count.
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:00.000000Z\t99\t1\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t2\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t3\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t4\n" +
+                            "2026-05-12T00:00:04.000000Z\t4\t5\n" +
+                            "2026-05-12T00:00:04.000000Z\t6\t6\n");
+        });
+    }
+
+    @Test
+    public void testNonCapableO3ResyncsLeadRowCount() throws Exception {
+        // M1b: finishLeadRefresh zeroes instance.leadRowCount before o3Replay because
+        // the capable path rebuilds the tier as a pure disk subset. The non-capable
+        // o3Replay branch rewrites nothing on disk and leaves the slot's un-flushed
+        // lead in place, so instance.leadRowCount used to stay 0 while the slot still
+        // stamped L. The next publish then reclassified those L never-flushed rows as
+        // overlap: size() under-reported by L while iteration served them as phantoms.
+        // The fix resyncs instance.leadRowCount to the untouched slot.
+        //
+        // CREATE rejects every non-snapshot-capable window shape (each
+        // WindowFunction.supportsSnapshot() folds in the anchor key type check), so a
+        // freshly-validated view never reaches the non-capable branch - it is a
+        // defensive path for a runtime-non-capable view (e.g. a restored view whose
+        // function lost snapshot support). This test forces that state directly via
+        // setSnapshotCapability(false) to exercise the branch and pin the resync.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            // Pin the clock, then pin the flush clock to it before every cycle so the
+            // FLUSH EVERY 1s cadence never fires and the lead stays un-flushed in RAM.
+            setCurrentMicros(1_000L);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: two in-order rows build an un-flushed lead (L = 2).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertTrue("cycle 1 must build an un-flushed lead", instance.getLeadRowCount() >= 2);
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                final long slotLead = tier.getSlot(tier.getPublishedIdx()).leadRowCount();
+                Assert.assertEquals("the slot must stamp the un-flushed lead", 2, slotLead);
+
+                // Force the runtime-non-capable state CREATE normally gates, so the
+                // next O3 takes o3Replay's non-capable branch (advance watermarks, no
+                // rebuild) instead of the capable replay.
+                instance.setSnapshotCapability(false);
+
+                // Cycle 2: a back-dated O3 row -> non-capable branch. It leaves the
+                // slot untouched (its stamped leadRowCount stays L=2). Pre-fix
+                // instance.leadRowCount stayed at the pre-o3Replay 0, desyncing from
+                // the slot; the fix resyncs it back to the slot's L.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 99)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "the non-capable branch must resync instance.leadRowCount to the untouched slot",
+                        tier.getSlot(tier.getPublishedIdx()).leadRowCount(),
+                        instance.getLeadRowCount()
+                );
+
+                // Cycle 3: a forward row. Its publish computes newLeadRowCount from
+                // instance.leadRowCount; only a resynced count keeps the slot's lead
+                // classification correct (all three rows are still un-flushed lead, not
+                // two of them silently reclassified as overlap).
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInMemoryBuffer pub = tier.getSlot(tier.getPublishedIdx());
+                Assert.assertEquals("all three rows are un-flushed lead", 3, pub.rowCount());
+                Assert.assertEquals("no lead row may be reclassified as overlap", 3, pub.leadRowCount());
+                Assert.assertEquals("instance and slot lead counts must agree", 3, instance.getLeadRowCount());
+            }
         });
     }
 
@@ -2126,6 +2358,40 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             execute("INSERT INTO base (ts, vs, vv) VALUES " +
                     "(" + (cycle2Start + 1) + ", 'bbbb4', 'vvvv4'), " +
                     "(" + (cycle2Start + 2) + ", 'ccccc5', 'wwwww5')");
+            drainWalQueue();
+            setCurrentMicros(500_000L);
+            drainJob(job);
+        }
+        drainWalQueue();
+    }
+
+    // Like createSeamSplitLv, but the base carries a non-cached SYMBOL passthrough
+    // column so the pinned slot's flushed (overlap) rows resolve their symbol
+    // through the LV table's disk symbol table. With the cache off that base hands
+    // out two distinct reused flyweights for valueOf/valueBOf, which is what makes
+    // getSymA vs getSymB aliasing observable. Disk ends up with the first 3 rows,
+    // the slot with the 2 most recent - each carrying a distinct symbol.
+    private void createSymbolSeamSplitLvNoCache() throws Exception {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+        execute("CREATE TABLE base (ts TIMESTAMP, s SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s AS " +
+                "SELECT ts, s, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+        final long dataStart = 1_700_000_000_000_000L;
+        final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base (ts, s, x) VALUES " +
+                    "(" + (dataStart + 1) + ", 'aaa', 1), " +
+                    "(" + (dataStart + 2) + ", 'bbb', 2), " +
+                    "(" + (dataStart + 3) + ", 'ccc', 3)");
+            drainWalQueue();
+            setCurrentMicros(250_000L); // > FLUSH EVERY 100ms
+            drainJob(job);
+
+            execute("INSERT INTO base (ts, s, x) VALUES " +
+                    "(" + (cycle2Start + 1) + ", 'ddd', 4), " +
+                    "(" + (cycle2Start + 2) + ", 'eee', 5)");
             drainWalQueue();
             setCurrentMicros(500_000L);
             drainJob(job);

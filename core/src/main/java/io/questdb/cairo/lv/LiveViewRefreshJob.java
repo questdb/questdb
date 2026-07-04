@@ -1544,6 +1544,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         if (advanceTo > instance.getRefreshedUpToSeqTxn()) {
             if (appendedRows > 0 && populateTier) {
+                if (instance.isTierStale()) {
+                    // The tier is stale: a prior both-slots-pinned O3 rebuild-skip
+                    // (or an emergency flush) left the published slot inconsistent
+                    // with the re-sequenced disk, and disk now holds every row up to
+                    // the frontier. Publishing this cycle's lead through the
+                    // dropRetained path would rebuild a pure-lead slot seamed at the
+                    // lead's minimum timestamp; a disk row at exactly that timestamp
+                    // (an additive same-ts row at the frontier - not diverted to O3,
+                    // whose trigger is a strict below-frontier compare) would then be
+                    // served by neither disk (the scan stops strictly below the seam)
+                    // nor the slot (which holds only the lead) - silent row loss plus
+                    // a size() overcount that breaks LIMIT. Flush this cycle's lead
+                    // straight to disk and rebuild the tier as a clean disk subset
+                    // instead: the seam lands at the IN MEMORY window's lower edge
+                    // with the overlap present, and rebuildInMemoryTier clears the
+                    // stale marking (or defers to the next cycle if both slots stay
+                    // pinned). Reachable only on the primary - a read-only replica
+                    // never sets tierStale, diverting O3 and publish stalls through
+                    // its own overrides before those setters run. instance.leadRowCount
+                    // is 0 here (both tierStale setters zero it), so flushLead
+                    // materialises exactly this cycle's staging rows, not the stale
+                    // slot rows.
+                    flushLead(instance, windowFactory, advanceTo, appendedRows);
+                    rebuildInMemoryTier(instance);
+                    instance.setRefreshedUpToSeqTxn(advanceTo);
+                    return;
+                }
                 // Stamp the slot with the last-flushed LV-table seqTxn (= disk's
                 // current version, since nothing has applied since the last flush):
                 // the overlap agrees with disk row-for-row and the lead sits on
@@ -1964,6 +1991,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", advanceTo=").$(advanceTo)
                         .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 persistState(instance);
+            }
+            // The callers zero instance.leadRowCount before o3Replay because the
+            // capable path rebuilds the tier as a pure disk subset (leadRowCount 0).
+            // This branch rewrote nothing on disk and left the published slot
+            // untouched, so its stamped leadRowCount is still the true un-flushed
+            // lead. Resync instance.leadRowCount to the slot: leaving it at 0 desyncs
+            // the two, so the next publish would reclassify those L never-flushed
+            // rows as overlap (size() under-reports, iteration serves them as
+            // phantoms) and flushLead's overlapCount would skip them entirely.
+            // Defensive: CREATE rejects every non-snapshot-capable window shape (each
+            // WindowFunction.supportsSnapshot() folds in the anchor key type check),
+            // and o3Replay recomputes capability above, so a freshly-validated view
+            // never reaches this branch. It fires only for a view that is
+            // non-capable at runtime (e.g. a restored view whose function lost
+            // snapshot support); the resync keeps its bookkeeping correct if so.
+            final LiveViewInMemoryTier ncTier = instance.getInMemoryTier();
+            if (ncTier != null) {
+                instance.setLeadRowCount(ncTier.getSlot(ncTier.getPublishedIdx()).leadRowCount());
             }
             return;
         }

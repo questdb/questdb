@@ -727,7 +727,13 @@ public class LiveViewRecordCursor implements RecordCursor {
             if (!inMemMode) {
                 return super.getSymB(col);
             }
-            return cursor.getSymbolTable(col).valueOf(buffer.getInt(bufferRow, col));
+            // valueBOf (not valueOf) so a caller holding getSymA and getSymB of the
+            // same in-mem row - a self ASOF/LT-join RHS or an A/B comparator - sees
+            // two independent flyweights. With a non-cached SYMBOL column
+            // (cairo.default.symbol.cache.flag=false) valueOf and valueBOf return
+            // distinct reused instances, so sharing valueOf here would let the second
+            // read clobber the first.
+            return cursor.getSymbolTable(col).valueBOf(buffer.getInt(bufferRow, col));
         }
 
         @Override
