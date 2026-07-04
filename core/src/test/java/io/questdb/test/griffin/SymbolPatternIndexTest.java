@@ -97,6 +97,11 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHintConstantWiring() {
+        Assert.assertEquals("no_symbol_pattern_index", io.questdb.griffin.SqlHints.NO_SYMBOL_PATTERN_INDEX_HINT);
+    }
+
+    @Test
     public void testConfigDefaults() {
         Assert.assertTrue(configuration.isSymbolPatternIndexEnabled());
         Assert.assertEquals(100, configuration.getSymbolPatternIndexThreshold());
