@@ -2698,6 +2698,83 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testDeferredFramesNotAckedUntilCommit() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // 20 deferred frames -- well past the server's ACK_BATCH_SIZE
+                // of 8. Before the deferred-ack fix, cumulative OK acks flowed
+                // mid-group and the store-and-forward client trimmed slots
+                // whose rows the server could still roll back.
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 20; i++) {
+                    sender.table("defer_no_ack")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                // Grace window: pre-fix an ack reliably arrived here (batch
+                // threshold crossed twice). Post-fix NOTHING may be acked --
+                // every frame is deferred and uncommitted.
+                io.questdb.std.Os.sleep(500);
+                Assert.assertEquals("no cumulative OK ack may cover uncommitted deferred frames",
+                        -1L, sender.getAckedFsn());
+
+                // The group-closing commit frame's cumulative ack covers the
+                // whole group at once.
+                sender.setDeferCommit(false);
+                sender.table("defer_no_ack")
+                        .longColumn("id", 20L)
+                        .at(1_000_000_000_000L + 20 * 1000L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // 21 frames published as FSNs 0..20; the commit frame is FSN 20
+                // and its cumulative ack covers the whole group.
+                Assert.assertTrue("group commit ack must cover the whole deferred group",
+                        sender.awaitAckedFsn(20L, 10_000));
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM defer_no_ack")
+                    .noLeakCheck()
+                    .returnsOnce("count\n21\n");
+        });
+    }
+
+    @Test
+    public void testGroupCommitAckFlushesEagerly() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // 3 deferred frames + 1 commit frame = 4 sequences, BELOW the
+                // server's ACK_BATCH_SIZE of 8. The ack for the group-closing
+                // commit must flush eagerly (hasPendingAck) instead of waiting
+                // for the batch cadence -- otherwise the client's transaction
+                // confirmation would stall behind unrelated future traffic.
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 3; i++) {
+                    sender.table("defer_eager_ack")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                sender.setDeferCommit(false);
+                sender.table("defer_eager_ack")
+                        .longColumn("id", 3L)
+                        .at(1_000_000_000_000L + 3 * 1000L, ChronoUnit.MICROS);
+                sender.flush();
+
+                Assert.assertTrue("group commit ack must flush eagerly below the batch threshold",
+                        sender.awaitAckedFsn(3L, 10_000));
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM defer_eager_ack")
+                    .noLeakCheck()
+                    .returnsOnce("count\n4\n");
+        });
+    }
+
+    @Test
     public void testDeferredCommitEmptyFinalMessage() throws Exception {
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {

@@ -243,6 +243,12 @@ public class QwpIngressReadOnlyRefusalShapeTest extends AbstractCairoTest {
         }
         if (state.isOk() && deferCommit) {
             state.commitIfMaxUncommittedRowsReached();
+            if (state.isOk()) {
+                // Mirrors the processor's deferred-ack containment: rows are
+                // buffered but uncommitted, so the cumulative-ack watermark
+                // must not advance past this frame until the group commits.
+                state.markUncommittedDeferredRows();
+            }
         }
         return state.isRoleChangeClosePending();
     }
