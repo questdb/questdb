@@ -95,6 +95,13 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     // A null entry at a given index means that column had no diff in this
     // transaction, so resolution falls through to the reader.
     private final ObjList<DirectSymbolMap> txnSymbolDiffs = new ObjList<>();
+    // Per-column clean symbol count for the current transaction's diff, keyed by
+    // base-table writer index (parallel to txnSymbolDiffs). The diff overlay is
+    // keyed by the txn's global symbol keys - the contiguous band
+    // [cleanSymbolCount, cleanSymbolCount + diff.size()) - so keyOf must probe
+    // that band rather than a dense-from-zero range. Only read when the matching
+    // overlay is non-empty, where buildTxnSymbolDiffs has just set it.
+    private final IntList txnSymbolCleanCounts = new IntList();
     // Number of base-table columns the current of() call projects; rebound on
     // each of() invocation. Internal capacity lists (pageAddresses, pageSizes,
     // symbolTables) grow lazily to match.
@@ -268,6 +275,9 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                 map = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_DEFAULT);
                 txnSymbolDiffs.extendAndSet(colIdx, map);
             }
+            // Record the diff's clean symbol count so keyOf can probe the overlay's
+            // real key band [cleanSymbolCount, cleanSymbolCount + size).
+            txnSymbolCleanCounts.extendAndSet(colIdx, diff.getCleanSymbolCount());
             SymbolMapDiffEntry entry = diff.nextEntry();
             while (entry != null) {
                 // DirectSymbolMap.put copies the CharSequence's bytes off-heap, so the
@@ -346,7 +356,9 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                         ? txnSymbolDiffs.getQuick(walColumnIndex)
                         : null;
                 // Pass an empty map as null — valueOf short-circuits to the reader.
-                symTab.of(walColumnIndex, reader, (diff != null && diff.size() > 0) ? diff : null);
+                final boolean hasOverlay = diff != null && diff.size() > 0;
+                final int cleanSymbolCount = hasOverlay ? txnSymbolCleanCounts.getQuick(walColumnIndex) : 0;
+                symTab.of(walColumnIndex, reader, hasOverlay ? diff : null, cleanSymbolCount);
             } else {
                 symbolTables.setQuick(i, null);
             }
@@ -376,6 +388,9 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         private final DirectString scanView = new DirectString();
         private final DirectString viewA = new DirectString();
         private final DirectString viewB = new DirectString();
+        // Start of the overlay's key band: this txn's diff keys occupy the
+        // contiguous range [cleanSymbolCount, cleanSymbolCount + txnDiff.size()).
+        private int cleanSymbolCount;
         private WalReader reader;
         // Per-transaction overlay (key -> symbol) built from the current txn's
         // SymbolMapDiff. Null when the txn has no diff entries for this column;
@@ -409,20 +424,34 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                 return SymbolTable.VALUE_NOT_FOUND;
             }
             if (txnDiff != null) {
-                for (int k = 0, n = txnDiff.size(); k < n; k++) {
+                // The overlay's keys are this txn's global symbol keys: the contiguous
+                // band [cleanSymbolCount, cleanSymbolCount + size), not a dense range
+                // from zero. Probe that band and return the actual key. The WAL writer
+                // resets local ids per commit, so when the base already holds committed
+                // symbols (cleanSymbolCount > 0) two un-applied commits can assign the
+                // same key to different values; the reader's cumulative map then keeps
+                // only the last-written value, and the per-txn overlay is what shadows
+                // that staleness for this txn's rows. valueOf is a keyed lookup, so a
+                // dense-from-zero scan would probe absent keys, miss, and fall through
+                // to the stale reader map.
+                final int hi = cleanSymbolCount + txnDiff.size();
+                for (int k = cleanSymbolCount; k < hi; k++) {
                     CharSequence v = txnDiff.valueOf(k, scanView);
                     if (v != null && Chars.equals(value, v)) {
                         return k;
                     }
                 }
             }
+            // Falls through for values below the overlay band (the clean symbols loaded
+            // from the table's committed files), which the reader resolves correctly.
             return reader.getSymbolKey(walColumnIndex, value, scanView);
         }
 
-        public void of(int walColumnIndex, WalReader reader, @Nullable DirectSymbolMap txnDiff) {
+        public void of(int walColumnIndex, WalReader reader, @Nullable DirectSymbolMap txnDiff, int cleanSymbolCount) {
             this.walColumnIndex = walColumnIndex;
             this.reader = reader;
             this.txnDiff = txnDiff;
+            this.cleanSymbolCount = cleanSymbolCount;
         }
 
         @Override

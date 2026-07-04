@@ -9950,6 +9950,65 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalSymbolFilterResolvesUnderCommitLocalKeyCollision() throws Exception {
+        // C3 regression: a raw-WAL SYMBOL equality filter must resolve its constant
+        // to the value's segment-local key through the per-txn diff overlay, even
+        // when the base already holds committed symbols (cleanSymbolCount > 0).
+        //
+        // The WAL writer resets local symbol ids per commit and re-reads the same
+        // (un-advanced) committed count between two un-applied commits, so each
+        // brand-new symbol is assigned the SAME key. Here the base commits two
+        // symbols first (keys 0, 1), then two un-applied commits in one segment
+        // each introduce a new symbol at key 2: commit A -> 'X'=2, commit B ->
+        // 'Y'=2. The segment's cumulative reader map ends with key 2 -> 'Y',
+        // hiding 'X'. keyOf('X') must probe the overlay at the real key band
+        // [cleanSymbolCount, cleanSymbolCount + size) = [2, 3) and return 2; the
+        // pre-fix dense-from-zero scan probed absent key 0, missed, and fell back
+        // to the stale reader map, returning VALUE_NOT_FOUND so the filter matched
+        // no rows and commit A's 'X' row was silently dropped.
+        //
+        // A rollover row count of 2 forces the two seed rows to fill segment 0 and
+        // the two colliding commits to share segment 1, so a single WalReader
+        // resolves both and sees the stale key.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, px, sum(px) OVER w AS s FROM base WHERE sym = 'X' " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Seed two committed symbols (keys 0, 1) and APPLY so the base's
+                // committed symbol count advances to 2. The two rows fill segment 0
+                // to the rollover threshold, so the next write opens a fresh
+                // segment that reads cleanSymbolCount = 2. Neither seed symbol
+                // matches the filter.
+                execute("INSERT INTO base VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 'SEED0', 1.0), " +
+                        "('2026-10-01T00:00:01.000000Z', 'SEED1', 2.0)");
+                drainWalQueue();
+
+                // Two un-applied commits, no apply between them: both land in
+                // segment 1 and collide on key 2 (commit A -> 'X', commit B ->
+                // 'Y'). One INSERT is one commit.
+                execute("INSERT INTO base VALUES ('2026-10-01T00:00:02.000000Z', 'X', 3.0)");
+                execute("INSERT INTO base VALUES ('2026-10-01T00:00:03.000000Z', 'Y', 4.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Commit A's 'X' row must survive the filter; commit B's 'Y' row must
+            // not leak in despite sharing key 2.
+            assertQuery("SELECT ts, sym, px, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(
+                    "ts\tsym\tpx\ts\n" +
+                            "2026-10-01T00:00:02.000000Z\tX\t3.0\t3.0\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsEmaAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
