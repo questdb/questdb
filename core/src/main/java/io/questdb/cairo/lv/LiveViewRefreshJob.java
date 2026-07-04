@@ -2297,6 +2297,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long effectiveSeqTxn = reader.getSeqTxn();
         boolean readerAttached = false;
         long appendedRows = 0;
+        // True when the zero-surviving-row path issued a pure-delete
+        // REPLACE_RANGE to clear ghost rows (appendedRows stays 0 there, but the
+        // apply + on-disk row-count re-read below still have to run).
+        boolean deletedGhostRange = false;
         long replayMaxTs = Numbers.LONG_NULL;
         // Minimum output ts the replay actually produced (rows arrive
         // ts-ascending, so the first appended row is the minimum). Base of the
@@ -2398,6 +2402,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                     }
                 }
+            } else if (lateRowTs != Numbers.LONG_NULL && lateRowTs >= viewLowerBoundTimestamp) {
+                // The probe found no surviving row, but this is a convergent
+                // DATA trigger (a dedup/replacement whose lowest touched ts is
+                // lateRowTs): the recompute genuinely empties the view from
+                // lateRowTs upward. Leaving the block a no-op strands the pre-O3
+                // output rows on disk as ghosts - size() over-reports and reads
+                // return stale rows while the watermark advances past the commit
+                // that removed their base rows. Reset the window accumulators to
+                // identity (matching the from-scratch empty recompute) and emit
+                // a pure-delete REPLACE_RANGE over [lateRowTs, +inf) so the
+                // on-disk range is cleared. Rows below lateRowTs stay frozen,
+                // exactly as the surviving-row boundary above treats them.
+                //
+                // A non-DATA / recovery trigger (lateRowTs == LONG_NULL, or one
+                // below the lower bound) keeps the no-op: without a convergent
+                // trigger ts the emptiness is a frozen prefix (DROP PARTITION /
+                // TTL / TRUNCATE / restart), not a deletion to propagate, and
+                // the pre-O3 accumulator state must survive.
+                clearWindowState(windowFactory, anchorWindow);
+                try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
+                    fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
+                            effectiveSeqTxn,
+                            lateRowTs,
+                            Long.MAX_VALUE
+                    ));
+                }
+                deletedGhostRange = true;
+                LOG.info().$("live view O3 head-miss replay cleared emptied range [view=")
+                        .$(viewName)
+                        .$(", deleteLowTs=").$(lateRowTs)
+                        .$(", effectiveSeqTxn=").$(effectiveSeqTxn).I$();
             }
         } finally {
             if (readerAttached) {
@@ -2407,14 +2442,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             reader.close();
         }
 
-        if (appendedRows > 0) {
+        if (appendedRows > 0 || deletedGhostRange) {
             applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
-            // Re-read the on-disk row count: the clamped REPLACE_RANGE may have
-            // preserved an unrefreshable prefix below replayMinTs, so the head-
-            // miss output is no longer a pure from-scratch rebuild. Sourcing the
-            // lifetime counter from the table keeps the head checkpoint's
-            // lvRowPosition (written below) consistent in both the intact-base
-            // and base-data-removed cases.
+            // Re-read the on-disk row count: the REPLACE_RANGE only rewrites the
+            // band at or above its low boundary and may have preserved a frozen
+            // prefix below it (or, on the pure-delete path, cleared the band
+            // outright), so the head-miss output is no longer a pure
+            // from-scratch rebuild. Sourcing the lifetime counter from the table
+            // keeps the head checkpoint's lvRowPosition (written below)
+            // consistent in both the intact-base and base-data-removed cases.
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
                 instance.setLvRowsTotal(lvReader.size());
             }

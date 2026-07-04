@@ -34,9 +34,12 @@ import io.questdb.cairo.lv.LiveViewRecovery;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Zip;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -75,6 +78,52 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                             reader.of(cpPath.$());
                             Assert.fail("expected CRC mismatch");
                         } catch (CairoException e) {
+                            Assert.assertTrue(e.getFlyweightMessage().toString(),
+                                    e.getFlyweightMessage().toString().contains("CRC mismatch"));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCorruptedVersionFieldIsCaughtByCrcNotVersionCheck() throws Exception {
+        // A bit-rotted version field must NOT masquerade as a compatibility
+        // break. The version field (offset 4) is covered by the CRC, so
+        // corrupting it without fixing the trailer trips the CRC check first.
+        // The reader reports plain corruption (errno != LV_CHECKPOINT_FILE_
+        // VERSION_MISMATCH) so the caller unlinks the head and replays from
+        // the lower bound instead of invalidating a live view over recoverable
+        // bit rot. Pre-fix the version check ran before the CRC and this same
+        // corruption was mis-reported as a version mismatch.
+        assertMemoryLeak(() -> {
+            final long lvSeqTxn = 23;
+            try (Path liveViewDir = newLiveViewDir()) {
+                try (LiveViewCheckpointWriter writer = new LiveViewCheckpointWriter(configuration)) {
+                    writer.of(liveViewDir.$(), lvSeqTxn);
+                    writer.writeManifestBlock(new LiveViewCheckpointManifest()
+                            .setLvSeqTxn(lvSeqTxn)
+                            .setLvRowPosition(0)
+                            .setBaseSeqTxn(0)
+                            .setMaxTimestamp(0)
+                            .setKind(LiveViewCheckpointManifest.KIND_STEADY));
+                    writer.commit(Long.MIN_VALUE);
+                }
+                try (Path cpPath = openHeadPath(liveViewDir, lvSeqTxn)) {
+                    // Corrupt the version field but leave the stale CRC trailer,
+                    // exactly what bit rot in that field looks like on disk.
+                    overwriteIntInFile(configuration, cpPath, 4, LiveViewCheckpointReader.SUPPORTED_VERSION_MAX + 1);
+                    try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(configuration)) {
+                        try {
+                            reader.of(cpPath.$());
+                            Assert.fail("expected CRC mismatch");
+                        } catch (CairoException e) {
+                            Assert.assertNotEquals(
+                                    "a bit-rotted version field must be recoverable corruption, not a compatibility break",
+                                    CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH,
+                                    e.getErrno()
+                            );
                             Assert.assertTrue(e.getFlyweightMessage().toString(),
                                     e.getFlyweightMessage().toString().contains("CRC mismatch"));
                         }
@@ -257,8 +306,11 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
         // value above SUPPORTED_VERSION_MAX means the file was written by a
         // newer server; the reader signals it with the dedicated errno so
         // the caller invalidates the LV rather than treating the file as
-        // corrupt. The version check fires before the CRC check, so the
-        // post-overwrite CRC mismatch never gets evaluated.
+        // corrupt. The version check runs AFTER the CRC check, so the version
+        // field is rewritten with a matching CRC to model a genuine
+        // compatibility break (intact file, unsupported version). A version
+        // field corrupted without fixing the CRC is instead recoverable bit
+        // rot - see testCorruptedVersionFieldIsCaughtByCrcNotVersionCheck.
         assertMemoryLeak(() -> {
             final long lvSeqTxn = 17;
             try (Path liveViewDir = newLiveViewDir()) {
@@ -273,7 +325,7 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                     writer.commit(Long.MIN_VALUE);
                 }
                 try (Path cpPath = openHeadPath(liveViewDir, lvSeqTxn)) {
-                    overwriteIntInFile(configuration, cpPath, 4, LiveViewCheckpointReader.SUPPORTED_VERSION_MAX + 1);
+                    overwriteIntAndFixCrc(configuration, cpPath, 4, LiveViewCheckpointReader.SUPPORTED_VERSION_MAX + 1);
                     try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(configuration)) {
                         try {
                             reader.of(cpPath.$());
@@ -296,7 +348,8 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
     @Test
     public void testRejectsFileWithFormatVersionTooOld() throws Exception {
         // Symmetric case: formatVersion below SUPPORTED_VERSION_MIN signals a
-        // file too old for this server to read.
+        // file too old for this server to read. As above, the CRC is fixed up
+        // so this models a genuine version break rather than corruption.
         assertMemoryLeak(() -> {
             final long lvSeqTxn = 19;
             try (Path liveViewDir = newLiveViewDir()) {
@@ -311,7 +364,7 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                     writer.commit(Long.MIN_VALUE);
                 }
                 try (Path cpPath = openHeadPath(liveViewDir, lvSeqTxn)) {
-                    overwriteIntInFile(configuration, cpPath, 4, LiveViewCheckpointReader.SUPPORTED_VERSION_MIN - 1);
+                    overwriteIntAndFixCrc(configuration, cpPath, 4, LiveViewCheckpointReader.SUPPORTED_VERSION_MIN - 1);
                     try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(configuration)) {
                         try {
                             reader.of(cpPath.$());
@@ -466,6 +519,46 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
             );
             mem.putInt(offset, value);
             mem.sync(false);
+        }
+    }
+
+    // Overwrites an int, then recomputes the CRC32 trailer over the header +
+    // blocks so the file stays structurally intact. Mimics a genuine
+    // version-mismatch file (valid CRC, out-of-range version) rather than bit
+    // rot, which the plain overwriteIntInFile leaves behind (stale CRC). The
+    // value write reuses overwriteIntInFile (which may round the sub-page .cp
+    // up to a page boundary); bodyEnd is recomputed from the post-write length
+    // so it matches what the reader observes, and the CRC is written back with
+    // a direct pwrite so the file length is left untouched.
+    private static void overwriteIntAndFixCrc(CairoConfiguration configuration, Path path, long offset, int value) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        overwriteIntInFile(configuration, path, offset, value);
+        final long fileSize = ff.length(path.$());
+        final long bodyEnd = fileSize - LiveViewCheckpointWriter.FILE_TRAILER_SIZE;
+        final int crc;
+        try (MemoryCMR ro = Vm.getCMRInstance()) {
+            ro.of(
+                    ff,
+                    path.$(),
+                    ff.getPageSize(),
+                    fileSize,
+                    MemoryTag.MMAP_DEFAULT,
+                    CairoConfiguration.O_NONE,
+                    -1
+            );
+            crc = Zip.crc32(0, ro.addressOf(0), (int) bodyEnd);
+        }
+        final long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putInt(buf, crc);
+            final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+            try {
+                ff.write(fd, buf, Integer.BYTES, bodyEnd);
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

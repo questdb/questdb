@@ -67,18 +67,22 @@ import static io.questdb.cairo.lv.LiveViewCheckpointWriter.FILE_TRAILER_SIZE;
  *     }
  * </pre>
  * <p>
- * {@link #of(LPSZ)} validates the file's magic value and format version, and
- * verifies the CRC32 trailer over header + blocks. A CRC mismatch or magic
- * mismatch makes {@code of} throw a plain {@link CairoException}; the caller
- * in {@code LiveViewRefreshJob} catches it, unlinks the head, and falls back
- * to the {@code viewLowerBoundTimestamp} replay path. The live view is not
- * invalidated by corruption - the {@code .cp} is derived state, recoverable
- * by re-running the refresh from the last applied watermark.
+ * {@link #of(LPSZ)} validates the file's magic value, verifies the CRC32
+ * trailer over header + blocks, and only then checks the format version. A
+ * CRC mismatch or magic mismatch makes {@code of} throw a plain
+ * {@link CairoException}; the caller in {@code LiveViewRefreshJob} catches it,
+ * unlinks the head, and falls back to the {@code viewLowerBoundTimestamp}
+ * replay path. The live view is not invalidated by corruption - the
+ * {@code .cp} is derived state, recoverable by re-running the refresh from the
+ * last applied watermark.
  * <p>
  * A {@code formatVersion} outside the supported range is treated separately.
  * It is not corruption but a real compatibility break, so {@code of} throws
  * with {@link CairoException#LV_CHECKPOINT_FILE_VERSION_MISMATCH} and the
  * caller invalidates the live view rather than unlinking the {@code .cp}.
+ * The version check runs <em>after</em> the CRC so a bit-rotted version field
+ * (which the CRC covers) is caught as recoverable corruption first, rather
+ * than being mistaken for a compatibility break and forcing invalidation.
  * The same rule applies to the per-function snapshot version check at the
  * function-block read path.
  */
@@ -156,6 +160,35 @@ public class LiveViewCheckpointReader implements Closeable {
                         .put(", actual=")
                         .put(magic);
             }
+            // Verify the CRC32 trailer BEFORE the format-version check. The
+            // version field (offset 4) and the block count (offset 8) both sit
+            // inside the header the CRC covers, so a bit-rotted version field
+            // must be classified as recoverable corruption (a plain
+            // CairoException, so the caller unlinks the head and replays from
+            // viewLowerBoundTimestamp) rather than a compatibility break
+            // (LV_CHECKPOINT_FILE_VERSION_MISMATCH, which makes the caller
+            // invalidate the view). Only once the CRC confirms the header is
+            // intact can a version outside the supported range be trusted as a
+            // real format difference rather than corrupted bytes.
+            bodyEnd = fileSize - FILE_TRAILER_SIZE;
+            if (bodyEnd > Integer.MAX_VALUE) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint exceeds maximum supported size, bytes=")
+                        .put(bodyEnd);
+            }
+            final long baseAddress = mem.addressOf(0);
+            final int computedCrc = Zip.crc32(0, baseAddress, (int) bodyEnd);
+            final int storedCrc = mem.getInt(bodyEnd);
+            if (computedCrc != storedCrc) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint CRC mismatch, expected=")
+                        .put(storedCrc)
+                        .put(", computed=")
+                        .put(computedCrc);
+            }
+
+            // CRC verified: the header is intact, so a version outside the
+            // supported range is a genuine compatibility break, not corruption.
             final int formatVersion = mem.getInt(4);
             if (formatVersion < SUPPORTED_VERSION_MIN) {
                 throw CairoException.critical(CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH)
@@ -176,24 +209,6 @@ public class LiveViewCheckpointReader implements Closeable {
                 throw CairoException.critical(0)
                         .put("live view checkpoint block count negative, blockCount=")
                         .put(blockCount);
-            }
-
-            // Verify CRC32 trailer.
-            bodyEnd = fileSize - FILE_TRAILER_SIZE;
-            if (bodyEnd > Integer.MAX_VALUE) {
-                throw CairoException.critical(0)
-                        .put("live view checkpoint exceeds maximum supported size, bytes=")
-                        .put(bodyEnd);
-            }
-            final long baseAddress = mem.addressOf(0);
-            final int computedCrc = Zip.crc32(0, baseAddress, (int) bodyEnd);
-            final int storedCrc = mem.getInt(bodyEnd);
-            if (computedCrc != storedCrc) {
-                throw CairoException.critical(0)
-                        .put("live view checkpoint CRC mismatch, expected=")
-                        .put(storedCrc)
-                        .put(", computed=")
-                        .put(computedCrc);
             }
             cursor.reset();
         } catch (Throwable t) {

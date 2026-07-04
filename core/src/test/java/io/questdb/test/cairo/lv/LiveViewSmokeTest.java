@@ -56,6 +56,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -66,6 +67,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
@@ -257,6 +260,40 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             );
             mem.putByte(offset, value);
             mem.sync(false);
+        }
+    }
+
+    // Rewrites the .cp format-version field to an unsupported value and repairs
+    // the CRC32 trailer so the file is a genuine version-mismatch file (intact
+    // CRC, out-of-range version) rather than bit rot. The reader validates the
+    // CRC before the version, so without the repair this same overwrite reads
+    // back as recoverable corruption. The version write may round the sub-page
+    // file up to a page boundary, so bodyEnd is taken from the post-write
+    // length and the CRC is written with a direct pwrite (no length change).
+    private static void overwriteCpVersionAndFixCrc(FilesFacade ff, Path path, int version) {
+        try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+            mem.of(ff, path.$(), ff.getPageSize(), 8L, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            mem.putInt(4L, version);
+            mem.sync(false);
+        }
+        final long fileSize = ff.length(path.$());
+        final long bodyEnd = fileSize - LiveViewCheckpointWriter.FILE_TRAILER_SIZE;
+        final int crc;
+        try (MemoryCMR ro = Vm.getCMRInstance()) {
+            ro.of(ff, path.$(), ff.getPageSize(), fileSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
+            crc = Zip.crc32(0, ro.addressOf(0), (int) bodyEnd);
+        }
+        final long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putInt(buf, crc);
+            final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+            try {
+                ff.write(fd, buf, Integer.BYTES, bodyEnd);
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -12709,10 +12746,14 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
             }
 
-            // Mutate the file-level formatVersion field (4-byte int at
-            // offset 4, right after the magic). The reader checks the
-            // version before the CRC trailer, so the broken CRC after the
-            // overwrite is unreached.
+            // Mutate the file-level formatVersion field (4-byte int at offset
+            // 4, right after the magic) to an unsupported value, then repair
+            // the CRC trailer so the file stays structurally intact. The reader
+            // validates the CRC before the version, so only a matching CRC lets
+            // the genuine compatibility break surface; a corrupted version
+            // field left with a stale CRC is instead recoverable corruption
+            // (unlink + head-miss replay) - see LiveViewCheckpointTest#
+            // testCorruptedVersionFieldIsCaughtByCrcNotVersionCheck.
             try (Path cpPath = new Path()) {
                 final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
                 cpPath.of(engine.getConfiguration().getDbRoot())
@@ -12720,18 +12761,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
                         .slash();
                 LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
-                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                    mem.of(
-                            engine.getConfiguration().getFilesFacade(),
-                            cpPath.$(),
-                            engine.getConfiguration().getFilesFacade().getPageSize(),
-                            8L,
-                            MemoryTag.MMAP_DEFAULT,
-                            CairoConfiguration.O_NONE
-                    );
-                    mem.putInt(4L, LiveViewCheckpointReader.SUPPORTED_VERSION_MAX + 1);
-                    mem.sync(false);
-                }
+                overwriteCpVersionAndFixCrc(
+                        engine.getConfiguration().getFilesFacade(),
+                        cpPath,
+                        LiveViewCheckpointReader.SUPPORTED_VERSION_MAX + 1
+                );
             }
 
             // Restart: clear the registry and rebuild from on-disk. The
@@ -14284,6 +14318,74 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
                         "2026-11-01T00:00:10.000000Z\ta\t200.0\n" +
                         "2026-11-01T00:00:20.000000Z\ta\t500.0\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3HeadMissConvergentEmptyingClearsGhostRows() throws Exception {
+        // Sibling of testO3HeadMissWithFullyFilteredReplayPreservesState, but
+        // here the O3 commit is a CONVERGENT DATA replacement (dedup UPSERT)
+        // that pushes EVERY surviving base row below the LV's WHERE filter, so
+        // the head-miss recompute produces zero rows. The probe-then-skip path
+        // used to leave the two pre-O3 output rows stranded on disk as ghosts
+        // (size() over-reporting) while the watermark advanced past the commit
+        // that removed their base rows. The fix emits a pure-delete
+        // REPLACE_RANGE over [lateRowTs, +inf) and resets accumulator state, so
+        // the view empties and a subsequent forward row cumulates from scratch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base WHERE x > 100 " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 200.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 300.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                        "2026-11-01T00:00:10.000000Z\ta\t200.0\n" +
+                        "2026-11-01T00:00:20.000000Z\ta\t500.0\n");
+
+                // Single dedup UPSERT that replaces BOTH base rows with values
+                // failing the filter (x <= 100). min(ts)=10 < latestSeenTs=20
+                // trips O3 detection; head-miss reads (10,50),(20,50), the
+                // filter drops both, and the probe sees no surviving row. lateRowTs
+                // = 10 (a DATA trigger), so the replay clears [10, +inf).
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 50.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 50.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertFalse(lv.isInvalid());
+                // Ghost rows are gone: the view is empty.
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n");
+
+                // A forward in-order row for the same partition must cumulate
+                // from scratch (sum = 500, not 1000): proof the accumulator was
+                // reset alongside the on-disk delete, not left at its pre-O3 500.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:30.000000Z', 'a', 500.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                        "2026-11-01T00:00:30.000000Z\ta\t500.0\n");
             }
 
             execute("DROP LIVE VIEW lv");
