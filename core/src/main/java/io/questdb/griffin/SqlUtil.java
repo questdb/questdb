@@ -36,7 +36,9 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.arr.VarcharArrayParser;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
@@ -604,6 +606,36 @@ public class SqlUtil {
         final IQueryModel queryModel = model.getQueryModel();
         assert queryModel != null;
         return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
+    }
+
+    /**
+     * Resolves a compiler-side column reference like {@link #getColumnIndexQuiet(RecordMetadata, CharSequence)},
+     * throwing {@link InvalidColumnException} when the column does not exist.
+     */
+    public static int getColumnIndex(RecordMetadata metadata, CharSequence columnName) {
+        final int index = getColumnIndexQuiet(metadata, columnName);
+        if (index > -1) {
+            return index;
+        }
+        throw InvalidColumnException.INSTANCE;
+    }
+
+    /**
+     * Resolves a compiler-side column reference against the given metadata. The lookup runs
+     * verbatim first; on a miss, if the name carries protective double quotes added by
+     * {@link #createExprColumnAlias} (or by the parser for dotted user aliases), it retries
+     * with the quotes stripped, because projection metadata stores such names unquoted
+     * (see {@link #toColumnName(CharSequence)}). Ingestion and storage paths must NOT use
+     * this method: wire-supplied names are not compiler aliases, and stripping them would
+     * redirect quoted names into unrelated columns. {@link RecordMetadata#getColumnIndexQuiet(CharSequence)}
+     * stays verbatim for those paths.
+     */
+    public static int getColumnIndexQuiet(RecordMetadata metadata, CharSequence columnName) {
+        final int index = metadata.getColumnIndexQuiet(columnName);
+        if (index > -1 || !isQuoteProtectedAlias(columnName)) {
+            return index;
+        }
+        return metadata.getColumnIndexQuiet(columnName, 1, columnName.length() - 1);
     }
 
     /**
@@ -1258,11 +1290,18 @@ public class SqlUtil {
      * protected: there the quotes are genuine content.
      */
     public static boolean isQuoteProtectedAlias(CharSequence alias) {
-        if (alias == null || !Chars.isDoubleQuoted(alias) || alias.length() < 3) {
+        return alias != null && isQuoteProtectedAlias(alias, 0, alias.length());
+    }
+
+    /**
+     * Ranged variant of {@link #isQuoteProtectedAlias(CharSequence)} testing the
+     * {@code [lo, hi)} slice of the given sequence.
+     */
+    public static boolean isQuoteProtectedAlias(CharSequence alias, int lo, int hi) {
+        if (hi - lo < 3 || alias.charAt(lo) != '"' || alias.charAt(hi - 1) != '"') {
             return false;
         }
-        final int hi = alias.length() - 1;
-        return Chars.indexOfLastUnquoted(alias, '.', 1, hi) > -1 || disallowedAliases.contains(alias, 1, hi);
+        return Chars.indexOfLastUnquoted(alias, '.', lo + 1, hi - 1) > -1 || disallowedAliases.contains(alias, lo + 1, hi - 1);
     }
 
     /**

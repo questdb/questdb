@@ -25,9 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.OperatorExpression;
@@ -196,6 +198,42 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testGetColumnIndexQuietHelperStripsProtectedAliasOnMiss() {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a.b", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("in", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("\"f,g\"", ColumnType.INT));
+
+        // protected tokens resolve against the clean stored names
+        Assert.assertEquals(0, SqlUtil.getColumnIndexQuiet(metadata, "\"a.b\""));
+        Assert.assertEquals(1, SqlUtil.getColumnIndexQuiet(metadata, "\"in\""));
+        // unprotected tokens stay verbatim
+        Assert.assertEquals(0, SqlUtil.getColumnIndexQuiet(metadata, "a.b"));
+        Assert.assertEquals(2, SqlUtil.getColumnIndexQuiet(metadata, "\"f,g\""));
+        Assert.assertEquals(-1, SqlUtil.getColumnIndexQuiet(metadata, "\"c.d\""));
+
+        // a verbatim match wins over the stripped retry
+        GenericRecordMetadata quoted = new GenericRecordMetadata();
+        quoted.add(new TableColumnMetadata("\"a.b\"", ColumnType.INT));
+        quoted.add(new TableColumnMetadata("a.b", ColumnType.INT));
+        Assert.assertEquals(0, SqlUtil.getColumnIndexQuiet(quoted, "\"a.b\""));
+    }
+
+    @Test
+    public void testGetColumnIndexQuietInterfaceDefaultIsVerbatim() {
+        // Ingestion paths resolve wire-supplied names through the RecordMetadata default;
+        // it must never strip compiler-alias quotes, or an ILP field named "in" (quote
+        // characters included) would be silently redirected into a column named in.
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("in", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("a.b", ColumnType.INT));
+        Assert.assertEquals(-1, metadata.getColumnIndexQuiet("\"in\""));
+        Assert.assertEquals(-1, metadata.getColumnIndexQuiet("\"a.b\""));
+        Assert.assertEquals(0, metadata.getColumnIndexQuiet("in"));
+        Assert.assertEquals(1, metadata.getColumnIndexQuiet("a.b"));
+    }
+
+    @Test
     public void testImplicitCastCharAsGeoHash() {
         int bits = 5;
         long hash = SqlUtil.implicitCastCharAsGeoHash('c', ColumnType.getGeoHashTypeWithBits(bits));
@@ -303,6 +341,27 @@ public class SqlUtilTest {
         } catch (ImplicitCastException e) {
             TestUtils.assertEquals("invalid IPv4 format: hello", e.getFlyweightMessage());
         }
+    }
+
+    @Test
+    public void testIsQuoteProtectedAlias() {
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias("\"a.b\""));
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias("\"in\""));
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias("\".\""));
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(null));
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(""));
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias("\"\""));
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias("a.b"));
+        // comma content needs no protection: the quotes are genuine content
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias("\"f,g\""));
+        // the dot is guarded by inner quotes
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias("\"a\".\"b\""));
+
+        // the ranged variant slices composed "alias.column" references
+        String composed = "m.\"k.b\"";
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(composed));
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias(composed, 2, composed.length()));
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(composed, 0, composed.length()));
     }
 
     @Test

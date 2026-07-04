@@ -153,13 +153,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     @Override
-    public int getColumnIndexQuiet(CharSequence columnName) {
-        // This metadata keeps protected names quoted internally (see add), so tokens must
-        // reach the map lookup verbatim - bypass the unquoting interface default.
-        return getColumnIndexQuiet(columnName, 0, columnName.length());
-    }
-
-    @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
         final MapKey key = map.withKey();
         final int dot = Chars.indexOfLastUnquoted(columnName, '.', lo, hi);

@@ -122,7 +122,7 @@ public class GroupByUtils {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 final ExpressionNode node = column.getAst();
-                int index = baseMetadata.getColumnIndexQuiet(node.token);
+                int index = SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
                 TableColumnMetadata m = null;
                 if (node.type != LITERAL || index != timestampIndex || timestampUnimportant) {
                     final Function func = functionParser.parseFunction(
@@ -787,7 +787,7 @@ public class GroupByUtils {
      */
     private static int findColumnKeyIndex(ExpressionNode node, Function func, RecordMetadata baseMetadata) {
         if (node.type == LITERAL) {
-            return baseMetadata.getColumnIndexQuiet(node.token);
+            return SqlUtil.getColumnIndexQuiet(baseMetadata, node.token);
         }
         if (SqlKeywords.isCastKeyword(node.token) && func instanceof ColumnFunction) {
             return ((ColumnFunction) func).getColumnIndex();
