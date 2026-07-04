@@ -103,7 +103,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction {
+    private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final Matcher matcher;
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
@@ -129,9 +129,15 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            initialized = false;
+            extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            initialized = true;
         }
 
         @Override
@@ -145,7 +151,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class MatchStaticSymbolTableRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
+    private static class MatchStaticSymbolTableRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final Function pattern;
         private final int patternPosition;
         private final SymbolFunction symbolFun;
@@ -174,11 +180,17 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
             matcher = RegexUtils.createMatcher(pattern, patternPosition);
-            initialized = false;
+            extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            initialized = true;
         }
 
         @Override
