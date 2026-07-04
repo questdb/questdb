@@ -158,6 +158,24 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRejectOutOfRangeDuration() throws Exception {
+        // A duration whose micros overflow a long must be rejected up front
+        // rather than silently narrowed. Before the fix toMicros cast the value
+        // through an int (fromMinutes / fromHours / fromDays), so an out-of-range
+        // value wrapped to a small one and slipped through instead of being
+        // caught - 100000000000000000d overflows a long micros count.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertDurationOutOfRangeRejected(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100000000000000000d AS " +
+                            "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            assertDurationOutOfRangeRejected(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 100000000000000000d AS " +
+                            "SELECT ts, x, row_number() OVER () AS rn FROM base");
+        });
+    }
+
     private void assertCreateLiveViewCollisionRejected(boolean ifNotExists) throws Exception {
         try {
             execute("CREATE LIVE VIEW " + (ifNotExists ? "IF NOT EXISTS " : "") +
@@ -167,6 +185,21 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "wrong message [msg=" + e.getFlyweightMessage() + ", ifNotExists=" + ifNotExists + ']',
                     Chars.contains(e.getFlyweightMessage(), "table or view with the requested name already exists")
+            );
+        }
+    }
+
+    private void assertDurationOutOfRangeRejected(String createSql) throws Exception {
+        try {
+            execute(createSql);
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected out-of-range duration reject for: " + createSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + createSql,
+                    Chars.contains(e.getFlyweightMessage(), "live view duration is out of range")
             );
         }
     }

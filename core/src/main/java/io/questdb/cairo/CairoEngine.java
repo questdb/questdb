@@ -988,6 +988,18 @@ public class CairoEngine implements Closeable, WriterSource {
                             registerLiveViewStubIfAbsent(tableToken, LiveViewLifecycleState.STATE_UNREADABLE);
                         }
                     } catch (Throwable th) {
+                        if (th instanceof VirtualMachineError) {
+                            // OutOfMemoryError / StackOverflowError during a load are
+                            // transient resource exhaustion, not view corruption. The
+                            // inner _lv.s recovery (catch Exception) already lets these
+                            // propagate for that reason; the outer catch must not
+                            // re-swallow them, or a boot-time OOM would mislabel a
+                            // healthy view state_unreadable and mislead an operator into
+                            // dropping it. A corrupt-file decode failure (an ordinary
+                            // exception, or an AssertionError under -ea) still falls
+                            // through to the droppable stub below.
+                            throw th;
+                        }
                         LOG.error().$("could not load live view, surfacing as state_unreadable [view=").$(tableToken)
                                 .$(", msg=").$safe(th.getMessage())
                                 .I$();

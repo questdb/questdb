@@ -27,7 +27,6 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -40,6 +39,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -200,15 +200,36 @@ public class LiveViewDefinition {
         if (value == 0) {
             return 0;
         }
+        // Compute the micros in long arithmetic with an exact multiply. The
+        // timestamp driver's fromMinutes / fromHours / fromDays take an int, so
+        // feeding them a large parsed value narrows it (e.g. 4294967297m would
+        // truncate to 1m); Math.multiplyExact instead throws on any value that
+        // does not fit, and the parse path converts that to a positioned
+        // SqlException (see toMicrosChecked). Products match the driver's.
         return switch (unit) {
             case 'U' -> value; // explicit micros
-            case 'T' -> MicrosTimestampDriver.INSTANCE.fromMillis(value);
-            case 's' -> MicrosTimestampDriver.INSTANCE.fromSeconds(value);
-            case 'm' -> MicrosTimestampDriver.INSTANCE.fromMinutes((int) value);
-            case 'h' -> MicrosTimestampDriver.INSTANCE.fromHours((int) value);
-            case 'd' -> MicrosTimestampDriver.INSTANCE.fromDays((int) value);
+            case 'T' -> Math.multiplyExact(value, Micros.MILLI_MICROS);
+            case 's' -> Math.multiplyExact(value, Micros.SECOND_MICROS);
+            case 'm' -> Math.multiplyExact(value, Micros.MINUTE_MICROS);
+            case 'h' -> Math.multiplyExact(value, Micros.HOUR_MICROS);
+            case 'd' -> Math.multiplyExact(value, Micros.DAY_MICROS);
             default -> value;
         };
+    }
+
+    /**
+     * Converts a parsed {@code (value, unit)} duration to micros at parse time,
+     * turning an out-of-range value (one that would overflow a long micros
+     * count) into a positioned {@link SqlException} instead of letting
+     * {@link #toMicros} truncate or wrap it. Use this on user-supplied CREATE
+     * LIVE VIEW clauses; {@link #toMicros} stays the plain read-back codec.
+     */
+    public static long toMicrosChecked(long value, char unit, int position) throws SqlException {
+        try {
+            return toMicros(value, unit);
+        } catch (ArithmeticException e) {
+            throw SqlException.$(position, "live view duration is out of range");
+        }
     }
 
     /**

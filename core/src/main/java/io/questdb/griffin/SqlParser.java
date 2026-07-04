@@ -1314,7 +1314,7 @@ public class SqlParser {
         int flushPos = lexer.lastTokenPosition();
         long flushValue = LiveViewDefinition.parseDurationValue(flushTok, flushPos);
         char flushUnit = LiveViewDefinition.parseDurationUnit(flushTok, flushPos);
-        long flushMicros = LiveViewDefinition.toMicros(flushValue, flushUnit);
+        long flushMicros = LiveViewDefinition.toMicrosChecked(flushValue, flushUnit, flushPos);
         if (flushValue == 0 || flushMicros < 100_000) {
             throw SqlException.$(flushPos, "live view FLUSH EVERY must be at least 100ms");
         }
@@ -1347,7 +1347,7 @@ public class SqlParser {
                 int memPos = lexer.lastTokenPosition();
                 inMemoryValue = LiveViewDefinition.parseDurationValue(memTok, memPos);
                 inMemoryUnit = LiveViewDefinition.parseDurationUnit(memTok, memPos);
-                inMemoryMicros = LiveViewDefinition.toMicros(inMemoryValue, inMemoryUnit);
+                inMemoryMicros = LiveViewDefinition.toMicrosChecked(inMemoryValue, inMemoryUnit, memPos);
                 if (inMemoryMicros < flushMicros) {
                     SqlException ex = SqlException.position(memPos)
                             .put("live view IN MEMORY must be at least FLUSH EVERY (")

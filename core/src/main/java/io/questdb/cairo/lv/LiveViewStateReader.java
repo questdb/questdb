@@ -50,8 +50,11 @@ import org.jetbrains.annotations.Nullable;
  *     <li>{@code lastProcessedSeqTxn} — highest base seqTxn the refresh worker has
  *     consumed (may be ahead of {@code lvConsumedSeqTxn} when output rows are buffered
  *     in-memory but not yet flushed)</li>
- *     <li>{@code appliedWatermark} — T_w on the live view's WAL; reconstructable from
- *     {@code _txn} but persisted for catalogue / restart speed</li>
+ *     <li>{@code appliedWatermark} — T_w expressed as a <em>base</em> table seqTxn (the
+ *     highest base seqTxn whose output has been applied to the LV's on-disk tier), not a
+ *     live-view seqTxn; reconstructable from {@code _txn} but persisted for catalogue /
+ *     restart speed. Note the head-checkpoint {@code lvSeqTxn} field lives in a different
+ *     sequence space (the LV's own seqTxn) despite the similar name</li>
  *     <li>{@code lvConsumedSeqTxn} — WAL purge floor this view publishes</li>
  * </ul>
  */

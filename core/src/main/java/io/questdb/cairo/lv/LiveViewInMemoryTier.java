@@ -199,11 +199,18 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      */
     public long footprintBytes() {
         long sum = 0;
-        if (slots[0] != null) {
-            sum += slots[0].footprintBytes();
+        // Snapshot each slot into a local before dereferencing it. This runs
+        // lock-free off the live_views() catalogue cursor with no read pin, so a
+        // concurrent DROP / invalidate (close() nulls slots[0]/slots[1]) can
+        // clear a slot between the null check and the deref - reading the field
+        // twice would then NPE the monitoring query.
+        final LiveViewInMemoryBuffer slot0 = slots[0];
+        if (slot0 != null) {
+            sum += slot0.footprintBytes();
         }
-        if (slots[1] != null) {
-            sum += slots[1].footprintBytes();
+        final LiveViewInMemoryBuffer slot1 = slots[1];
+        if (slot1 != null) {
+            sum += slot1.footprintBytes();
         }
         return sum;
     }

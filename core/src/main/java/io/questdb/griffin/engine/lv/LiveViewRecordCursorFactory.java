@@ -90,14 +90,25 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor diskCursor = base.getCursor(executionContext);
-        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
-        LiveViewRecordCursor cursor = new LiveViewRecordCursor();
+        final LiveViewInstance instance;
+        final boolean diskScanAscending;
+        final LiveViewRecordCursor cursor;
         try {
+            instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
             // seam routing assumes the disk scan yields rows in ascending
             // timestamp order. The LV table has a designated timestamp, so a
             // forward scan is ascending; backward / index scans are not, and the
             // cursor must fall back to disk-only for them.
-            boolean diskScanAscending = base.getScanDirection() == SCAN_DIRECTION_FORWARD;
+            diskScanAscending = base.getScanDirection() == SCAN_DIRECTION_FORWARD;
+            cursor = new LiveViewRecordCursor();
+        } catch (Throwable t) {
+            // Nothing owns diskCursor yet (of() has not run), so free it here.
+            Misc.free(diskCursor);
+            throw t;
+        }
+        try {
+            // of() takes ownership of diskCursor first thing, so once it is
+            // called the cursor closes diskCursor via close() on any failure.
             cursor.of(diskCursor, base.getMetadata(), instance, timestampColumnIndex, diskScanAscending);
         } catch (Throwable t) {
             Misc.free(cursor);

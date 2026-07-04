@@ -277,8 +277,11 @@ public class LiveViewRecordCursor implements RecordCursor {
     }
 
     public void of(RecordCursor diskCursor, RecordMetadata baseMetadata, LiveViewInstance instance, int timestampColumnIndex, boolean diskScanAscending) {
-        releaseSlot();
+        // Take ownership of diskCursor before anything that can throw, so a later
+        // failure in of() closes it via close() rather than leaking it back to
+        // the caller (getCursor relies on this hand-off point).
         this.diskCursor = diskCursor;
+        releaseSlot();
         this.timestampColumnIndex = timestampColumnIndex;
         this.inMemRowsServed = 0;
         this.leadRowsServed = 0;
