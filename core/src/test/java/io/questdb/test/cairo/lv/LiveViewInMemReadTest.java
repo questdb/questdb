@@ -779,6 +779,98 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupOverlapRebuildUsesOwnSchemaNotSiblingViews() throws Exception {
+        // C2 regression. The staging buffer (stagingBuffer / stagingColumnTypes in
+        // LiveViewRefreshJob) is a per-WORKER field shared across every view a
+        // refresh worker serves, reshaped only in ensureStagingAndTier. The dedup
+        // overlap branch of drainAppliedBase used to run o3Replay ->
+        // rebuildInMemoryTier BEFORE calling ensureStagingAndTier, so it staged
+        // THIS view's LV disk columns through whatever schema the worker last served
+        // (a sibling view), then stamped the rebuilt slot with the current disk
+        // seqTxn - so the read fence held and the tier served corrupt rows.
+        //
+        // Two views on one job with the SAME output column count but a different
+        // type at column index 1 (DOUBLE for the victim, INT for the sibling). Same
+        // count means the stale-schema stager does not fault on an index mismatch;
+        // the wider-victim (8 bytes) read through the narrower sibling stride (4
+        // bytes) corrupts the val column silently. Drive the sibling last so the
+        // shared staging buffer holds its INT shape, then force the dedup view onto
+        // the overlap rebuild with a below-frontier UPSERT. Pre-fix the rebuilt
+        // tier's val column diverges from disk; post-fix the up-front reshape makes
+        // the rebuild read the victim's own DOUBLE schema.
+        assertMemoryLeak(() -> {
+            // Victim: DOUBLE val over a DEDUP base -> the coupled applied-reader path.
+            execute("CREATE TABLE base_a (sym SYMBOL, val DOUBLE, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base_a");
+            // Sibling: INT at the same column index, same total column count.
+            execute("CREATE TABLE base_b (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lvb FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base_b");
+
+            LiveViewInstance instanceA = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instanceA);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: the victim's initial forward append. Flushes 3 rows to the
+                // LV table, populates the tier, and sets the frontier to ts=03.
+                execute("INSERT INTO base_a (sym, val, ts) VALUES " +
+                        "('a', 10.0, '2026-01-01T00:00:01.000000Z'), " +
+                        "('a', 20.0, '2026-01-01T00:00:02.000000Z'), " +
+                        "('a', 30.0, '2026-01-01T00:00:03.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Cycle 2: refresh the SIBLING. Its ensureStagingAndTier reshapes the
+                // shared worker staging buffer to the INT schema - the stale shape the
+                // victim's overlap rebuild must NOT reuse.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base_b (sym, val, ts) VALUES " +
+                        "('a', 1, '2026-01-01T00:00:01.000000Z'), " +
+                        "('a', 2, '2026-01-01T00:00:02.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Cycle 3: a below-frontier dedup UPSERT on base_a (ts=02, val 20 ->
+                // 999) forces the victim onto drainAppliedBase's overlap branch ->
+                // o3Replay -> rebuildInMemoryTier. The disk REPLACE_RANGE is correct
+                // either way; only the in-mem rebuild reads the staging schema, which
+                // is still the sibling's INT shape until the fix reshapes it.
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base_a (sym, val, ts) VALUES ('a', 999.0, '2026-01-01T00:00:02.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // A cursor opened right after the overlap rebuild routes through the tier:
+            // the slot was stamped with the current disk seqTxn, so the fence holds.
+            InnerRead afterOverlap = readInner("SELECT * FROM lv");
+            Assert.assertTrue("overlap rebuild must keep the tier routable", afterOverlap.routingEligible);
+            Assert.assertTrue("the rebuilt tier must serve in-mem rows", afterOverlap.inMemRowsServed > 0);
+
+            // The served tier must equal disk (fence forced off). Pre-fix the DOUBLE
+            // val column was staged through the sibling's INT stride, so they diverge.
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            // ... and equal a from-scratch recompute over the post-dedup base.
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base_a");
+
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\trn\n" +
+                            "a\t10.0\t2026-01-01T00:00:01.000000Z\t1\n" +
+                            "a\t999.0\t2026-01-01T00:00:02.000000Z\t2\n" +
+                            "a\t30.0\t2026-01-01T00:00:03.000000Z\t3\n");
+        });
+    }
+
+    @Test
     public void testToTopReReadIsConsistent() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();

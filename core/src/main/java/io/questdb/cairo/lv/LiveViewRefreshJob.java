@@ -1010,6 +1010,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final boolean overlap = latestSeenTs != Numbers.LONG_NULL
                     && batchMinTs != Numbers.LONG_NULL
                     && batchMinTs <= latestSeenTs;
+            // Reshape the per-worker staging buffer to THIS view's output schema
+            // before either branch touches it. stagingBuffer / stagingColumnTypes
+            // are worker-wide fields carrying whatever view the worker last served,
+            // and both branches stage through them: the overlap branch's o3Replay ->
+            // rebuildInMemoryTier -> stageInMemoryWindowFromDisk reads this view's LV
+            // disk columns but dispatches by stagingColumnTypes, so without this
+            // up-front reshape it would read them through a different view's schema
+            // and stamp the rebuilt slot with a matching disk seqTxn - corrupt rows
+            // served under a passing read fence. Mirrors incrementalRefresh, which
+            // calls ensureStagingAndTier up-front.
+            final boolean populateTier = ensureStagingAndTier(instance, outMetadata, cursorTimestampIndex);
             if (overlap) {
                 // Release the scan reader before o3Replay re-pins via its own
                 // waitForApply (don't hold two base readers).
@@ -1030,7 +1041,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             // Strictly-forward cheap append over the applied reader.
-            final boolean populateTier = ensureStagingAndTier(instance, outMetadata, cursorTimestampIndex);
             // Inclusive lower bound: strictly above the frontier, floored at the view's
             // lower bound. On the first cycle latestSeenTs is LONG_NULL, so the floor
             // governs and the scan builds window state from empty.
