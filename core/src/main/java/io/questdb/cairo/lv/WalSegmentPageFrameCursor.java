@@ -51,7 +51,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -375,12 +375,10 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         extractedTimestampMem.jumpTo(bytes);
         final long src = colMem.getPageAddress(0) + rowLo * TIMESTAMP_PAIR_BYTES;
         final long dst = extractedTimestampMem.getAddress();
-        for (long r = 0; r < rowCount; r++) {
-            Unsafe.getUnsafe().putLong(
-                    dst + (r << 3),
-                    Unsafe.getUnsafe().getLong(src + r * TIMESTAMP_PAIR_BYTES)
-            );
-        }
+        // Pull the 8-byte ts out of each 16-byte (ts, rowId) pair via the SIMD
+        // primitive TableWriter / O3CopyJob already use for exactly this gather;
+        // indexHi is inclusive, so pass rowCount - 1.
+        Vect.copyFromTimestampIndex(src, 0, rowCount - 1, dst);
         return dst;
     }
 

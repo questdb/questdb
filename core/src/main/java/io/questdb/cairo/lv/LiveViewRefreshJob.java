@@ -3775,15 +3775,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     writeRow++;
                 }
             }
-            // Append staging rows on top.
-            for (long r = 0, rn = stagingBuffer.rowCount(); r < rn; r++) {
-                long srcTs = stagingBuffer.getLong(r, tsCol);
-                if (writeSeamTs == Numbers.LONG_NULL) {
-                    writeSeamTs = srcTs;
-                }
-                writeSlot.copyRowFrom(stagingBuffer, r, writeRow);
-                writeRow++;
+            // Append staging rows on top. Staging is ts-ascending, so its first row
+            // carries the minimum; it seeds writeSeamTs only when no retained row did.
+            final long stagingRows = stagingBuffer.rowCount();
+            if (stagingRows > 0 && writeSeamTs == Numbers.LONG_NULL) {
+                writeSeamTs = stagingBuffer.getLong(0, tsCol);
             }
+            writeSlot.copyRowsFrom(stagingBuffer, 0, stagingRows, writeRow);
+            writeRow += stagingRows;
             writeSlot.setRowCount(writeRow);
             writeSlot.setSeamTs(writeSeamTs);
             writeSlot.setLvSeqTxn(lvSeqTxn);
@@ -3826,15 +3825,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * fast-path.
      */
     private void appendStagingInPlace(LiveViewInMemoryBuffer slot, long stagingMinTs) {
-        long writeRow = slot.rowCount();
-        if (writeRow == 0 && stagingBuffer.rowCount() > 0) {
+        final long writeRow = slot.rowCount();
+        final long rn = stagingBuffer.rowCount();
+        if (writeRow == 0 && rn > 0) {
             slot.setSeamTs(stagingMinTs);
         }
-        for (long r = 0, rn = stagingBuffer.rowCount(); r < rn; r++) {
-            slot.copyRowFrom(stagingBuffer, r, writeRow);
-            writeRow++;
-        }
-        slot.setRowCount(writeRow);
+        slot.copyRowsFrom(stagingBuffer, 0, rn, writeRow);
+        slot.setRowCount(writeRow + rn);
     }
 
     /**
@@ -4170,9 +4167,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void fillSlotFromStaging(LiveViewInMemoryBuffer slot, long lvSeqTxn) {
         slot.reset();
         final long rows = stagingBuffer.rowCount();
-        for (long r = 0; r < rows; r++) {
-            slot.copyRowFrom(stagingBuffer, r, r);
-        }
+        slot.copyRowsFrom(stagingBuffer, 0, rows, 0);
         slot.setRowCount(rows);
         slot.setSeamTs(stagingBuffer.seamTs());
         slot.setLvSeqTxn(lvSeqTxn);

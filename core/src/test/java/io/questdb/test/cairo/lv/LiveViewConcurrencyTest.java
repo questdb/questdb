@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -57,6 +59,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Concurrency tests for live views, covering the ingestion and lifecycle shapes the
@@ -205,6 +208,22 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         // A refresh-driver thread maintains the view while four writers ingest.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runConcurrent(rnd, 0, 4, 800, false, true));
+    }
+
+    @Test
+    public void testDemoteRefusedMintDoesNotInvalidateView() throws Exception {
+        // Deterministic regression for the live-view commit demote fence (17a1f40e08).
+        // Every LV commit family routes through fencedLiveViewCommit, which fires the
+        // role-switch mint observer inside the role-switch read-lock hold at the exact
+        // WAL externalization point. A witness that throws the read-only authorization
+        // error there models a PRIMARY-to-REPLICA demote winning the race - the fence's
+        // in-lock isReadOnlyMode() re-check (or getWalWriter's eager check) refusing the
+        // mint. handleRefreshFailure must classify that authorization refusal as
+        // retry-later and NEVER invalidate: a live view is derived state the new primary
+        // recomputes forward, and invalidation is durable/sticky with no replica-side
+        // recovery, so a demote refusal must not brick the view locally. Once the demote
+        // clears, the same view must resume and converge to the from-scratch recompute.
+        assertMemoryLeak(this::runDemoteRefusedMintDoesNotInvalidate);
     }
 
     @Test
@@ -1006,6 +1025,90 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 sqlExecutionContext,
                 "(" + viewSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
+                LOG,
+                true
+        );
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // Drives a live-view refresh whose commit mint is refused by an armed demote
+    // witness, then asserts the view is not invalidated and recovers once the demote
+    // clears. See testDemoteRefusedMintDoesNotInvalidateView for the full rationale.
+    private void runDemoteRefusedMintDoesNotInvalidate() throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // A coupled (non-IN-MEMORY) view: incrementalRefresh commits the LV WAL block
+        // directly through fencedLiveViewCommit on the same tick, so a single drive
+        // deterministically reaches the mint - no deferred FLUSH cadence to wait on.
+        final String viewSql = "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts "
+                + "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base";
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+
+        // A healthy first cycle so the view is active before the demote window opens.
+        try (WalWriter w = engine.getWalWriter(baseToken)) {
+            appendRow(w, MicrosTimestampDriver.floor(DATA_START), 0, 1, 1.0);
+            w.commit();
+        }
+        final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        try {
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertFalse("view must be valid before the demote", instance.getStateReader().isInvalid());
+
+            // More base rows so the next refresh has a real LV WAL block to mint.
+            try (WalWriter w = engine.getWalWriter(baseToken)) {
+                appendRow(w, MicrosTimestampDriver.floor(DATA_START) + 1_000_000, 0, 2, 2.0);
+                appendRow(w, MicrosTimestampDriver.floor(DATA_START) + 2_000_000, 1, 3, 3.0);
+                w.commit();
+            }
+            drainWalQueue();
+
+            // Arm the demote witness: throw the read-only authorization error at the mint
+            // point, exactly where a role flip would make the fence's re-check refuse.
+            final AtomicInteger refusals = new AtomicInteger(0);
+            CairoEngine.setRoleSwitchMintObserver(() -> {
+                refusals.incrementAndGet();
+                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            });
+            try {
+                // Every mint attempt while the witness is armed is refused. The refresh
+                // must absorb each refusal as retry-later and leave the view valid.
+                for (int i = 0; i < 8; i++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                    Assert.assertFalse(
+                            "a demote-refused mint must not invalidate the view",
+                            instance.getStateReader().isInvalid()
+                    );
+                }
+                Assert.assertTrue("the fenced mint must have been refused at least once", refusals.get() > 0);
+            } finally {
+                CairoEngine.setRoleSwitchMintObserver(null);
+            }
+
+            // The demote cleared: the same view resumes forward and converges.
+            driveRefreshToQuiescence(job);
+            Assert.assertFalse("view must remain valid after recovery", instance.getStateReader().isInvalid());
+        } finally {
+            Misc.free(job);
+        }
+
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY 1, 2",
+                "(lv) ORDER BY 1, 2",
                 LOG,
                 true
         );

@@ -45,6 +45,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Utf8Sequence;
@@ -571,6 +572,75 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     throw new UnsupportedOperationException(
                             "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
                     );
+            }
+        }
+    }
+
+    /**
+     * Batch-copies the contiguous source row range {@code [srcRowLo, srcRowHi)} onto
+     * this buffer's dense append tail starting at {@code dstRow}, column by column.
+     * This is the column-major counterpart to {@link #copyRowFrom}: a fixed-width /
+     * SYMBOL column copies its whole row range with a single {@link Vect#memcpy} at the
+     * column's {@code row * size} stride - the same columnar layout {@code TableWriter}'s
+     * O3 merge copies - hoisting the per-cell type switch out of the row loop
+     * ({@code O(cols)} native copies instead of {@code O(rows * cols)} scalar puts). A
+     * variable-length column (STRING / BINARY / VARCHAR / ARRAY) still re-appends per
+     * row through the same payload-plus-aux append path {@link #copyRowFrom} uses,
+     * because its aux offsets are relative to this buffer's own payload cursor and
+     * cannot be bulk-copied without a rebase.
+     * <p>
+     * {@code src} must share this buffer's schema and be a distinct buffer - the callers
+     * copy the worker's staging buffer or the sibling published slot into a write slot,
+     * never a slot onto itself, so the fixed-width memcpy never aliases. As with
+     * {@link #copyRowFrom}, the caller advances {@link #setRowCount(long)} after the
+     * range is written; the fixed-width write lands in place at the absolute
+     * {@code dstRow * size} offset (extending the buffer without moving its append
+     * cursor), and {@code dstRow} must be the next dense append row so the var-size
+     * append cursors stay aligned.
+     */
+    public void copyRowsFrom(LiveViewInMemoryBuffer src, long srcRowLo, long srcRowHi, long dstRow) {
+        final long count = srcRowHi - srcRowLo;
+        if (count <= 0) {
+            return;
+        }
+        for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            final int size = columnTypeSizes.getQuick(c);
+            if (size > 0) {
+                // Fixed-width / SYMBOL column: one memcpy over the contiguous byte range.
+                // Source rows live at [srcRowLo * size, srcRowHi * size); the destination
+                // lands densely at [dstRow * size, ...). appendAddressFor(offset, bytes)
+                // extends the destination in place and returns the absolute write address
+                // without advancing its append cursor, matching the absolute-offset writes
+                // copyRowFrom does per cell.
+                final MemoryCARWImpl dstData = dataMem.getQuick(c);
+                final long bytes = count * size;
+                final long dstAddr = dstData.appendAddressFor(dstRow * size, bytes);
+                Vect.memcpy(dstAddr, src.dataMem.getQuick(c).addressOf(srcRowLo * size), bytes);
+            } else {
+                // Variable-length column: re-append each row's payload + aux entry, the
+                // same path copyRowFrom takes. dst advances densely so each append's
+                // order assert (aux cursor == dst * auxWidth) holds.
+                long dst = dstRow;
+                for (long r = srcRowLo; r < srcRowHi; r++, dst++) {
+                    switch (ColumnType.tagOf(columnTypes.getQuick(c))) {
+                        case ColumnType.STRING:
+                            appendStr(c, dst, src.getStrA(r, c));
+                            break;
+                        case ColumnType.BINARY:
+                            appendBin(c, dst, src.getBin(r, c));
+                            break;
+                        case ColumnType.VARCHAR:
+                            appendVarchar(c, dst, src.getVarcharA(r, c));
+                            break;
+                        case ColumnType.ARRAY:
+                            appendArray(c, dst, src.getArray(r, c));
+                            break;
+                        default:
+                            throw new UnsupportedOperationException(
+                                    "live view in-memory tier does not support column type: " + ColumnType.nameOf(columnTypes.getQuick(c))
+                            );
+                    }
+                }
             }
         }
     }
