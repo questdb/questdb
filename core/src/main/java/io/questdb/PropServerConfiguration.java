@@ -517,6 +517,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxArrayElementCount;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
+    private final boolean sqlSymbolPatternIndexEnabled;
+    private final int sqlSymbolPatternIndexThreshold;
     private final int sqlModelPoolCapacity;
     private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
@@ -1702,6 +1704,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
             this.sqlGroupByPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_POOL_CAPACITY, 1024);
             this.sqlMaxSymbolNotEqualsCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT, 100);
+            this.sqlSymbolPatternIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED, true);
+            this.sqlSymbolPatternIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, 100);
             this.sqlBindVariablePoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_BIND_VARIABLE_POOL_SIZE, 8);
             this.sqlQueryRegistryPoolSize = getInt(properties, env, PropertyKey.CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE, 32);
             this.sqlCountDistinctCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COUNT_DISTINCT_CAPACITY, 3);
@@ -4201,6 +4205,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxSymbolNotEqualsCount() {
             return sqlMaxSymbolNotEqualsCount;
+        }
+
+        @Override
+        public boolean isSymbolPatternIndexEnabled() {
+            return sqlSymbolPatternIndexEnabled;
+        }
+
+        @Override
+        public int getSymbolPatternIndexThreshold() {
+            return sqlSymbolPatternIndexThreshold;
         }
 
         @Override

@@ -584,6 +584,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSymbolPatternIndexEnabled() {
+        return getDelegate().isSymbolPatternIndexEnabled();
+    }
+
+    @Override
+    public int getSymbolPatternIndexThreshold() {
+        return getDelegate().getSymbolPatternIndexThreshold();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return getDelegate().getMaxUncommittedRows();
     }

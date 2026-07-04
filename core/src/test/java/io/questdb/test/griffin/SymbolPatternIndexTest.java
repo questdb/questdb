@@ -97,6 +97,12 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConfigDefaults() {
+        Assert.assertTrue(configuration.isSymbolPatternIndexEnabled());
+        Assert.assertEquals(100, configuration.getSymbolPatternIndexThreshold());
+    }
+
+    @Test
     public void testProviderExposesStartsWithKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, ts timestamp) timestamp(ts)");

@@ -386,6 +386,10 @@ public interface CairoConfiguration {
 
     int getMaxSymbolNotEqualsCount();
 
+    boolean isSymbolPatternIndexEnabled();
+
+    int getSymbolPatternIndexThreshold();
+
     int getMaxUncommittedRows();
 
     int getMetadataPoolCapacity();
