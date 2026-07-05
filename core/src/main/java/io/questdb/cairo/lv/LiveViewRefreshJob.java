@@ -1565,7 +1565,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // its own overrides before those setters run. instance.leadRowCount
                     // is 0 here (both tierStale setters zero it), so flushLead
                     // materialises exactly this cycle's staging rows, not the stale
-                    // slot rows.
+                    // slot rows. Pin that invariant explicitly rather than trusting
+                    // upstream bookkeeping: the o3Replay non-capable resync only re-arms
+                    // leadRowCount from a non-stale slot, but a from-scratch setLeadRowCount(0)
+                    // here also keeps flushRows / lvRowPosition accounting exact against any
+                    // future path that could leave a stale non-zero count while tierStale.
+                    instance.setLeadRowCount(0);
                     flushLead(instance, windowFactory, advanceTo, appendedRows);
                     rebuildInMemoryTier(instance);
                     instance.setRefreshedUpToSeqTxn(advanceTo);
@@ -1995,11 +2000,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The callers zero instance.leadRowCount before o3Replay because the
             // capable path rebuilds the tier as a pure disk subset (leadRowCount 0).
             // This branch rewrote nothing on disk and left the published slot
-            // untouched, so its stamped leadRowCount is still the true un-flushed
-            // lead. Resync instance.leadRowCount to the slot: leaving it at 0 desyncs
-            // the two, so the next publish would reclassify those L never-flushed
+            // untouched, so on a NON-stale slot its stamped leadRowCount is still the
+            // true un-flushed lead. Resync instance.leadRowCount to it: leaving it at 0
+            // desyncs the two, so the next publish would reclassify those L never-flushed
             // rows as overlap (size() under-reports, iteration serves them as
             // phantoms) and flushLead's overlapCount would skip them entirely.
+            // Skip the resync when the slot is tierStale, though: a prior emergency flush
+            // already wrote its lead rows to disk yet left the slot stamped with that
+            // now-stale leadRowCount, so it is NOT an un-flushed lead. Re-arming
+            // instance.leadRowCount from a stale slot would break the finishLeadRefresh
+            // tierStale branch, which trusts leadRowCount == 0 to flush only the new
+            // staging rows -- a stale non-zero value makes it re-flush the already-durable
+            // rows as on-disk duplicates. When stale the correct value is the 0 the caller
+            // left before o3Replay, so leaving it untouched is right.
             // Defensive: CREATE rejects every non-snapshot-capable window shape (each
             // WindowFunction.supportsSnapshot() folds in the anchor key type check),
             // and o3Replay recomputes capability above, so a freshly-validated view
@@ -2007,7 +2020,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // non-capable at runtime (e.g. a restored view whose function lost
             // snapshot support); the resync keeps its bookkeeping correct if so.
             final LiveViewInMemoryTier ncTier = instance.getInMemoryTier();
-            if (ncTier != null) {
+            if (ncTier != null && !instance.isTierStale()) {
                 instance.setLeadRowCount(ncTier.getSlot(ncTier.getPublishedIdx()).leadRowCount());
             }
             return;
@@ -4384,7 +4397,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // subclass overrides isLeadReconstruction() to select it; the primary default is false.
         final boolean leadReconstruction = isLeadReconstruction();
         try {
-            if (instance.isDropped() || instance.isInvalid()) {
+            // A definition-less stub (torn / too-new _lv or _lv.s) must never refresh -
+            // it has no definition to drive from. Both refresh entry paths already
+            // filter it (the fallback scan via isStub(), the by-base-table map
+            // structurally excludes it), so this is defense-in-depth against a future
+            // third caller reaching a stub here and NPEing on getDefinition().
+            if (instance.isStub() || instance.isDropped() || instance.isInvalid()) {
                 return;
             }
             // Snapshot freeze: DatabaseCheckpointAgent is mid-copy of this LV's
@@ -4392,6 +4410,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // advance while the agent is reading them. The agent clears the
             // flag via endCheckpoint() once the per-LV copy completes; the
             // next fallback or notification tick picks the worker back up.
+            // This check is load-bearing for the checkpoint deadlock fix: it runs
+            // under the refresh latch acquired above, so a freeze armed AFTER this
+            // turn took the latch is observed here and skips the turn, while a freeze
+            // armed BEFORE is serialised by startCheckpoint's latch take-and-release.
+            // That handshake is what lets the in-band _lv.s rewrites drop
+            // waitForUnfrozen() without racing the agent's copy - do not move a rewrite
+            // ahead of this guard or out of the latch hold.
             if (instance.isFreezeInProgress()) {
                 return;
             }
