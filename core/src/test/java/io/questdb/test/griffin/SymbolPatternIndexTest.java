@@ -660,6 +660,70 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * SP3 covering parity sweep: a data-driven sweep on a COVERED-projection table that includes explicit
+     * NULL-symbol rows and MULTIPLE partitions. For each predicate shape the covered fast path (unhinted)
+     * must return byte-identical rows to the scan+filter oracle (forced by
+     * {@code no_symbol_pattern_index(t) no_covering(t)} hints). KEY invariant: a POSITIVE pattern never
+     * matches NULL, so the covered result must contain ZERO null-symbol rows for every predicate. This tests
+     * the NULL-exclusion property of the covering path (correct key-set from provider excludes key 0 / the
+     * NULL sentinel).
+     *
+     * <p>Covered DDL: {@code sym symbol index type posting include (price)}, so {@code price} and {@code sym}
+     * are both covered; {@code ts} is selected so the ORDER BY is stable across partitions.
+     */
+    @Test
+    public void testCoveringParitySweep() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting include (price), price double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('alpha','alto','beta','ALPHA','al_x','gamma'), x::double, timestamp_sequence(0, 3600000000L) from long_sequence(4000)");
+            // Explicit NULL-symbol rows in a separate partition to prove NULL exclusion on the covered path.
+            execute("insert into t select null, x::double, timestamp_sequence(4000*3600000000L, 3600000000L) from long_sequence(300)");
+            String[] preds = {
+                    "sym like 'al%'",         // prefix
+                    "sym like '%ta'",          // endswith
+                    "sym like '%lph%'",        // contains
+                    "sym ilike 'al%'",         // ilike prefix
+                    "sym ~ '^al'",             // regex
+                    "sym like 'zzz%'",         // empty match
+                    "sym like 'al\\_x'",       // underscore escape
+                    "sym like 'al%' and price > 100" // residual conjunct
+            };
+            for (String p : preds) {
+                String base = "select %s price, sym, ts from t where " + p.replace("%", "%%") + " order by ts, price";
+                String expected = select(String.format(base, "/*+ no_symbol_pattern_index(t) no_covering(t) */ "));
+                String actual = select(String.format(base, ""));
+                io.questdb.test.tools.TestUtils.assertEquals("pred=[" + p + "]", expected, actual);
+            }
+        });
+    }
+
+    /**
+     * SP3 covering routing: asserts that the query planner routes correctly based on whether the
+     * projection is fully covered by the posting index.
+     *
+     * <ul>
+     *   <li>Covered projection ({@code select sym, price}) -&gt; plan must contain {@code CoveringIndex}.</li>
+     *   <li>NOT-covered projection (column {@code extra} is not in the INCLUDE set) -&gt; plan must fall
+     *       back to the classic bitmap {@code SymbolPatternIndex}.</li>
+     *   <li>{@code no_covering(t)} hint on a covered query -&gt; forces the classic bitmap
+     *       {@code SymbolPatternIndex} (not covering, but still a fast path).</li>
+     * </ul>
+     */
+    @Test
+    public void testCoveringVsBitmapRouting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting include (price), price double, extra long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA'), x::double, x, timestamp_sequence(0, 60000000) from long_sequence(500)");
+            // Covered projection: all selected columns are sym (from WHERE) + price (INCLUDE) -> CoveringIndex.
+            assertQuery("select sym, price from t where sym like 'A%'").noLeakCheck().assertsPlanContaining("CoveringIndex");
+            // NOT-covered projection: 'extra' is not in the INCLUDE set -> falls back to classic SymbolPatternIndex.
+            assertQuery("select sym, extra from t where sym like 'A%'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+            // Hint disables covering -> falls back to bitmap SymbolPatternIndex (still a fast path, just not covering).
+            assertQuery("select /*+ no_covering(t) */ sym, price from t where sym like 'A%'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+        });
+    }
+
+    /**
      * Runs {@code sql} and returns its printed text (header + rows) captured into a private sink, so two
      * queries can be compared without clobbering the shared static test sink.
      */
