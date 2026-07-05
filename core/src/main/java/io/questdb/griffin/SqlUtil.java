@@ -321,18 +321,29 @@ public class SqlUtil {
                 }
             }
 
+            // No usable content survived: an empty base, or truncation plus the quote
+            // reservation consumed it all. Emit a "column" placeholder (matching
+            // createColumnAlias) so the loop terminates with a valid, unquoted name
+            // instead of spinning forever - the old return gate keyed on len, which
+            // still counted the quote budget, so it always terminated.
+            final boolean emptyContent = contentLen == 0;
+
             // Emit the protective quotes only when the FINAL content still needs
             // them. Truncation may have dropped the discriminating dot, and a
             // dedup suffix turns an operator token into a plain identifier; in
             // both cases the bare name is unambiguous, so keeping the quotes would
             // only leak them into result-set metadata (see toColumnName).
-            final boolean emitQuote = quote && aliasContentNeedsQuoting(base, start, start + contentLen, sequence > 1);
+            final boolean emitQuote = !emptyContent && quote && aliasContentNeedsQuoting(base, start, start + contentLen, sequence > 1);
 
             final CharacterStoreEntry entry = store.newEntry();
             if (emitQuote) {
                 entry.put('"');
             }
-            entry.put(base, start, start + contentLen);
+            if (emptyContent) {
+                entry.put("column");
+            } else {
+                entry.put(base, start, start + contentLen);
+            }
             if (sequence > 1) {
                 entry.put('_');
                 entry.put(sequence);
@@ -341,7 +352,7 @@ public class SqlUtil {
                 entry.put('"');
             }
             final CharSequence alias = entry.toImmutable();
-            if (contentLen > 0 && aliasToColumnMap.excludes(alias)) {
+            if (aliasToColumnMap.excludes(alias)) {
                 // Update the sequence tracker for next time
                 nextAliasSequenceMap.put(seqKey, sequence + 1);
                 return alias;
@@ -1688,56 +1699,80 @@ public class SqlUtil {
             return base;
         }
 
-        // A quote-protected base (e.g. the dotted user alias "a.b") must stay protected after
-        // deduplication so it keeps stripping to a clean display name. The sequence suffix goes
-        // inside the closing quote ("a.b" -> "a.b1"), never after it ("a.b"1 would fail
-        // isQuoteProtectedAlias and leak the quotes into the result set metadata).
+        // A quote-protected base carries its dedup suffix inside the quotes and re-derives
+        // whether the quotes are still needed from the final content (see the loop below): a
+        // dotted alias stays protected ("a.b" -> "a.b1", stripping to a clean a.b1) while an
+        // operator token sheds the quotes once the suffix makes it a plain identifier ("in" ->
+        // in1). Putting the suffix after the quotes ("a.b"1) would fail isQuoteProtectedAlias
+        // and leak them into the result set metadata.
         final boolean quoteProtected = isQuoteProtectedAlias(base);
 
-        final CharacterStoreEntry characterStoreEntry = store.newEntry();
-
+        // Resolve the dedup content: the [contentLo, contentHi) slice of base reused for every
+        // candidate, or the "column" placeholder (contentLo < 0) for empty/numeric/disallowed
+        // bases. A quote-protected base keys on its bare interior so the sequence counter is
+        // shared whether or not a given candidate re-emits the protective quotes.
+        final int contentLo;
+        final int contentHi;
+        final CharacterStoreEntry baseEntry = store.newEntry();
         if (indexOfDot == -1) {
             if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NULL) {
-                characterStoreEntry.put("column");
+                contentLo = -1;
+                contentHi = -1;
+                baseEntry.put("column");
             } else if (quoteProtected) {
-                // drop the closing quote; the loop re-appends it after the sequence suffix
-                characterStoreEntry.put(base, 0, base.length() - 1);
+                contentLo = 1;
+                contentHi = base.length() - 1;
+                baseEntry.put(base, contentLo, contentHi);
             } else {
-                characterStoreEntry.put(base);
+                contentLo = 0;
+                contentHi = base.length();
+                baseEntry.put(base);
             }
+        } else if (indexOfDot + 1 == base.length()) {
+            contentLo = -1;
+            contentHi = -1;
+            baseEntry.put("column");
         } else {
-            if (indexOfDot + 1 == base.length()) {
-                characterStoreEntry.put("column");
-            } else {
-                characterStoreEntry.put(base, indexOfDot + 1, base.length());
-            }
+            contentLo = indexOfDot + 1;
+            contentHi = base.length();
+            baseEntry.put(base, contentLo, contentHi);
         }
-
-        final int baseAliasLen = characterStoreEntry.length();
+        final CharSequence seqKey = baseEntry.toImmutable();
 
         // Look up the starting sequence for this base alias
-        int sequence = nextAliasSequenceMap.get(characterStoreEntry.toImmutable());
+        int sequence = nextAliasSequenceMap.get(seqKey);
         if (sequence == -1) {
             sequence = 0;
         }
 
         while (true) {
-            characterStoreEntry.trimTo(baseAliasLen);
-            if (sequence > 0) {
-                characterStoreEntry.put(sequence);
+            // Re-emit the protective quotes per candidate only while the final content still
+            // needs them: a dotted interior always does; an operator token only until a dedup
+            // suffix makes it a plain identifier (so "a.b" -> "a.b1", while "in" stays quoted
+            // at sequence 0 to collide with the stored "in", then surfaces as bare in1).
+            final boolean emitQuote = quoteProtected && contentLo >= 0
+                    && aliasContentNeedsQuoting(base, contentLo, contentHi, sequence > 0);
+            final CharacterStoreEntry entry = store.newEntry();
+            if (emitQuote) {
+                entry.put('"');
             }
-            if (quoteProtected) {
-                characterStoreEntry.put('"');
+            if (contentLo >= 0) {
+                entry.put(base, contentLo, contentHi);
+            } else {
+                entry.put("column");
+            }
+            if (sequence > 0) {
+                entry.put(sequence);
+            }
+            if (emitQuote) {
+                entry.put('"');
             }
             sequence++;
-            if (aliasToColumnMap.excludes(characterStoreEntry.toImmutable())) {
+            final CharSequence alias = entry.toImmutable();
+            if (aliasToColumnMap.excludes(alias)) {
                 // Update the sequence tracker for next time
-                final int aliasLen = characterStoreEntry.length();
-                characterStoreEntry.trimTo(baseAliasLen);
-                nextAliasSequenceMap.put(characterStoreEntry.toImmutable(), sequence);
-                // Revert entry to the alias
-                characterStoreEntry.trimTo(aliasLen);
-                return characterStoreEntry.toImmutable();
+                nextAliasSequenceMap.put(seqKey, sequence);
+                return alias;
             }
         }
     }

@@ -123,6 +123,26 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasEmptyBase() {
+        // An empty base is quote-forced (the empty string is a disallowed alias) but has no
+        // content left to protect, so the return gate keyed on contentLen was never satisfied
+        // and the loop spun forever. It must terminate with a "column" placeholder instead
+        // (regression for the PIVOT IN ('') compiler hang).
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        CharSequence first = SqlUtil.createExprColumnAlias(store, "", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("column", first.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(first));
+        aliasMap.put(first.toString(), null);
+
+        // a second empty base dedups cleanly, still no leaked quotes
+        CharSequence second = SqlUtil.createExprColumnAlias(store, "", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("column_2", second.toString());
+    }
+
+    @Test
     public void testExprColumnAliasSimpleCase() {
         CharacterStore store = new CharacterStore(32, 1);
         LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);

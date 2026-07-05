@@ -293,6 +293,54 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotDuplicateOperatorTokenValuesThroughJoin() throws Exception {
+        // Two pivots produce operator-token columns ('in') that collide in the outer wildcard.
+        // The dedup must yield clean, quote-free names (in / in1) and the join must compile
+        // (regression: the composed reference t2."in" threw "wtf? t2.\"in\"" / Invalid column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("""
+                    SELECT * FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t2
+                    ORDER BY grp, grp1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	grp1	in1
+                            A	10	A	10
+                            A	10	B	30
+                            B	30	A	10
+                            B	30	B	30
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotEmptyValue() throws Exception {
+        // An empty-string pivot value has no content to build an alias from; it must terminate
+        // with a "column" placeholder instead of spinning the compiler forever (regression for
+        // the PIVOT IN ('') hang / NegativeArraySizeException).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', '', 10), ('B', '', 30);");
+            assertQuery("""
+                    SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('') GROUP BY grp) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	column
+                            A	10
+                            B	30
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotImplicitGroupBy() throws Exception {
         assertQuery("""
                 SELECT *
@@ -574,6 +622,30 @@ public class PivotTest extends AbstractSqlParserTest {
                                             Frame forward scan on: trades
                             """)
                     .returns(result);
+        });
+    }
+
+    @Test
+    public void testPivotOperatorTokenValueThroughJoin() throws Exception {
+        // An operator-token pivot column ('in') referenced through a join wildcard produces the
+        // composed reference t1."in"; it must resolve against the join metadata (stored bare as
+        // t1.in) and surface the clean name (regression: threw "wtf? t1.\"in\"" at compile time).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("""
+                    SELECT * FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN (SELECT 1 x) t2
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	x
+                            A	10	1
+                            B	30	1
+                            """);
         });
     }
 

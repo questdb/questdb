@@ -37,6 +37,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -139,18 +140,32 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
 
     @Override
     public int getColumnIndexQuiet(CharSequence columnName, int lo, int hi) {
-        final MapKey key = map.withKey();
         final int dot = Chars.indexOfLastUnquoted(columnName, '.', lo, hi);
+        MapKey key = map.withKey();
         if (dot == -1) {
             key.putStr(null);
             key.putStrLowerCase(columnName, lo, hi);
         } else {
-            key.putStrLowerCase(columnName, 0, dot);
-            key.putStrLowerCase(columnName, dot + 1, columnName.length());
+            key.putStrLowerCase(columnName, lo, dot);
+            key.putStrLowerCase(columnName, dot + 1, hi);
         }
         MapValue value = key.findValue();
         if (value != null) {
             return value.getInt(0);
+        }
+        // A composed "alias.column" reference whose column part carries the compiler's
+        // protective quotes (e.g. a join wildcard reference m."in") resolves against the
+        // unquoted stored name: an operator-token column is stored bare, while a dotted
+        // column is stored re-quoted and already matched verbatim above. Retry the
+        // qualified lookup with the quotes stripped off the column part.
+        if (dot > -1 && SqlUtil.isQuoteProtectedAlias(columnName, dot + 1, hi)) {
+            key = map.withKey();
+            key.putStrLowerCase(columnName, lo, dot);
+            key.putStrLowerCase(columnName, dot + 2, hi - 1);
+            value = key.findValue();
+            if (value != null) {
+                return value.getInt(0);
+            }
         }
         return -1;
     }
