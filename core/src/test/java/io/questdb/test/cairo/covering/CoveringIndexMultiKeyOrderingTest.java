@@ -238,6 +238,53 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSparsePrefixSumMemoRebuildsAcrossO3Update() throws Exception {
+        // Covered-value regression for the sparse-gen sidecar prefix-sum memo
+        // (AbstractPostingIndexReader.SparseGenSidecarPrefixSum). The memo caches
+        // sum(counts[0..slot)) per sparse gen and is reused across every pooled
+        // cursor open on a reader; a wrong base ordinal would read the WRONG
+        // covered value, which the covering-vs-oracle cross-check below catches.
+        // (Verified non-vacuous: an off-by-one in the memo's prefix makes this
+        // test fail — it genuinely routes covered reads through the memo.)
+        //
+        // The index is declared INLINE so it is built incrementally: every commit
+        // appends a fresh SPARSE gen (dense gens only arise from a whole-index
+        // seal), which is exactly the path the memo optimizes. A broad multi-key
+        // predicate over multiple partitions makes many keys share (and thus
+        // build) each gen's prefix; a second, timestamp-interleaved insert then
+        // adds more sparse gens and bumps the reader's gen-snapshot version, so
+        // the memo is exercised both before and after an index update. The memo's
+        // cross-snapshot invalidation itself is guaranteed by construction (it
+        // keys on genLookup.getCacheVersion(), bumped on every snapshot swap) and
+        // is further stressed by the O3-fuzz / reload suites.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_memo (" +
+                    "ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_memo " +
+                    "SELECT dateadd('h', (x * 3)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "'k' || (x % 12), x::DOUBLE FROM long_sequence(240)");
+
+            final String predicate = "sym IN ('k0','k1','k2','k3','k4','k5','k6','k7','k8','k9','k10','k11') AND price > 0";
+
+            // First read: builds the prefix-sum memo on the pooled reader(s).
+            assertCoveringMatchesOracle("t_memo", "ts, sym, price", predicate, TS_ORDER_TAILS);
+
+            // Index update: a timestamp-interleaved insert into the SAME partitions
+            // appends new sparse gens and shifts every partition's gen layout, so a
+            // reader that survives from the first read must observe the gen-snapshot
+            // (cache version) bump and rebuild the memo from the fresh mapped bytes.
+            execute("INSERT INTO t_memo " +
+                    "SELECT dateadd('m', (x * 97)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "'k' || (x % 12), (10000 + x)::DOUBLE FROM long_sequence(240)");
+
+            // Second read: must still match the oracle. A stale (non-rebuilt) memo
+            // would surface wrong covered prices here.
+            assertCoveringMatchesOracle("t_memo", "ts, sym, price", predicate, TS_ORDER_TAILS);
+        });
+    }
+
+    @Test
     public void testNoResidualFilterCrossCheck() throws Exception {
         assertMemoryLeak(() -> {
             createInterleavedSinglePartition("t_nofilter");

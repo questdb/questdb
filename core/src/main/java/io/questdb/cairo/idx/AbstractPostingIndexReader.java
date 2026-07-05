@@ -75,6 +75,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected final PostingIndexChainEntry.Snapshot entryScratch = new PostingIndexChainEntry.Snapshot();
     protected final PostingGenLookup genLookup = new PostingGenLookup();
     protected final PostingIndexChainHeader.Snapshot headerScratch = new PostingIndexChainHeader.Snapshot();
+    // Reader-scoped memo of every sparse gen's per-slot sidecar prefix sum.
+    // Shared by all pooled cursors of this reader, so it is built at most once
+    // per (gen, snapshot) and read O(1) thereafter. Version-guarded on
+    // genLookup.getCacheVersion(); see SparseGenSidecarPrefixSum.
+    protected final SparseGenSidecarPrefixSum sidecarPrefixSum = new SparseGenSidecarPrefixSum();
     protected final MemoryCMR infoMem = Vm.getCMRInstance();
     protected final MemoryMR keyMem = Vm.getCMRInstance();
     protected final Path sidecarBasePath = new Path();
@@ -138,6 +143,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public void close() {
+        sidecarPrefixSum.clear();
         Misc.free(genLookup);
         Misc.free(infoMem);
         Misc.free(keyMem);
@@ -2379,6 +2385,97 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     colPointBlockAddrs[i] = 0;
                 }
             }
+        }
+    }
+
+    /**
+     * Reader-scoped memo of the per-slot sidecar prefix sum of every SPARSE gen.
+     * <p>
+     * For a sparse gen, a key's sidecar base ordinal is {@code sum(counts[0..slot))},
+     * where {@code counts[i]} is the covered-value count of slot {@code i} and
+     * {@code slot} is the key's dense slot in the gen. Both {@code loadSparseGen*}
+     * methods in the fwd/bwd readers used to recompute this with an O(slot)
+     * accumulation loop on <em>every</em> cursor open. A broad key set opens a
+     * cursor for every active key in every partition (hundreds of thousands of
+     * opens), and each open re-scanned the same counts array up to slot ≈
+     * activeKeyCount/2, making covered reads effectively O(N²) per gen. The prefix
+     * sum is identical for every key in a gen, so we build it once per gen and
+     * index it O(1): overall O(N²) -&gt; O(N) per gen.
+     * <p>
+     * <b>Version guard (correctness critical).</b> A stale prefix would yield the
+     * wrong sidecar offset and therefore the WRONG covered value — silent data
+     * corruption. The memo is tied to {@link PostingGenLookup#getCacheVersion()},
+     * which is bumped by {@code invalidateCache()} on every gen-metadata snapshot
+     * swap ({@code readIndexMetadataFromChain} -&gt; {@code commitSnapshot} +
+     * {@code invalidateCache}, i.e. every O3 split / seal / extendHead / pin change
+     * / reopen). Whenever that token moves we drop the whole memo and rebuild each
+     * gen lazily from the fresh mapped bytes. Between bumps a published gen's
+     * counts bytes are immutable, so the memo is exactly what the loop would
+     * recompute. The memo stores only integer prefix sums — never a native
+     * address — so a resized/remapped valueMem can never leave a dangling pointer.
+     * <p>
+     * Not thread-safe: a posting index reader is single-threaded (see the
+     * operating-thread asserts on the cursors), and this memo is only touched from
+     * the {@code loadSparseGen*} paths under that same single-writer discipline.
+     */
+    protected static final class SparseGenSidecarPrefixSum {
+        // perGen[gen][slot] = sum(counts[0..slot)) for the sparse gen; a null row
+        // means "not built yet for the current snapshot". Rebuilt lazily.
+        private int[][] perGen;
+        // getCacheVersion() the memo was last (re)built against. A mismatch means a
+        // new gen snapshot was committed, so every cached row is dropped.
+        private long version = -1;
+
+        void clear() {
+            if (perGen != null) {
+                Arrays.fill(perGen, null);
+            }
+            version = -1;
+        }
+
+        /**
+         * O(1) sidecar base ordinal for {@code slot} in {@code gen}, i.e.
+         * {@code sum(counts[0..slot))}. Builds (or rebuilds on a version change)
+         * the gen's prefix row on first use, then reads it directly.
+         *
+         * @param cacheVersion   current {@link PostingGenLookup#getCacheVersion()}
+         * @param genCount       number of gens visible in the current snapshot
+         *                       (sizes the per-gen row table)
+         * @param gen            the sparse gen index, in {@code [0, genCount)}
+         * @param slot           the key's dense slot within the gen
+         * @param countsBase     native address of this gen's per-slot counts array
+         *                       (already computed by the caller from the current
+         *                       snapshot's gen file offset)
+         * @param activeKeyCount number of slots in the sparse gen
+         */
+        int baseOrdinal(long cacheVersion, int genCount, int gen, int slot, long countsBase, int activeKeyCount) {
+            if (version != cacheVersion) {
+                // A new gen snapshot was committed since we last built: every
+                // cached row may reference stale offsets/counts. Drop and rebind.
+                if (perGen != null) {
+                    Arrays.fill(perGen, null);
+                }
+                version = cacheVersion;
+            }
+            if (perGen == null || perGen.length < genCount) {
+                int[][] grown = new int[genCount][];
+                if (perGen != null) {
+                    System.arraycopy(perGen, 0, grown, 0, perGen.length);
+                }
+                perGen = grown;
+            }
+            int[] prefix = perGen[gen];
+            if (prefix == null) {
+                // prefix[i] = sum(counts[0..i)); prefix[0] = 0.
+                prefix = new int[activeKeyCount];
+                int acc = 0;
+                for (int i = 0; i < activeKeyCount; i++) {
+                    prefix[i] = acc;
+                    acc += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
+                }
+                perGen[gen] = prefix;
+            }
+            return prefix[slot];
         }
     }
 }

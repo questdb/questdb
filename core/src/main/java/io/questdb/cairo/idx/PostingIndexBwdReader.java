@@ -717,12 +717,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            // For sparse gens, compute sidecar base and set ordinal past the end
+            // For sparse gens, compute sidecar base and set ordinal past the end.
+            // The base = sum(counts[0..start)) is O(1) via the reader-scoped memo
+            // instead of an O(start) scan of counts[] on every cursor open;
+            // version-guarded on the gen snapshot. The bwd reader emits values in
+            // descending order, so it starts one past the key's last covered
+            // value and decrements — hence "+ totalValueCount".
+            // See SparseGenSidecarPrefixSum.
             if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < start; i++) {
-                    sidecarBase += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
+                int sidecarBase = sidecarPrefixSum.baseOrdinal(
+                        genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount);
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
             } else {
                 this.sidecarOrdinal = totalValueCount;
@@ -764,12 +768,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            // For sparse gens, compute sidecar base and set ordinal past the end
+            // For sparse gens, compute sidecar base and set ordinal past the end.
+            // O(1) via the reader-scoped memo instead of an O(idx) scan of counts[]
+            // on every cursor open; version-guarded on the gen snapshot. See the
+            // sibling loadSparseGenByPrefixSum and SparseGenSidecarPrefixSum.
             if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < idx; i++) {
-                    sidecarBase += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
+                int sidecarBase = sidecarPrefixSum.baseOrdinal(
+                        genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount);
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
             } else {
                 this.sidecarOrdinal = totalValueCount;
