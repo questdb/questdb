@@ -6630,7 +6630,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             null,
                                             true,
-                                            filter
+                                            filter,
+                                            null
                                     );
                                     symbolValueFunc = null;
                                     return coveringFactory;
@@ -6712,7 +6713,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     intrinsicModel.keyValueFuncs,
                                     reader,
                                     true,
-                                    filter
+                                    filter,
+                                    null
                             );
                         }
                     }
@@ -10478,6 +10480,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 null,
                                                 null,
                                                 false,
+                                                null,
                                                 null
                                         );
                                         // coveringFactory now owns dfcFactory and symbolFunc; clear our
@@ -10582,6 +10585,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         intrinsicModel.keyValueFuncs,
                                         reader,
                                         false,
+                                        null,
                                         null
                                 );
                                 // coveringFactory now owns dfcFactory; clear our reference so the
@@ -11444,7 +11448,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 residualFilter = compileBooleanFilter(residualRoot, queryMeta, executionContext);
             }
 
-            // 6) full filter (pattern AND residual) drives the > threshold fallback scan
+            // 6) Covering route (POSITIVE only): when the projection is fully covered by the posting
+            // index (indexed symbol + INCLUDE-d columns), read covered values from the sidecars via the
+            // multi-key covering merge, with the matched-key set supplied by the provider. The positive
+            // pattern never matches NULL, so the covered result has no null-symbol rows -- correct. A
+            // negated pattern must NOT take this route: its complement includes NULL-symbol rows the
+            // covered merge cannot produce, so it stays on the SP2 classic complement scan below.
+            // Decided before fullFilter is compiled: the covering path drives its selection from the
+            // provider + residual and never needs the (pattern AND residual) fullFilter.
+            if (!negated && !SqlHints.hasNoCoveringHint(model) && executionContext.isCoveringIndexEnabled()) {
+                final int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
+                final int[] coveringMapping = buildCoveringIndexMapping(reader, keyReaderColIdx, columnIndexes, queryMeta);
+                if (coveringMapping != null) {
+                    final CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                            queryMeta,
+                            dfcFactory,
+                            keyReaderColIdx,
+                            SymbolTable.VALUE_NOT_FOUND,
+                            null, // symbolFunction (single-key) unused on the provider path
+                            columnIndexes,
+                            coveringMapping,
+                            null, // keyValueFuncs (IN/=) -- mutually exclusive with the provider
+                            reader,
+                            false, // latestBy
+                            null, // latestByFilter
+                            providerFunction // patternProviderFunction: the positive pattern's key-set provider
+                    );
+                    // Ownership transferred: coveringFactory now owns dfcFactory AND providerFunction.
+                    // Null the locals so this method's catch does NOT re-free them. This matters when the
+                    // residual wrap below throws: wrapCoveringWithFilter's own catch already frees
+                    // coveringFactory (-> dfcFactory + providerFunction) and residualFilter, so the outer
+                    // catch here must be a no-op for those references (Misc.free(null) is safe) to avoid a
+                    // double free. fullFilter is never compiled on this path, so it cannot leak.
+                    dfcFactory = null;
+                    providerFunction = null;
+                    if (residualFilter != null) {
+                        // wrapCoveringWithFilter takes ownership of residualFilter (and frees the whole
+                        // chain on any throw). residualRoot is the ExpressionNode it needs as filterExpr.
+                        final Function residual = residualFilter;
+                        residualFilter = null;
+                        return wrapCoveringWithFilter(coveringFactory, residual, residualRoot, queryMeta, model, executionContext);
+                    }
+                    return coveringFactory;
+                }
+            }
+
+            // 6b) full filter (pattern AND residual) drives the > threshold fallback scan (classic path)
             fullFilter = compileFilter(intrinsicModel, queryMeta, executionContext);
 
             // 7) ordering: only the designated-timestamp-only advice requests a heap-based merge.

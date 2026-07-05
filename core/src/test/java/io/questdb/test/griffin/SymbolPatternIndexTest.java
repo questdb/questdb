@@ -556,6 +556,110 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * SP3: a POSITIVE pattern over a COVERED projection (all selected columns are the indexed symbol or
+     * INCLUDE-d covered columns) must route through the {@code CoveringIndex} merge (reading covered
+     * values from the posting sidecars), NOT the bitmap {@code SymbolPatternIndex}. Asserts recognition
+     * (unhinted plan contains {@code CoveringIndex}) and byte-identical row parity vs the scan+filter
+     * ground truth.
+     *
+     * <p>Ground-truth hint note: {@code no_symbol_pattern_index(t)} alone does NOT disable the covering
+     * path (a positive covered pattern would still hit {@code CoveringIndex} via this new route), so the
+     * scan+filter oracle must ALSO carry {@code no_covering(t)}. Both hints are space-separated in a
+     * single hint block immediately after SELECT.
+     */
+    @Test
+    public void testCoveringPositivePlanAndParity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting include (price), price double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x::double, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            // Covered projection (sym known from WHERE, price covered) -> CoveringIndex, not the bitmap SymbolPatternIndex.
+            assertQuery("select sym, price from t where sym like 'A%'").noLeakCheck().assertsPlanContaining("CoveringIndex");
+            // Ground truth: force a plain scan+filter by disabling BOTH the pattern-index and the covering path.
+            String expected = select("select /*+ no_symbol_pattern_index(t) no_covering(t) */ price, sym from t where sym like 'A%' order by price");
+            String actual = select("select price, sym from t where sym like 'A%' order by price");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
+     * SP3 covering + residual: a positive covered pattern with a residual conjunct on a covered column
+     * ({@code AND price > 1000}) must still route through {@code CoveringIndex} (wrapped by a residual
+     * filter) and match the scan+filter ground truth. The residual predicate references only covered
+     * columns so the covering projection remains valid.
+     */
+    @Test
+    public void testCoveringPositiveWithResidualParity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting include (price), price double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x::double, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            assertQuery("select sym, price from t where sym like 'A%' and price > 1000").noLeakCheck().assertsPlanContaining("CoveringIndex");
+            String expected = select("select /*+ no_symbol_pattern_index(t) no_covering(t) */ price, sym from t where sym like 'A%' and price > 1000 order by price");
+            String actual = select("select price, sym from t where sym like 'A%' and price > 1000 order by price");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
+     * SP3 covering + deferred symbol: keys are resolved at execution time from the provider, so a matching
+     * symbol inserted AFTER the covering factory is compiled must appear in the covered result. Exercises
+     * the getCursor provider seam re-populating {@code multiKeys} per execution (never cached at compile).
+     */
+    @Test
+    public void testCoveringPositiveDeferredSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting include (price), price double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','BB'), x::double, timestamp_sequence(0, 60000000) from long_sequence(50)");
+            try (RecordCursorFactory factory = engine.select("select price, sym from t where sym like 'A%' order by price", sqlExecutionContext)) {
+                // Insert a new matching symbol AFTER the covering factory was compiled.
+                execute("insert into t values ('AC', 999.0, 100000000::timestamp)");
+                String actual = printFactory(factory);
+                String expected = select("select /*+ no_symbol_pattern_index(t) no_covering(t) */ price, sym from t where sym like 'A%' order by price");
+                io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+            }
+        });
+    }
+
+    /**
+     * SP3 covering page-frame path: a parallel GROUP BY aggregation ({@code sum(price)}) over a positive
+     * covered pattern drives the covering factory's {@code getPageFrameCursor} multi-key provider branch
+     * (the parallel/vectorized aggregation consumes page frames, not the record cursor). Asserts the plan
+     * routes through {@code CoveringIndex} and that the aggregate equals the scan+filter ground truth --
+     * proving the page-frame provider seam fills {@code multiKeys} correctly (right symbol-table basis,
+     * no NULL key, deferred-safe).
+     */
+    @Test
+    public void testCoveringPositivePageFrameAggregationParity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting include (price), price double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x::double, timestamp_sequence(0, 60000000) from long_sequence(4000)");
+            // GROUP BY on the covered symbol drives page frames (parallel/vectorized aggregation) through the covering factory.
+            assertQuery("select sym, sum(price) from t where sym like 'A%'").noLeakCheck().assertsPlanContaining("CoveringIndex");
+            String expected = select("select /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, sum(price) s from t where sym like 'A%' order by sym");
+            String actual = select("select sym, sum(price) s from t where sym like 'A%' order by sym");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
+     * SP3 negated stays classic: a NEGATED pattern ({@code NOT LIKE}) over a covered projection must NOT use
+     * the covering route (covering only serves the positive match set; NOT LIKE includes NULL-symbol rows
+     * which the covered merge cannot produce). It stays on the SP2 classic complement scan.
+     */
+    @Test
+    public void testCoveringNegatedStaysClassic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting include (price), price double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x::double, timestamp_sequence(0, 60000000) from long_sequence(1500)");
+            execute("insert into t select null, x::double, timestamp_sequence(1500*60000000, 60000000) from long_sequence(200)");
+            assertQuery("select sym, price from t where sym not like 'A%'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+            assertQuery("select sym, price from t where sym not like 'A%'").noLeakCheck().assertsPlanNotContaining("CoveringIndex");
+            String expected = select("select /*+ no_symbol_pattern_index(t) no_covering(t) */ price, sym, ts from t where sym not like 'A%' order by ts, price");
+            String actual = select("select price, sym, ts from t where sym not like 'A%' order by ts, price");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
      * Runs {@code sql} and returns its printed text (header + rows) captured into a private sink, so two
      * queries can be compared without clobbering the shared static test sink.
      */

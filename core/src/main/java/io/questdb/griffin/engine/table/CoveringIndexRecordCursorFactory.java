@@ -55,6 +55,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -99,6 +100,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final RecordMetadata metadata;
     private final MultiKeyCoveringCursor multiKeyCursor;
     private final MultiKeyCoveringPageFrameCursor multiKeyPageFrameCursor;
+    // SP3 provider seam: when non-null, the multi-key set is supplied at getCursor/getPageFrameCursor
+    // time by this SymbolKeySetProvider (a positive symbol pattern's matched keys, already sorted +
+    // unique + NULL-excluded) instead of by resolvedKeys/keyValueFuncs. Mutually exclusive with
+    // keyValueFuncs. This factory owns the single instance and frees it in close() (like symbolFunction).
+    private final Function patternProviderFunction;
     private final int[] queryColToIncludeIdx;
     private final IntList resolvedKeys;
     private final SingleKeyCoveringCursor singleKeyCursor;
@@ -117,8 +123,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @Nullable ObjList<Function> keyValueFuncs,
             @Nullable TableReader reader,
             boolean latestBy,
-            @Nullable Function latestByFilter
+            @Nullable Function latestByFilter,
+            @Nullable Function patternProviderFunction
     ) {
+        // keyValueFuncs (IN/= key list) and patternProviderFunction (positive pattern's key-set provider)
+        // are two mutually exclusive ways to drive the multi-key merge; never both.
+        assert keyValueFuncs == null || patternProviderFunction == null;
+        assert patternProviderFunction == null || patternProviderFunction instanceof SymbolKeySetProvider;
         this.metadata = metadata;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
@@ -128,6 +139,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.symbolFunctionRuntimeConstant = symbolKey == SymbolTable.VALUE_NOT_FOUND;
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
+        this.patternProviderFunction = patternProviderFunction;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
         // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
         // POOLED ObjList owned by the compiler's WhereClauseParser (ObjectPool<IntrinsicModel>).
@@ -147,15 +159,24 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // the copy is the reference this factory owns and frees in close(); using it consistently avoids
         // a refactor hazard if the defensive copy above is ever changed or removed.
         final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
-        if (keyValueFuncsCopy != null) {
-            this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
-            int multiKeyCapacity = keyValueFuncsCopy.size();
-            if (reader != null) {
-                SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
-                    Function f = keyValueFuncsCopy.getQuick(i);
-                    int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
-                    resolvedKeys.add(key);
+        if (keyValueFuncsCopy != null || patternProviderFunction != null) {
+            final int multiKeyCapacity;
+            if (patternProviderFunction != null) {
+                // Provider path: the matched-key set is not known until getCursor (it is resolved from the
+                // static symbol table at execution time, so it also reflects symbols added after compile).
+                // Leave resolvedKeys null and size the merge with a small growable default.
+                this.resolvedKeys = null;
+                multiKeyCapacity = 16;
+            } else {
+                this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
+                multiKeyCapacity = keyValueFuncsCopy.size();
+                if (reader != null) {
+                    SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
+                    for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
+                        Function f = keyValueFuncsCopy.getQuick(i);
+                        int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
+                        resolvedKeys.add(key);
+                    }
                 }
             }
             this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
@@ -191,6 +212,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         Misc.free(dfcFactory);
         Misc.free(latestByFilter);
         Misc.free(symbolFunction);
+        Misc.free(patternProviderFunction);
         Misc.freeObjList(keyValueFuncs);
         Misc.free(singleKeyCursor);
         Misc.free(multiKeyCursor);
@@ -207,33 +229,58 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
         try {
             if (multiKeyCursor != null) {
-                if (keyValueFuncs != null) {
-                    Function.init(keyValueFuncs, frameCursor, executionContext, null);
-                }
-                SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-                multiKeyCursor.multiKeys.clear();
-                for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
-                    int key = resolvedKeys.getQuick(i);
-                    if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                        CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
-                        key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                if (patternProviderFunction != null) {
+                    // SP3 provider path. Bind the cursor to the frame FIRST: the provider's sym SymbolColumn
+                    // references the indexed symbol column by QUERY position, and multiKeyCursor is the
+                    // SymbolTableSource that maps query position -> reader index (via columnIndexes). Init'ing
+                    // the provider against the raw PartitionFrameCursor instead would resolve the symbol table
+                    // by reader index and bind the wrong column. of() only sizes internal state from
+                    // multiKeys (re-grown lazily at iteration), so filling multiKeys after of() is safe.
+                    multiKeyCursor.of(frameCursor);
+                    // Resolve the positive pattern's matched key set now, from the static symbol table. The
+                    // provider returns raw symbol keys (0..count-1), sorted + unique + NULL-excluded --
+                    // exactly the ints the merge expects -- so no dedup/NULL filtering is needed. Re-resolved
+                    // every getCursor (never cached), so deferred symbols added after compile are included.
+                    patternProviderFunction.init(multiKeyCursor, executionContext);
+                    final IntList keys = ((SymbolKeySetProvider) patternProviderFunction).getMatchedSymbolKeys();
+                    multiKeyCursor.multiKeys.clear();
+                    for (int i = 0, n = keys.size(); i < n; i++) {
+                        multiKeyCursor.multiKeys.add(keys.getQuick(i));
                     }
-                    // Bind-variable / runtime-constant list elements may resolve
-                    // to the same symbol key; dedup so the multi-key merge does
-                    // not open a duplicate posting cursor per key and merge the
-                    // same row-id stream twice (duplicate rows / inflated
-                    // aggregates).
-                    if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyCursor.multiKeys.contains(key)) {
-                        multiKeyCursor.multiKeys.add(key);
+                    // of() above sized the per-key merge arrays from the (then empty) multiKeys; re-run the
+                    // sizing now that the keys are filled, so hasNext()'s k-way merge (which indexes
+                    // keyHeads[0..multiKeys.size()) before the first openNextPartitionCursors()) has arrays
+                    // wide enough. Harmless no-op when the key count did not grow.
+                    multiKeyCursor.resetIterationState();
+                } else {
+                    if (keyValueFuncs != null) {
+                        Function.init(keyValueFuncs, frameCursor, executionContext, null);
                     }
+                    SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+                    multiKeyCursor.multiKeys.clear();
+                    for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
+                        int key = resolvedKeys.getQuick(i);
+                        if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
+                            CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
+                            key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                        }
+                        // Bind-variable / runtime-constant list elements may resolve
+                        // to the same symbol key; dedup so the multi-key merge does
+                        // not open a duplicate posting cursor per key and merge the
+                        // same row-id stream twice (duplicate rows / inflated
+                        // aggregates).
+                        if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyCursor.multiKeys.contains(key)) {
+                            multiKeyCursor.multiKeys.add(key);
+                        }
+                    }
+                    // Always wire up the frame cursor and table reader, even when no
+                    // keys resolve. Callers wrap us in operators (e.g. ORDER BY on a
+                    // SYMBOL column) that probe baseCursor.getSymbolTable() during
+                    // init, before any iteration. With an empty multiKeys list,
+                    // hasNext()'s merge finds no per-key heads and
+                    // openNextPartitionCursors() opens nothing, so it reports no rows.
+                    multiKeyCursor.of(frameCursor);
                 }
-                // Always wire up the frame cursor and table reader, even when no
-                // keys resolve. Callers wrap us in operators (e.g. ORDER BY on a
-                // SYMBOL column) that probe baseCursor.getSymbolTable() during
-                // init, before any iteration. With an empty multiKeys list,
-                // hasNext()'s merge finds no per-key heads and
-                // openNextPartitionCursors() opens nothing, so it reports no rows.
-                multiKeyCursor.of(frameCursor);
                 multiKeyCursor.circuitBreaker = executionContext.getCircuitBreaker();
                 multiKeyCursor.latestByFilter = latestByFilter;
                 if (latestByFilter != null) {
@@ -296,6 +343,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         try {
             TableReader reader = frameCursor.getTableReader();
             if (multiKeyPageFrameCursor != null) {
+                if (patternProviderFunction != null) {
+                    // SP3 provider path: see getCursor(). Bind the cursor to the frame FIRST so the provider's
+                    // sym SymbolColumn resolves its static symbol table via query-position -> reader-index
+                    // (multiKeyPageFrameCursor is the SymbolTableSource that maps through columnIndexes);
+                    // init'ing against the raw PartitionFrameCursor would bind the wrong column. Provider keys
+                    // are raw, sorted, unique, NULL-excluded, re-resolved each call (deferred-symbol safe) ->
+                    // no dedup/NULL filter.
+                    multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false);
+                    patternProviderFunction.init(multiKeyPageFrameCursor, executionContext);
+                    final IntList keys = ((SymbolKeySetProvider) patternProviderFunction).getMatchedSymbolKeys();
+                    multiKeyPageFrameCursor.multiKeys.clear();
+                    for (int i = 0, n = keys.size(); i < n; i++) {
+                        multiKeyPageFrameCursor.multiKeys.add(keys.getQuick(i));
+                    }
+                    return multiKeyPageFrameCursor;
+                }
                 if (keyValueFuncs != null) {
                     Function.init(keyValueFuncs, frameCursor, executionContext, null);
                 }
@@ -394,7 +457,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 sink.putColumnName(q);
             }
         }
-        if (keyValueFuncs != null) {
+        if (patternProviderFunction != null) {
+            // The provider IS the positive pattern predicate (e.g. sym ~ '^A'); render it as the filter.
+            sink.attr("filter").val(patternProviderFunction);
+        } else if (keyValueFuncs != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" IN ").val(keyValueFuncs);
         } else {
             sink.attr("filter").putColumnName(keyQueryPosition).val('=').val(symbolFunction);
