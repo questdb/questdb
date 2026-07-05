@@ -150,6 +150,39 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringPageFrameHeapMergeParity() throws Exception {
+        // SP4 Task 2: above HEAP_MERGE_MIN_KEYS the multi-key covering PAGE-FRAME
+        // cursor (parallel GROUP BY path) merges per-key heads with an O(log N)
+        // heap instead of the linear O(N) min-scan. The heap must emit
+        // BYTE-IDENTICAL rows to the linear path. Force the heap by lowering the
+        // crossover below the key count (8) and diff against the default (linear) run.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_pf_heap (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_pf_heap SELECT rnd_symbol('a','b','c','d','e','f','g','h'), x::DOUBLE, timestamp_sequence(0, 60000000) FROM long_sequence(5000)");
+            final String q = "SELECT sym, sum(price) FROM t_pf_heap WHERE sym IN ('a','b','c','d','e','f','g','h') ORDER BY sym";
+
+            // Guard: the aggregate query must actually route through the covering page-frame cursor.
+            String plan = getPlan(q);
+            Assert.assertTrue("expected a covering plan, got:\n" + plan, plan.contains("CoveringIndex"));
+
+            // Linear branch (default crossover 16 > 8 keys): ground truth.
+            String linear = runToString(q);
+            Assert.assertFalse("linear ground truth errored:\n" + linear, linear.startsWith("ERROR"));
+            // 8 symbol groups must produce 8 data rows (header + 8); proves results are non-trivial.
+            Assert.assertTrue("expected at least 9 lines (header + 8 groups), got:\n" + linear, linear.split("\n").length >= 9);
+
+            // Force heap branch (crossover 2 < 8 keys) and require identity.
+            CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
+            try {
+                String heap = runToString(q);
+                io.questdb.test.tools.TestUtils.assertEquals(linear, heap);
+            } finally {
+                CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
+            }
+        });
+    }
+
+    @Test
     public void testDeferredSymbolInListCrossCheck() throws Exception {
         assertMemoryLeak(() -> {
             createInterleavedSinglePartition("t_def");

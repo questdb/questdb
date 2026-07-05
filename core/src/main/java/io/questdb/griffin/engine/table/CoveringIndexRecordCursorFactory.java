@@ -2251,6 +2251,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // state persists across nextImpl() calls so a partition that exceeds
         // maxRowsPerFrame resumes in the next frame.
         private int mergePartitionIndex = -1;
+        // Dual-mode merge: linear O(N) min-scan for small N, heap O(log N) for
+        // large N (above effectiveHeapMergeMinKeys()). Mirrors the same mechanism
+        // in MultiKeyCoveringCursor. The page-frame path advances immediately
+        // (covered values are copied via writeCoveredRow), so there is no deferred
+        // advance: peek → writeCoveredRow → pollAndReplace / pollValue.
+        private final IntLongSortedList heap = new IntLongSortedList();
+        private boolean useHeap;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2307,6 +2314,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     mergeHeads[i] = NO_ROW;
                 }
             }
+            heap.clear();
             mergePartitionIndex = -1;
         }
 
@@ -2339,17 +2347,28 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             int count = 0;
             while (count < rowCap) {
                 // Two keys never share a row id, so the smallest head is unique.
-                int best = -1;
-                long bestRow = NO_ROW;
-                for (int i = 0; i < n; i++) {
-                    long h = mergeHeads[i];
-                    if (h != NO_ROW && (best < 0 || h < bestRow)) {
-                        best = i;
-                        bestRow = h;
+                int best;
+                if (!useHeap) {
+                    // Linear O(N) min-scan for small N.
+                    best = -1;
+                    long bestRow = NO_ROW;
+                    for (int i = 0; i < n; i++) {
+                        long h = mergeHeads[i];
+                        if (h != NO_ROW && (best < 0 || h < bestRow)) {
+                            best = i;
+                            bestRow = h;
+                        }
                     }
-                }
-                if (best < 0) {
-                    break; // partition drained
+                    if (best < 0) {
+                        break; // partition drained
+                    }
+                } else {
+                    // Heap O(log N) merge for large N. The heap holds only keys
+                    // with non-exhausted heads; an empty heap means partition drained.
+                    if (!heap.hasNext()) {
+                        break;
+                    }
+                    best = heap.peekIndex();
                 }
                 if (count >= capacity) {
                     capacity = growFrameBuffers(frameAddrs, count, capacity);
@@ -2361,7 +2380,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 count++;
                 // Covered values are copied into the frame buffer, so the winning
                 // cursor can be advanced to its next row immediately.
-                mergeHeads[best] = c.hasNext() ? c.next() : NO_ROW;
+                if (c.hasNext()) {
+                    long nh = c.next();
+                    mergeHeads[best] = nh;
+                    if (useHeap) {
+                        heap.pollAndReplace(best, nh);
+                    }
+                } else {
+                    mergeHeads[best] = NO_ROW;
+                    if (useHeap) {
+                        heap.pollValue();
+                    }
+                }
             }
             if (count == 0) {
                 return null;
@@ -2381,6 +2411,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 mergeCursors = new CoveringRowCursor[n];
                 mergeHeads = new long[n];
             }
+            useHeap = n > effectiveHeapMergeMinKeys();
             final int partitionIndex = partFrame.getPartitionIndex();
             final long rowLo = partFrame.getRowLo();
             final long rowHi = partFrame.getRowHi();
@@ -2401,6 +2432,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 } else {
                     mergeCursors[i] = Misc.free(c);
                     mergeHeads[i] = NO_ROW;
+                }
+            }
+            if (any && useHeap) {
+                heap.clear();
+                for (int i = 0; i < n; i++) {
+                    if (mergeHeads[i] != NO_ROW) {
+                        heap.add(i, mergeHeads[i]);
+                    }
                 }
             }
             return any;
