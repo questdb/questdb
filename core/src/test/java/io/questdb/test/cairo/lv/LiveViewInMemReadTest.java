@@ -927,6 +927,109 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNormalFlushRestampFailThenNonCapableO3DoesNotDuplicate() throws Exception {
+        // Sibling of testTierStaleEmergencyFlushThenNonCapableO3DoesNotDuplicate: the
+        // SAME on-disk duplication reached through a NORMAL cadence flush whose restamp
+        // CAS fails instead of an emergency flush. When one reader pins the published
+        // slot across a normal flush, restampSlotAfterFlush's 0 -> -1 CAS loses, so the
+        // slot keeps its now-durable leadRowCount stamp -- but a normal flush never sets
+        // tierStale. An o3Replay non-capable resync gated only on !tierStale would then
+        // re-arm instance.leadRowCount from that durable stamp, and the next flush would
+        // re-flush the already-durable rows as on-disk duplicates. The resync instead
+        // gates on the slot's stamped seqTxn still matching the applied disk seqTxn,
+        // which excludes this stale-stamped slot as well as the tierStale one.
+        //
+        // Cycle 0: build a two-row un-flushed lead in the published slot.
+        // Cycle A: pin the published slot, then a fully-filtered commit (0 output rows)
+        //   fires the cadence flush without a publish/swap -> the same slot stays
+        //   published, its restamp CAS fails, and tierStale stays FALSE.
+        // Cycle B: a back-dated O3 on a (forced) non-capable view. The resync must NOT
+        //   re-arm instance.leadRowCount from the stale-stamped slot.
+        // Cycle C: a forward row + flush must not re-flush rows 01-02.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            setCurrentMicros(1_000L);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 0: build a two-row un-flushed lead in the published slot.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros); // suppress the cadence flush
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                Assert.assertEquals("two-row un-flushed lead", 2, instance.getLeadRowCount());
+                final int publishedIdx = tier.getPublishedIdx();
+
+                // Pin the published slot so the upcoming NORMAL flush's restamp CAS fails.
+                final int pin = tier.acquireRead();
+
+                // Cycle A: a fully-filtered commit (x <= 0 -> 0 output rows) advances head
+                // so refreshInstance runs and the cadence flush fires, but there is no
+                // publish/swap, so the SAME slot stays published. flushLead writes the 2
+                // lead rows to disk and zeroes instance.leadRowCount; restampSlotAfterFlush's
+                // CAS fails (slot pinned), so the slot keeps its now-durable leadRowCount=2
+                // stamp, and a normal flush never sets tierStale.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL); // force the flush due
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:03.000000Z', -1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals("published slot unchanged", publishedIdx, tier.getPublishedIdx());
+                Assert.assertFalse("a normal flush never sets tierStale", instance.isTierStale());
+                Assert.assertEquals("normal flush zeroes instance.leadRowCount", 0, instance.getLeadRowCount());
+                Assert.assertTrue("the slot keeps its now-durable lead stamp (restamp CAS failed)",
+                        tier.getSlot(tier.getPublishedIdx()).leadRowCount() > 0);
+
+                tier.releaseRead(pin);
+
+                // Force the runtime-non-capable state so the next O3 takes o3Replay's
+                // non-capable branch (the resync path).
+                instance.setSnapshotCapability(false);
+
+                // Cycle B: a back-dated O3 -> non-capable branch. The slot's stamped
+                // seqTxn no longer matches the applied disk seqTxn (the normal flush
+                // advanced disk while the restamp CAS failed), so the resync must leave
+                // instance.leadRowCount at 0 -- those rows are already durable.
+                instance.setLastFlushTimeUs(currentMicros); // suppress the flush this cycle
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 99)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "a stale-stamped slot's lead is already on disk; the resync must not re-arm leadRowCount",
+                        0, instance.getLeadRowCount()
+                );
+
+                // Cycle C: a forward row + flush. Pre-fix, priorLead = 2 re-flushed rows
+                // 01-02 as duplicates.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:05.000000Z', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Rows 01 and 02 must each appear exactly once (count = 2). Pre-fix the
+            // cycle-C re-flush wrote them a second time (count = 4).
+            assertQuery("SELECT count() n FROM lv WHERE x >= 1 AND x <= 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("n\n2\n");
+        });
+    }
+
+    @Test
     public void testO3ReplayRebuildOracleSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

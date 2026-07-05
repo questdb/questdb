@@ -2000,19 +2000,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The callers zero instance.leadRowCount before o3Replay because the
             // capable path rebuilds the tier as a pure disk subset (leadRowCount 0).
             // This branch rewrote nothing on disk and left the published slot
-            // untouched, so on a NON-stale slot its stamped leadRowCount is still the
-            // true un-flushed lead. Resync instance.leadRowCount to it: leaving it at 0
-            // desyncs the two, so the next publish would reclassify those L never-flushed
-            // rows as overlap (size() under-reports, iteration serves them as
-            // phantoms) and flushLead's overlapCount would skip them entirely.
-            // Skip the resync when the slot is tierStale, though: a prior emergency flush
-            // already wrote its lead rows to disk yet left the slot stamped with that
-            // now-stale leadRowCount, so it is NOT an un-flushed lead. Re-arming
-            // instance.leadRowCount from a stale slot would break the finishLeadRefresh
-            // tierStale branch, which trusts leadRowCount == 0 to flush only the new
-            // staging rows -- a stale non-zero value makes it re-flush the already-durable
-            // rows as on-disk duplicates. When stale the correct value is the 0 the caller
-            // left before o3Replay, so leaving it untouched is right.
+            // untouched, so a slot that is STILL a current un-flushed lead keeps its
+            // stamped leadRowCount as the true lead. Resync instance.leadRowCount to it:
+            // leaving it at 0 desyncs the two, so the next publish would reclassify those
+            // L never-flushed rows as overlap (size() under-reports, iteration serves
+            // them as phantoms) and flushLead's overlapCount would skip them entirely.
+            //
+            // But re-arm ONLY from a slot whose stamped LV-table seqTxn still matches the
+            // applied disk seqTxn. A slot whose stamp has fallen behind disk holds rows
+            // that are already durable, so its leadRowCount is NOT an un-flushed lead and
+            // the correct value is the 0 the caller left. Two paths leave such a
+            // stale-stamped slot, and both must be excluded:
+            //   - an emergency flush wrote the lead to disk, set tierStale, and left the
+            //     slot's now-durable leadRowCount stamped (isTierStale() would catch it); and
+            //   - a normal flush wrote the lead to disk but its restampSlot 0 -> -1 CAS
+            //     lost to a reader pin, so the slot kept its now-durable stamp while
+            //     tierStale stayed FALSE (restampSlotAfterFlush ignores the CAS result) --
+            //     an isTierStale() guard MISSES this one.
+            // Re-arming from either would make the finishLeadRefresh flush path trust a
+            // stale non-zero leadRowCount and re-flush the already-durable rows as on-disk
+            // duplicates. The seqTxn-match check below subsumes both (both leave
+            // slot.lvSeqTxn() != applied) and needs no reader open: the applied seqTxn is
+            // the same coordinate flushLead / publishToInMemoryTier stamp the slot from,
+            // and nothing has applied to the LV table since (this branch does not commit).
+            //
             // Defensive: CREATE rejects every non-snapshot-capable window shape (each
             // WindowFunction.supportsSnapshot() folds in the anchor key type check),
             // and o3Replay recomputes capability above, so a freshly-validated view
@@ -2020,8 +2031,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // non-capable at runtime (e.g. a restored view whose function lost
             // snapshot support); the resync keeps its bookkeeping correct if so.
             final LiveViewInMemoryTier ncTier = instance.getInMemoryTier();
-            if (ncTier != null && !instance.isTierStale()) {
-                instance.setLeadRowCount(ncTier.getSlot(ncTier.getPublishedIdx()).leadRowCount());
+            if (ncTier != null) {
+                final LiveViewInMemoryBuffer ncSlot = ncTier.getSlot(ncTier.getPublishedIdx());
+                final long lvAppliedSeqTxn = engine.getTableSequencerAPI()
+                        .getTxnTracker(instance.getLiveViewToken())
+                        .getWriterTxn();
+                if (ncSlot.lvSeqTxn() == lvAppliedSeqTxn) {
+                    instance.setLeadRowCount(ncSlot.leadRowCount());
+                }
             }
             return;
         }
