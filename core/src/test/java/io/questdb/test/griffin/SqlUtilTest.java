@@ -61,6 +61,19 @@ import java.util.concurrent.TimeUnit;
 public class SqlUtilTest {
 
     @Test
+    public void testExprColumnAliasAllSpaceBaseYieldsColumn() {
+        // A quote-protected base whose content truncates down to only spaces must not surface as
+        // a bare space: the space-trim collapses it to nothing and the "column" placeholder takes
+        // over (regression for the all-space alias leak - the old !quote-gated trim left " ").
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+        CharSequence alias = SqlUtil.createExprColumnAlias(store, "  .z", aliasMap, seqMap, 4, true);
+        Assert.assertEquals("column", alias.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(alias));
+    }
+
+    @Test
     public void testExprColumnAliasDedupManyCollisions() {
         // Drives the dedup loop through many collisions in a single call. The candidate store
         // entry is rewound (trimTo) and rebuilt each iteration, so the sequence numbering must
@@ -203,6 +216,20 @@ public class SqlUtilTest {
         Assert.assertEquals("aaa", alias.toString());
         Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(alias));
         Assert.assertEquals("aaa", SqlUtil.toColumnName(alias));
+    }
+
+    @Test
+    public void testExprColumnAliasTruncationDropsTrailingSpace() {
+        // Truncation cuts the dot off a quote-protected base, so the protective quotes are
+        // dropped; the bare remainder must still have its trailing space trimmed. The trim now
+        // keys on the final bare-ness (!emitQuote), not on the original quote flag, so the column
+        // name never ends in a space (regression: the old !quote gate left "ab ").
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+        CharSequence alias = SqlUtil.createExprColumnAlias(store, "ab .c", aliasMap, seqMap, 6, true);
+        Assert.assertEquals("ab", alias.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(alias));
     }
 
     @Test

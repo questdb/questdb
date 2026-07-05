@@ -318,27 +318,32 @@ public class SqlUtil {
             final int len = Math.min(truncatedLen, maxLength - seqSize - (quote ? 1 : 0));
             int contentLen = Math.max(0, len - (quote ? 2 : 0));
 
-            // We don't want the alias to finish with a space.
-            if (!quote && contentLen > 0 && base.charAt(start + contentLen - 1) == ' ') {
-                final int lastSpace = Chars.lastIndexOfDifferent(base, start, start + contentLen, ' ') - start;
-                if (lastSpace > 0) {
-                    contentLen = lastSpace + 1;
-                }
+            // Decide whether the protective quotes wrap this candidate BEFORE the space-trim
+            // below, so the trim can key on the final bare-ness. Emit the quotes only when the
+            // content still needs them: truncation may have dropped the discriminating dot, and
+            // a dedup suffix turns an operator token into a plain identifier; in both cases the
+            // bare name is unambiguous, so keeping the quotes would only leak them into
+            // result-set metadata (see toColumnName).
+            final boolean emitQuote = quote && contentLen > 0
+                    && aliasContentNeedsQuoting(base, start, start + contentLen, sequence > 1);
+
+            // The alias must never end in - or consist solely of - a space. Trim trailing
+            // spaces whenever the content is emitted bare (there are no wrapping quotes to
+            // contain them), keyed on !emitQuote rather than !quote: a quote-protected base
+            // whose dot is truncated off drops its quotes and would otherwise expose the
+            // space-terminated bare content. An all-space slice trims to nothing and falls
+            // through to the "column" placeholder below.
+            if (!emitQuote && contentLen > 0 && base.charAt(start + contentLen - 1) == ' ') {
+                final int lastNonSpace = Chars.lastIndexOfDifferent(base, start, start + contentLen, ' ') - start;
+                contentLen = lastNonSpace >= 0 ? lastNonSpace + 1 : 0;
             }
 
-            // No usable content survived: an empty base, or truncation plus the quote
-            // reservation consumed it all. Emit a "column" placeholder (matching
-            // createColumnAlias) so the loop terminates with a valid, unquoted name
-            // instead of spinning forever - the old return gate keyed on len, which
-            // still counted the quote budget, so it always terminated.
+            // No usable content survived: an empty base, truncation plus the quote reservation,
+            // or an all-space slice. Emit a "column" placeholder (matching createColumnAlias) so
+            // the loop terminates with a valid, unquoted name instead of spinning forever - the
+            // old return gate keyed on len, which still counted the quote budget, so it always
+            // terminated.
             final boolean emptyContent = contentLen == 0;
-
-            // Emit the protective quotes only when the FINAL content still needs
-            // them. Truncation may have dropped the discriminating dot, and a
-            // dedup suffix turns an operator token into a plain identifier; in
-            // both cases the bare name is unambiguous, so keeping the quotes would
-            // only leak them into result-set metadata (see toColumnName).
-            final boolean emitQuote = !emptyContent && quote && aliasContentNeedsQuoting(base, start, start + contentLen, sequence > 1);
 
             entry.trimTo(entryStart);
             if (emitQuote) {
