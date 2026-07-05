@@ -499,6 +499,90 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCoveringMergeCrossoverBoundaryParity() throws Exception {
+        // SP4: pins both sides of the heap-vs-linear crossover boundary.
+        // With setHeapMergeMinKeysForTesting(k), the merge picks linear when
+        // n <= k (n > k == false) and heap when n > k. By testing n==k (linear)
+        // and n==k+1 (heap) we verify that an off-by-one in the comparison
+        // (> vs >=) would still be caught: both branches must match the oracle.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_boundary (" +
+                    "ts TIMESTAMP, sym SYMBOL, price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // 9 interleaved keys (A..I) over multiple DAY partitions.
+            // 6-minute spacing -> 5040 rows spanning ~21 days.
+            execute("INSERT INTO t_boundary " +
+                    "SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "CASE " +
+                    "WHEN x % 9 = 0 THEN 'A' WHEN x % 9 = 1 THEN 'B' WHEN x % 9 = 2 THEN 'C' " +
+                    "WHEN x % 9 = 3 THEN 'D' WHEN x % 9 = 4 THEN 'E' WHEN x % 9 = 5 THEN 'F' " +
+                    "WHEN x % 9 = 6 THEN 'G' WHEN x % 9 = 7 THEN 'H' ELSE 'I' END, " +
+                    "x::DOUBLE FROM long_sequence(5040)");
+            execute("ALTER TABLE t_boundary ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+
+            CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(8);
+            try {
+                // n == 8: 8 > 8 == false  -> LINEAR branch
+                assertCoveringMatchesOracle("t_boundary", "price",
+                        "sym IN ('A','B','C','D','E','F','G','H') AND price > 0",
+                        TS_ORDER_TAILS);
+                // n == 9: 9 > 8 == true   -> HEAP branch
+                assertCoveringMatchesOracle("t_boundary", "price",
+                        "sym IN ('A','B','C','D','E','F','G','H','I') AND price > 0",
+                        TS_ORDER_TAILS);
+            } finally {
+                CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testSparsePrefixSumMemoCoveredValueParityAcrossSlots() throws Exception {
+        // SP6: dedicated exhaustive exercise of the sparse-gen sidecar prefix-sum
+        // memo (AbstractPostingIndexReader.SparseGenSidecarPrefixSum). The memo
+        // caches baseOrdinal = sum(counts[0..slot)) for each (gen, slot) pair and
+        // is used on every covered-value read from a sparse gen. A wrong prefix
+        // base yields a wrong covered price, which the covering-vs-oracle diff
+        // below catches.
+        //
+        // Construction rationale: BYPASS WAL + a SINGLE bulk INSERT whose rows
+        // span many DAY partitions OUT OF timestamp order forces the index builder
+        // to create SPARSE gens (each partition gets one sparse gen whose counts[]
+        // array has gaps). 40 distinct symbol keys (k00..k39) ensure their dense
+        // slots within each gen span the FULL counts[] range, so every prefix
+        // index 0..39 serves as the base for at least one key -- exercising the
+        // memo across the entire slot range in one query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sparse_memo (" +
+                    "ts TIMESTAMP, " +
+                    "sym SYMBOL INDEX TYPE POSTING INCLUDE (price), " +
+                    "price DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // Build a 40-symbol round-robin over 8000 rows; 1-minute spacing
+            // spans ~5.5 days. The BYPASS WAL single-INSERT path does NOT seal
+            // the index, so each partition's gen is sparse.
+            execute("INSERT INTO t_sparse_memo " +
+                    "SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "'k' || lpad((x % 40)::VARCHAR, 2, '0'), " +
+                    "x::DOUBLE FROM long_sequence(8000)");
+
+            // Predicate covers all 40 keys so every slot's prefix is exercised.
+            final String allKeys =
+                    "'k00','k01','k02','k03','k04','k05','k06','k07','k08','k09'," +
+                    "'k10','k11','k12','k13','k14','k15','k16','k17','k18','k19'," +
+                    "'k20','k21','k22','k23','k24','k25','k26','k27','k28','k29'," +
+                    "'k30','k31','k32','k33','k34','k35','k36','k37','k38','k39'";
+            final String predicate = "sym IN (" + allKeys + ") AND price > 0";
+
+            // assertCoveringMatchesOracle already guards plan.contains("CoveringIndex"),
+            // so the oracle (no_covering scan) and the covering path are compared;
+            // any wrong prefix-sum base produces a wrong covered price -> mismatch.
+            assertCoveringMatchesOracle("t_sparse_memo", "ts, sym, price", predicate, TS_ORDER_TAILS);
+        });
+    }
+
     /**
      * Runs each shape twice on {@code table} -- once covering, once with the
      * {@code no_covering} oracle hint -- and asserts the results match. Confirms
