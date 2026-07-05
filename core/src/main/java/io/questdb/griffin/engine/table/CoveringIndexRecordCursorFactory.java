@@ -61,6 +61,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongSortedList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
@@ -93,6 +94,15 @@ import java.util.Arrays;
  * {@code patternProviderFunction}) and populate {@code multiKeys} accordingly.
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
+    // Above this many resolved keys the multi-key covering cursors merge the
+    // per-key heads with an O(log N) heap poll (like HeapRowCursorFactory on the
+    // non-covering path) instead of the linear O(N) min-scan; at or below it the
+    // linear scan wins for the small IN-lists it usually serves. See
+    // MultiKeyCoveringCursor and effectiveHeapMergeMinKeys().
+    static final int HEAP_MERGE_MIN_KEYS = 16;
+    // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
+    @TestOnly
+    static int heapMergeMinKeysOverride = -1;
     private final IntList columnIndexes;
 
     private final PartitionFrameCursorFactory dfcFactory;
@@ -209,6 +219,27 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @TestOnly
     public static void setMaxRowsPerFrameForTesting(int newCap) {
         CoveringPageFrameCursor.maxRowsPerFrameOverride = newCap;
+    }
+
+    /**
+     * Test-only hook that lowers the multi-key merge crossover so the O(log N)
+     * heap k-way merge (see {@link MultiKeyCoveringCursor}) can be exercised with
+     * small IN-lists that would otherwise stay on the linear min-scan. Pass
+     * {@code -1} to clear the override and revert to {@link #HEAP_MERGE_MIN_KEYS}.
+     */
+    @TestOnly
+    public static void setHeapMergeMinKeysForTesting(int n) {
+        heapMergeMinKeysOverride = n;
+    }
+
+    /**
+     * The effective multi-key merge crossover: the test override when set,
+     * otherwise {@link #HEAP_MERGE_MIN_KEYS}. When the number of resolved keys
+     * exceeds this, the multi-key cursors merge the per-key heads with a heap
+     * ({@code O(log N)} per row) instead of the linear min-scan ({@code O(N)}).
+     */
+    static int effectiveHeapMergeMinKeys() {
+        return heapMergeMinKeysOverride >= 0 ? heapMergeMinKeysOverride : HEAP_MERGE_MIN_KEYS;
     }
 
     @Override
@@ -1982,13 +2013,26 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // rows in global (ascending designated-timestamp) order within each
         // partition -- the same result order HeapRowCursorFactory produces on the
         // non-covering path -- instead of draining one key's posting list before
-        // the next. The merge is a linear min-scan over the open heads (O(R*N) for
-        // R rows and N keys), not HeapRowCursorFactory's O(log N) heap poll; fine
-        // for the small IN-lists this serves.
+        // the next.
+        // Two merge strategies pick the smallest open head, chosen per partition
+        // by key count (effectiveHeapMergeMinKeys()): a linear min-scan over the
+        // heads (O(R*N) for R rows and N keys), fine for the small IN-lists this
+        // usually serves; or, above the crossover, an O(log N) heap poll (the
+        // same IntLongSortedList HeapRowCursorFactory uses) for broad symbol
+        // patterns that match thousands of keys. Both merges emit byte-identical
+        // rows -- keys share no row id, so the smallest head is unambiguous.
         private CoveringRowCursor[] keyCursors;
         private long[] keyHeads;
+        // Min-heap of (keyIndex -> head row id) over the open per-key heads, used
+        // when useHeap. Kept in lockstep with keyHeads: the winning entry stays at
+        // position 0 (peeked, not polled) while its covered values are read, then
+        // is polled/replaced on the next hasNext() -- see the heap body there.
+        private final IntLongSortedList heap = new IntLongSortedList();
         // The key whose head was emitted last; advanced on the next hasNext().
         private int selectedKeyIdx = -1;
+        // Whether the current merge uses the heap (multiKeys.size() > crossover).
+        // Recomputed per reset; stable across a partition switch (key set fixed).
+        private boolean useHeap;
 
         MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
                                int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
@@ -2016,31 +2060,62 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             final int n = multiKeys.size();
             while (true) {
-                // Advance the cursor we emitted last; we deferred this so its
-                // covered values stayed readable until the caller consumed them.
-                if (selectedKeyIdx >= 0) {
-                    CoveringRowCursor c = keyCursors[selectedKeyIdx];
-                    keyHeads[selectedKeyIdx] = c.hasNext() ? c.next() : NO_ROW;
-                    selectedKeyIdx = -1;
-                }
-                // Pick the smallest head row id across the open per-key cursors.
-                // Two keys never share a row id (a row has one symbol value), so
-                // no tie-breaking is needed.
-                int best = -1;
-                long bestRow = NO_ROW;
-                for (int i = 0; i < n; i++) {
-                    long h = keyHeads[i];
-                    if (h != NO_ROW && (best < 0 || h < bestRow)) {
-                        best = i;
-                        bestRow = h;
+                if (!useHeap) {
+                    // ---- linear min-scan (small IN-lists) ----
+                    // Advance the cursor we emitted last; we deferred this so its
+                    // covered values stayed readable until the caller consumed them.
+                    if (selectedKeyIdx >= 0) {
+                        CoveringRowCursor c = keyCursors[selectedKeyIdx];
+                        keyHeads[selectedKeyIdx] = c.hasNext() ? c.next() : NO_ROW;
+                        selectedKeyIdx = -1;
                     }
-                }
-                if (best >= 0) {
-                    selectedKeyIdx = best;
-                    coveringRecord.of(keyCursors[best]);
-                    coveringRecord.setSymbolKey(multiKeys.getQuick(best));
-                    coveringRecord.setRowId(bestRow);
-                    return true;
+                    // Pick the smallest head row id across the open per-key cursors.
+                    // Two keys never share a row id (a row has one symbol value), so
+                    // no tie-breaking is needed.
+                    int best = -1;
+                    long bestRow = NO_ROW;
+                    for (int i = 0; i < n; i++) {
+                        long h = keyHeads[i];
+                        if (h != NO_ROW && (best < 0 || h < bestRow)) {
+                            best = i;
+                            bestRow = h;
+                        }
+                    }
+                    if (best >= 0) {
+                        selectedKeyIdx = best;
+                        coveringRecord.of(keyCursors[best]);
+                        coveringRecord.setSymbolKey(multiKeys.getQuick(best));
+                        coveringRecord.setRowId(bestRow);
+                        return true;
+                    }
+                } else {
+                    // ---- heap k-way merge (broad key sets), deferred-advance preserved ----
+                    // Advance the cursor we emitted last, syncing the heap with it.
+                    // The emitted entry is still the heap's min (position 0): we
+                    // peeked it last time without polling, and nothing else touched
+                    // the heap since, so pollAndReplace/pollValue act on that entry.
+                    if (selectedKeyIdx >= 0) {
+                        CoveringRowCursor c = keyCursors[selectedKeyIdx];
+                        if (c.hasNext()) {
+                            long nh = c.next();
+                            keyHeads[selectedKeyIdx] = nh;
+                            heap.pollAndReplace(selectedKeyIdx, nh); // pop the emitted min, reinsert its next head
+                        } else {
+                            keyHeads[selectedKeyIdx] = NO_ROW;
+                            heap.pollValue(); // key exhausted this partition: pop the min
+                        }
+                        selectedKeyIdx = -1;
+                    }
+                    if (heap.hasNext()) {
+                        // Emit the min WITHOUT polling, so keyCursors[best]'s covered
+                        // values stay readable; defer the poll to the next hasNext().
+                        int best = heap.peekIndex();
+                        selectedKeyIdx = best;
+                        coveringRecord.of(keyCursors[best]);
+                        coveringRecord.setSymbolKey(multiKeys.getQuick(best));
+                        coveringRecord.setRowId(keyHeads[best]);
+                        return true;
+                    }
                 }
                 if (!openNextPartitionCursors()) {
                     return false;
@@ -2087,6 +2162,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 keyCursors[i] = null;
                 keyHeads[i] = NO_ROW;
             }
+            // Fix the merge strategy for this scan by key count, and start with an
+            // empty heap; openNextPartitionCursors() rebuilds it from primed heads.
+            useHeap = n > effectiveHeapMergeMinKeys();
+            heap.clear();
         }
 
         private void closeKeyCursors() {
@@ -2096,6 +2175,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     keyHeads[i] = NO_ROW;
                 }
             }
+            // Drop any stale entries so they cannot survive a toTop()/partition
+            // switch; the heap is rebuilt from freshly primed heads.
+            heap.clear();
             selectedKeyIdx = -1;
         }
 
@@ -2136,6 +2218,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                 }
                 if (any) {
+                    if (useHeap) {
+                        // (Re)build the heap from this partition's primed heads;
+                        // NO_ROW keys are simply absent from the heap.
+                        heap.clear();
+                        for (int i = 0; i < n; i++) {
+                            if (keyHeads[i] != NO_ROW) {
+                                heap.add(i, keyHeads[i]);
+                            }
+                        }
+                    }
                     return true;
                 }
                 closeKeyCursors();

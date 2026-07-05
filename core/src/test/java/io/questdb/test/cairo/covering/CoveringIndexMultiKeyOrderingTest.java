@@ -108,6 +108,48 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringMultiKeyHeapMergeParity() throws Exception {
+        // SP4: above HEAP_MERGE_MIN_KEYS the multi-key covering record cursor
+        // merges the per-key heads with an O(log N) heap instead of the linear
+        // O(N) min-scan. The heap must be a pure speedup: for the SAME query it
+        // has to emit BYTE-IDENTICAL rows (row-ids, covered values, ascending
+        // order) to the linear path. Force the heap branch by lowering the
+        // crossover below the key count (8) and diff against the default run.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_heap (ts TIMESTAMP, sym SYMBOL, price DOUBLE, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // 8 interleaved keys over multiple partitions, 5000 rows: keys share
+            // no row id but their heads interleave, so the merge order is what is
+            // being tested. A var-width covered column is included so covered
+            // value reads (not just row ids) are compared too.
+            execute("INSERT INTO t_heap " +
+                    "SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), " +
+                    "rnd_symbol('a','b','c','d','e','f','g','h'), x::DOUBLE, " +
+                    "CASE WHEN x % 97 = 0 THEN NULL::VARCHAR ELSE ('v_' || x)::VARCHAR END " +
+                    "FROM long_sequence(5000)");
+            execute("ALTER TABLE t_heap ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, vc)");
+            final String q = "SELECT sym, price, vc FROM t_heap WHERE sym IN ('a','b','c','d','e','f','g','h') ORDER BY ts, price";
+            // Guard against a vacuous pass: the query must actually route through
+            // the covering (posting) index, otherwise neither run exercises the
+            // merge under test.
+            String plan = getPlan(q);
+            Assert.assertTrue("expected a covering plan, got:\n" + plan, plan.contains("CoveringIndex"));
+
+            // Linear branch (default crossover 16 > 8 keys): ground truth.
+            String linear = runToString(q);
+            Assert.assertFalse("linear ground truth errored:\n" + linear, linear.startsWith("ERROR"));
+
+            // Force the heap branch (crossover 2 < 8 keys) and require identity.
+            CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
+            try {
+                String heap = runToString(q);
+                io.questdb.test.tools.TestUtils.assertEquals(linear, heap);
+            } finally {
+                CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
+            }
+        });
+    }
+
+    @Test
     public void testDeferredSymbolInListCrossCheck() throws Exception {
         assertMemoryLeak(() -> {
             createInterleavedSinglePartition("t_def");
