@@ -78,8 +78,8 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Two-family symbol scheme:
  * <ul>
- *   <li>~100 RARE symbols with prefix {@code r} (matched by {@code LIKE 'r%'})</li>
- *   <li>~9900 COMMON symbols with prefix {@code c} (matched by {@code LIKE 'c%'})</li>
+ *   <li>~50 RARE symbols with prefix {@code r} (matched by {@code LIKE 'r%'})</li>
+ *   <li>~9850 COMMON symbols with prefix {@code c} (matched by {@code LIKE 'c%'})</li>
  *   <li>~1% NULL symbols</li>
  * </ul>
  *
@@ -212,16 +212,16 @@ public class SymbolPatternIndexBenchmark {
 
             // Two-family symbol assignment via a 0-9999 uniform random bucket k:
             //   k < 100              -> NULL          (~1%)
-            //   100 <= k < 200       -> 'r' || (k-100)  100 distinct rare symbols
-            //   200 <= k < 10000     -> 'c' || (k-200)  9800 distinct common symbols
-            // Note: k range 200-10000 gives 9800 distinct values (k-200 in 0..9799),
-            // which is close enough to the target of ~9900 COMMON symbols.
+            //   100 <= k < 150       -> 'r' || (k-100)  50 distinct rare symbols  (~0.5%)
+            //   150 <= k < 10000     -> 'c' || (k-150)  9850 distinct common symbols (~98.5%)
+            // Threshold sizing: neg `NOT LIKE 'c%'` complement = 50 rare + 1 NULL key = 51 <= 100 (default
+            // cairo.sql.symbol.pattern.index.threshold) -> index path taken.
             sharedEngine.execute(
                     "INSERT INTO " + tbl + " SELECT "
                             + "  CASE"
                             + "    WHEN k < 100 THEN NULL"
-                            + "    WHEN k < 200 THEN concat('r', cast(k - 100 as string))"
-                            + "    ELSE concat('c', cast(k - 200 as string))"
+                            + "    WHEN k < 150 THEN concat('r', cast(k - 100 as string))"
+                            + "    ELSE concat('c', cast(k - 150 as string))"
                             + "  END, "
                             + "  rnd_double() * 1000, "
                             + "  x, "
