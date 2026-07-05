@@ -31,6 +31,7 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
@@ -329,6 +330,26 @@ public class SqlUtilTest {
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("\"a.b\""));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("in"));
         Assert.assertEquals(1, metadata.getColumnIndexQuiet("a.b"));
+    }
+
+    @Test
+    public void testGetColumnIndexThrowsOnMiss() {
+        // The throwing SqlUtil.getColumnIndex resolves like the quiet variant (verbatim, then the
+        // protective-quote strip retry) but raises the shared InvalidColumnException singleton on a
+        // miss, matching the old RecordMetadata.getColumnIndex default it replaced.
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("a.b", ColumnType.INT));
+
+        Assert.assertEquals(0, SqlUtil.getColumnIndex(metadata, "a.b"));
+        Assert.assertEquals(0, SqlUtil.getColumnIndex(metadata, "\"a.b\""));
+
+        try {
+            SqlUtil.getColumnIndex(metadata, "nope");
+            Assert.fail("expected InvalidColumnException");
+        } catch (InvalidColumnException e) {
+            // expected - the shared singleton, no message
+            Assert.assertSame(InvalidColumnException.INSTANCE, e);
+        }
     }
 
     @Test
