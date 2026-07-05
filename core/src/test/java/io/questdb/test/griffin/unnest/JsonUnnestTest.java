@@ -1063,6 +1063,27 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnsDottedFieldNameExtractsValue() throws Exception {
+        // Regression: a dotted JSON field key (a.b) must extract its value, not silently return
+        // NULL. The parser keeps the protective quotes on the dotted COLUMNS name so its dots stay
+        // content for the display name; JsonUnnestSource must strip them from the native extraction
+        // key, or the C++ matcher looks up a field literally spelled "a.b" and never matches the
+        // JSON key a.b.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"a.b\":1.5},{\"a.b\":2.5}]')");
+            assertQuery("SELECT u.\"a.b\" FROM t, UNNEST(t.payload COLUMNS(\"a.b\" DOUBLE)) u")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a.b
+                            1.5
+                            2.5
+                            """);
+        });
+    }
+
+    @Test
     public void testColumnsKeywordAsColumnNameRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");
