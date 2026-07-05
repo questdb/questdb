@@ -203,17 +203,71 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
-     * Negation ({@code NOT LIKE}) must NOT be lifted to the index fast path; the plan must fall back to
-     * scan+filter and still be correct.
+     * SP2: negation ({@code NOT LIKE}) IS now lifted to the index fast path via a complement scan, and the
+     * result must still equal the scan+filter ground truth (same rows, including NULL-symbol rows). The
+     * opt-out hint still forces the scan+filter path.
      */
     @Test
-    public void testNegationNotLiftedToIndex() throws Exception {
+    public void testNegationLiftedToIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(1500)");
-            assertQuery("select sym, v from t where sym not like 'A%'").noLeakCheck().assertsPlanNotContaining("SymbolPatternIndex");
+            assertQuery("select sym, v from t where sym not like 'A%'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+            assertQuery("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym not like 'A%'").noLeakCheck().assertsPlanNotContaining("SymbolPatternIndex");
             String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym not like 'A%' order by ts, v");
             String actual = select("select sym, v, ts from t where sym not like 'A%' order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
+     * SP2 end-to-end row parity for the NEGATED complement fast path: {@code NOT LIKE 'A%'} via the index
+     * (unhinted) must return byte-identical rows to the scan+filter ground truth (hinted), including the
+     * NULL-symbol rows that {@code NOT LIKE} includes.
+     */
+    @Test
+    public void testNotLikeMatchesScanFilter_indexPath() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            execute("insert into t select null, x, timestamp_sequence(2000*60000000, 60000000) from long_sequence(300)");
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym not like 'A%' order by ts, v");
+            String actual = select("select sym, v, ts from t where sym not like 'A%' order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    /**
+     * SP2 recognition proof for negation: the unhinted {@code NOT LIKE} plan routes through the
+     * SymbolPatternIndex complement fast path, while the hinted (opt-out) plan does not. This is the
+     * meaningful RED-&gt;GREEN signal for the negated codegen branch.
+     */
+    @Test
+    public void testNotLikePlanUsesSymbolPatternIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA'), x, timestamp_sequence(0, 60000000) from long_sequence(100)");
+            assertQuery("select sym, v from t where sym not like 'A%'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+            assertQuery("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym not like 'A%'").noLeakCheck().assertsPlanNotContaining("SymbolPatternIndex");
+        });
+    }
+
+    /**
+     * SP2 Case B: the binary {@code !~} operator (which parses as a single binary node, not {@code not(~)})
+     * must also be lifted to the complement fast path via a synthesized positive {@code ~} provider node.
+     * Asserts both recognition (plan routes through / opts out of SymbolPatternIndex) and row parity —
+     * including NULL-symbol rows — against the scan+filter ground truth.
+     */
+    @Test
+    public void testNotRegexMatchesScanFilter_indexPath() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            execute("insert into t select null, x, timestamp_sequence(2000*60000000, 60000000) from long_sequence(300)");
+            assertQuery("select sym, v from t where sym !~ '^A'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+            assertQuery("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym !~ '^A'").noLeakCheck().assertsPlanNotContaining("SymbolPatternIndex");
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym !~ '^A' order by ts, v");
+            String actual = select("select sym, v, ts from t where sym !~ '^A' order by ts, v");
             io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
         });
     }
@@ -305,6 +359,61 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             String actual = select("select sym, v, ts from t where sym like 'A%' order by ts, v");
             io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             // Prove the index branch actually fired.
+            Assert.assertTrue(
+                    "expected indexInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0
+            );
+            Assert.assertEquals(
+                    "expected fallbackInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations,
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations
+            );
+        });
+    }
+
+    /**
+     * SP2 negated adaptive threshold: the fast-vs-fallback decision is measured on the COMPLEMENT (included)
+     * size, not the matched size. With 150 distinct {@code B}-prefixed symbols and pattern {@code NOT LIKE 'A%'},
+     * the positive pattern matches 0 keys but the complement is 150 &gt; 100, so the factory must fall back to
+     * scan+filter (fallback counter increments, index counter stays zero) while still matching ground truth.
+     */
+    @Test
+    public void testNegatedHighComplementFallsBackToScan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            // 'B' || (x % 150) => B0..B149 = 150 distinct symbols, none matching 'A%'.
+            // NOT LIKE 'A%' therefore includes all 150 keys > default threshold (100) => fallback path.
+            execute("insert into t select cast('B' || (x % 150) as symbol), x, timestamp_sequence(0, 60000000) from long_sequence(1500)");
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, count() from t where sym not like 'A%' order by sym");
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            String actual = select("select sym, count() from t where sym not like 'A%' order by sym");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+            Assert.assertTrue(
+                    "expected fallbackInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations,
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0
+            );
+            Assert.assertEquals(
+                    "expected indexInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations
+            );
+        });
+    }
+
+    /**
+     * SP2 negated index path: when the complement is small enough (&le; threshold) the factory uses the
+     * index-merge complement scan. With 5 distinct symbols and {@code NOT LIKE 'A%'} the complement is
+     * 2 keys (BA, BB) — well under 100 — so the index counter must increment and the fallback stay at zero.
+     */
+    @Test
+    public void testNegatedLowComplementUsesIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym not like 'A%' order by ts, v");
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            String actual = select("select sym, v, ts from t where sym not like 'A%' order by ts, v");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             Assert.assertTrue(
                     "expected indexInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
                     SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0

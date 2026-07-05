@@ -11312,10 +11312,57 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Attempts to build the index fast path for a positive LIKE/ILIKE/regex predicate on an indexed
-     * static-symbol column. Returns {@code null} (leaking nothing) when the filter has no qualifying
-     * conjunct or the qualifying conjunct does not compile to a {@link SymbolKeySetProvider}; in that case
-     * the caller keeps {@code dfcFactory} and continues with the ordinary scan+filter path.
+     * Recognizes a NEGATED pattern on an indexed static-symbol column, either
+     * <ul>
+     *     <li>Case A: a unary {@code not(...)} ({@code paramCount == 1}) wrapping a positive
+     *     {@code like}/{@code ilike}/{@code ~}, or</li>
+     *     <li>Case B: the binary {@code !~} operator ({@code paramCount == 2}).</li>
+     * </ul>
+     * Returns the POSITIVE equivalent node to compile as the {@link SymbolKeySetProvider} (whose matched keys
+     * become the set to EXCLUDE), or {@code null} when {@code node} is not such a negation. For Case A the
+     * positive node already exists ({@code node.rhs}); for Case B a positive {@code ~} node is synthesized
+     * from the pool with the {@code ~} operator's token/precedence, sharing the same lhs/rhs.
+     */
+    private ExpressionNode negatedPatternPositiveNode(
+            ExpressionNode node,
+            RecordMetadata queryMeta,
+            TableReader reader,
+            IntList columnIndexes
+    ) {
+        if (node.token == null) {
+            return null;
+        }
+        // Case A: not( like|ilike|~ ... )
+        if (node.paramCount == 1 && isNotKeyword(node.token) && node.rhs != null
+                && isPatternOnIndexedSymbol(node.rhs, queryMeta, reader, columnIndexes)) {
+            return node.rhs;
+        }
+        // Case B: sym !~ 'pattern'  ->  synthesize the positive ~ node
+        if (node.paramCount == 2 && Chars.equals(node.token, "!~") && node.lhs != null
+                && node.lhs.type == LITERAL && node.lhs.token != null) {
+            final int idx = queryMeta.getColumnIndexQuiet(node.lhs.token);
+            if (idx >= 0 && isSymbol(queryMeta.getColumnType(idx))
+                    && reader.getMetadata().isColumnIndexed(columnIndexes.getQuick(idx))) {
+                // getOperatorDefinition("~") resolves to the BINARY LikeRegex operator: the registry map is
+                // keyed by token and deliberately excludes the unary complement, so there is no ambiguity.
+                final OperatorExpression tilde = OperatorExpression.chooseRegistry(
+                        configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("~");
+                final ExpressionNode pos = expressionNodePool.next().of(OPERATION, tilde.operator.token, tilde.precedence, node.position);
+                pos.paramCount = 2;
+                pos.lhs = node.lhs;
+                pos.rhs = node.rhs;
+                return pos;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Attempts to build the index fast path for a LIKE/ILIKE/regex predicate — or its negation
+     * (NOT LIKE / NOT ILIKE / !~), served by a complement scan — on an indexed static-symbol column.
+     * Returns {@code null} (leaking nothing) when the filter has no qualifying conjunct or the qualifying
+     * conjunct does not compile to a {@link SymbolKeySetProvider}; in that case the caller keeps
+     * {@code dfcFactory} and continues with the ordinary scan+filter path.
      * <p>
      * On success the returned factory owns {@code dfcFactory}, the provider function, the residual filter
      * and the full filter (all freed in the factory's {@code _close()}); the caller nulls its
@@ -11335,11 +11382,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<ExpressionNode> conjuncts = new ObjList<>();
         collectAndConjuncts(intrinsicModel.filter, conjuncts);
 
-        // 2) find the first qualifying positive pattern conjunct on an indexed symbol column
+        // 2) find the first qualifying conjunct on an indexed symbol column: a positive pattern, or a
+        //    negation (NOT LIKE / NOT ILIKE / !~) whose POSITIVE equivalent we compile as the provider.
         int patternIdx = -1;
+        boolean negated = false;
+        ExpressionNode positiveNode = null; // the node compiled as the provider (matched keys)
         for (int i = 0, n = conjuncts.size(); i < n; i++) {
             if (isPatternOnIndexedSymbol(conjuncts.getQuick(i), queryMeta, reader, columnIndexes)) {
                 patternIdx = i;
+                positiveNode = conjuncts.getQuick(i);
+                negated = false;
+                break;
+            }
+            final ExpressionNode p = negatedPatternPositiveNode(conjuncts.getQuick(i), queryMeta, reader, columnIndexes);
+            if (p != null) {
+                patternIdx = i;
+                positiveNode = p;
+                negated = true;
                 break;
             }
         }
@@ -11347,15 +11406,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null; // nothing compiled yet, nothing to free
         }
 
-        final ExpressionNode patternNode = conjuncts.getQuick(patternIdx);
-        final int keyColumnIndex = queryMeta.getColumnIndexQuiet(patternNode.lhs.token);
+        // The ORIGINAL conjunct at patternIdx is removed from the residual (below); the POSITIVE node is
+        // compiled as the provider. For both polarities positiveNode.lhs is the symbol-column literal.
+        final int keyColumnIndex = queryMeta.getColumnIndexQuiet(positiveNode.lhs.token);
 
         Function providerFunction = null;
         Function residualFilter = null;
         Function fullFilter = null;
         try {
-            // 4) compile the pattern predicate; bail out (freeing it) unless it is a key-set provider
-            providerFunction = functionParser.parseFunction(patternNode, queryMeta, executionContext);
+            // 4) compile the POSITIVE pattern predicate; bail out (freeing it) unless it is a key-set provider
+            providerFunction = functionParser.parseFunction(positiveNode, queryMeta, executionContext);
             if (!(providerFunction instanceof SymbolKeySetProvider)) {
                 providerFunction = Misc.free(providerFunction);
                 return null;
@@ -11402,6 +11462,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     providerFunction,
                     residualFilter,
                     fullFilter,
+                    negated,
                     orderByTimestamp,
                     indexDirection,
                     configuration.getSymbolPatternIndexThreshold(),

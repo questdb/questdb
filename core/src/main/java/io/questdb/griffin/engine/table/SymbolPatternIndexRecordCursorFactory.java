@@ -31,6 +31,8 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -43,9 +45,12 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Index fast path for a positive {@code LIKE}/{@code ILIKE}/{@code ~} predicate on an indexed,
- * static-symbol-table column. Structurally mirrors {@link FilterOnValuesRecordCursorFactory}, with three
- * differences:
+ * Index fast path for a {@code LIKE}/{@code ILIKE}/{@code ~} predicate (or its negation
+ * {@code NOT LIKE}/{@code NOT ILIKE}/{@code !~}) on an indexed, static-symbol-table column. The provider
+ * always compiles the POSITIVE pattern; when {@code negated} is set the factory scans the COMPLEMENT of the
+ * matched key set — every symbol key the pattern does not match, plus the NULL key when the column contains
+ * nulls (mirroring {@link FilterOnExcludedValuesRecordCursorFactory} / "NOT IN" semantics). Structurally
+ * mirrors {@link FilterOnValuesRecordCursorFactory}, with three differences:
  * <ol>
  *     <li>the set of symbol keys to scan is not fixed at construction: it is read at
  *     {@link #initRecordCursor(PageFrameCursor, SqlExecutionContext)} from a {@link SymbolKeySetProvider}
@@ -72,15 +77,20 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
+    // reused per initRecordCursor for the negated (complement) path: every symbol key NOT matched by the
+    // positive pattern, plus VALUE_IS_NULL when the column contains nulls (mirrors "NOT IN" semantics).
+    private final IntList complementKeys = new IntList();
     private final int[] cursorFactoriesIdx = new int[]{0};
     private final PageFrameRecordCursorImpl fallbackCursor;
     private final Function fallbackFilter;         // full filter (pattern AND residual)
     private final boolean heapCursorUsed;
     private final PageFrameRecordCursorImpl indexCursor;
     private final int indexDirection;
+    // false: scan the keys the (positive) pattern matches; true: scan the complement (NOT LIKE / !~).
+    private final boolean negated;
     private final ObjList<SymbolFunctionRowCursorFactory> perKeyFactories = new ObjList<>();
     private final SymbolKeySetProvider provider;
-    private final Function providerFunction;        // == (Function) provider; the compiled pattern predicate
+    private final Function providerFunction;        // == (Function) provider; the compiled POSITIVE pattern predicate
     private final Function residualFilter;          // applied on index rows (nullable)
     private final RowCursorFactory rowCursorFactory;
     private final int threshold;
@@ -97,6 +107,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
             @NotNull Function providerFunction,
             @Nullable Function residualFilter,
             @NotNull Function fallbackFilter,
+            boolean negated,
             boolean orderByTimestamp,
             int indexDirection,
             int threshold,
@@ -109,6 +120,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         this.provider = (SymbolKeySetProvider) providerFunction;
         this.residualFilter = residualFilter;
         this.fallbackFilter = fallbackFilter;
+        this.negated = negated;
         this.indexDirection = indexDirection;
         this.threshold = threshold;
         // Use the timestamp-merge heap only when the planner explicitly requested timestamp ordering.
@@ -190,12 +202,19 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        // Computes the matched symbol key set (init cascades to the arg symbol column, binding its
-        // static symbol table), then reads the keys.
+        // Computes the POSITIVE matched symbol key set (init cascades to the arg symbol column, binding its
+        // static symbol table), then reads the keys. For the negated path these are the keys to EXCLUDE.
         providerFunction.init(pageFrameCursor, executionContext);
-        final IntList keys = provider.getMatchedSymbolKeys();
-        final int n = keys.size();
-        if (n > threshold) {
+        final IntList matched = provider.getMatchedSymbolKeys(); // sorted, unique, no NULL
+
+        // "Included" count decides fast-vs-fallback: |matched| for the positive path, the complement size
+        // for the negated path (computed cheaply, WITHOUT enumerating). A positive pattern never matches
+        // NULL, so NULL is always in the negated complement when the column has nulls.
+        final StaticSymbolTable symTab = negated ? pageFrameCursor.getSymbolTable(columnIndex) : null;
+        final int includedCount = negated
+                ? symTab.getSymbolCount() - matched.size() + (symTab.containsNullValue() ? 1 : 0)
+                : matched.size();
+        if (includedCount > threshold) {
             //noinspection AssignmentToStaticFieldFromInstanceMethod
             testFallbackInvocations++;
             fallbackCursor.of(pageFrameCursor, executionContext);
@@ -204,6 +223,27 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
             }
             return fallbackCursor;
         }
+
+        // Materialize the effective key list: the matched keys for the positive path, or the complement
+        // (mirrors FilterOnExcludedValues -> "NOT IN" semantics, with the NULL key included) for the
+        // negated path. VALUE_IS_NULL is mapped to index key 0 by the per-key factory's toIndexKey().
+        final IntList keys;
+        if (!negated) {
+            keys = matched;
+        } else {
+            complementKeys.clear();
+            for (int k = 0, symCount = symTab.getSymbolCount(); k < symCount; k++) {
+                if (matched.binarySearchUniqueList(k) < 0) {
+                    complementKeys.add(k);
+                }
+            }
+            if (symTab.containsNullValue() && matched.binarySearchUniqueList(SymbolTable.VALUE_IS_NULL) < 0) {
+                complementKeys.add(SymbolTable.VALUE_IS_NULL);
+            }
+            keys = complementKeys;
+        }
+
+        final int n = keys.size();
         buildPerKeyFactories(n);
         for (int i = 0; i < n; i++) {
             perKeyFactories.getQuick(i).of(keys.getQuick(i));
