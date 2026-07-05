@@ -669,7 +669,11 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
      * NULL sentinel).
      *
      * <p>Covered DDL: {@code sym symbol index type posting include (price)}, so {@code price} and {@code sym}
-     * are both covered; {@code ts} is selected so the ORDER BY is stable across partitions.
+     * are both covered. The projection selects ONLY covered columns ({@code price, sym}) and orders by
+     * {@code price}; {@code ts} is intentionally excluded because it is NOT in the INCLUDE set and would
+     * cause {@code buildCoveringIndexMapping} to return null, silently falling back to the bitmap path.
+     * {@code price} values come from {@code x::double} over {@code long_sequence(4000)}, yielding unique
+     * values 1.0–4000.0 for non-null rows, so ORDER BY price is deterministic within the compared row-sets.
      */
     @Test
     public void testCoveringParitySweep() throws Exception {
@@ -689,10 +693,18 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     "sym like 'al%' and price > 100" // residual conjunct
             };
             for (String p : preds) {
-                String base = "select %s price, sym, ts from t where " + p.replace("%", "%%") + " order by ts, price";
+                // Projection: only covered columns (price from INCLUDE, sym as the index key).
+                // ts is NOT in INCLUDE and must NOT appear here — it would cause buildCoveringIndexMapping
+                // to return null and silently drop to the bitmap SymbolPatternIndex path.
+                // ORDER BY price is deterministic: non-null price values are unique 1.0–4000.0.
+                String base = "select %s price, sym from t where " + p.replace("%", "%%") + " order by price";
                 String expected = select(String.format(base, "/*+ no_symbol_pattern_index(t) no_covering(t) */ "));
                 String actual = select(String.format(base, ""));
                 io.questdb.test.tools.TestUtils.assertEquals("pred=[" + p + "]", expected, actual);
+                // Guard: the unhinted plan MUST route through CoveringIndex for every predicate.
+                // If any predicate silently falls back to the bitmap path this assertion fails loudly.
+                String guardSql = "select price, sym from t where " + p + " order by price";
+                assertQuery(guardSql).noLeakCheck().assertsPlanContaining("CoveringIndex");
             }
         });
     }
