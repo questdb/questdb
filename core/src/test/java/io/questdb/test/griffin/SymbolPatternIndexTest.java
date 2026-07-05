@@ -27,6 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -316,12 +318,81 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * Parity oracle sweep: for a matrix of predicate shapes the fast index path (unhinted) must return
+     * byte-identical rows to the scan+filter ground truth (hint immediately after SELECT). Covers
+     * LIKE, ILIKE, regex (~), underscore-escaped LIKE, residual conjunct, empty match, and a no-match
+     * pattern — on a table that includes NULL symbols and multiple partitions.
+     */
+    @Test
+    public void testParitySweep() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('alpha','alto','beta','ALPHA','al_x','gamma',null), x, timestamp_sequence(0, 3600000000) from long_sequence(5000)");
+            String[] preds = {
+                    "sym like 'al%'",
+                    "sym like '%ta'",
+                    "sym like '%lph%'",
+                    "sym ilike 'al%'",
+                    "sym ilike 'ALPHA'",
+                    "sym ~ '^al'",
+                    "sym ~ 'a'",
+                    "sym ~ 'zzz'",                  // matches nothing
+                    "sym like 'al\\_x'",             // underscore escape
+                    "sym like 'al%' and v > 100",   // residual filter
+                    "sym like 'no_such%'"            // empty match
+            };
+            for (String p : preds) {
+                // Hint goes right after SELECT (a WHERE-position hint is a silent no-op).
+                // Use %s as a placeholder for the hint (or empty string), then escape any real % in pred.
+                String base = "select %s sym, v, ts from t where " + p.replace("%", "%%") + " order by ts, v";
+                String expected = select(String.format(base, "/*+ no_symbol_pattern_index(t) */ "));
+                String actual   = select(String.format(base, ""));
+                io.questdb.test.tools.TestUtils.assertEquals("pred=[" + p + "]", expected, actual);
+            }
+        });
+    }
+
+    /**
+     * Deferred-symbol test: compile a fast-path factory, then insert a new matching symbol, then
+     * execute the cached factory — asserts the new symbol's rows are included (keys resolved at
+     * execution time, not at compile time).
+     */
+    @Test
+    public void testDeferredSymbolAddedAfterCompile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','BB'), x, timestamp_sequence(0, 60000000) from long_sequence(50)");
+            // Compile the fast-path factory (engine.select returns a RecordCursorFactory)
+            try (RecordCursorFactory factory = engine.select("select sym, v from t where sym like 'A%' order by v", sqlExecutionContext)) {
+                // Insert a new matching symbol AFTER the factory was compiled
+                execute("insert into t values ('AC', 999, 100000000::timestamp)");
+                // Execute the cached plan now — must see the new 'AC' row
+                String actual   = printFactory(factory);
+                String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym like 'A%' order by v");
+                io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+            }
+        });
+    }
+
+    /**
      * Runs {@code sql} and returns its printed text (header + rows) captured into a private sink, so two
      * queries can be compared without clobbering the shared static test sink.
      */
     private String select(String sql) throws SqlException {
         StringSink localSink = new StringSink();
         printSql(sql, localSink);
+        return localSink.toString();
+    }
+
+    /**
+     * Executes a pre-compiled {@link RecordCursorFactory} and returns its output as a string
+     * (header + rows), using a private sink so it does not clobber the shared static test sink.
+     */
+    private String printFactory(RecordCursorFactory factory) throws SqlException {
+        StringSink localSink = new StringSink();
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            println(factory.getMetadata(), cursor, localSink);
+        }
         return localSink.toString();
     }
 }
