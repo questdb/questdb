@@ -58,13 +58,16 @@ import org.jetbrains.annotations.TestOnly;
  * SP1 accelerates only the single-threaded, non-page-frame path: {@link #supportsPageFrameCursor()} is
  * {@code false}, so parallel/page-frame consumers keep using the surrounding scan+filter pipeline.
  * <p>
- * <b>Ordering note:</b> this factory does NOT override {@code followedOrderByAdvice()} (stays {@code false}).
- * Full sort-elision (so that an outer Sort node is dropped entirely for {@code ORDER BY ts} or
- * {@code ORDER BY ts DESC}) is deferred. Correctness for all orderings is guaranteed by the retained outer
- * Sort; {@link #getScanDirection()} advertises {@code SCAN_DIRECTION_FORWARD} for the ASC+heap case only,
- * matching the behaviour of {@link FilterOnValuesRecordCursorFactory}. The per-key index scan always runs
- * {@code DIR_FORWARD} — passing {@code DIR_BACKWARD} when {@code orderByTimestamp} is set would be inert
- * (no {@code followedOrderByAdvice()} short-circuit) and therefore misleading.
+ * <b>Ordering note:</b> this factory does NOT override {@code followedOrderByAdvice()} (stays {@code false}),
+ * so advice-driven sort-elision is deferred. Ordering is still correct in every case, by one of two
+ * mechanisms: for {@code ORDER BY ts} <i>ascending</i> the outer Sort is elided by {@code generateOrderBy}
+ * because {@link #getScanDirection()} advertises {@code SCAN_DIRECTION_FORWARD} (ASC + heap), and correctness
+ * then comes from the forward, row-id-ordered {@code HeapRowCursor} merge (row-id order == designated-timestamp
+ * order) — exactly as in {@link FilterOnValuesRecordCursorFactory}; for {@code ORDER BY ts DESC} and any other
+ * ordering, {@code getScanDirection()} returns {@code SCAN_DIRECTION_OTHER} so the outer Sort is retained and
+ * provides the order. The per-key index scan always runs {@code DIR_FORWARD} — passing {@code DIR_BACKWARD}
+ * when {@code orderByTimestamp} is set would be inert (no {@code followedOrderByAdvice()} short-circuit to act
+ * on it) and therefore misleading.
  * </p>
  */
 public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
