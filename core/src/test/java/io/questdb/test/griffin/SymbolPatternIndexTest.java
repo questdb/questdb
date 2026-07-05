@@ -353,6 +353,38 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * Ground-truth oracle for SP2: pins that {@code NOT LIKE} and {@code !~} INCLUDE rows whose symbol
+     * is NULL.  The semantics are: {@code like(NULL) = NULL} which is not TRUE, so {@code NOT like(NULL) = NULL}
+     * which is also not TRUE… but QuestDB follows SQL three-valued logic where the WHERE clause only passes
+     * rows for which the predicate is TRUE.  However, the current scan+filter engine evaluates
+     * {@code not(null) = false} for NULL symbols in a NOT LIKE context (the NULL sentinel becomes false after
+     * negation).  This test documents the ACTUAL observed behaviour so that the SP2 excluded-complement fast
+     * path can reproduce it exactly.
+     *
+     * <p>Concretely: with 300 rows of {@code rnd_symbol('alpha','beta','gamma')} and 50 explicit NULL rows,
+     * {@code sym NOT LIKE 'al%'} must return exactly (non-alpha non-null rows) + (null rows).
+     */
+    @Test
+    public void testNegationIncludesNullRows_groundTruth() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            // 3 non-null symbols + explicit NULL symbols
+            execute("insert into t select rnd_symbol('alpha','beta','gamma'), x, timestamp_sequence(0, 60000000) from long_sequence(300)");
+            execute("insert into t select null, x, timestamp_sequence(300*60000000, 60000000) from long_sequence(50)");
+            // Ground truth: NOT LIKE 'al%' must INCLUDE the 50 null-symbol rows (like(null)=false -> not=true).
+            long notLikeCount = countOf("select count() from t where sym not like 'al%'");
+            long nullCount = countOf("select count() from t where sym is null");
+            long nonAlphaNonNull = countOf("select count() from t where sym is not null and sym not like 'al%'");
+            Assert.assertEquals(50, nullCount);
+            Assert.assertEquals("NOT LIKE must include NULL-symbol rows", nonAlphaNonNull + nullCount, notLikeCount);
+            // Same for !~
+            long notRegexCount = countOf("select count() from t where sym !~ '^al'");
+            long nonAlphaRegexNonNull = countOf("select count() from t where sym is not null and sym !~ '^al'");
+            Assert.assertEquals(nonAlphaRegexNonNull + nullCount, notRegexCount);
+        });
+    }
+
+    /**
      * Deferred-symbol test: compile a fast-path factory, then insert a new matching symbol, then
      * execute the cached factory — asserts the new symbol's rows are included (keys resolved at
      * execution time, not at compile time).
@@ -382,6 +414,21 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         StringSink localSink = new StringSink();
         printSql(sql, localSink);
         return localSink.toString();
+    }
+
+    /**
+     * Runs a scalar {@code count()} query and returns the single long result.
+     * The printed form is "count\n&lt;value&gt;\n"; we strip the header line and parse the first data token.
+     */
+    private long countOf(String sql) throws SqlException {
+        String out = select(sql);
+        // Format: "count\n<value>\n" — skip the header line, parse the number.
+        int newline = out.indexOf('\n');
+        Assert.assertTrue("countOf query returned no data: " + out, newline >= 0 && newline < out.length() - 1);
+        String rest = out.substring(newline + 1).trim();
+        int end = rest.indexOf('\n');
+        String token = end >= 0 ? rest.substring(0, end).trim() : rest;
+        return Long.parseLong(token);
     }
 
     /**
