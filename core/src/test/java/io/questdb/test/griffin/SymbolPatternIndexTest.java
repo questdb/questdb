@@ -494,6 +494,46 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
+     * SP2 negation parity sweep: for a matrix of negated predicate shapes the fast index path
+     * (unhinted) must return byte-identical rows to the scan+filter ground truth (hint immediately
+     * after SELECT). Covers NOT LIKE, NOT ILIKE, !~, underscore escape, residual conjunct, no-match
+     * pattern, and the non-lift {@code NOT LIKE '%'} case — on a table WITH NULL symbols and
+     * MULTIPLE partitions.
+     *
+     * <p>The {@code not like '%'} case: {@code LIKE '%'} compiles to a not-null check (not a
+     * SymbolKeySetProvider), so the {@code instanceof} gate in {@code tryGenerateSymbolPatternIndex}
+     * returns null and the query falls back to scan+filter. Parity must hold regardless.
+     */
+    @Test
+    public void testNegationParitySweep() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('alpha','alto','beta','ALPHA','al_x','gamma'), x, timestamp_sequence(0, 3600000000) from long_sequence(4000)");
+            execute("insert into t select null, x, timestamp_sequence(4000*3600000000L, 3600000000) from long_sequence(400)");
+            String[] preds = {
+                    "sym not like 'al%'",
+                    "sym not like '%ta'",
+                    "sym not like '%lph%'",
+                    "sym not ilike 'al%'",
+                    "sym !~ '^al'",
+                    "sym !~ 'a'",
+                    "sym not like 'zzz%'",           // matches nothing -> complement is everything (+null)
+                    "sym not like '%'",              // LIKE '%' is NullCheck (not a provider) -> must NOT lift; stays scan+filter
+                    "sym not like 'al\\_x'",         // underscore escape
+                    "sym not like 'al%' and v > 100" // residual filter alongside negation
+            };
+            for (String p : preds) {
+                // Hint goes right after SELECT (a WHERE-position hint is a silent no-op).
+                // Use %s as placeholder for the hint; escape any real % in the predicate.
+                String base = "select %s sym, v, ts from t where " + p.replace("%", "%%") + " order by ts, v";
+                String expected = select(String.format(base, "/*+ no_symbol_pattern_index(t) */ "));
+                String actual = select(String.format(base, ""));
+                io.questdb.test.tools.TestUtils.assertEquals("pred=[" + p + "]", expected, actual);
+            }
+        });
+    }
+
+    /**
      * Deferred-symbol test: compile a fast-path factory, then insert a new matching symbol, then
      * execute the cached factory — asserts the new symbol's rows are included (keys resolved at
      * execution time, not at compile time).
