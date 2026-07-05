@@ -77,8 +77,14 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             boolean symbolTableStatic,
             RecordMetadata metadata
     ) {
-        columnName = protectDottedColumnName(tableAlias, columnName);
-        int dot = addAlias(tableAlias, columnName);
+        int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        columnName = protectDottedColumnName(tableAlias, columnName, dot);
+        if (tableAlias != null) {
+            // aliased side: the name is either re-quoted (its dot is now content) or was never
+            // dotted, so it carries no table.column separator
+            dot = -1;
+        }
+        addAlias(tableAlias, columnName, dot);
         final Utf16Sink b = Misc.getThreadLocalSink();
         TableColumnMetadata cm;
         if (dot == -1) {
@@ -104,8 +110,13 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     }
 
     public void add(CharSequence tableAlias, TableColumnMetadata m) {
-        final CharSequence columnName = protectDottedColumnName(tableAlias, m.getColumnName());
-        final int dot = addAlias(tableAlias, columnName);
+        CharSequence columnName = m.getColumnName();
+        int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        columnName = protectDottedColumnName(tableAlias, columnName, dot);
+        if (tableAlias != null) {
+            dot = -1;
+        }
+        addAlias(tableAlias, columnName, dot);
         TableColumnMetadata cm;
         if (dot == -1 && tableAlias != null) {
             // qualify the column with its side's alias; a re-quoted dotted name lands here too
@@ -178,9 +189,8 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         this.timestampIndex = index;
     }
 
-    private int addAlias(CharSequence tableAlias, CharSequence columnName) {
-        int dot = Chars.indexOfLastUnquoted(columnName, '.');
-        // add column with its own alias
+    private void addAlias(CharSequence tableAlias, CharSequence columnName, int dot) {
+        // add column with its own alias; the caller precomputes dot (the table.column split)
         MapKey key = map.withKey();
 
         if (dot == -1) {
@@ -199,7 +209,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         }
 
         value.putInt(0, columnCount++);
-        return dot;
     }
 
     private void addToMap(CharSequence columnName, int dot, TableColumnMetadata cm) {
@@ -223,9 +232,9 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     // content rather than a "table.column" separator. Base factory metadata stores such names
     // unquoted (SqlUtil.toColumnName), but this map's dot-splitting convention keys on the
     // quotes; with a null alias the name is an already-composed prefixed form and must keep
-    // splitting at the dot, so it is left untouched.
-    private CharSequence protectDottedColumnName(CharSequence tableAlias, CharSequence columnName) {
-        if (tableAlias != null && Chars.indexOfLastUnquoted(columnName, '.') > -1) {
+    // splitting at the dot, so it is left untouched. dot is the caller's single dot scan.
+    private CharSequence protectDottedColumnName(CharSequence tableAlias, CharSequence columnName, int dot) {
+        if (tableAlias != null && dot > -1) {
             return Misc.getThreadLocalSink().put('"').put(columnName).put('"').toString();
         }
         return columnName;
