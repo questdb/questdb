@@ -183,6 +183,27 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHaversineDistDegPreservesOrderByAdvice() throws Exception {
+        execute("create table geo (lat double, lon double, seq int, ts timestamp)");
+        execute("""
+                insert into geo values
+                (0, 0,  1, '2020-01-01T00:00:00.000000Z'),
+                (0, 30, 4, '2020-01-01T00:00:03.000000Z'),
+                (0, 10, 2, '2020-01-01T00:00:01.000000Z'),
+                (0, 20, 3, '2020-01-01T00:00:02.000000Z')
+                """);
+
+        assertQuery("select haversine_dist_deg(lat, lon, ts) d from (select * from geo order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        d
+                        3335.893876029014
+                        """);
+    }
+
+    @Test
     public void testNoKeyGroupBy() throws Exception {
         assertQuery("select sum(price) / count() from x where price > 0")
                 .ddl("""
@@ -791,6 +812,27 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         1326447242\t1970-01-01T00:00:00.006000Z
                         1548800833\t1970-01-01T00:00:00.002000Z
                         1868723706\t1970-01-01T00:00:00.008000Z
+                        """);
+    }
+
+    @Test
+    public void testStringAggPreservesOrderByAdvice() throws Exception {
+        execute("create table words (val string, seq int)");
+        execute("""
+                insert into words values
+                ('A', 1),
+                ('D', 4),
+                ('B', 2),
+                ('C', 3)
+                """);
+
+        assertQuery("select string_agg(val, ',') s from (select * from words order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        s
+                        A,B,C,D
                         """);
     }
 
