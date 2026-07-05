@@ -103,10 +103,11 @@ public class SymbolPatternIndexBenchmark {
     static final long ROWS = Long.getLong("sympat.rows", 10_000_000L);
 
     // Canonical scenario ordering for the summary table
-    private static final String[] SCEN = {"pos_bitmap", "pos_covering", "pos_broad", "neg_bitmap", "neg_broad"};
+    private static final String[] SCEN = {"pos_bitmap", "pos_covering", "covering_broad", "pos_broad", "neg_bitmap", "neg_broad"};
     private static final Map<String, String> PRED = Map.of(
             "pos_bitmap", "LIKE 'r%'",
             "pos_covering", "LIKE 'r%'",
+            "covering_broad", "LIKE 'c%'",
             "pos_broad", "LIKE 'c%'",
             "neg_bitmap", "NOT LIKE 'c%'",
             "neg_broad", "NOT LIKE 'r%'");
@@ -120,7 +121,7 @@ public class SymbolPatternIndexBenchmark {
 
     @State(Scope.Benchmark)
     public static class ScenarioState {
-        @Param({"pos_bitmap", "pos_covering", "pos_broad", "neg_bitmap", "neg_broad"})
+        @Param({"pos_bitmap", "pos_covering", "covering_broad", "pos_broad", "neg_bitmap", "neg_broad"})
         String scenario;
         RecordCursorFactory fastFactory;
         RecordCursorFactory baselineFactory;
@@ -144,7 +145,7 @@ public class SymbolPatternIndexBenchmark {
             drain(fastFactory);
             if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0) return "index";
             if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0) return "fallback";
-            return scenario.equals("pos_covering") ? "covering" : "scan";
+            return (scenario.equals("pos_covering") || scenario.equals("covering_broad")) ? "covering" : "scan";
         }
 
         @TearDown(Level.Trial)
@@ -296,11 +297,11 @@ public class SymbolPatternIndexBenchmark {
     // ---------------------------------------------------------------------------
 
     static String scenarioFastSql(String scenario) {
-        String table = scenario.equals("pos_covering") ? "t_covering" : "t_bitmap";
-        String proj = scenario.equals("pos_covering") ? "sym, price" : "sym, price, val";
+        String table = (scenario.equals("pos_covering") || scenario.equals("covering_broad")) ? "t_covering" : "t_bitmap";
+        String proj = (scenario.equals("pos_covering") || scenario.equals("covering_broad")) ? "sym, price" : "sym, price, val";
         String pred = switch (scenario) {
             case "pos_bitmap", "pos_covering" -> "sym like 'r%'";
-            case "pos_broad" -> "sym like 'c%'";
+            case "covering_broad", "pos_broad" -> "sym like 'c%'";
             case "neg_bitmap" -> "sym not like 'c%'";
             case "neg_broad" -> "sym not like 'r%'";
             default -> throw new IllegalStateException(scenario);
@@ -309,11 +310,11 @@ public class SymbolPatternIndexBenchmark {
     }
 
     static String scenarioBaselineSql(String scenario) {
-        String table = scenario.equals("pos_covering") ? "t_covering" : "t_bitmap";
-        String proj = scenario.equals("pos_covering") ? "sym, price" : "sym, price, val";
+        String table = (scenario.equals("pos_covering") || scenario.equals("covering_broad")) ? "t_covering" : "t_bitmap";
+        String proj = (scenario.equals("pos_covering") || scenario.equals("covering_broad")) ? "sym, price" : "sym, price, val";
         String pred = switch (scenario) {
             case "pos_bitmap", "pos_covering" -> "sym like 'r%'";
-            case "pos_broad" -> "sym like 'c%'";
+            case "covering_broad", "pos_broad" -> "sym like 'c%'";
             case "neg_bitmap" -> "sym not like 'c%'";
             case "neg_broad" -> "sym not like 'r%'";
             default -> throw new IllegalStateException(scenario);
@@ -339,7 +340,7 @@ public class SymbolPatternIndexBenchmark {
                     } else if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0) {
                         label = "fallback";
                     } else {
-                        label = scen.equals("pos_covering") ? "covering" : "scan";
+                        label = (scen.equals("pos_covering") || scen.equals("covering_broad")) ? "covering" : "scan";
                     }
                     TAKEN.put(scen, label);
                 }
