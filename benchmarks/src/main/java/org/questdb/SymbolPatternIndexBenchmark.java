@@ -63,6 +63,9 @@ import java.nio.file.Files;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -90,7 +93,7 @@ import java.util.concurrent.TimeUnit;
  * </pre>
  */
 @BenchmarkMode(Mode.AverageTime)
-@OutputTimeUnit(TimeUnit.MICROSECONDS)
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 2, time = 1)
 @Measurement(iterations = 3, time = 1)
 @Fork(0)
@@ -99,14 +102,23 @@ public class SymbolPatternIndexBenchmark {
 
     static final long ROWS = Long.getLong("sympat.rows", 10_000_000L);
 
+    // Canonical scenario ordering for the summary table
+    private static final String[] SCEN = {"pos_bitmap", "pos_covering", "pos_broad", "neg_bitmap", "neg_broad"};
+    private static final Map<String, String> PRED = Map.of(
+            "pos_bitmap", "LIKE 'r%'",
+            "pos_covering", "LIKE 'r%'",
+            "pos_broad", "LIKE 'c%'",
+            "neg_bitmap", "NOT LIKE 'c%'",
+            "neg_broad", "NOT LIKE 'r%'");
+    // Populated by probeAllPaths() after the JMH run (Fork(0) keeps engine in-process)
+    private static final Map<String, String> TAKEN = new LinkedHashMap<>();
+
     private static boolean dataReady;
     private static SqlExecutionContextImpl sharedCtx;
     private static CairoEngine sharedEngine;
     private static java.nio.file.Path tmpDir;
 
     @State(Scope.Benchmark)
-    @BenchmarkMode(Mode.AverageTime)
-    @OutputTimeUnit(TimeUnit.MILLISECONDS)
     public static class ScenarioState {
         @Param({"pos_bitmap", "pos_covering", "pos_broad", "neg_bitmap", "neg_broad"})
         String scenario;
@@ -117,20 +129,9 @@ public class SymbolPatternIndexBenchmark {
         @Setup(Level.Trial)
         public void setup() throws Exception {
             ensureData();
-            String table = scenario.equals("pos_covering") ? "t_covering" : "t_bitmap";
-            String proj = scenario.equals("pos_covering") ? "sym, price" : "sym, price, val";
-            String pred = switch (scenario) {
-                case "pos_bitmap", "pos_covering" -> "sym like 'r%'";
-                case "pos_broad" -> "sym like 'c%'";
-                case "neg_bitmap" -> "sym not like 'c%'";
-                case "neg_broad" -> "sym not like 'r%'";
-                default -> throw new IllegalStateException(scenario);
-            };
-            String tail = " from " + table + " where " + pred;
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(sharedEngine)) {
-                fastFactory = compiler.compile("select " + proj + tail, sharedCtx).getRecordCursorFactory();
-                baselineFactory = compiler.compile(
-                        "select /*+ no_symbol_pattern_index no_covering */ " + proj + tail, sharedCtx).getRecordCursorFactory();
+                fastFactory = compiler.compile(scenarioFastSql(scenario), sharedCtx).getRecordCursorFactory();
+                baselineFactory = compiler.compile(scenarioBaselineSql(scenario), sharedCtx).getRecordCursorFactory();
             }
             taken = probePath();
         }
@@ -171,6 +172,7 @@ public class SymbolPatternIndexBenchmark {
                 .measurementIterations(3).measurementTime(TimeValue.seconds(1))
                 .build();
         Collection<RunResult> results = new Runner(opts).run();
+        probeAllPaths();
         printSummary(results);
         if (sharedEngine != null) {
             Misc.free(sharedEngine);
@@ -288,8 +290,95 @@ public class SymbolPatternIndexBenchmark {
     }
 
     // ---------------------------------------------------------------------------
-    // Summary: no-op stub for Task 1; real output added in Task 3
+    // Scenario SQL: single source of truth shared by ScenarioState.setup() and
+    // probeAllPaths() so the two can never drift.
+    // Returns the SELECT (without the hint) for the given scenario.
     // ---------------------------------------------------------------------------
 
-    private static void printSummary(Collection<RunResult> results) { /* Task 3 */ }
+    static String scenarioFastSql(String scenario) {
+        String table = scenario.equals("pos_covering") ? "t_covering" : "t_bitmap";
+        String proj = scenario.equals("pos_covering") ? "sym, price" : "sym, price, val";
+        String pred = switch (scenario) {
+            case "pos_bitmap", "pos_covering" -> "sym like 'r%'";
+            case "pos_broad" -> "sym like 'c%'";
+            case "neg_bitmap" -> "sym not like 'c%'";
+            case "neg_broad" -> "sym not like 'r%'";
+            default -> throw new IllegalStateException(scenario);
+        };
+        return "select " + proj + " from " + table + " where " + pred;
+    }
+
+    static String scenarioBaselineSql(String scenario) {
+        String table = scenario.equals("pos_covering") ? "t_covering" : "t_bitmap";
+        String proj = scenario.equals("pos_covering") ? "sym, price" : "sym, price, val";
+        String pred = switch (scenario) {
+            case "pos_bitmap", "pos_covering" -> "sym like 'r%'";
+            case "pos_broad" -> "sym like 'c%'";
+            case "neg_bitmap" -> "sym not like 'c%'";
+            case "neg_broad" -> "sym not like 'r%'";
+            default -> throw new IllegalStateException(scenario);
+        };
+        return "select /*+ no_symbol_pattern_index no_covering */ " + proj + " from " + table + " where " + pred;
+    }
+
+    // ---------------------------------------------------------------------------
+    // probeAllPaths: recompute taken labels after JMH run.
+    // Fork(0) keeps sharedEngine alive in-process, so we can probe directly.
+    // ---------------------------------------------------------------------------
+
+    private static void probeAllPaths() throws Exception {
+        if (sharedEngine == null) return;
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(sharedEngine)) {
+            for (String scen : SCEN) {
+                try (RecordCursorFactory factory = compiler.compile(scenarioFastSql(scen), sharedCtx).getRecordCursorFactory()) {
+                    SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                    drain(factory);
+                    String label;
+                    if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0) {
+                        label = "index";
+                    } else if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0) {
+                        label = "fallback";
+                    } else {
+                        label = scen.equals("pos_covering") ? "covering" : "scan";
+                    }
+                    TAKEN.put(scen, label);
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Summary: per-scenario speedup + path taken + baseline-plan disclosure
+    // ---------------------------------------------------------------------------
+
+    private static void printSummary(Collection<RunResult> results) {
+        Map<String, Double> fast = new HashMap<>();
+        Map<String, Double> base = new HashMap<>();
+        for (RunResult rr : results) {
+            String m = rr.getParams().getBenchmark();
+            String scen = rr.getParams().getParam("scenario");
+            double score = rr.getPrimaryResult().getScore();
+            if (m.endsWith(".fast")) fast.put(scen, score);
+            else if (m.endsWith(".baseline")) base.put(scen, score);
+        }
+        System.out.println();
+        System.out.println("=== Symbol pattern-index benchmark (" + ROWS + " rows, avg ms/op, lower=better) ===");
+        System.out.printf("%-13s  %-16s  %13s  %10s  %8s   %s%n",
+                "scenario", "predicate", "baseline(ms)", "fast(ms)", "speedup", "taken");
+        System.out.printf("%-13s  %-16s  %13s  %10s  %8s   %s%n",
+                "-------------", "----------------", "-------------", "----------", "--------", "--------");
+        for (String scen : SCEN) {
+            Double b = base.get(scen), f = fast.get(scen);
+            if (b == null || f == null) continue;
+            String taken = TAKEN.getOrDefault(scen, "?");
+            System.out.printf("%-13s  %-16s  %13.2f  %10.2f  %7.1fx   %s%n",
+                    scen, PRED.get(scen), b, f, b / f, taken);
+        }
+        System.out.println();
+        System.out.println("Notes:");
+        System.out.println("  fast     = optimizer's chosen plan (no hints)");
+        System.out.println("  baseline = /*+ no_symbol_pattern_index no_covering */ scan+filter plan");
+        System.out.println("             (may run in parallel via AsyncFilteredRecordCursorFactory)");
+        System.out.println("  taken    = fast path's runtime decision: index / covering / fallback");
+    }
 }
