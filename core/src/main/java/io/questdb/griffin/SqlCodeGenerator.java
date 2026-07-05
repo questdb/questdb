@@ -11410,8 +11410,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null; // nothing compiled yet, nothing to free
         }
 
-        // The ORIGINAL conjunct at patternIdx is removed from the residual (below); the POSITIVE node is
-        // compiled as the provider. For both polarities positiveNode.lhs is the symbol-column literal.
+        // The ORIGINAL conjunct at patternIdx is excluded when building the residual (step 5 below skips i==patternIdx);
+        // the POSITIVE node is compiled as the provider. For both polarities positiveNode.lhs is the symbol-column literal.
         final int keyColumnIndex = queryMeta.getColumnIndexQuiet(positiveNode.lhs.token);
 
         Function providerFunction = null;

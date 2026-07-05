@@ -87,6 +87,10 @@ import java.util.Arrays;
  * <p>
  * Supports single-key (WHERE sym = 'A'), bind variable (WHERE sym = $1),
  * and multi-key (WHERE sym IN ('A', 'B')) queries.
+ * It also serves a positive symbol pattern ({@code LIKE}/{@code ILIKE}/{@code ~}) over a covered
+ * projection: the matched symbol keys are supplied at {@code getCursor} time by a
+ * {@link io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider} (the
+ * {@code patternProviderFunction}) and populate {@code multiKeys} accordingly.
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final IntList columnIndexes;
