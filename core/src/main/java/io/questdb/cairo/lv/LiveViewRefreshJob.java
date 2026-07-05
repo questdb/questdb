@@ -1997,8 +1997,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 persistState(instance);
             }
-            // The callers zero instance.leadRowCount before o3Replay because the
-            // capable path rebuilds the tier as a pure disk subset (leadRowCount 0).
+            // instance.leadRowCount is 0 on entry to o3Replay: finishLeadRefresh (the
+            // lead path) and drainAppliedBase's overlap branch (the coupled dedup path,
+            // where an ALTER ... DEDUP ENABLE flip can leave a pre-dedup RAM lead) zero
+            // it explicitly first, and the remaining coupled-forward and replay-to-applied
+            // callers carry no un-flushed lead so it is already 0. The capable path
+            // rebuilds the tier as a pure disk subset (leadRowCount 0).
             // This branch rewrote nothing on disk and left the published slot
             // untouched, so a slot that is STILL a current un-flushed lead keeps its
             // stamped leadRowCount as the true lead. Resync instance.leadRowCount to it:
