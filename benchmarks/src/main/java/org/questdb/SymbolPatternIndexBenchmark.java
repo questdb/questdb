@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -43,6 +44,7 @@ import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
@@ -102,18 +104,60 @@ public class SymbolPatternIndexBenchmark {
     private static CairoEngine sharedEngine;
     private static java.nio.file.Path tmpDir;
 
-    // Smoke: compile a fresh LIKE query each invocation and drain its result
-    @Benchmark
-    public long smoke() throws Exception {
-        ensureData();
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(sharedEngine)) {
-            try (RecordCursorFactory factory = compiler.compile(
-                    "SELECT sym, price FROM t_bitmap WHERE sym LIKE 'r%'", sharedCtx
-            ).getRecordCursorFactory()) {
-                return drain(factory);
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class ScenarioState {
+        @Param({"pos_bitmap", "pos_covering", "pos_broad", "neg_bitmap", "neg_broad"})
+        String scenario;
+        RecordCursorFactory fastFactory;
+        RecordCursorFactory baselineFactory;
+        String taken;
+
+        @Setup(Level.Trial)
+        public void setup() throws Exception {
+            ensureData();
+            String table = scenario.equals("pos_covering") ? "t_covering" : "t_bitmap";
+            String proj = scenario.equals("pos_covering") ? "sym, price" : "sym, price, val";
+            String pred = switch (scenario) {
+                case "pos_bitmap", "pos_covering" -> "sym like 'r%'";
+                case "pos_broad" -> "sym like 'c%'";
+                case "neg_bitmap" -> "sym not like 'c%'";
+                case "neg_broad" -> "sym not like 'r%'";
+                default -> throw new IllegalStateException(scenario);
+            };
+            String tail = " from " + table + " where " + pred;
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(sharedEngine)) {
+                fastFactory = compiler.compile("select " + proj + tail, sharedCtx).getRecordCursorFactory();
+                baselineFactory = compiler.compile(
+                        "select /*+ no_symbol_pattern_index no_covering */ " + proj + tail, sharedCtx).getRecordCursorFactory();
             }
+            taken = probePath();
+        }
+
+        // Determine which path the FAST factory actually takes: probe the runtime bitmap
+        // counters (index vs fallback), else covering (covering does not touch those counters),
+        // else scan. Reset -> run once -> read.
+        private String probePath() throws SqlException {
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            drain(fastFactory);
+            if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0) return "index";
+            if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0) return "fallback";
+            return scenario.equals("pos_covering") ? "covering" : "scan";
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            fastFactory = Misc.free(fastFactory);
+            baselineFactory = Misc.free(baselineFactory);
         }
     }
+
+    @Benchmark
+    public long fast(ScenarioState s) throws SqlException { return drain(s.fastFactory); }
+
+    @Benchmark
+    public long baseline(ScenarioState s) throws SqlException { return drain(s.baselineFactory); }
 
     public static void main(String[] args) throws Exception {
         System.setProperty("questdb.log.level", "E");
