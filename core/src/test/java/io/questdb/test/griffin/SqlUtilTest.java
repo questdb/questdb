@@ -152,7 +152,7 @@ public class SqlUtilTest {
         );
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testExprColumnAliasEmptyBase() {
         // An empty base is quote-forced (the empty string is a disallowed alias) but has no
         // content left to protect, so the return gate keyed on contentLen was never satisfied

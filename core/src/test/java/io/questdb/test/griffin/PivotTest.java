@@ -319,7 +319,7 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testPivotEmptyValue() throws Exception {
         // An empty-string pivot value has no content to build an alias from; it must terminate
         // with a "column" placeholder instead of spinning the compiler forever (regression for
