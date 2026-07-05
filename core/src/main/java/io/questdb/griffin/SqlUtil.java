@@ -286,10 +286,10 @@ public class SqlUtil {
 
         final int start = prefixedLiteral ? indexOfDot + 1 : 0;
 
-        // Track the per-base sequence under a stable key: the protected base,
-        // keeping the historical (quote-prefixed when protecting) form so suffix
-        // numbering is unchanged. Built once and never overwritten, since the
-        // loop below only ever appends to the store (never trims it back).
+        // Track the per-base sequence under a stable key: the protected base, keeping the
+        // historical (quote-prefixed when protecting) form so suffix numbering is unchanged.
+        // seqKey lives in its own store entry, ahead of the reusable candidate entry below,
+        // so rewinding that entry never overwrites it.
         final CharacterStoreEntry keyEntry = store.newEntry();
         if (quote) {
             keyEntry.put('"');
@@ -304,6 +304,11 @@ public class SqlUtil {
         if (sequence == -1) {
             sequence = 1;
         }
+
+        // Reuse one store entry across dedup candidates: trimTo(entryStart) rewinds it each
+        // iteration so rejected candidates do not accumulate in the store.
+        final CharacterStoreEntry entry = store.newEntry();
+        final int entryStart = entry.length();
 
         int seqSize = 0;
         while (true) {
@@ -335,7 +340,7 @@ public class SqlUtil {
             // only leak them into result-set metadata (see toColumnName).
             final boolean emitQuote = !emptyContent && quote && aliasContentNeedsQuoting(base, start, start + contentLen, sequence > 1);
 
-            final CharacterStoreEntry entry = store.newEntry();
+            entry.trimTo(entryStart);
             if (emitQuote) {
                 entry.put('"');
             }
@@ -1745,6 +1750,12 @@ public class SqlUtil {
             sequence = 0;
         }
 
+        // Reuse one store entry across dedup candidates: trimTo(entryStart) rewinds it each
+        // iteration so rejected candidates do not accumulate in the store. seqKey lives in an
+        // earlier entry and is left untouched.
+        final CharacterStoreEntry entry = store.newEntry();
+        final int entryStart = entry.length();
+
         while (true) {
             // Re-emit the protective quotes per candidate only while the final content still
             // needs them: a dotted interior always does; an operator token only until a dedup
@@ -1752,7 +1763,7 @@ public class SqlUtil {
             // at sequence 0 to collide with the stored "in", then surfaces as bare in1).
             final boolean emitQuote = quoteProtected && contentLo >= 0
                     && aliasContentNeedsQuoting(base, contentLo, contentHi, sequence > 0);
-            final CharacterStoreEntry entry = store.newEntry();
+            entry.trimTo(entryStart);
             if (emitQuote) {
                 entry.put('"');
             }

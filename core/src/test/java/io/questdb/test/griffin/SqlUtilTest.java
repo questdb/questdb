@@ -61,6 +61,22 @@ import java.util.concurrent.TimeUnit;
 public class SqlUtilTest {
 
     @Test
+    public void testExprColumnAliasDedupManyCollisions() {
+        // Drives the dedup loop through many collisions in a single call. The candidate store
+        // entry is rewound (trimTo) and rebuilt each iteration, so the sequence numbering must
+        // stay correct - guards the store-reuse optimization against rewind corruption.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+        aliasMap.put("same", null);
+        aliasMap.put("same_2", null);
+        aliasMap.put("same_3", null);
+        aliasMap.put("same_4", null);
+        // a single call must skip past all four occupied names to same_5
+        Assert.assertEquals("same_5", SqlUtil.createExprColumnAlias(store, "same", aliasMap, seqMap, 64, false).toString());
+    }
+
+    @Test
     public void testExprColumnAliasDedupOperatorTokenDropsStaleQuotes() {
         // An operator-token alias is quote-protected, but once a dedup suffix makes it a plain
         // identifier the protection is no longer needed: the quotes must be dropped, not left to
