@@ -173,6 +173,39 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasOperatorTokenTrailingSpaceDedups() {
+        // Regression: an operator-token value with trailing whitespace ('in ') is NOT quote-forced
+        // (the raw string "in " is not a disallowed alias, so quote == false), but the space-trim
+        // reduces its bare content to `in`, an operator token whose display name collides with the
+        // protective-quoted "in" of a sibling value 'in'. The un-suffixed bare candidate used to skip
+        // the quoted-sibling check and surface a second bare `in`, so both columns displayed as `in`.
+        // The dedup must now yield a clean in / in_2. The collision is caught in either alias order.
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        // 'in' aliased first -> "in"; 'in ' collides on display name in -> clean in_2
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        CharSequence first = SqlUtil.createExprColumnAlias(store, "in", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("\"in\"", first.toString());
+        aliasMap.put(first.toString(), null);
+        CharSequence second = SqlUtil.createExprColumnAlias(store, "in ", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("in_2", second.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(second));
+        Assert.assertEquals("in_2", SqlUtil.toColumnName(second));
+
+        // reverse order: 'in ' aliased first -> bare in; 'in' -> in_2. Same {in, in_2} display set.
+        CharacterStore store2 = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap2 = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap2 = new LowerCaseCharSequenceIntHashMap();
+        CharSequence firstRev = SqlUtil.createExprColumnAlias(store2, "in ", aliasMap2, seqMap2, 64, true);
+        Assert.assertEquals("in", firstRev.toString());
+        aliasMap2.put(firstRev.toString(), null);
+        CharSequence secondRev = SqlUtil.createExprColumnAlias(store2, "in", aliasMap2, seqMap2, 64, true);
+        Assert.assertEquals("in_2", secondRev.toString());
+        Assert.assertEquals("in_2", SqlUtil.toColumnName(secondRev));
+    }
+
+    @Test
     public void testExprColumnAliasQuotedContentValueDedupsClean() {
         // A PIVOT value whose data is literally "in" displays as in (toColumnName strips the data
         // quotes, the documented quoted-content-value tradeoff). When it collides with an operator-token

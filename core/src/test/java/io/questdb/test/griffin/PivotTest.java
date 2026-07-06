@@ -796,6 +796,66 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotOperatorTokenValueWithTrailingSpace() throws Exception {
+        // Regression: an operator-token pivot value ('in') and the same token plus trailing
+        // whitespace ('in ') both reduce to the display name `in` - the space is trimmed from the
+        // bare alias. The un-suffixed bare 'in ' candidate used to skip the quoted-sibling check and
+        // surface a second column also named `in`, so the projection metadata build threw
+        // "Duplicate column [name=in]". The dedup must now yield clean, quote-free names in / in_2,
+        // and CREATE TABLE AS SELECT over the pivot must succeed. Both value orders are covered:
+        // the result set was scan-order dependent (non-deterministic for a dynamic pivot) before.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'in ', 20),
+                        ('B', 'in', 30),
+                        ('B', 'in ', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'in ') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	10	20
+                            B	30	40
+                            """);
+            // reverse value order collides the other way but still dedups cleanly to in / in_2
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in ', 'in') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	20	10
+                            B	40	30
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in', 'in ') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, \"in\", in_2 FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotPositionalGroupByNotAllowed() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);

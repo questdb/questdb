@@ -314,6 +314,30 @@ public class SqlUtil {
             sequence = 1;
         }
 
+        // The trailing-space trim below (or truncation) can reduce a !quote base to a bare operator
+        // token - e.g. the pivot value 'in ' trims to `in`, which shares a display name with the
+        // protective-quoted "in" of a sibling value 'in'. Precompute that "<token>" sibling once
+        // (mirroring createColumnAlias) so the un-suffixed bare candidate is rejected and deduped
+        // (in / in_2) instead of silently producing a duplicate result-set column. It lives in its
+        // own store region, ahead of the reused candidate entry below, so the loop's trimTo never
+        // disturbs it. Only the !quote path needs it: a genuine operator-token base has quote == true
+        // and emits quoted first, so its bare siblings are already covered by the interior check.
+        CharSequence bareQuotedSibling = null;
+        if (!quote) {
+            // seq == 1 content extent: len == min(truncatedLen, maxLength) == truncatedLen (!quote),
+            // then the same trailing-space trim the loop applies to a bare candidate.
+            int firstContentLen = truncatedLen;
+            if (firstContentLen > 0 && base.charAt(start + firstContentLen - 1) == ' ') {
+                final int lastNonSpace = Chars.lastIndexOfDifferent(base, start, start + firstContentLen, ' ') - start;
+                firstContentLen = lastNonSpace >= 0 ? lastNonSpace + 1 : 0;
+            }
+            if (firstContentLen > 0 && disallowedAliases.contains(base, start, start + firstContentLen)) {
+                final CharacterStoreEntry siblingEntry = store.newEntry();
+                siblingEntry.put('"').put(base, start, start + firstContentLen).put('"');
+                bareQuotedSibling = siblingEntry.toImmutable();
+            }
+        }
+
         // Reuse one store entry across dedup candidates: trimTo(entryStart) rewinds it each
         // iteration so rejected candidates do not accumulate in the store.
         final CharacterStoreEntry entry = store.newEntry();
@@ -398,9 +422,10 @@ public class SqlUtil {
             final CharSequence alias = entry.toImmutable();
             // A quote-protected candidate ("in") and an already-taken bare identifier (in) reduce to
             // the same toColumnName display name, so they collide in the projection metadata; reject
-            // the candidate in that case so it gets a dedup suffix. An operator-token base here always
-            // emits quoted first, so a bare candidate never needs the reverse (quoted-sibling) check.
-            if (isAliasNameAvailable(aliasToColumnMap, alias, emitQuote, null)) {
+            // the candidate in that case so it gets a dedup suffix. The reverse also collides: a bare
+            // un-suffixed candidate that trimmed/truncated down to an operator token shares a display
+            // name with a stored "<token>" - bareQuotedSibling (non-null only then) forces its dedup.
+            if (isAliasNameAvailable(aliasToColumnMap, alias, emitQuote, deduped ? null : bareQuotedSibling)) {
                 // Update the sequence tracker for next time
                 nextAliasSequenceMap.put(seqKey, sequence + 1);
                 return alias;
