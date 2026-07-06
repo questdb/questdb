@@ -139,6 +139,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.EMPTY, (state, cq, keepAliveHeader) -> sendEmptyQueryNotice(state, keepAliveHeader));
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_MAT_VIEW, this::executeDdl);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_LIVE_VIEW, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_VIEW, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.COMPILE_VIEW, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER_VIEW, sendConfirmation);
@@ -148,6 +149,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
             // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
             assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
+            assert hasExecutorForEveryType(this.queryExecutors);
             this.nanosecondClock = configuration.getNanosecondClock();
             this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.metrics = engine.getMetrics();
@@ -374,6 +376,22 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             return HTTP_FORBIDDEN;
         }
         return HTTP_BAD_REQUEST;
+    }
+
+    // Every declared CompiledQuery type must resolve to a non-null executor. The list-size check alone
+    // is blind to a null hole below the highest-set index (extendAndSet(EMPTY) grows the list past it),
+    // which is how a missing CREATE_LIVE_VIEW executor once slipped through as a runtime NPE on /exec.
+    // Indices 15/16 are a permanent gap in the type numbering (VACUUM = UPDATE + 3).
+    private static boolean hasExecutorForEveryType(ObjList<QueryExecutor> executors) {
+        for (int type = 1; type <= CompiledQuery.TYPES_COUNT; type++) {
+            if (type == 15 || type == 16) {
+                continue;
+            }
+            if (executors.getQuick(type) == null) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void logInternalError(

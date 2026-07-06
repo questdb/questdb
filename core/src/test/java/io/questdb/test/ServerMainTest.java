@@ -49,6 +49,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -58,6 +59,7 @@ import org.junit.Test;
 import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.Statement;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -324,6 +326,58 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 TableToken token = serverMain.getEngine().getTableTokenIfExists("live_rn");
                 Assert.assertNotNull(token);
                 Assert.assertTrue(token.isLiveView());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateLiveViewOverNetworkInterfaces() throws Exception {
+        // CREATE LIVE VIEW must be dispatched by every network SQL entry point, not only
+        // engine.execute(). The HTTP /exec processor had no executor registered for
+        // CompiledQuery.CREATE_LIVE_VIEW and threw an NPE; the pgwire path fell through to the
+        // text-re-execute arm and leaked the already-compiled operation. Drive the statement
+        // through both interfaces under the memory-leak guard so a regression on either surfaces.
+        assertMemoryLeak(() -> {
+            try (
+                    final ServerMain serverMain = new ServerMain(getServerMainArgs());
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1)
+                            .with(AllowAllSecurityContext.INSTANCE);
+                    TestHttpClient testHttpClient = new TestHttpClient()
+            ) {
+                serverMain.start();
+
+                serverMain.getEngine().execute(
+                        "CREATE TABLE trades (symbol SYMBOL, price DOUBLE, ts TIMESTAMP)" +
+                                " TIMESTAMP(ts) PARTITION BY HOUR WAL",
+                        sqlExecutionContext
+                );
+
+                final String viewSelect = " AS SELECT symbol, price, ts," +
+                        " row_number() OVER w AS rn" +
+                        " FROM trades" +
+                        " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')";
+
+                // HTTP /exec -- the confirmed NPE path.
+                testHttpClient.assertGet(
+                        "/exec",
+                        "{\"ddl\":\"OK\"}",
+                        "CREATE LIVE VIEW live_http FLUSH EVERY 1s" + viewSelect,
+                        "localhost",
+                        HTTP_PORT,
+                        null,
+                        null,
+                        null
+                );
+                Assert.assertTrue(serverMain.getEngine().getLiveViewRegistry().hasView("live_http"));
+
+                // pgwire -- the operation-leak path, caught by assertMemoryLeak.
+                try (
+                        Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement stmt = conn.createStatement()
+                ) {
+                    stmt.execute("CREATE LIVE VIEW live_pg FLUSH EVERY 1s" + viewSelect);
+                }
+                Assert.assertTrue(serverMain.getEngine().getLiveViewRegistry().hasView("live_pg"));
             }
         });
     }
