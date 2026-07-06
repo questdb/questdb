@@ -884,10 +884,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     // Seam fires after resetInvalidState cleared the marker, modelling an INVALIDATE that
                     // defers during the pump (the lock is held for the whole insert-as-select).
-                    final Runnable seam = onHoldingLockForTesting;
-                    if (seam != null) {
-                        seam.run();
-                    }
+                    runHoldingLockSeamForTesting();
 
                     final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, Numbers.LONG_NULL);
                     insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp);
@@ -1615,12 +1612,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             boolean isSelfDeferred = false;
             try {
                 // Seam: a concurrent INVALIDATE deferring while THIS invalidateView holds the lock (see the
-                // method-top comment); the finally must finalize it. Inside the unlocking try, so even a
-                // throwing seam cannot leak the latch.
-                final Runnable seam = onHoldingLockForTesting;
-                if (seam != null) {
-                    seam.run();
-                }
+                // method-top comment); the finally must finalize it.
+                runHoldingLockSeamForTesting();
 
                 // Mark the view invalid only if the operation is forced or the view was never refreshed.
                 if (force || viewState.getLastRefreshBaseTxn() != -1) {
@@ -1796,11 +1789,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-            // Inside the unlocking try, so even a throwing seam cannot leak the latch.
-            final Runnable seam = onHoldingLockForTesting;
-            if (seam != null) {
-                seam.run();
-            }
+            runHoldingLockSeamForTesting();
 
             final TableToken baseTableToken;
             final String baseTableName = viewDefinition.getBaseTableName();
@@ -2194,10 +2183,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long refreshTriggerTimestamp
     ) throws SqlException {
         assert viewState.isLocked();
-        final Runnable seam = onHoldingLockForTesting;
-        if (seam != null) {
-            seam.run();
-        }
+        runHoldingLockSeamForTesting();
 
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits
@@ -2301,6 +2287,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // Runs the onHoldingLockForTesting seam, if armed. Callers invoke it while holding the view
+    // lock, inside the try whose finally unlocks, so even a throwing seam cannot leak the latch.
+    private void runHoldingLockSeamForTesting() {
+        final Runnable seam = onHoldingLockForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
     private void setInvalidState(MatViewState viewState, WalWriter walWriter, CharSequence invalidationReason, long invalidationTimestamp) {
         viewState.markAsInvalid(invalidationReason);
         viewState.setLastRefreshTimestampUs(invalidationTimestamp);
@@ -2337,11 +2332,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             final MatViewDefinition viewDefinition = viewState.getViewDefinition();
             try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
-                // Inside the unlocking try, so even a throwing seam cannot leak the latch.
-                final Runnable seam = onHoldingLockForTesting;
-                if (seam != null) {
-                    seam.run();
-                }
+                runHoldingLockSeamForTesting();
 
                 final TableToken baseTableToken = verifyBaseTableToken(viewDefinition, viewState, walWriter);
                 if (baseTableToken == null) {
