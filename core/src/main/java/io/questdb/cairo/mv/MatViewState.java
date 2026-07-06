@@ -76,16 +76,16 @@ public class MatViewState implements QuietCloseable {
     // single outlier (GC pause, O3 partition rewrite) from poisoning the EMA
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
-    // Enables an off-latch CAS on refreshRetryAfterMicros so MatViewTimerJob can clear only the
-    // exact deadline it observed due, without clobbering a fresh backoff a concurrent under-latch
-    // refresh may have just armed. See clearRefreshRetry(long).
-    private static final AtomicLongFieldUpdater<MatViewState> REFRESH_RETRY_AFTER_UPDATER =
-            AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Sentinel stored in pendingInvalidationMarker to represent a pending invalidation that carries
     // no reason -- the full-refresh reschedule (see MatViewRefreshJob#fullRefresh). It is distinct
     // from null (not pending) so the whole marker stays a single atomically-written volatile
     // reference; getPendingInvalidationReason() reports null for it.
     private static final Object PENDING_INVALIDATION_NO_REASON = new Object();
+    // Enables an off-latch CAS on refreshRetryAfterMicros so MatViewTimerJob can clear only the
+    // exact deadline it observed due, without clobbering a fresh backoff a concurrent under-latch
+    // refresh may have just armed. See clearRefreshRetry(long).
+    private static final AtomicLongFieldUpdater<MatViewState> REFRESH_RETRY_AFTER_UPDATER =
+            AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Protected by this.latch.

@@ -42,9 +42,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * nothing finalized it -- the view stayed {@code valid} on disk with stale rows. The fix finalizes the
  * deferral when the lock-holder completes, so the view ends {@code invalid} (visible, recoverable) instead.
  * <p>
- * Each test drives the race deterministically with a {@code @TestOnly} seam that fires while a lock-holder
- * (a refresh, or {@code invalidateView} itself) holds the view lock and marks the view pending, exactly as
- * a losing concurrent {@code invalidateView} would; the holder's completion must finalize it.
+ * Most tests drive the race deterministically with a {@code @TestOnly} seam that fires while a lock-holder
+ * (a refresh, or {@code invalidateView} itself) holds the view lock and marks the view pending -- the marker
+ * half of what a losing concurrent {@code invalidateView} issues; the holder's completion must finalize it.
+ * {@link #testRefreshHoldingLockFinalizesDeferredInvalidationWithQueuedTask()} exercises the complete
+ * defer-site pair (marker plus the re-enqueued task the guard swallows), and
+ * {@link #testLockContendedInvalidationDefersWithReason()} exercises the real defer site itself.
  * <p>
  * One branch is left uncovered here: {@code finalizeDeferredInvalidation}'s read-only early-return. It needs
  * {@code engine.isReadOnlyMode()} true at finalize time, which in OSS requires a custom read-only engine that
@@ -57,6 +60,74 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         super.setUp();
         // Materialized views require dev mode; without it the engine installs a no-op state store.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testFailedRefreshLeavesDeferredInvalidationUntouched() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // Pins finalizeDeferredInvalidation's isInvalid early-return: a deferral lands mid-hold AND the
+            // holding refresh itself fails. The seam marks the view pending, then drops a base column the view
+            // SQL needs, so insertAsSelect's recompile fails and refreshFailState marks the view invalid with
+            // the compile error. finalize then sees the view already invalid and must return early: no
+            // re-enqueued INVALIDATE may overwrite the fail reason, and the marker must survive untouched.
+            final AtomicBoolean fired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnHoldingLockForTesting(() -> {
+                    if (fired.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("update operation");
+                        try {
+                            execute("alter table base_price drop column price");
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        drainWalQueue();
+                    }
+                });
+
+                execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T14:00')");
+                drainWalQueue();
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+
+            Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+            Assert.assertTrue("the failed refresh must mark the view invalid", state.isInvalid());
+            Assert.assertTrue("finalize must not clear the marker on an already-invalid view", state.isPendingInvalidation());
+            Assert.assertEquals("update operation", state.getPendingInvalidationReason());
+
+            // The view carries the refresh-failure reason; the deferred "update operation" never minted.
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tinvalid
+                            """);
+            assertQuery("select count() from materialized_views where invalidation_reason = 'update operation'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
     }
 
     @Test
@@ -204,7 +275,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             try {
                 execute("update base_price set amount = 42;"); // rows-affected UPDATE -> apply-time INVALIDATE
                 drainWalQueue();           // apply the UPDATE -> enqueue the INVALIDATE
-                drainMatViewQueue(engine); // process it: invalidateView defers (we hold the lock) + guard swallow
+                // The drain processes the INVALIDATE (invalidateView defers: we hold the lock), then dequeues
+                // the deferral's own re-enqueued task in the same loop -- the pending guard swallows it, which
+                // the still-pending/still-valid assertions below pin.
+                drainMatViewQueue(engine);
 
                 // The real defer site must record the cause so a later finalize can mint with it.
                 Assert.assertTrue("invalidation should have deferred", state.isPendingInvalidation());
@@ -416,8 +490,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
 
             // Simulate a concurrent INVALIDATE deferring mid-range-refresh: the seam fires once while
-            // rangeRefresh holds the view lock and marks the view pending, exactly as a losing invalidateView
-            // would. The range-refresh completion must finalize the deferred invalidation.
+            // rangeRefresh holds the view lock and marks the view pending (the marker half of a losing
+            // invalidateView's defer). The range-refresh completion must finalize the deferred invalidation.
             final AtomicBoolean fired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
@@ -477,8 +551,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
 
             // A concurrent apply-time INVALIDATE deferring mid-refresh: the seam fires once, while the
-            // refresh holds the view lock, and marks the view pending exactly as a losing invalidateView
-            // would (markAsPendingInvalidation + the re-enqueued task swallowed by the guard).
+            // refresh holds the view lock, and marks the view pending (the marker half of a losing
+            // invalidateView's defer; the paired re-enqueued task is exercised in
+            // testRefreshHoldingLockFinalizesDeferredInvalidationWithQueuedTask).
             final AtomicBoolean fired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
@@ -499,6 +574,57 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             // The deferred invalidation must be finalized: the view ends invalid (not valid-with-stale),
             // carrying the deferral's reason.
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tinvalid\tupdate operation
+                            """);
+        });
+    }
+
+    @Test
+    public void testRefreshHoldingLockFinalizesDeferredInvalidationWithQueuedTask() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // The complete defer-site pair, as a losing concurrent invalidateView issues it: the pending
+            // marker AND the re-enqueued INVALIDATE task. Pre-fix, the refresh completed without finalizing,
+            // so the queued task was re-delivered against a still-pending view and the guard swallowed it for
+            // good. Post-fix, the refresh's finalize clears the marker (and queues its own INVALIDATE), so the
+            // re-delivered task passes the guard and mints; the second task is then swallowed by isInvalid.
+            final AtomicBoolean fired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnHoldingLockForTesting(() -> {
+                    if (fired.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("update operation");
+                        engine.getMatViewStateStore().enqueueInvalidate(viewToken, "update operation");
+                    }
+                });
+
+                execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T14:00')");
+                drainWalQueue();
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+
+            Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -557,6 +683,49 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStatsResetFinalizesDeferredInvalidation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // A deferral already landed and its re-delivered task was swallowed by the pending guard: the
+            // marker is armed and the queue drained away with no effect -- the frozen-pending state.
+            state.markAsPendingInvalidation("update operation");
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken, "update operation");
+            drainMatViewQueue(engine);
+            Assert.assertTrue("the re-delivered task must be swallowed while pending", state.isPendingInvalidation());
+            Assert.assertFalse("the swallowed task must not mint", state.isInvalid());
+
+            // REFRESH ... STATS takes the same per-view latch, synchronously on the SQL thread. It is a
+            // lock-holder like any refresh: its unlock must finalize the deferral, or the view stays frozen.
+            execute("refresh materialized view price_1h stats");
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1h\tbase_price\tinvalid\tupdate operation
+                            """);
+        });
+    }
+
+    @Test
     public void testUpdateRefreshIntervalsHoldingLockFinalizesDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_price (" +
@@ -585,9 +754,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
 
             // Simulate a concurrent INVALIDATE deferring while an interval-update task holds the view lock:
-            // the seam fires once (updateRefreshIntervals holds the lock) and marks the view pending,
-            // exactly as a losing invalidateView would. The interval-update completion must finalize the
-            // deferred invalidation.
+            // the seam fires once (updateRefreshIntervals holds the lock) and marks the view pending (the
+            // marker half of a losing invalidateView's defer). The interval-update completion must finalize
+            // the deferred invalidation.
             final AtomicBoolean fired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {

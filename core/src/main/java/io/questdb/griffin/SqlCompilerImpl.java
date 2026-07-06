@@ -55,6 +55,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
@@ -3587,7 +3588,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try {
                             viewState.refreshStats();
                         } finally {
-                            viewState.unlock();
+                            // This stats reset is a lock-holder like any refresh: an INVALIDATE that defers
+                            // while it holds the latch re-enqueues a task that invalidateView's pending guard
+                            // then swallows, so the unlock must finalize the deferral or the view freezes
+                            // valid-but-stale. See MatViewRefreshJob#finalizeAndUnlock.
+                            MatViewRefreshJob.finalizeAndUnlock(engine, matViewStateStore, matViewToken, viewState, false);
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "materialized view is currently refreshing, retry stats reset later");
