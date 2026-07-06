@@ -30,6 +30,40 @@ import org.junit.Test;
 public class MergeUnionAllTest extends AbstractCairoTest {
 
     @Test
+    public void testCastRequiredMergeWidensNonTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a (px int, ts timestamp) timestamp(ts) partition by day");
+            execute("create table b (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into a values (1, 1), (3, 3)");
+            execute("insert into b values (2.5, 2), (4.5, 4)");
+            assertQuery("select px from ((select * from a) union all (select * from b)) order by ts")
+                    .withPlanContaining("Union All Merge")
+                    .withPlanNotContaining("Encode sort")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            px
+                            1.0
+                            2.5
+                            3.0
+                            4.5
+                            """);
+            assertQuery("select px from ((select * from a) union all (select * from b)) order by ts desc")
+                    .withPlanContaining("Union All Merge")
+                    .withPlanNotContaining("Encode sort")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            px
+                            4.5
+                            3.0
+                            2.5
+                            1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testChainedUnionAllDescMergesFully() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
