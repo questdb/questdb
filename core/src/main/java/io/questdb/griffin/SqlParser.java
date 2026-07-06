@@ -4479,10 +4479,21 @@ public class SqlParser {
                 do {
                     CharSequence colNameTok = tok(lexer, "column name");
                     assertNameIsQuotedOrNotAKeyword(colNameTok, lexer.lastTokenPosition());
-                    // keep the protective quotes on a dotted name so its dots stay content,
-                    // not a table.column separator (matches the SELECT-alias convention)
-                    boolean unquoting = Chars.indexOf(colNameTok, '.') == -1;
-                    CharSequence colName = GenericLexer.immutableOf(unquoting ? unquote(colNameTok) : colNameTok);
+                    // A dotted name keeps its dots as content, not a table.column separator (matches
+                    // the SELECT-alias convention). Normalize to the protective DOUBLE-quote form
+                    // regardless of the user's quote style: only double quotes are recognized
+                    // downstream (Chars.indexOfLastUnquoted / SqlUtil.isQuoteProtectedAlias handle '"'
+                    // only), so a retained single quote or backtick would leave the dot to mis-split
+                    // into a spurious table.column reference and fail to resolve at compile time.
+                    final CharSequence unquotedColName = unquote(colNameTok);
+                    final CharSequence colName;
+                    if (Chars.indexOf(unquotedColName, '.') == -1) {
+                        colName = GenericLexer.immutableOf(unquotedColName);
+                    } else {
+                        final CharacterStoreEntry colNameEntry = characterStore.newEntry();
+                        colNameEntry.put('"').put(unquotedColName).put('"');
+                        colName = colNameEntry.toImmutable();
+                    }
                     CharSequence typeName = tok(lexer, "column type");
                     int type = ColumnType.typeOf(typeName);
                     if (type == -1) {
@@ -4554,10 +4565,19 @@ public class SqlParser {
                 tok = tok(lexer, "column alias");
                 int aliasPos = lexer.lastTokenPosition();
                 assertNameIsQuotedOrNotAKeyword(tok, aliasPos);
-                // keep the protective quotes on a dotted alias so its dots stay content,
-                // not a table.column separator (matches the SELECT-alias convention)
-                boolean unquoting = Chars.indexOf(tok, '.') == -1;
-                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(unquoting ? unquote(tok) : tok));
+                // A dotted alias keeps its dots as content (see the COLUMNS field-name note above):
+                // normalize any quote style to the protective double-quote form so downstream lookups
+                // treat the dots as content instead of a table.column separator.
+                final CharSequence unquotedAlias = unquote(tok);
+                final CharSequence aliasName;
+                if (Chars.indexOf(unquotedAlias, '.') == -1) {
+                    aliasName = GenericLexer.immutableOf(unquotedAlias);
+                } else {
+                    final CharacterStoreEntry aliasEntry = characterStore.newEntry();
+                    aliasEntry.put('"').put(unquotedAlias).put('"');
+                    aliasName = aliasEntry.toImmutable();
+                }
+                unnestModel.getUnnestColumnAliases().add(aliasName);
                 if (firstExcessAliasPos == -1
                         && unnestModel.getUnnestColumnAliases().size() > maxAliases) {
                     firstExcessAliasPos = aliasPos;

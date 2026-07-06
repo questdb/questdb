@@ -1763,6 +1763,26 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotToTableWithDottedColumnNamesFailsCleanly() throws Exception {
+        // Documented limitation: a dotted pivot value yields a display column name that contains a
+        // dot (FNCL 2.5), which is not a valid PHYSICAL column name - TableUtils.isValidColumnName
+        // rejects '.'. So CREATE TABLE AS SELECT (and a materialized view) over such a pivot cannot
+        // materialize the column and must fail cleanly with an "invalid column name" SqlException,
+        // never a crash. Operator-token pivot values (in, and) ARE valid physical names and CTAS
+        // succeeds - see testPivotToTableWithOperatorTokenColumnNames. The dotted display name still
+        // works for plain SELECT and over the wire; only physical persistence is unsupported.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'FNCL 2.5', 10), ('B', 'FNCL 2.5', 30);");
+            assertExceptionNoLeakCheck(
+                    "CREATE TABLE pivoted AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('FNCL 2.5') GROUP BY grp))",
+                    13,
+                    "invalid column name [name=FNCL 2.5"
+            );
+        });
+    }
+
+    @Test
     public void testPivotToTableWithOperatorTokenColumnNames() throws Exception {
         // Operator-token pivot values now yield clean physical column names, so CREATE TABLE AS
         // SELECT succeeds (the old "in"-with-quotes name was rejected as invalid) and the columns

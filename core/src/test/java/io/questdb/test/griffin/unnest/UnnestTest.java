@@ -273,6 +273,37 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDottedColumnAliasNonStandardQuotes() throws Exception {
+        // A single-quoted or backtick dotted UNNEST alias must behave exactly like the double-quoted
+        // form u("a.b"): the parser normalizes any quote style to the protective double quotes so the
+        // dots stay content and the column surfaces clean as a.b. Regression: keeping the raw single
+        // quote / backtick left the dot to mis-split into a spurious table.column reference, tripping
+        // the "wtf?" assert (or an ArrayIndexOutOfBoundsException without assertions) at compile time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1))");
+            assertQuery("""
+                    SELECT u."a.b" FROM t, UNNEST(t.arr) u('a.b') ORDER BY u."a.b"
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a.b
+                            1.0
+                            2.0
+                            """);
+            assertQuery("""
+                    SELECT * FROM t, UNNEST(t.arr) u(`a.b`)
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            arr	a.b
+                            [1.0,2.0]	1.0
+                            [1.0,2.0]	2.0
+                            """);
+        });
+    }
+
+    @Test
     public void testEmptyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ARRAY[]::DOUBLE[] arr FROM long_sequence(1))");

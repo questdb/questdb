@@ -80,9 +80,11 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
 
     /**
      * Gets the numeric index of a column by name over the {@code [lo, hi)} slice of the
-     * given sequence. Like {@link #getColumnIndexQuiet(CharSequence)}, the lookup is verbatim:
-     * the slice is matched as-is, with no compiler-alias unquoting. Will not throw an exception
-     * if the column does not exist.
+     * given sequence. Like {@link #getColumnIndexQuiet(CharSequence)}, no compiler-alias unquoting
+     * is applied. Most implementations match the slice verbatim; implementations that model composed
+     * {@code table.column} names (the join metadata used during SQL compilation) instead split the
+     * slice on an unquoted dot, so a caller needing a strictly verbatim match must not feed such a
+     * name to those implementations. Will not throw an exception if the column does not exist.
      *
      * @param columnName name of the column
      * @param lo         the low boundary index of the columnName chars, inclusive

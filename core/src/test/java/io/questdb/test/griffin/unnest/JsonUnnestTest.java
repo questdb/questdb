@@ -1084,6 +1084,26 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnsDottedFieldNameNonStandardQuotesExtractsValue() throws Exception {
+        // A single-quoted dotted COLUMNS field name behaves like the double-quoted "a.b": the parser
+        // normalizes it to the protective double-quote form, JsonUnnestSource strips those quotes for
+        // the native extraction key, and the JSON field a.b is matched. Regression: keeping the raw
+        // single quote left the dot to mis-split into a compile-time internal error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            execute("INSERT INTO t VALUES ('[{\"a.b\":1.5},{\"a.b\":2.5}]')");
+            assertQuery("SELECT u.\"a.b\" FROM t, UNNEST(t.payload COLUMNS('a.b' DOUBLE)) u")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            a.b
+                            1.5
+                            2.5
+                            """);
+        });
+    }
+
+    @Test
     public void testColumnsKeywordAsColumnNameRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");

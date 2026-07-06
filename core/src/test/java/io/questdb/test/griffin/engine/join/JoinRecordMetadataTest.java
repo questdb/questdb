@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -84,6 +85,26 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.X"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("A.x"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("A.X"));
+    }
+
+    @Test
+    public void testQuoteProtectedDottedAliasDoesNotMisbind() {
+        // Regression: SqlUtil.getColumnIndexQuiet resolves a protected alias by stripping the quotes
+        // and retrying via the ranged lookup, which JoinRecordMetadata splits on a dot. A whole-quoted
+        // dotted alias "a.b" (no column literally named a.b exists) must NOT bind to the unrelated join
+        // column a.b (side a, column b) - a real dotted join column is stored re-quoted and matched
+        // verbatim first, so a miss here is correct. The operator-token form "in" carries no dot and
+        // still resolves via the bare retry.
+        JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2);
+        metadata.add("a", "b", ColumnType.INT, IndexType.NONE, 0, false, null);
+        Assert.assertEquals(-1, SqlUtil.getColumnIndexQuiet(metadata, "\"a.b\""));
+        // the direct composed reference a.b (side a, column b) still resolves - the guard only affects
+        // the strip-retry, not JoinRecordMetadata's own lookup
+        Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.b"));
+
+        JoinRecordMetadata opMetadata = new JoinRecordMetadata(configuration, 1);
+        opMetadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
+        Assert.assertEquals(0, SqlUtil.getColumnIndexQuiet(opMetadata, "\"in\""));
     }
 
     @Test
