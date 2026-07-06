@@ -103,6 +103,16 @@ public class LiveViewInstance implements QuietCloseable {
     // however many turns the catch-up needs; persists across turns (the per-turn
     // budget can split the catch-up). Mutated under the refresh latch only.
     private long backfillSkipWriteFloor;
+    // Cumulative count of in-order (forward-append) base rows dropped because their
+    // timestamp fell below viewLowerBoundTimestamp. Surfaced via
+    // live_views().below_lower_bound_count. Complements o3RejectedCount, which
+    // counts the same drops on the O3 replay path, so the two never overlap: a
+    // given commit is diverted to exactly one path. Bumped only on the refresh
+    // worker at the in-order drain; volatile so the catalogue query thread reads a
+    // current value. In-memory only - resets to 0 on restart (an observability
+    // signal, not durable state). Non-zero means back-dated / pre-CREATE data is
+    // being silently excluded by the floor; BACKFILL or real-time ingestion avoids it.
+    private volatile long belowLowerBoundCount;
     private RecordCursorFactory compiledFactory;
     // Cumulative count of coupled dedup-base refresh cycles that proved the base range
     // clean and took the cheap raw-WAL append path.
@@ -128,6 +138,12 @@ public class LiveViewInstance implements QuietCloseable {
     // asserted; the field is informational for tests and diagnostics.
     private volatile long freezeFrozenLvSeqTxn = Numbers.LONG_NULL;
     private volatile boolean freezeInProgress;
+    // One-shot latch for the advisory log the refresh worker emits the first time
+    // a view drops in-order rows below viewLowerBoundTimestamp. Keeps the "dropping
+    // sub-floor rows" hint to a single line per process rather than one per drain.
+    // Touched only on the refresh-worker thread under the refresh latch, like
+    // tierStale, so a plain field suffices.
+    private boolean hasWarnedBelowLowerBoundDrop;
     // N=2 in-memory tier; lazily allocated on the
     // first refresh cycle after the LV's compiled factory + projected metadata
     // are known. Reads route through it via LiveViewRecordCursor; the refresh
@@ -347,6 +363,18 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Accumulates {@code n} in-order (forward-append) base rows dropped for
+     * falling below {@code viewLowerBoundTimestamp}. Called from the refresh
+     * worker at the in-order drain; the value is exposed via
+     * {@code live_views().below_lower_bound_count}. The O3 replay path counts
+     * its own sub-floor drops via {@link #bumpO3RejectedCount(long)}; the two
+     * never double-count the same row (a commit is diverted to one path only).
+     */
+    public void bumpBelowLowerBoundCount(long n) {
+        belowLowerBoundCount += n;
+    }
+
+    /**
      * Increments the count of coupled dedup-base refresh cycles that proved the base
      * range clean (raw WAL == applied base) and took the cheap raw-WAL append path
      * instead of the applied-reader path. Bumped
@@ -416,6 +444,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getBackfillSkipWriteFloor() {
         return backfillSkipWriteFloor;
+    }
+
+    public long getBelowLowerBoundCount() {
+        return belowLowerBoundCount;
     }
 
     public RecordCursorFactory getCompiledFactory() {
@@ -668,6 +700,10 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setLvConsumedSeqTxn(source.getLvConsumedSeqTxn());
         stateReader.setBackfillState(source.getBackfillState());
         stateReader.setBackfillTargetSeqTxn(source.getBackfillTargetSeqTxn());
+    }
+
+    public boolean hasWarnedBelowLowerBoundDrop() {
+        return hasWarnedBelowLowerBoundDrop;
     }
 
     public boolean isDropped() {
@@ -1063,6 +1099,10 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setTierStale(boolean tierStale) {
         this.tierStale = tierStale;
+    }
+
+    public void setWarnedBelowLowerBoundDrop() {
+        this.hasWarnedBelowLowerBoundDrop = true;
     }
 
     public void setWriterStallStartUs(long writerStallStartUs) {

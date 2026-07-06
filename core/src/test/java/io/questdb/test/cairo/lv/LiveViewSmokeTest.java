@@ -11134,7 +11134,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 assertQuery("SELECT * FROM live_views() WHERE 1 = 0").noLeakCheck().returns("view_name\tview_table_dir_name\tbase_table_name\tview_sql\tview_status\t"
                         + "invalidation_reason\tflush_every_interval\tflush_every_interval_unit\t"
                         + "in_memory_interval\tin_memory_interval_unit\tin_mem_bytes\tin_mem_rows\t"
-                        + "o3_rejected_count\tlag_seqtxn\tlag_micros\t"
+                        + "o3_rejected_count\tbelow_lower_bound_count\tlag_seqtxn\tlag_micros\t"
                         + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
                         + "view_lower_bound_timestamp\twriter_stall_micros\tbackfill_target_seqtxn\t"
                         + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n");
@@ -11418,15 +11418,70 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             assertQuery("SELECT ts, x, rn FROM lv_fwd ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(expected);
             assertQuery("SELECT ts, x, rn FROM lv_o3 ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(expected);
 
-            // The forward path drops in-order sub-floor rows silently - they are
-            // pre-CREATE data excluded by the floor, not out-of-order arrivals,
-            // so they are not counted as O3 rejections. The replay path, by
-            // contrast, rejects the back-dated commit that sits below the floor.
+            // The two counters split the sub-floor drops by arrival path and
+            // never overlap. The forward path drops its two in-order sub-floor
+            // rows (pre-CREATE data excluded by the floor, not out-of-order
+            // arrivals): they land in below_lower_bound_count, not
+            // o3_rejected_count. The replay path rejects the back-dated commit
+            // below the floor: it lands in o3_rejected_count, not
+            // below_lower_bound_count.
             Assert.assertEquals("in-order sub-floor rows are not O3 rejections", 0L, fwd.getO3RejectedCount());
+            Assert.assertEquals("in-order sub-floor rows are counted below the lower bound", 2L, fwd.getBelowLowerBoundCount());
             Assert.assertEquals("the back-dated sub-floor commit is an O3 rejection", 2L, o3.getO3RejectedCount());
+            Assert.assertEquals("the O3 path does not touch below_lower_bound_count", 0L, o3.getBelowLowerBoundCount());
+            assertQuery("SELECT view_name, o3_rejected_count, below_lower_bound_count FROM live_views() ORDER BY view_name")
+                    .noLeakCheck().returns("view_name\to3_rejected_count\tbelow_lower_bound_count\n" +
+                            "lv_fwd\t0\t2\n" +
+                            "lv_o3\t2\t0\n");
 
             execute("DROP LIVE VIEW lv_fwd");
             execute("DROP LIVE VIEW lv_o3");
+        });
+    }
+
+    @Test
+    public void testInOrderRowsBelowLowerBoundAreCounted() throws Exception {
+        // A fresh non-BACKFILL view whose entire first commit is back-dated below
+        // the CREATE wall-clock floor drops every row on the in-order forward-
+        // append path. That drop used to be invisible - active view, lag 0,
+        // o3_rejected_count 0, no log - so a 100%-loss of back-dated ingestion
+        // read as a healthy-but-empty view. below_lower_bound_count now records
+        // it so the drop is diagnosable from the catalogue.
+        assertMemoryLeak(() -> {
+            // Pin the floor at a known wall-clock moment (2023-11-14T22:13:20Z).
+            // Every inserted row sits strictly below it and strictly ascending,
+            // so the commit is in order (not O3) and takes the forward-append
+            // path rather than the O3 replay.
+            setCurrentMicros(1_700_000_000_000_000L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals("no drops yet", 0L, instance.getBelowLowerBoundCount());
+
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2023-11-14T00:00:00.000000Z', 1), " +
+                    "('2023-11-14T00:00:01.000000Z', 2), " +
+                    "('2023-11-14T00:00:02.000000Z', 3)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // Every row dropped: the view is empty but the counter names it, and
+            // none of the drops are attributed to the O3 path.
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            Assert.assertEquals("all three in-order sub-floor rows counted", 3L, instance.getBelowLowerBoundCount());
+            Assert.assertEquals("in-order drops are not O3 rejections", 0L, instance.getO3RejectedCount());
+            Assert.assertTrue("the advisory log latch is set after the first drop", instance.hasWarnedBelowLowerBoundDrop());
+            assertQuery("SELECT view_name, view_status, o3_rejected_count, below_lower_bound_count FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("view_name\tview_status\to3_rejected_count\tbelow_lower_bound_count\n" +
+                            "lv\tactive\t0\t3\n");
+
+            execute("DROP LIVE VIEW lv");
         });
     }
 

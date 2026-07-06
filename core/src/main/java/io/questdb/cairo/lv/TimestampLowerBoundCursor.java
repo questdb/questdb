@@ -51,6 +51,10 @@ final class TimestampLowerBoundCursor implements RecordCursor {
     private RecordCursor base;
     private long lowTs;
     private boolean skipped;
+    // Count of sub-floor rows the current scan advanced past. Reset per of() /
+    // toTop(), read by the caller after a full drain to tally in-order rows
+    // dropped for falling below viewLowerBoundTimestamp.
+    private long skippedCount;
     private int timestampIndex = -1;
 
     @Override
@@ -59,6 +63,7 @@ final class TimestampLowerBoundCursor implements RecordCursor {
         timestampIndex = -1;
         lowTs = 0L;
         skipped = false;
+        skippedCount = 0L;
     }
 
     @Override
@@ -69,6 +74,16 @@ final class TimestampLowerBoundCursor implements RecordCursor {
     @Override
     public Record getRecordB() {
         return base.getRecordB();
+    }
+
+    /**
+     * Number of leading rows the current scan dropped for sitting strictly
+     * below {@code lowTs}. Valid once the caller has drained the cursor (the
+     * skip-prefix runs lazily on the first {@link #hasNext()}); reset by
+     * {@link #of} and {@link #toTop}.
+     */
+    public long getSkippedCount() {
+        return skippedCount;
     }
 
     @Override
@@ -89,6 +104,7 @@ final class TimestampLowerBoundCursor implements RecordCursor {
                 skipped = true;
                 return true;
             }
+            skippedCount++;
         }
         skipped = true;
         return false;
@@ -104,6 +120,7 @@ final class TimestampLowerBoundCursor implements RecordCursor {
         this.timestampIndex = timestampIndex;
         this.lowTs = lowTs;
         this.skipped = false;
+        this.skippedCount = 0L;
     }
 
     @Override
@@ -125,5 +142,6 @@ final class TimestampLowerBoundCursor implements RecordCursor {
     public void toTop() {
         base.toTop();
         skipped = false;
+        skippedCount = 0L;
     }
 }

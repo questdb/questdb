@@ -1207,6 +1207,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long advanceTo = -1;
         long appendedRows = 0;
         long batchMaxTs = Numbers.LONG_NULL;
+        // In-order rows the lower-bound cursor dropped this drain for falling
+        // below viewLowerBoundTimestamp. Tallied per commit off the reused
+        // tsLowerBoundCursor, folded into below_lower_bound_count after the walk.
+        long belowLowerBoundSkipped = 0;
         boolean o3Detected = false;
         long o3LateRowTs = Numbers.LONG_NULL;
         long o3SeqTxn = Numbers.LONG_NULL;
@@ -1448,9 +1452,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                         appendedRows++;
                     }
+                    // Tally the sub-floor prefix this in-order commit dropped.
+                    // Read before windowCursor.close(), which frees (and resets)
+                    // the lower-bound cursor. The O3 path counts its own drops via
+                    // bumpO3RejectedCount and breaks before reaching the cursor,
+                    // so the two accounts never overlap.
+                    belowLowerBoundSkipped += tsLowerBoundCursor.getSkippedCount();
                 } finally {
                     windowCursor.close();
                 }
+            }
+        }
+
+        if (belowLowerBoundSkipped > 0) {
+            instance.bumpBelowLowerBoundCount(belowLowerBoundSkipped);
+            if (!instance.hasWarnedBelowLowerBoundDrop()) {
+                // Advisory, once per process per view: a silent 100%-drop of
+                // back-dated in-order data reads as a healthy view (active,
+                // lag 0, no rejections), so surface the floor once to point the
+                // operator at BACKFILL / real-time ingestion.
+                instance.setWarnedBelowLowerBoundDrop();
+                LOG.advisory().$("live view is dropping in-order rows below its lower bound [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", bound=").$ts(
+                                ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()),
+                                viewLowerBoundTimestamp
+                        )
+                        .$(", dropped=").$(belowLowerBoundSkipped)
+                        .$("]; use BACKFILL or ingest at real time to include history").$();
             }
         }
 

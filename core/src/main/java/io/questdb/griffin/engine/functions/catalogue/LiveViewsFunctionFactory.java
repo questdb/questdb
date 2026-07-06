@@ -54,9 +54,13 @@ import io.questdb.std.ObjList;
  * {@code live_views()} catalogue. Exposes per-view operator state derived from
  * {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s}.
  * <p>
- * {@code o3_rejected_count}, {@code backfill_target_seqtxn},
- * {@code writer_stall_micros}, and {@code in_mem_bytes} are wired to live
- * values. {@code in_mem_bytes} is the peak-sticky native footprint (allocated
+ * {@code o3_rejected_count}, {@code below_lower_bound_count},
+ * {@code backfill_target_seqtxn}, {@code writer_stall_micros}, and
+ * {@code in_mem_bytes} are wired to live values. {@code o3_rejected_count} and
+ * {@code below_lower_bound_count} split the rows a view drops for sitting below
+ * its lower bound by arrival path - O3 replay vs in-order forward-append - so
+ * the two are disjoint and sum to the total dropped.
+ * {@code in_mem_bytes} is the peak-sticky native footprint (allocated
  * capacity across both slots); {@code in_mem_rows} is the live row count of the
  * published slot, so the two together separate a view actively buffering rows
  * from one holding arena capacity retained from a past burst.
@@ -101,30 +105,31 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
     }
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
-        private static final int COLUMN_APPLIED_WATERMARK = 16;
-        private static final int COLUMN_BACKFILL_TARGET_SEQTXN = 20;
+        private static final int COLUMN_APPLIED_WATERMARK = 17;
+        private static final int COLUMN_BACKFILL_TARGET_SEQTXN = 21;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
+        private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL = 6;
         private static final int COLUMN_FLUSH_EVERY_INTERVAL_UNIT = 7;
-        private static final int COLUMN_HEAD_CHECKPOINT_LV_SEQTXN = 21;
-        private static final int COLUMN_HEAD_CHECKPOINT_MAX_TS = 22;
-        private static final int COLUMN_HEAD_CHECKPOINT_STATE_BYTES = 23;
+        private static final int COLUMN_HEAD_CHECKPOINT_LV_SEQTXN = 22;
+        private static final int COLUMN_HEAD_CHECKPOINT_MAX_TS = 23;
+        private static final int COLUMN_HEAD_CHECKPOINT_STATE_BYTES = 24;
         private static final int COLUMN_INVALIDATION_REASON = 5;
         private static final int COLUMN_IN_MEMORY_INTERVAL = 8;
         private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 9;
         private static final int COLUMN_IN_MEM_BYTES = 10;
         private static final int COLUMN_IN_MEM_ROWS = 11;
-        private static final int COLUMN_LAG_MICROS = 14;
-        private static final int COLUMN_LAG_SEQTXN = 13;
-        private static final int COLUMN_LAST_PROCESSED_SEQTXN = 15;
-        private static final int COLUMN_LV_CONSUMED_SEQTXN = 17;
+        private static final int COLUMN_LAG_MICROS = 15;
+        private static final int COLUMN_LAG_SEQTXN = 14;
+        private static final int COLUMN_LAST_PROCESSED_SEQTXN = 16;
+        private static final int COLUMN_LV_CONSUMED_SEQTXN = 18;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
-        private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 18;
+        private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_VIEW_SQL = 3;
         private static final int COLUMN_VIEW_STATUS = 4;
         private static final int COLUMN_VIEW_TABLE_DIR_NAME = 1;
-        private static final int COLUMN_WRITER_STALL_MICROS = 19;
+        private static final int COLUMN_WRITER_STALL_MICROS = 20;
         private static final RecordMetadata METADATA;
         private final LiveViewsListCursor cursor = new LiveViewsListCursor();
 
@@ -298,10 +303,15 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // once the sweep completes and the state flips to ACTIVE
                         // (the field is wiped on the BACKFILLING -> ACTIVE flip).
                         case COLUMN_BACKFILL_TARGET_SEQTXN -> instance.getStateReader().getBackfillTargetSeqTxn();
-                        // Count of late rows rejected for falling below
+                        // Count of late O3 rows rejected for falling below
                         // viewLowerBoundTimestamp. In-memory counter, resets on
                         // restart.
                         case COLUMN_O3_REJECTED_COUNT -> instance.getO3RejectedCount();
+                        // Count of in-order (forward-append) rows dropped for
+                        // falling below viewLowerBoundTimestamp - back-dated /
+                        // pre-CREATE data the floor excludes. In-memory counter,
+                        // resets on restart. Disjoint from o3_rejected_count.
+                        case COLUMN_BELOW_LOWER_BOUND_COUNT -> instance.getBelowLowerBoundCount();
                         default -> 0;
                     };
                 }
@@ -365,17 +375,18 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("in_mem_bytes", ColumnType.LONG));                         // 10
             metadata.add(new TableColumnMetadata("in_mem_rows", ColumnType.LONG));                          // 11
             metadata.add(new TableColumnMetadata("o3_rejected_count", ColumnType.LONG));                    // 12
-            metadata.add(new TableColumnMetadata("lag_seqtxn", ColumnType.LONG));                           // 13
-            metadata.add(new TableColumnMetadata("lag_micros", ColumnType.LONG));                           // 14
-            metadata.add(new TableColumnMetadata("last_processed_seqtxn", ColumnType.LONG));                // 15
-            metadata.add(new TableColumnMetadata("applied_watermark", ColumnType.LONG));                    // 16
-            metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));                   // 17
-            metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 18
-            metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 19
-            metadata.add(new TableColumnMetadata("backfill_target_seqtxn", ColumnType.LONG));               // 20
-            metadata.add(new TableColumnMetadata("head_checkpoint_lv_seqtxn", ColumnType.LONG));            // 21
-            metadata.add(new TableColumnMetadata("head_checkpoint_max_ts", ColumnType.TIMESTAMP_MICRO));    // 22
-            metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 23
+            metadata.add(new TableColumnMetadata("below_lower_bound_count", ColumnType.LONG));              // 13
+            metadata.add(new TableColumnMetadata("lag_seqtxn", ColumnType.LONG));                           // 14
+            metadata.add(new TableColumnMetadata("lag_micros", ColumnType.LONG));                           // 15
+            metadata.add(new TableColumnMetadata("last_processed_seqtxn", ColumnType.LONG));                // 16
+            metadata.add(new TableColumnMetadata("applied_watermark", ColumnType.LONG));                    // 17
+            metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));                   // 18
+            metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 19
+            metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 20
+            metadata.add(new TableColumnMetadata("backfill_target_seqtxn", ColumnType.LONG));               // 21
+            metadata.add(new TableColumnMetadata("head_checkpoint_lv_seqtxn", ColumnType.LONG));            // 22
+            metadata.add(new TableColumnMetadata("head_checkpoint_max_ts", ColumnType.TIMESTAMP_MICRO));    // 23
+            metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 24
             METADATA = metadata;
         }
     }
