@@ -1590,6 +1590,30 @@ public class SqlUtil {
     }
 
     /**
+     * Inverse of {@link #toColumnName(CharSequence)}: takes a clean, unquoted display name and
+     * returns the compiler-internal alias, wrapping it in protective double quotes only when the
+     * bare name could not be processed verbatim - it carries an unquoted dot (which downstream
+     * {@code table.column} resolution would mis-split) or collides with an operator token. Names
+     * that need no protection are returned unchanged, so the result always round-trips back to
+     * {@code name} through {@link #toColumnName(CharSequence)}.
+     * <p>
+     * Mirrors the {@code nonLiteral} quoting decision of
+     * {@link #createExprColumnAlias(CharacterStore, CharSequence, AbstractLowerCaseCharSequenceHashSet, LowerCaseCharSequenceIntHashMap, int, boolean)}.
+     * Use it where an alias is assembled from already-stripped parts (e.g. the PIVOT rewrite composes
+     * {@code value_aggregate}) and must be re-protected as a WHOLE: leaving a component's quotes
+     * embedded mid-name would defeat {@link #isQuoteProtectedAlias(CharSequence)} / {@link #toColumnName(CharSequence)}
+     * and leak the quotes into result set metadata.
+     */
+    public static CharSequence protectColumnAlias(CharacterStore store, CharSequence name) {
+        if (Chars.indexOfLastUnquoted(name, '.') > -1 || disallowedAliases.contains(name)) {
+            final CharacterStoreEntry entry = store.newEntry();
+            entry.put('"').put(name).put('"');
+            return entry.toImmutable();
+        }
+        return name;
+    }
+
+    /**
      * Converts a projection alias to the user-visible result set column name by removing
      * the protective double quotes {@link #createExprColumnAlias(CharacterStore, CharSequence, AbstractLowerCaseCharSequenceHashSet, LowerCaseCharSequenceIntHashMap, int, boolean)}
      * wraps around aliases the compiler cannot process verbatim. The quotes are

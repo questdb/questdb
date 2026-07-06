@@ -1353,11 +1353,16 @@ public class SqlOptimiser implements Mutable {
                     if (i > 0) {
                         cse.put('_');
                     }
-                    cse.put(colAlias);
+                    // Strip each component's protective quotes before concatenating: a quote-protected
+                    // value alias ("in", "FNCL 2.5") embedded mid-composite ("in"_s) is not a whole
+                    // isQuoteProtectedAlias, so toColumnName could not strip it and the quotes would leak
+                    // into result set metadata. protectColumnAlias below re-protects the assembled name
+                    // as a whole when its clean content still needs it.
+                    cse.put(SqlUtil.toColumnName(colAlias));
                 }
 
                 if (!model.isPivotGroupByColumnHasNoAlias()) {
-                    cse.put('_').put(aggAlias);
+                    cse.put('_').put(SqlUtil.toColumnName(aggAlias));
                 }
 
                 // Use switch when: single FOR column, single constant value (not ELSE mode)
@@ -1398,7 +1403,11 @@ public class SqlOptimiser implements Mutable {
                 aggNode.paramCount = 1;
                 aggNode.rhs = caseNode;
 
-                outerModel.addBottomUpColumn(queryColumnPool.next().of(cse.toImmutable(), aggNode));
+                // Re-protect the assembled composite as a whole: a dotted content (FNCL 2.5_s) would
+                // otherwise be mis-split by later table.column resolution, and an operator-token content
+                // (in) would collide - matching how a single-value pivot column is protected.
+                CharSequence colName = SqlUtil.protectColumnAlias(characterStore, cse.toImmutable());
+                outerModel.addBottomUpColumn(queryColumnPool.next().of(colName, aggNode));
             }
 
             for (int i = forColumnCount - 1; i >= 0; i--) {

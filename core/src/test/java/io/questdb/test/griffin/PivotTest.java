@@ -225,6 +225,78 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotAliasedAggregateProtectedColumnNames() throws Exception {
+        // Regression: a pivot with an ALIASED aggregate builds a composite output column name
+        // (value_aggregate). When the value is a protective-quoted operator token or dotted name,
+        // the composite used to embed those quotes mid-name ("in"_s / "FNCL 2.5"_s), which
+        // toColumnName could not strip, so the quotes leaked into result set metadata and broke
+        // CREATE TABLE AS SELECT. The components are now stripped and the whole composite
+        // re-protected, so the names surface clean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+
+            // operator-token values with an aliased aggregate -> clean in_s / and_s
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) AS s FOR cat IN ('in', 'and') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_s\tand_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) AS s FOR cat IN ('in', 'and') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, in_s, and_s FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_s\tand_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+
+            // dotted values with an aliased aggregate -> clean FNCL 2.5_s (dot stays content, no leaked quotes)
+            execute("CREATE TABLE sec (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO sec VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 3.0', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 3.0', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM sec
+                    PIVOT (SUM(val) AS s FOR cat IN ('FNCL 2.5', 'FNCL 3.0') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tFNCL 2.5_s\tFNCL 3.0_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotDefaultNamingRules() throws Exception {
         assertQuery("""
                 trades PIVOT (
@@ -548,6 +620,37 @@ public class PivotTest extends AbstractSqlParserTest {
                     )
                     """)
                     .fails(28, "PIVOT produces too many columns: 12, limit is 10");
+        });
+    }
+
+    @Test
+    public void testPivotMultiForProtectedColumnNames() throws Exception {
+        // Regression: a multi-FOR pivot concatenates one value alias per FOR column (value1_value2).
+        // Protective-quoted operator-token values used to embed their quotes mid-name ("in"_"and");
+        // the components are now stripped so the composite surfaces clean (in_and).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, c1 STRING, c2 STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 'and', 10),
+                        ('B', 'in', 'and', 30);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR c1 IN ('in')
+                            c2 IN ('and')
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_and
+                            A\t10
+                            B\t30
+                            """);
         });
     }
 
