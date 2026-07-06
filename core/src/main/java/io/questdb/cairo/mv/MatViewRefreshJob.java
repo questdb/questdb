@@ -456,13 +456,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // deployments: the read lock is uncontended and the read-only flag is static.
     private void fencedMatViewCommit(Runnable commit) {
         if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
         try {
             if (engine.isReadOnlyMode()) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             engine.fireRoleSwitchMintObserver();
             commit.run();
