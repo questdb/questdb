@@ -66,10 +66,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * WAL writer pool per FLUSH cycle rather than being owned by the instance.
  */
 public class LiveViewInstance implements QuietCloseable {
+    private static final int HEAD_CHECKPOINT_BASE_SEQ_TXN = 3;
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
     private static final int HEAD_CHECKPOINT_MAX_TS = 1;
     private static final int HEAD_CHECKPOINT_STATE_BYTES = 2;
-    private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L};
+    private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
     private final LiveViewDefinition definition;
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
@@ -138,11 +139,16 @@ public class LiveViewInstance implements QuietCloseable {
     // write hook (deferred) and consumed by the live_views() catalogue and
     // by the O3 head-hit / restart-restore decision paths.
     // <p>
-    // The trio is packed into one immutable long[] published via volatile
+    // The tuple is packed into one immutable long[] published via volatile
     // store so the O3 head-hit lock-free reader always sees a consistent
     // (lvSeqTxn, maxTs, stateBytes) tuple; without the packing a reader
     // could observe a fresh lvSeqTxn paired with the prior maxTs.
-    // Indexes: HEAD_CHECKPOINT_LV_SEQ_TXN / _MAX_TS / _STATE_BYTES.
+    // baseSeqTxn is the base commit the durable head covers (the manifest's
+    // baseSeqTxn): WalPurgeJob holds the base WAL purge floor at it so the
+    // (baseSeqTxn, applied] range restart recovery replays survives until a
+    // later checkpoint advances the manifest past it.
+    // Indexes: HEAD_CHECKPOINT_LV_SEQ_TXN / _MAX_TS / _STATE_BYTES /
+    // _BASE_SEQ_TXN.
     private volatile long[] headCheckpoint = EMPTY_HEAD_CHECKPOINT;
     // Key (data-cursor row offset) of the current rolling backfill checkpoint
     // _checkpoints/<key>.bcp, or Numbers.LONG_NULL when none exists. Stamped by
@@ -330,7 +336,7 @@ public class LiveViewInstance implements QuietCloseable {
     /**
      * Accumulates {@code n} into both {@link #rowsSinceLastCheckpointWritten}
      * (the cadence counter, which resets on each fresh head via
-     * {@link #setHeadCheckpoint(long, long, long, long)}) and
+     * {@link #setHeadCheckpoint(long, long, long, long, long)}) and
      * {@link #lvRowsTotal} (the lifetime counter, which mirrors
      * {@code MANIFEST.lvRowPosition} and persists across restarts). Called
      * from the refresh worker after each successful LV WAL apply commit.
@@ -498,6 +504,10 @@ public class LiveViewInstance implements QuietCloseable {
         return headBackfillCpKey;
     }
 
+    public long getHeadCheckpointBaseSeqTxn() {
+        return headCheckpoint[HEAD_CHECKPOINT_BASE_SEQ_TXN];
+    }
+
     public long getHeadCheckpointLvSeqTxn() {
         return headCheckpoint[HEAD_CHECKPOINT_LV_SEQ_TXN];
     }
@@ -510,7 +520,7 @@ public class LiveViewInstance implements QuietCloseable {
      * Atomic read of the {@code (lvSeqTxn, maxTs)} pair the O3 head-hit
      * eligibility check needs. Returns a stable two-element array
      * {@code [lvSeqTxn, maxTs]} so callers cannot observe a torn pair across
-     * a concurrent {@link #setHeadCheckpoint(long, long, long, long)}.
+     * a concurrent {@link #setHeadCheckpoint(long, long, long, long, long)}.
      */
     public long[] getHeadCheckpointSeqAndMaxTs() {
         final long[] local = headCheckpoint;
@@ -915,12 +925,12 @@ public class LiveViewInstance implements QuietCloseable {
         this.headBackfillCpKey = key;
     }
 
-    public void setHeadCheckpoint(long lvSeqTxn, long maxTs, long stateBytes, long writtenUs) {
-        // Publish the (lvSeqTxn, maxTs, stateBytes) trio atomically: build a
-        // fresh immutable array and store the reference volatile. A reader
-        // observing the new reference is guaranteed to see all three fields
-        // from the same setHeadCheckpoint call, never a torn mix.
-        this.headCheckpoint = new long[]{lvSeqTxn, maxTs, stateBytes};
+    public void setHeadCheckpoint(long lvSeqTxn, long baseSeqTxn, long maxTs, long stateBytes, long writtenUs) {
+        // Publish the (lvSeqTxn, maxTs, stateBytes, baseSeqTxn) tuple atomically:
+        // build a fresh immutable array and store the reference volatile. A reader
+        // observing the new reference is guaranteed to see all fields from the same
+        // setHeadCheckpoint call, never a torn mix.
+        this.headCheckpoint = new long[]{lvSeqTxn, maxTs, stateBytes, baseSeqTxn};
         this.rowsSinceLastCheckpointWritten = 0;
         this.lastCheckpointWrittenUs = writtenUs;
     }

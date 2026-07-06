@@ -1873,7 +1873,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$(t).I$();
             }
         }
-        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
     }
 
     /**
@@ -3031,9 +3031,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
             checkpointWriter.of(path.$(), lvSeqTxn);
 
+            // The base commit this head covers. Stamped into the manifest and
+            // mirrored onto the instance below so WalPurgeJob can hold the base
+            // WAL purge floor here rather than at the applied point.
+            final long baseSeqTxn = instance.getLastProcessedSeqTxn();
             checkpointManifest.clear();
             checkpointManifest.setLvSeqTxn(lvSeqTxn);
-            checkpointManifest.setBaseSeqTxn(instance.getLastProcessedSeqTxn());
+            checkpointManifest.setBaseSeqTxn(baseSeqTxn);
             checkpointManifest.setMaxTimestamp(batchMaxTs);
             checkpointManifest.setLvRowPosition(instance.getLvRowsTotal());
             checkpointManifest.setKind(LiveViewCheckpointManifest.KIND_STEADY);
@@ -3073,7 +3077,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final long stateBytes = checkpointWriter.getAppendOffset();
             checkpointWriter.commit(firstCp ? Numbers.LONG_NULL : priorLvSeqTxn);
 
-            instance.setHeadCheckpoint(lvSeqTxn, batchMaxTs, stateBytes, nowUs);
+            instance.setHeadCheckpoint(lvSeqTxn, baseSeqTxn, batchMaxTs, stateBytes, nowUs);
         } catch (Throwable t) {
             LOG.critical().$("could not write live view head checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
@@ -3325,7 +3329,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(rmErr).I$();
         }
-        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
         return false;
     }
 
@@ -3384,6 +3388,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // as "first commit" and writes a fresh head soon after.
         instance.setHeadCheckpoint(
                 headLvSeqTxn,
+                manifestBaseSeqTxn,
                 restoredHeadState.maxTimestamp,
                 restoredHeadState.stateBytes,
                 Numbers.LONG_NULL

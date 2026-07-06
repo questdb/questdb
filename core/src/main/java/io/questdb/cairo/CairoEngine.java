@@ -973,7 +973,20 @@ public class CairoEngine implements Closeable, WriterSource {
                                     sweepNameSink
                             );
                             if (headSeqTxn != Numbers.LONG_NULL) {
-                                instance.setHeadCheckpoint(headSeqTxn, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+                                // The head base seqTxn is only known once the first refresh
+                                // reads the .cp manifest, but WalPurgeJob may run before that
+                                // and must not purge the (headBase, applied] base WAL that
+                                // tryRestoreFromHead's replay needs. Stamp subscribeFromSeqTxn
+                                // as a safe lower bound (the head base never sits below the
+                                // point the view began consuming) so the replay range is held
+                                // until the first cycle re-stamps the exact base seqTxn.
+                                instance.setHeadCheckpoint(
+                                        headSeqTxn,
+                                        stateReader.getSubscribeFromSeqTxn(),
+                                        Numbers.LONG_NULL,
+                                        0L,
+                                        Numbers.LONG_NULL
+                                );
                             }
                             // Backfill checkpoints live in a disjoint .bcp
                             // namespace. For a view loaded mid-sweep, retain the

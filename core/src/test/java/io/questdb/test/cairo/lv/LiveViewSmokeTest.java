@@ -3639,6 +3639,147 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalPurgeHoldsBaseWalAtHeadCheckpointForRestartReplay() throws Exception {
+        // Regression: a live view must not go permanently INVALID after a restart
+        // when the durable head checkpoint lags the applied watermark. The head
+        // .cp advances only on its own cadence, while the applied watermark
+        // advances every FLUSH, so restart recovery replays the
+        // (headBaseSeqTxn, applied] base WAL to re-seed the accumulator gap.
+        // WalPurgeJob must hold the base WAL purge floor at the durable head's
+        // base seqTxn, not the applied point: lvConsumed advances to applied
+        // every flush, so a floor at lvConsumed lets the (headBase, applied]
+        // segments be purged out from under the next restart's replayToApplied,
+        // which then cannot open the purged _event file and invalidates the view
+        // forever.
+        //
+        // Roll a fresh base WAL segment per commit (rollover row count = 1) so the
+        // gap seqTxn lands in its own segment: WalPurgeJob purges at segment
+        // granularity. An un-refreshed trailing commit rolls the writer off the
+        // gap segment so it becomes a deletion candidate (the active writer
+        // segment is never purged).
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        assertMemoryLeak(() -> {
+            // Pin the clock well past the epoch: the WAL purge sweep's interval
+            // gate (30s) skips every sweep while the clock sits near epoch. Data
+            // timestamps sit above this so the non-BACKFILL view keeps every row.
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
+
+            // Batch A -> base seqTxn 1 (WAL segment wal1/0). The first flush
+            // writes the first head .cp (covers base seqTxn 1) and advances the
+            // applied watermark to 1.
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
+                    "('2026-06-01T00:00:01.000000Z', 'a', 2.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final long headLvSeqTxnAfterA = instance.getHeadCheckpointLvSeqTxn();
+            Assert.assertNotEquals("head .cp written for batch A", Numbers.LONG_NULL, headLvSeqTxnAfterA);
+            final long headBaseAfterA = instance.getHeadCheckpointBaseSeqTxn();
+
+            // Batch B -> base seqTxn 2 (WAL segment wal1/1). It flushes
+            // (applied -> 2, lvConsumed -> 2) but the head cadence (default 1M
+            // rows / 5 min, clock advanced only 100ms) does not fire, so the
+            // durable head still covers base seqTxn 1: the checkpoint-lags-applied
+            // gap the restart replay depends on.
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-01T00:00:02.000000Z', 'a', 4.0), " +
+                    "('2026-06-01T00:00:03.000000Z', 'a', 8.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 100_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            Assert.assertEquals("head .cp must not advance for batch B",
+                    headLvSeqTxnAfterA, instance.getHeadCheckpointLvSeqTxn());
+            Assert.assertEquals("head base seqTxn must not advance for batch B",
+                    headBaseAfterA, instance.getHeadCheckpointBaseSeqTxn());
+            Assert.assertEquals("applied watermark ran ahead of the head",
+                    2L, instance.getAppliedWatermark());
+            Assert.assertEquals("head still covers base seqTxn 1",
+                    1L, instance.getHeadCheckpointBaseSeqTxn());
+
+            // Trailing base commit -> base seqTxn 3 (WAL segment wal1/2). It is
+            // applied to the base but NOT refreshed into the view, so the view's
+            // applied/lvConsumed stay at 2 and the head stays at 1. Its only role
+            // is to roll the base writer off wal1/1 so that segment (holding the
+            // gap seqTxn 2) becomes a deletion candidate.
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-01T00:00:05.000000Z', 'a', 32.0)");
+            drainWalQueue();
+            Assert.assertEquals("view must not have consumed the trailing commit",
+                    2L, instance.getStateReader().getLvConsumedSeqTxn());
+
+            // Release the pooled base writer so its now-inactive WAL segments
+            // unlock and become eligible for purge.
+            engine.releaseInactive();
+
+            // Purge base WAL. Pre-fix the floor is lvConsumed (2), which deletes
+            // the gap segment wal1/1 (seqTxn 2) the restart replay needs. The fix
+            // caps the floor at the head's base seqTxn (1), so wal1/1 survives.
+            drainPurgeJob();
+            assertSegmentExistence(false, "base", 1, 0); // seqTxn 1: below the head, always purgeable
+            assertSegmentExistence(true, "base", 1, 1);  // seqTxn 2: the gap segment the fix must retain
+            assertSegmentExistence(true, "base", 1, 2);  // seqTxn 3: still to apply, retained
+
+            // Restart: the startup sweep re-stamps the head from the .cp, then the
+            // first refresh runs tryRestoreFromHead -> replayToApplied(1, 2) over
+            // the retained gap WAL, then drains forward to base seqTxn 3. The view
+            // must recover ACTIVE, not invalidate on a purged _event file.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 200_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(recovered);
+            Assert.assertFalse(
+                    "view must stay active after the purge + restart (the gap WAL replay must survive the purge)",
+                    recovered.isInvalid()
+            );
+
+            final String expected = "ts\tsym\ts\n" +
+                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                    "2026-06-01T00:00:01.000000Z\ta\t3.0\n" +
+                    "2026-06-01T00:00:02.000000Z\ta\t7.0\n" +
+                    "2026-06-01T00:00:03.000000Z\ta\t15.0\n" +
+                    "2026-06-01T00:00:05.000000Z\ta\t47.0\n";
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            // The restored accumulator must keep advancing: a new row continues
+            // the running sum from 47, proving the window state (not just the
+            // rows) survived the purge and restart.
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:06.000000Z', 'a', 16.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 300_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(expected +
+                    "2026-06-01T00:00:06.000000Z\ta\t63.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testTruncateOnBaseIsTransparentToLiveView() throws Exception {
         // TRUNCATE on the base is transparent to the LV: the view stays
         // ACTIVE, its derived rows on disk are preserved byte-for-byte, the
@@ -12554,10 +12695,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             final long lvSeqA = 10L;
             final long maxTsA = 100L;
+            final long baseSeqA = 5L;
             final long lvSeqB = 20L;
             final long maxTsB = 200L;
+            final long baseSeqB = 15L;
             // Seed with tuple A so the reader sees a known value on first read.
-            instance.setHeadCheckpoint(lvSeqA, maxTsA, 1L, 1L);
+            instance.setHeadCheckpoint(lvSeqA, baseSeqA, maxTsA, 1L, 1L);
 
             final AtomicBoolean stop = new AtomicBoolean(false);
             final AtomicBoolean tornObserved = new AtomicBoolean(false);
@@ -12566,9 +12709,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 int n = 0;
                 while (!stop.get()) {
                     if ((n & 1) == 0) {
-                        instance.setHeadCheckpoint(lvSeqA, maxTsA, 1L, 1L);
+                        instance.setHeadCheckpoint(lvSeqA, baseSeqA, maxTsA, 1L, 1L);
                     } else {
-                        instance.setHeadCheckpoint(lvSeqB, maxTsB, 2L, 2L);
+                        instance.setHeadCheckpoint(lvSeqB, baseSeqB, maxTsB, 2L, 2L);
                     }
                     n++;
                     if ((n & 0xff) == 0) {
@@ -15250,7 +15393,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // Direct mutation via the setter (the 2a.4 write hook will call this).
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 Assert.assertNotNull(lv);
-                lv.setHeadCheckpoint(42L, 1_700_000_000_000_000L, 4096L, 0L);
+                lv.setHeadCheckpoint(42L, 40L, 1_700_000_000_000_000L, 4096L, 0L);
 
                 assertQuery("SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_max_ts, head_checkpoint_state_bytes FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +
                         "lv\t42\t2023-11-14T22:13:20.000000Z\t4096\n");

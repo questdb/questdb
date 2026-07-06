@@ -552,6 +552,21 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (lvConsumed > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, lvConsumed);
             }
+            // Hold the base WAL back to the durable head checkpoint's base commit,
+            // not the applied point. On restart tryRestoreFromHead replays the
+            // (headBaseSeqTxn, applied] base WAL to advance the accumulators restored
+            // from the head .cp up to the applied watermark; lvConsumed advances to
+            // that applied point every flush, but the head .cp only advances on the
+            // checkpoint cadence, so lvConsumed can outrun the durable head and let
+            // this range be purged out from under the next restart's replay. Capping
+            // at headBaseSeqTxn keeps the replay WAL until a later checkpoint moves
+            // the manifest past it. LONG_NULL (no head, or a cleared/corrupt head)
+            // leaves the floor at lvConsumed: those views recover by rebuilding from
+            // the applied base table, which needs no raw base WAL.
+            final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
+            if (headBaseSeqTxn > -1) {
+                safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);
+            }
         }
         return safeToPurgeTxn;
     }
