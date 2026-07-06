@@ -82,6 +82,11 @@ steps:
     displayName: "Activate GraalVM 25"
     condition: |
       eq(variables['System.JobName'], 'linux_x64_graal')
+  # Compile the client's native library from source when building it as a
+  # -SNAPSHOT (local-client). A Maven-Central client ships the binaries in its
+  # jar, so this is a no-op there. Runs after JDK activation so $JAVA_HOME points
+  # at the JDK whose jni.h CMake builds against.
+  - template: build-client-native.yml
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
