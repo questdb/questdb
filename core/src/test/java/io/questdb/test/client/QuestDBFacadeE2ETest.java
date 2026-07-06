@@ -27,6 +27,7 @@ package io.questdb.test.client;
 import io.questdb.PropertyKey;
 import io.questdb.client.Completion;
 import io.questdb.client.QuestDB;
+import io.questdb.client.Query;
 import io.questdb.client.QueryException;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.line.LineSenderException;
@@ -51,8 +52,8 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * End-to-end tests for the {@link QuestDB} facade against an embedded server.
  * Verifies that pooled Sender ingest and pooled Query egress both round-trip
- * data correctly and that the pool semantics (flush-on-return, thread-affine,
- * acquire timeout, cancel) hold under real I/O.
+ * data correctly and that the pool semantics (flush-on-return, distinct
+ * per-borrow Senders, acquire timeout, cancel) hold under real I/O.
  * <p>
  * Every run picks a small random chunk size and forces both HTTP recv and send
  * fragmentation at the server, mirroring {@code QwpEgressFragmentationFuzzTest}.
@@ -130,16 +131,17 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
 
                     AtomicLong sum = new AtomicLong();
                     AtomicInteger rows = new AtomicInteger();
-                    Completion c = db.executeSql("SELECT i FROM rt", new CollectingHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum.addAndGet(batch.getLongValue(0, r));
-                                rows.incrementAndGet();
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT i FROM rt").handler(new CollectingHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                for (int r = 0; r < batch.getRowCount(); r++) {
+                                    sum.addAndGet(batch.getLongValue(0, r));
+                                    rows.incrementAndGet();
+                                }
                             }
-                        }
-                    });
-                    c.await();
+                        }).submit().await();
+                    }
                     Assert.assertEquals(3, rows.get());
                     Assert.assertEquals(6L, sum.get());
                 }
@@ -160,43 +162,45 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                     AtomicReference<Byte> errorStatus = new AtomicReference<>();
                     AtomicReference<Throwable> awaitOutcome = new AtomicReference<>();
                     CountDownLatch firstBatch = new CountDownLatch(1);
-                    Completion c = db.executeSql("SELECT x FROM big ORDER BY x", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            firstBatch.countDown();
-                            // Stall longer than the typical batch turnaround so cancel
-                            // has time to land while the user thread is parked here.
-                            try {
-                                Thread.sleep(2_000);
-                            } catch (InterruptedException ie) {
-                                Thread.currentThread().interrupt();
+                    try (Query q = db.borrowQuery()) {
+                        Completion c = q.sql("SELECT x FROM big ORDER BY x").handler(new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                firstBatch.countDown();
+                                // Stall longer than the typical batch turnaround so cancel
+                                // has time to land while the user thread is parked here.
+                                try {
+                                    Thread.sleep(2_000);
+                                } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                }
                             }
-                        }
 
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
+                            @Override
+                            public void onEnd(long totalRows) {
+                            }
 
-                        @Override
-                        public void onError(byte s, String message) {
-                            errorStatus.set(s);
+                            @Override
+                            public void onError(byte s, String message) {
+                                errorStatus.set(s);
+                            }
+                        }).submit();
+                        Assert.assertTrue(firstBatch.await(firstBatchTimeoutMs(10_000), TimeUnit.MILLISECONDS));
+                        c.cancel();
+                        try {
+                            c.await();
+                        } catch (QueryException qe) {
+                            awaitOutcome.set(qe);
                         }
-                    });
-                    Assert.assertTrue(firstBatch.await(firstBatchTimeoutMs(10_000), TimeUnit.MILLISECONDS));
-                    c.cancel();
-                    try {
-                        c.await();
-                    } catch (QueryException qe) {
-                        awaitOutcome.set(qe);
-                    }
-                    // Cancel races completion. Whichever wins, the query must reach
-                    // a terminal state without deadlocking and the API must remain
-                    // consistent. If cancel won, await threw and onError saw a
-                    // non-zero status; if completion won, await returned cleanly.
-                    Assert.assertTrue("Completion must terminate", c.isDone());
-                    if (awaitOutcome.get() != null) {
-                        Assert.assertNotNull("onError must fire when cancel wins", errorStatus.get());
-                        Assert.assertNotEquals((byte) 0, (byte) errorStatus.get());
+                        // Cancel races completion. Whichever wins, the query must reach
+                        // a terminal state without deadlocking and the API must remain
+                        // consistent. If cancel won, await threw and onError saw a
+                        // non-zero status; if completion won, await returned cleanly.
+                        Assert.assertTrue("Completion must terminate", c.isDone());
+                        if (awaitOutcome.get() != null) {
+                            Assert.assertNotNull("onError must fire when cancel wins", errorStatus.get());
+                            Assert.assertNotEquals((byte) 0, (byte) errorStatus.get());
+                        }
                     }
                 }
             }
@@ -221,13 +225,14 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         new Thread(() -> {
                             try {
                                 AtomicInteger seen = new AtomicInteger();
-                                Completion c = db.executeSql("SELECT x FROM conc", new CollectingHandler() {
-                                    @Override
-                                    public void onBatch(QwpColumnBatch batch) {
-                                        seen.addAndGet(batch.getRowCount());
-                                    }
-                                });
-                                c.await();
+                                try (Query q = db.borrowQuery()) {
+                                    q.sql("SELECT x FROM conc").handler(new CollectingHandler() {
+                                        @Override
+                                        public void onBatch(QwpColumnBatch batch) {
+                                            seen.addAndGet(batch.getRowCount());
+                                        }
+                                    }).submit().await();
+                                }
                                 if (seen.get() == 100) {
                                     okCount.incrementAndGet();
                                 }
@@ -248,19 +253,114 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
         });
     }
 
+    @Test(timeout = 60_000)
+    public void testHandlerCannotCloseOrAwaitOnWorkerThread() throws Exception {
+        // A result handler runs on the worker (dispatch) thread, so a reentrant
+        // close()/await() from inside it would block forever waiting for a
+        // terminal event only that thread can deliver. The reentrancy guard must
+        // turn that into an immediate IllegalStateException -- proving both that
+        // the handler really runs on the worker thread and that the worker is
+        // not deadlocked/leaked (the next borrow still works). The method-level
+        // timeout fails the test if the guard regresses into a deadlock.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain server = startFragmented()) {
+                server.execute("CREATE TABLE rh(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.execute("INSERT INTO rh SELECT x, x::TIMESTAMP FROM long_sequence(3)");
+                server.awaitTable("rh");
+
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                try (QuestDB db = QuestDB.builder().fromConfig(config).queryPoolSize(1).build()) {
+                    AtomicReference<Throwable> closeOutcome = new AtomicReference<>();
+                    AtomicReference<Throwable> awaitOutcome = new AtomicReference<>();
+                    AtomicInteger rows = new AtomicInteger();
+
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT x FROM rh").handler(new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                rows.addAndGet(batch.getRowCount());
+                                // q is also the Completion (QueryLease implements both).
+                                // Both calls run on the worker thread and must throw.
+                                if (closeOutcome.get() == null) {
+                                    try {
+                                        q.close();
+                                        closeOutcome.set(new AssertionError("close() must throw from a handler"));
+                                    } catch (Throwable t) {
+                                        closeOutcome.set(t);
+                                    }
+                                    try {
+                                        // q is the Completion at runtime (QueryLease implements both).
+                                        ((Completion) q).await();
+                                        awaitOutcome.set(new AssertionError("await() must throw from a handler"));
+                                    } catch (Throwable t) {
+                                        awaitOutcome.set(t);
+                                    }
+                                }
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                Assert.fail("egress error: " + message);
+                            }
+                        }).submit().await();
+                    }
+
+                    Assert.assertEquals("the handler must have run (onBatch saw the rows)", 3, rows.get());
+                    Assert.assertTrue("close() from a handler must throw IllegalStateException, was: "
+                                    + closeOutcome.get(),
+                            closeOutcome.get() instanceof IllegalStateException);
+                    Assert.assertTrue("await() from a handler must throw IllegalStateException, was: "
+                                    + awaitOutcome.get(),
+                            awaitOutcome.get() instanceof IllegalStateException);
+                    Assert.assertTrue("the error must point at cancel() as the safe in-handler stop",
+                            ((IllegalStateException) closeOutcome.get()).getMessage().contains("cancel()"));
+
+                    // The worker must not be deadlocked or leaked: re-borrow from
+                    // the size-1 pool and run a normal query to completion.
+                    AtomicInteger reused = new AtomicInteger();
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT x FROM rh").handler(new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                reused.addAndGet(batch.getRowCount());
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                Assert.fail("egress error on reuse: " + message);
+                            }
+                        }).submit().await();
+                    }
+                    Assert.assertEquals("the worker must still be usable after the in-handler misuse",
+                            3, reused.get());
+                }
+            }
+        });
+    }
+
     @Test
     public void testQueryExceptionOnBadSql() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain _ = startFragmented()) {
                 String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.connect(config)) {
-                    Completion c = db.executeSql("SELECT * FROM no_such_table", new CollectingHandler());
-                    try {
-                        c.await();
-                        Assert.fail("expected QueryException for missing table");
-                    } catch (QueryException qe) {
-                        Assert.assertTrue("status byte must be non-zero on server error",
-                                qe.getStatus() != 0);
+                    try (Query q = db.borrowQuery()) {
+                        Completion c = q.sql("SELECT * FROM no_such_table").handler(new CollectingHandler()).submit();
+                        try {
+                            c.await();
+                            Assert.fail("expected QueryException for missing table");
+                        } catch (QueryException qe) {
+                            Assert.assertTrue("status byte must be non-zero on server error",
+                                    qe.getStatus() != 0);
+                        }
                     }
                 }
             }
@@ -297,47 +397,18 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
         });
     }
 
-    @Test
-    public void testThreadAffineSenderRoundTrip() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain server = startFragmented()) {
-                server.execute("CREATE TABLE ta(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                server.awaitTable("ta");
-
-                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
-                try (QuestDB db = QuestDB.connect(config)) {
-                    Sender s1 = db.sender();
-                    Sender s2 = db.sender();
-                    Assert.assertSame("same thread must see the same pinned Sender", s1, s2);
-                    s1.table("ta").longColumn("i", 7).at(7L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
-                    s1.flush();
-                    db.releaseSender();
-                    server.awaitTxn("ta", 1);
-
-                    AtomicLong got = new AtomicLong();
-                    Completion c = db.executeSql("SELECT i FROM ta", new CollectingHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            for (int r = 0; r < batch.getRowCount(); r++) {
-                                got.set(batch.getLongValue(0, r));
-                            }
-                        }
-                    });
-                    c.await();
-                    Assert.assertEquals(7L, got.get());
-                }
-            }
-        });
-    }
-
     /**
-     * Same thread, many sequential queries. Asserts:
-     * - {@link QuestDB#query()} returns the same per-thread instance every call
-     * - state resets between submits (no SQL/handler carryover)
-     * - back-to-back submits with binds reuse the same {@link Completion}
+     * One borrowed handle, many sequential submits. Asserts:
+     * - within a single lease the {@link Completion} is the reused field on the
+     * handle (same instance every submit)
+     * - bound values reach the server on every submit
+     * - re-borrowing from a size-1 pool reuses the pooled worker and its
+     * pre-allocated QueryImpl, with builder state reset, so a no-binds query
+     * does not carry over the prior binds (the returned lease is a fresh
+     * per-borrow handle wrapping that reused state)
      */
     @Test
-    public void testManySequentialQueriesOnSameThread() throws Exception {
+    public void testManySequentialQueriesOnSameHandle() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain server = startFragmented()) {
                 server.execute("CREATE TABLE seq(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -346,29 +417,59 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
 
                 String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
                 try (QuestDB db = QuestDB.builder().fromConfig(config).queryPoolSize(1).build()) {
-                    io.questdb.client.Query firstHandle = db.query();
-                    Completion firstCompletion = firstHandle
-                            .sql("SELECT count() FROM seq")
-                            .handler(new CollectingHandler())
-                            .submit();
-                    firstCompletion.await();
+                    Completion firstCompletion;
+                    try (Query handle = db.borrowQuery()) {
+                        firstCompletion = handle
+                                .sql("SELECT count() FROM seq")
+                                .handler(new CollectingHandler())
+                                .submit();
+                        firstCompletion.await();
 
-                    // Identity: every subsequent query() on the same thread is the
-                    // same handle, and the Completion is the same field on it.
-                    final int iterations = 50;
-                    for (int i = 0; i < iterations; i++) {
-                        io.questdb.client.Query q = db.query();
-                        Assert.assertSame("Query handle must be reused per thread", firstHandle, q);
+                        // Many sequential submits on the SAME lease: the Completion
+                        // is the reused field on the handle, and bound values reach
+                        // the server each time.
+                        final int iterations = 50;
+                        for (int i = 0; i < iterations; i++) {
+                            AtomicLong observed = new AtomicLong();
+                            Completion c = handle.sql("SELECT x FROM seq WHERE x = $1")
+                                    .binds(binds -> binds.setLong(0, 7L))
+                                    .handler(new QwpColumnBatchHandler() {
+                                        @Override
+                                        public void onBatch(QwpColumnBatch batch) {
+                                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                                observed.set(batch.getLongValue(0, r));
+                                            }
+                                        }
 
-                        AtomicLong observed = new AtomicLong();
-                        Completion c = q.sql("SELECT x FROM seq WHERE x = $1")
-                                .binds(binds -> binds.setLong(0, 7L))
+                                        @Override
+                                        public void onEnd(long totalRows) {
+                                        }
+
+                                        @Override
+                                        public void onError(byte status, String message) {
+                                            Assert.fail("egress error: " + message);
+                                        }
+                                    })
+                                    .submit();
+                            Assert.assertSame("Completion must be reused per handle", firstCompletion, c);
+                            c.await();
+                            Assert.assertEquals("iter " + i + ": bound value must reach the server", 7L, observed.get());
+                        }
+                    }
+
+                    // Re-borrow from the size-1 pool: the pooled worker and its
+                    // reused QueryImpl come back, and resetForBorrow() cleared the
+                    // prior SQL/binds/handler, so a no-binds query does not carry
+                    // over the earlier $1 binds. The lease is a fresh per-borrow
+                    // handle wrapping that reused state; QueryImplResetTest in the
+                    // client asserts the same-pooled-object reuse directly.
+                    AtomicLong total = new AtomicLong();
+                    try (Query handle = db.borrowQuery()) {
+                        handle.sql("SELECT count() FROM seq")
                                 .handler(new QwpColumnBatchHandler() {
                                     @Override
                                     public void onBatch(QwpColumnBatch batch) {
-                                        for (int r = 0; r < batch.getRowCount(); r++) {
-                                            observed.set(batch.getLongValue(0, r));
-                                        }
+                                        total.set(batch.getLongValue(0, 0));
                                     }
 
                                     @Override
@@ -377,38 +478,12 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
 
                                     @Override
                                     public void onError(byte status, String message) {
-                                        Assert.fail("egress error on iter " + " : " + message);
+                                        Assert.fail("egress error on no-binds tail: " + message);
                                     }
                                 })
-                                .submit();
-                        Assert.assertSame("Completion must be reused per Query", firstCompletion, c);
-                        c.await();
-                        Assert.assertEquals("iter " + i + ": bound value must reach the server", 7L, observed.get());
+                                .submit()
+                                .await();
                     }
-
-                    // After a binds-using query, a no-binds query on the same handle
-                    // must not carry over the previous binds (would fail server-side
-                    // with "no placeholder" or a stale value).
-                    AtomicLong total = new AtomicLong();
-                    db.query()
-                            .sql("SELECT count() FROM seq")
-                            .handler(new QwpColumnBatchHandler() {
-                                @Override
-                                public void onBatch(QwpColumnBatch batch) {
-                                    total.set(batch.getLongValue(0, 0));
-                                }
-
-                                @Override
-                                public void onEnd(long totalRows) {
-                                }
-
-                                @Override
-                                public void onError(byte status, String message) {
-                                    Assert.fail("egress error on no-binds tail: " + message);
-                                }
-                            })
-                            .submit()
-                            .await();
                     Assert.assertEquals(50L, total.get());
                 }
             }
@@ -465,27 +540,28 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                             try {
                                 for (int i = 0; i < queriesPerThread; i++) {
                                     AtomicInteger seen = new AtomicInteger();
-                                    Completion c = db.query()
-                                            .sql("SELECT x FROM mix WHERE x > $1")
-                                            .binds(binds -> binds.setLong(0, 0L))
-                                            .handler(new QwpColumnBatchHandler() {
-                                                @Override
-                                                public void onBatch(QwpColumnBatch batch) {
-                                                    seen.addAndGet(batch.getRowCount());
-                                                }
+                                    try (Query q = db.borrowQuery()) {
+                                        q.sql("SELECT x FROM mix WHERE x > $1")
+                                                .binds(binds -> binds.setLong(0, 0L))
+                                                .handler(new QwpColumnBatchHandler() {
+                                                    @Override
+                                                    public void onBatch(QwpColumnBatch batch) {
+                                                        seen.addAndGet(batch.getRowCount());
+                                                    }
 
-                                                @Override
-                                                public void onEnd(long totalRows) {
-                                                }
+                                                    @Override
+                                                    public void onEnd(long totalRows) {
+                                                    }
 
-                                                @Override
-                                                public void onError(byte status, String message) {
-                                                    firstError.compareAndSet(null,
-                                                            new AssertionError("egress error: " + message));
-                                                }
-                                            })
-                                            .submit();
-                                    c.await();
+                                                    @Override
+                                                    public void onError(byte status, String message) {
+                                                        firstError.compareAndSet(null,
+                                                                new AssertionError("egress error: " + message));
+                                                    }
+                                                })
+                                                .submit()
+                                                .await();
+                                    }
                                     if (seen.get() >= 200) {
                                         okCount.incrementAndGet();
                                     }
@@ -510,9 +586,8 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
     }
 
     /**
-     * One thread submits two queries that execute concurrently on a 2-slot
-     * pool. Uses {@link QuestDB#newQuery()} to obtain two independent handles
-     * (the thread-local {@code query()} is single-flight).
+     * One thread runs two queries concurrently on a 2-slot pool by borrowing
+     * two {@link Query} handles (a single handle is single-flight).
      * <p>
      * Concurrency proof: each handler stalls in {@code onBatch} for 1s. If
      * the second submit had to wait for the first, total elapsed would be
@@ -563,16 +638,12 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                     };
 
                     long start = System.nanoTime();
-                    Completion c1 = db.newQuery()
-                            .sql("SELECT x FROM cc")
-                            .handler(stallingHandler)
-                            .submit();
-                    Completion c2 = db.newQuery()
-                            .sql("SELECT x FROM cc")
-                            .handler(stallingHandler)
-                            .submit();
-                    c1.await();
-                    c2.await();
+                    try (Query q1 = db.borrowQuery(); Query q2 = db.borrowQuery()) {
+                        Completion c1 = q1.sql("SELECT x FROM cc").handler(stallingHandler).submit();
+                        Completion c2 = q2.sql("SELECT x FROM cc").handler(stallingHandler).submit();
+                        c1.await();
+                        c2.await();
+                    }
                     long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
                     if (firstError.get() != null) {
@@ -582,6 +653,171 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                             "elapsed=" + elapsedMs + "ms; with concurrency it should be ~"
                                     + STALL_MS + "ms, not ~" + (STALL_MS * 2) + "ms",
                             elapsedMs < (STALL_MS * 2) - 200);
+                }
+            }
+        });
+    }
+
+    /**
+     * Mixed ingest + egress over one pooled handle: the main thread borrows
+     * two Senders at once -- one per table -- from a 2-slot sender pool and
+     * uses them simultaneously (interleaved row-by-row, with a shared mid-flush
+     * so they also transmit at once), while a dedicated reader thread streams
+     * two DIFFERENT SQLs, each on its own borrowed {@link io.questdb.client.Query}
+     * handle, over a 2-slot query pool.
+     * <p>
+     * Every {@link QuestDB#borrowSender()} call returns a distinct pooled
+     * Sender with its own buffer, asserted directly with {@code assertNotSame}.
+     * <p>
+     * Asserts both pools hand out two leases at once without blocking, the
+     * close-on-return flush lands every row, and each query sees the exact
+     * rows and sum for its own table (no cross-talk between the two Senders or
+     * the two Query handles).
+     */
+    @Test
+    public void testTwoSendersPerTableWhileReaderThreadStreamsTwoQueries() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain server = startFragmented()) {
+                server.execute("CREATE TABLE alpha(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.execute("CREATE TABLE beta(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.awaitTable("alpha");
+                server.awaitTable("beta");
+
+                final int rowsAlpha = 100;
+                final int rowsBeta = 50;
+
+                // auto_flush_interval=3600000 (1h): the default 100ms interval
+                // auto-flush would fire on the next at() after any >=100ms stall
+                // (GC/JIT on a loaded CI agent), injecting a third txn per table.
+                // That would both break the awaitTxn(name, 2) barrier below (it
+                // returns at writerTxn >= 2, before the close-flush txn applies,
+                // so the reader would see a partial table) and degrade the
+                // choreographed shared mid-flush (a premature auto-flush drains
+                // the buffer it is meant to transmit). WS rejects
+                // auto_flush_interval=off outright, so a 1h interval -- orders of
+                // magnitude beyond the test's runtime -- stands in for it. With
+                // that, rows=1000 (> both row counts) and bytes=0, exactly two
+                // non-empty flushes per table are guaranteed: the shared
+                // mid-flush and the close flush.
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";auto_flush_interval=3600000;";
+                try (QuestDB db = QuestDB.builder()
+                        .fromConfig(config)
+                        .senderPoolSize(2)
+                        .queryPoolSize(2)
+                        .acquireTimeoutMillis(30_000)
+                        .build()) {
+
+                    // (1) Ingest: hold two pooled Senders at once -- one per
+                    // table -- and use them simultaneously. Every borrow hands
+                    // out a distinct pooled Sender with its own buffer, so a
+                    // 2-slot pool leases both to one thread.
+                    final int maxRows = Math.max(rowsAlpha, rowsBeta);
+                    try (Sender a = db.borrowSender();
+                         Sender b = db.borrowSender()) {
+                        // Distinct objects: borrowSender() is not thread-local,
+                        // so the two leases are independent Senders.
+                        Assert.assertNotSame("borrowSender() must hand out two distinct pooled Senders", a, b);
+
+                        // Interleave the two senders row-by-row so both buffers
+                        // fill at the same time, rather than filling alpha
+                        // completely before touching beta.
+                        for (int i = 0; i < maxRows; i++) {
+                            if (i < rowsAlpha) {
+                                a.table("alpha").longColumn("x", i)
+                                        .at((i + 1L) * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                            }
+                            if (i < rowsBeta) {
+                                b.table("beta").longColumn("x", 2L * i)
+                                        .at((i + 1L) * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                            }
+                            // Mid-way -- while both still have rows left to
+                            // write -- flush both at once so the two senders also
+                            // transmit concurrently, not merely buffer in step.
+                            if (i == rowsBeta / 2) {
+                                a.flush();
+                                b.flush();
+                            }
+                        }
+                        // close() on each flushes whatever remains.
+                    }
+                    // ws ingest is async. With interval auto-flush disabled in the
+                    // config, each table sees exactly two non-empty flushes (the
+                    // shared mid-flush + its close flush); wait for both.
+                    server.awaitTxn("alpha", 2);
+                    server.awaitTxn("beta", 2);
+
+                    // (2) Egress: a dedicated reader thread streams two
+                    // different SQLs at once, each on its own borrowed Query handle.
+                    final AtomicLong alphaSum = new AtomicLong();
+                    final AtomicLong betaSum = new AtomicLong();
+                    final AtomicInteger alphaRows = new AtomicInteger();
+                    final AtomicInteger betaRows = new AtomicInteger();
+                    final AtomicReference<Throwable> firstError = new AtomicReference<>();
+
+                    Thread reader = new Thread(() -> {
+                        try (Query qa = db.borrowQuery(); Query qb = db.borrowQuery()) {
+                            Completion ca = qa
+                                    .sql("SELECT x FROM alpha")
+                                    .handler(new QwpColumnBatchHandler() {
+                                        @Override
+                                        public void onBatch(QwpColumnBatch batch) {
+                                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                                alphaSum.addAndGet(batch.getLongValue(0, r));
+                                                alphaRows.incrementAndGet();
+                                            }
+                                        }
+
+                                        @Override
+                                        public void onEnd(long totalRows) {
+                                        }
+
+                                        @Override
+                                        public void onError(byte status, String message) {
+                                            firstError.compareAndSet(null,
+                                                    new AssertionError("alpha egress error: " + message));
+                                        }
+                                    })
+                                    .submit();
+                            Completion cb = qb
+                                    .sql("SELECT x FROM beta")
+                                    .handler(new QwpColumnBatchHandler() {
+                                        @Override
+                                        public void onBatch(QwpColumnBatch batch) {
+                                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                                betaSum.addAndGet(batch.getLongValue(0, r));
+                                                betaRows.incrementAndGet();
+                                            }
+                                        }
+
+                                        @Override
+                                        public void onEnd(long totalRows) {
+                                        }
+
+                                        @Override
+                                        public void onError(byte status, String message) {
+                                            firstError.compareAndSet(null,
+                                                    new AssertionError("beta egress error: " + message));
+                                        }
+                                    })
+                                    .submit();
+                            ca.await();
+                            cb.await();
+                        } catch (Throwable th) {
+                            firstError.compareAndSet(null, th);
+                        }
+                    }, "reader");
+                    reader.start();
+                    reader.join(TimeUnit.SECONDS.toMillis(30));
+                    Assert.assertFalse("reader thread must finish within 30s", reader.isAlive());
+
+                    if (firstError.get() != null) {
+                        throw new AssertionError("reader thread failed", firstError.get());
+                    }
+                    Assert.assertEquals(rowsAlpha, alphaRows.get());
+                    Assert.assertEquals(rowsBeta, betaRows.get());
+                    // alpha x = 0..rowsAlpha-1; beta x = 2*i for i = 0..rowsBeta-1.
+                    Assert.assertEquals((rowsAlpha - 1L) * rowsAlpha / 2, alphaSum.get());
+                    Assert.assertEquals((rowsBeta - 1L) * rowsBeta, betaSum.get());
                 }
             }
         });
@@ -644,12 +880,14 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                     // txns. Wait for all to apply before counting.
                     server.awaitTxn("el", 4);
                     AtomicInteger seen = new AtomicInteger();
-                    db.executeSql("SELECT x FROM el", new CollectingHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            seen.addAndGet(batch.getRowCount());
-                        }
-                    }).await();
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT x FROM el").handler(new CollectingHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                seen.addAndGet(batch.getRowCount());
+                            }
+                        }).submit().await();
+                    }
                     Assert.assertEquals("burst writes must all land", burst, seen.get());
 
                     // Let the housekeeper reap idle slots back toward min.
@@ -668,19 +906,18 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
     }
 
     /**
-     * Two-arg connect: separate (here identical) ingest and query ws strings.
-     * Exercises the facade's two-string path end-to-end.
+     * Single cluster config drives both the ingest and query pools. Exercises
+     * the facade's one-config path end-to-end.
      */
     @Test
-    public void testTwoArgConnectRoundTrip() throws Exception {
+    public void testSingleConfigConnectRoundTrip() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain server = startFragmented()) {
                 server.execute("CREATE TABLE two(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 server.awaitTable("two");
 
-                String ingest = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
-                String query = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
-                try (QuestDB db = QuestDB.connect(ingest, query)) {
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                try (QuestDB db = QuestDB.connect(config)) {
                     try (Sender s = db.borrowSender()) {
                         s.table("two").longColumn("i", 11).at(1_000_000L, java.time.temporal.ChronoUnit.MICROS);
                         s.table("two").longColumn("i", 22).at(2L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
@@ -688,14 +925,16 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                     server.awaitTxn("two", 1);
 
                     AtomicLong sum = new AtomicLong();
-                    db.executeSql("SELECT i FROM two", new CollectingHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            for (int r = 0; r < batch.getRowCount(); r++) {
-                                sum.addAndGet(batch.getLongValue(0, r));
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT i FROM two").handler(new CollectingHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                for (int r = 0; r < batch.getRowCount(); r++) {
+                                    sum.addAndGet(batch.getLongValue(0, r));
+                                }
                             }
-                        }
-                    }).await();
+                        }).submit().await();
+                    }
                     Assert.assertEquals(33L, sum.get());
                 }
             }
@@ -722,12 +961,14 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                     server.awaitTxn("pk", 1);
 
                     AtomicInteger rows = new AtomicInteger();
-                    db.executeSql("SELECT i FROM pk", new CollectingHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            rows.addAndGet(batch.getRowCount());
-                        }
-                    }).await();
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT i FROM pk").handler(new CollectingHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                rows.addAndGet(batch.getRowCount());
+                            }
+                        }).submit().await();
+                    }
                     Assert.assertEquals(1, rows.get());
                 }
             }
@@ -757,20 +998,22 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                     server.awaitTxn("au", 1);
 
                     AtomicLong got = new AtomicLong();
-                    db.executeSql("SELECT i FROM au", new CollectingHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            for (int r = 0; r < batch.getRowCount(); r++) {
-                                got.set(batch.getLongValue(0, r));
+                    try (Query q = db.borrowQuery()) {
+                        q.sql("SELECT i FROM au").handler(new CollectingHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                for (int r = 0; r < batch.getRowCount(); r++) {
+                                    got.set(batch.getLongValue(0, r));
+                                }
                             }
-                        }
-                    }).await();
+                        }).submit().await();
+                    }
                     Assert.assertEquals(99L, got.get());
                 }
 
                 // Wrong password is rejected at the eager pool-prewarm connect.
                 String bad = "ws::addr=127.0.0.1:" + HTTP_PORT + ";user=admin;pass=wrong;";
-                try (QuestDB db = QuestDB.connect(bad)) {
+                try (QuestDB _ = QuestDB.connect(bad)) {
                     Assert.fail("expected auth failure with a wrong password");
                 } catch (RuntimeException expected) {
                     // connect rejected the bad credentials
