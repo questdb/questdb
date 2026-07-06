@@ -2854,6 +2854,20 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 assertQuery("SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'")
                         .noLeakCheck().noRandomAccess()
                         .returns("in_mem_bytes\n" + lateFootprint + "\n");
+
+                // in_mem_rows tracks the live logical content, not the arena
+                // capacity: it stays at the small retained window (one cycle),
+                // decoupled from the plateaued footprint. This is the pairing that
+                // lets an operator tell a view actively buffering rows from one
+                // holding capacity retained from a past burst.
+                long liveRows = tier.publishedRowCount();
+                Assert.assertTrue(
+                        "published row count must stay at the small retained window [rows=" + liveRows + "]",
+                        liveRows <= 4 * rowsPerCycle
+                );
+                assertQuery("SELECT in_mem_rows FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck().noRandomAccess()
+                        .returns("in_mem_rows\n" + liveRows + "\n");
             }
 
             execute("DROP LIVE VIEW lv");
@@ -2890,6 +2904,43 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             long footprint = instance.getInMemoryTier().footprintBytes();
             Assert.assertTrue("footprint must be > 0 after a refresh", footprint > 0);
             assertQuery("SELECT in_mem_bytes FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("in_mem_bytes\n" + footprint + "\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewsExposesInMemRows() throws Exception {
+        // in_mem_rows reports the live row count of the published slot - the
+        // logical content of the in-mem tier, the companion to the peak-sticky
+        // in_mem_bytes footprint. Zero before any refresh allocates the tier;
+        // equals the published slot's rowCount once a refresh has populated it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            // Before any refresh: tier is unallocated; in_mem_rows must read 0.
+            assertQuery("SELECT in_mem_rows FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("in_mem_rows\n0\n");
+
+            // Two rows match the WHERE filter; a third is filtered out.
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 1), " +
+                    "('2026-05-12T00:00:00.000002Z', 2), " +
+                    "('2026-05-12T00:00:00.000003Z', -1)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            // After refresh, in_mem_rows equals the published slot's rowCount.
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull("tier must be allocated after refresh", tier);
+            long liveRows = tier.publishedRowCount();
+            Assert.assertEquals("only the two filter-matching rows are held in memory", 2, liveRows);
+            assertQuery("SELECT in_mem_rows FROM live_views() WHERE view_name = 'lv'").noLeakCheck().noRandomAccess().returns("in_mem_rows\n" + liveRows + "\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -10941,7 +10992,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try {
                 assertQuery("SELECT * FROM live_views() WHERE 1 = 0").noLeakCheck().returns("view_name\tview_table_dir_name\tbase_table_name\tview_sql\tview_status\t"
                         + "invalidation_reason\tflush_every_interval\tflush_every_interval_unit\t"
-                        + "in_memory_interval\tin_memory_interval_unit\tin_mem_bytes\t"
+                        + "in_memory_interval\tin_memory_interval_unit\tin_mem_bytes\tin_mem_rows\t"
                         + "o3_rejected_count\tlag_seqtxn\tlag_micros\t"
                         + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
                         + "view_lower_bound_timestamp\twriter_stall_micros\tbackfill_target_seqtxn\t"

@@ -278,6 +278,26 @@ public class LiveViewInMemoryTier implements QuietCloseable {
         }
     }
 
+    /**
+     * Returns the number of rows currently held in the published
+     * (reader-visible) slot - the live logical content of the in-mem tier,
+     * the companion to {@link #footprintBytes()} which reports peak-sticky
+     * allocated capacity across both slots. Used by
+     * {@code live_views().in_mem_rows}.
+     * <p>
+     * Runs lock-free off the {@code live_views()} catalogue cursor with no read
+     * pin. Snapshots {@code publishedIdx} and the slot reference into locals
+     * before dereferencing, so a concurrent DROP / invalidate (close() nulls
+     * both slots) cannot NPE the monitoring query; it may momentarily observe a
+     * slot mid-swap, acceptable for an approximate monitoring metric. Returns 0
+     * when the published slot has been cleared.
+     */
+    public long publishedRowCount() {
+        final int idx = publishedIdx;
+        final LiveViewInMemoryBuffer slot = slots[idx];
+        return slot == null ? 0L : slot.rowCount();
+    }
+
     public void releaseRead(int slotIdx) {
         releasePerSlotRc(slotIdx);
         // Drop the global lease taken at acquireRead; if this was the last
