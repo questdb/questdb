@@ -525,6 +525,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
     }
 
+    // Survives per-message clear(); reset only on onDisconnected().
+    public boolean hasUnresolvedSequence() {
+        return firstUnresolvedSequence != -1;
+    }
+
     /**
      * Records that a FLAG_DEFER_COMMIT frame buffered rows into WAL writers
      * without a covering commit. Cleared by {@link #commit()} (successful

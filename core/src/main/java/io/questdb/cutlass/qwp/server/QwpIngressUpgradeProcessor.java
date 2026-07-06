@@ -862,6 +862,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return;
         }
 
+        // A prior error broke the ordered pipeline: committing a later pipelined
+        // frame would advance committed data past the gap the acked watermark
+        // stopped at. Consume the sequence without touching the engine; the
+        // client replays it from its acked watermark on a fresh connection.
+        if (state.hasUnresolvedSequence()) {
+            LOG.debug().$("WebSocket frame refused, connection pipeline broken by a prior error [fd=").$(context.getFd())
+                    .$(", seq=").$(seq).I$();
+            state.markSequenceUnresolved(seq);
+            return;
+        }
+
         if (!state.isOk()) {
             LOG.debug().$("WebSocket ignoring message, state is in error [fd=").$(context.getFd()).I$();
             sendErrorResponse(context, state, seq, STATUS_INTERNAL_ERROR, "Previous message failed");
@@ -994,6 +1005,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
             }
         } else {
+            // Before any flush that may defer, so a blocked error frame still
+            // clamps the watermark and refuses the pipelined tail.
+            state.markSequenceUnresolved(seq);
             // Error - first ACK all successful messages (if in READY state), then send error
             if (state.hasPendingAck()) {
                 try {

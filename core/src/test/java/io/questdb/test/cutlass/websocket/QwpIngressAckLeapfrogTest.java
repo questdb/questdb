@@ -210,6 +210,82 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A per-message error must break the ordered pipeline: a valid frame the
+     * client already pipelined behind the failing one must be refused, never
+     * committed, and the cumulative OK-ACK must not leapfrog the gap.
+     */
+    @Test
+    public void testErrorRefusesPipelinedTailOnSameConnection() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            // seq=0 valid, seq=1 schema mismatch (VARCHAR "x" into LONG v),
+            // seq=2 valid but pipelined behind the gap.
+            ObjList<byte[]> sent = ingestOnFreshConnection(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowVarcharMessage("x", 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.PING, new byte[0])
+            );
+
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals("only seq=0 must commit; the pipelined tail after the error is refused", 1, reader.size());
+            }
+            Assert.assertTrue("seq=1 must be refused with an error response", hasErrorResponseForSeq(sent, 1));
+            long maxOkAck = maxCumulativeOkAck(sent);
+            Assert.assertTrue("cumulative OK-ACK must not leapfrog the errored seq=1 (was " + maxOkAck + ")", maxOkAck < 1);
+        });
+    }
+
+    /**
+     * A frame refused because a prior error broke the pipeline is neither
+     * committed nor acked, so a reconnecting client replays it from its acked
+     * watermark and it lands exactly once -- no loss, no duplicate.
+     */
+    @Test
+    public void testReconnectReplayLandsRefusedTailExactlyOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("create table tab (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+
+            // Connection 1: A commits, B (schema mismatch) errors, C is refused.
+            ingestOnFreshConnection(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowVarcharMessage("x", 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
+            );
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                Assert.assertEquals("first connection commits only A", 1, reader.size());
+            }
+
+            // Reconnect: the client replays its unacked tail from ackedFsn+1 --
+            // the corrected B and the still-valid C.
+            ingestOnFreshConnection(
+                    processor,
+                    httpConfig,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L))
+            );
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("tab")) {
+                // A + B + C, C exactly once (never committed on connection 1).
+                Assert.assertEquals("replayed tail must land exactly once, no duplicate", 3, reader.size());
+            }
+        });
+    }
+
     private static byte[] concat(byte[]... arrays) {
         int len = 0;
         for (byte[] a : arrays) {
@@ -349,6 +425,52 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         return message;
     }
 
+    /**
+     * Like {@link #oneRowMessage} but declares {@code v} as VARCHAR carrying a
+     * non-numeric string, which the LONG column rejects as SCHEMA_MISMATCH.
+     */
+    private static byte[] oneRowVarcharMessage(String value, long tsMicros) {
+        byte[] utf8 = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] payload = new byte[11 + 1 + 8 + utf8.length + 1 + 8];
+        int i = 0;
+        payload[i++] = 3;
+        payload[i++] = 't';
+        payload[i++] = 'a';
+        payload[i++] = 'b';
+        payload[i++] = 1; // rowCount
+        payload[i++] = 2; // columnCount
+        payload[i++] = 1; // column name length
+        payload[i++] = 'v';
+        payload[i++] = QwpConstants.TYPE_VARCHAR;
+        payload[i++] = 0; // empty name = designated timestamp
+        payload[i++] = QwpConstants.TYPE_TIMESTAMP;
+        // column data: v -- [no-null-bitmap flag][offset array][utf8 bytes]
+        payload[i++] = 0;
+        i = writeLeInt(payload, i, 0);
+        i = writeLeInt(payload, i, utf8.length);
+        System.arraycopy(utf8, 0, payload, i, utf8.length);
+        i += utf8.length;
+        // column data: designated timestamp
+        payload[i++] = 0;
+        writeLeLong(payload, i, tsMicros);
+
+        byte[] message = new byte[QwpConstants.HEADER_SIZE + payload.length];
+        message[0] = 'Q';
+        message[1] = 'W';
+        message[2] = 'P';
+        message[3] = '1';
+        message[4] = QwpConstants.VERSION;
+        message[5] = 0;
+        message[6] = 1;
+        message[7] = 0;
+        message[8] = (byte) payload.length;
+        message[9] = 0;
+        message[10] = 0;
+        message[11] = 0;
+        System.arraycopy(payload, 0, message, QwpConstants.HEADER_SIZE, payload.length);
+        return message;
+    }
+
     private static long readLeLong(byte[] buf, int offset) {
         long v = 0;
         for (int i = 7; i >= 0; i--) {
@@ -357,11 +479,47 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         return v;
     }
 
+    private static int writeLeInt(byte[] buf, int offset, int value) {
+        for (int i = 0; i < 4; i++) {
+            buf[offset++] = (byte) (value >>> (i * 8));
+        }
+        return offset;
+    }
+
     private static int writeLeLong(byte[] buf, int offset, long value) {
         for (int i = 0; i < 8; i++) {
             buf[offset++] = (byte) (value >>> (i * 8));
         }
         return offset;
+    }
+
+    private ObjList<byte[]> ingestOnFreshConnection(
+            QwpIngressUpgradeProcessor processor,
+            HttpFullFatServerConfiguration httpConfig,
+            byte[]... frames
+    ) throws Exception {
+        byte[] wire = concat(frames);
+        PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+        long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+        try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+            QwpIngressProcessorState state = new QwpIngressProcessorState(
+                    RECV_BUFFER_SIZE,
+                    httpConfig.getSendBufferSize(),
+                    engine,
+                    httpConfig.getLineHttpProcessorConfiguration()
+            );
+            state.of(-1, AllowAllSecurityContext.INSTANCE);
+            getLV().set(context, state);
+            for (byte[] frame : frames) {
+                drive(processor, context, nf, frame.length);
+            }
+        } finally {
+            Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+        return rawSocket.sentFrames;
     }
 
     /**
