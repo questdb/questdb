@@ -41,13 +41,13 @@ import org.jetbrains.annotations.Nullable;
  * covered (posting-index sidecar) columns into native page-frame buffers, plus
  * the broadcast of a symbol key column. The byte layout it produces is exactly
  * what a downstream native page-frame consumer (vectorized aggregation, JIT /
- * non-JIT filter, group-by) reads. This class drives the worker-side covered
- * decode (in {@link PageFrameMemoryPool}). The eager, multi-key frame-production
- * path in {@code CoveringIndexRecordCursorFactory} writes the IDENTICAL byte
- * layout via its own {@code write*ToFrame} methods; the two must stay in lockstep
- * (size guards included) — any change to the layout here must be mirrored there.
- * The paths never decode the same value (workers skip multi-key frames), so the
- * duplication is a drift risk rather than an active divergence.
+ * non-JIT filter, group-by) reads. This class is the single source of truth for
+ * the covered byte layout: it drives both the worker-side covered decode (in
+ * {@link PageFrameMemoryPool}) and the eager, multi-key frame-production path in
+ * {@code CoveringIndexRecordCursorFactory}, which delegates to
+ * {@link #writeCoveredRow} (each supplies its own {@link VarDataSink} over its
+ * per-column data buffers). The two paths never decode the same value (workers
+ * skip multi-key frames) but now share one writer, so the layout cannot drift.
  * <p>
  * Var-size columns (VARCHAR / STRING / BINARY / ARRAY) append into a per-column
  * data buffer fronted by a {@link VarDataSink} that the caller supplies; the
