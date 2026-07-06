@@ -62,13 +62,13 @@ public interface MonotonicTimestampFunction {
      * offset applied to every timestamp: the inverse subtracts {@code shift} back. Returns
      * {@link #EXACT}, or {@link #NONE} when subtracting {@code shift} would overflow the long
      * boundary or when the forward shift wraps part of the preimage out of a single interval.
-     * The {@code timestampType} identifies the designated-timestamp domain, whose write-time
-     * ceiling decides whether the forward shift can actually reach a storable overflow value.
+     * {@code maxTimestamp} is the ceiling on this shift's input (see {@link #shiftInputCeiling}):
+     * it decides whether the forward shift can actually reach a storable overflow value.
      */
-    static int invertConstantShift(Interval io, long shift, int timestampType) {
+    static int invertConstantShift(Interval io, long shift, long maxTimestamp) {
         final long inLo = io.getLo();
         final long inHi = io.getHi();
-        if (shiftWrapsIntoRange(shift, inLo, inHi, ColumnType.getTimestampDriver(timestampType).getMaxDesignatedTimestamp())) {
+        if (shiftWrapsIntoRange(shift, inLo, inHi, maxTimestamp)) {
             return NONE;
         }
         long lo = inLo;
@@ -208,6 +208,24 @@ public interface MonotonicTimestampFunction {
      * be constant or runtime-constant.
      */
     Function getTimestampArg();
+
+    /**
+     * Returns the ceiling on this shift function's input for the overflow check in
+     * {@link #invertConstantShift}. Only the innermost shift sits directly on the designated
+     * timestamp, whose stored values {@code TableWriter}/{@code WalWriter.validateBounds} caps at
+     * the domain ceiling; there the driver ceiling ({@link TimestampDriver#getMaxDesignatedTimestamp})
+     * bounds the wrap exactly. An outer shift's input is an inner sub-expression whose value can
+     * exceed that ceiling by the accumulated inner shifts, so the driver ceiling would understate the
+     * reachable range; there this returns {@code Long.MAX_VALUE}, which makes any positive shift
+     * decline (the conservative, always-sound choice). Without this distinction a chain of shifts
+     * whose sum overflows -- but whose per-layer shifts each stay under the gap -- would wrongly
+     * prune and drop matching rows.
+     */
+    default long shiftInputCeiling(int timestampType) {
+        return getTimestampArg() instanceof MonotonicTimestampFunction
+                ? Long.MAX_VALUE
+                : ColumnType.getTimestampDriver(timestampType).getMaxDesignatedTimestamp();
+    }
 
     /**
      * Inverts a value range of this function's result into a range on its timestamp

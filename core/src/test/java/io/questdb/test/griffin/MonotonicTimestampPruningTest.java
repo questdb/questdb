@@ -83,6 +83,27 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddLongMicroNearMaxOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tmax (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR;");
+            execute("INSERT INTO tmax VALUES " +
+                    "(1, '2022-01-01T00:00:00.000000Z')," +
+                    "(2, '9999-12-31T23:59:59.999999Z');");
+            // a shift of 9e18 us exceeds the micros gap to Long.MAX, so a stored value near year 9999
+            // overflows to a negative value that satisfies the open upper bound; the predicate must keep
+            // the filter and must not prune, or the year-9999 row is silently dropped
+            assertQuery("SELECT * FROM tmax WHERE ts + 9_000_000_000_000_000_000 < '2022-06-01'")
+                    .timestamp("ts")
+                    .withPlanContaining("filter:")
+                    .withPlanNotContaining("Interval forward scan")
+                    .returns("""
+                            price\tts
+                            2.0\t9999-12-31T23:59:59.999999Z
+                            """);
+        });
+    }
+
+    @Test
     public void testAddLongNanoNearMaxOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tn (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY;");
@@ -332,6 +353,28 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testChainedShiftOverflowKeepsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tmax (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR;");
+            execute("INSERT INTO tmax VALUES " +
+                    "(1, '2022-01-01T00:00:00.000000Z')," +
+                    "(2, '9999-12-31T23:59:59.999999Z');");
+            // each 4.5e18 us shift stays under the single-shift overflow gap, but their sum (9e18)
+            // overflows the micros domain for the year-9999 row. Only the innermost shift may use the
+            // domain ceiling; the outer shift stays conservative, so the chain keeps its filter and the
+            // year-9999 row (whose composed value wraps negative below the bound) is preserved
+            assertQuery("SELECT * FROM tmax WHERE dateadd('h', 1250000000, dateadd('h', 1250000000, ts)) < '2022-06-01'")
+                    .timestamp("ts")
+                    .withPlanContaining("filter:")
+                    .withPlanNotContaining("Interval forward scan")
+                    .returns("""
+                            price\tts
+                            2.0\t9999-12-31T23:59:59.999999Z
                             """);
         });
     }
