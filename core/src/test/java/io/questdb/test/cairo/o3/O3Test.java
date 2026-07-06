@@ -898,6 +898,10 @@ public class O3Test extends AbstractO3Test {
         // when TableWriter is merges it with O3 data.
 
         Assume.assumeTrue(partitionO3SplitThreshold > 2000);
+        // The zero-copy hardlink split ignores the split threshold and leaves the donor prefix
+        // in place, so no "2020-02-05.<txn>" rewrite would happen and the openRW hook below
+        // would never fire. Disable it: this test must merge-copy the whole partition.
+        partitionTopEnabled = false;
         AtomicReference<SqlCompiler> compilerRef = new AtomicReference<>();
         AtomicReference<SqlExecutionContext> executionContextRef = new AtomicReference<>();
         AtomicBoolean compared = new AtomicBoolean(false);
@@ -1128,6 +1132,9 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testVarColumnCopyLargePrefix() throws Exception {
         partitionO3SplitThreshold = 100 * (1L << 30); // 100GB, effectively no partition split
+        // The zero-copy hardlink split ignores the split threshold (it copies nothing) and would
+        // leave the prefix in place, so disable it: this test must copy the >2GB prefix.
+        partitionTopEnabled = false;
 
         ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
         executeWithPool(

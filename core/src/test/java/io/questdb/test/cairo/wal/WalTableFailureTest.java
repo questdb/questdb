@@ -845,6 +845,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testForceDropPartitionRangeNotOnDiskWithSplits() throws Exception {
         setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        // The row counts and split partition names below assume the classic 2-way copy split;
+        // the zero-copy hardlink split produces a different partition topology (a separate
+        // hardlinked suffix child), so pin it off.
+        setProperty(PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, "false");
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 

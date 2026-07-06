@@ -83,6 +83,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static int o3ColumnMemorySize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
+    protected static boolean partitionTopEnabled = true;
     protected final Rnd rnd;
     protected final TestTimestampType timestampType;
     @Rule
@@ -128,6 +129,7 @@ public class AbstractO3Test extends AbstractTest {
         o3ColumnMemorySize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
+        partitionTopEnabled = true;
         cairoCommitLatency = 30_000_000;
         super.tearDown();
     }
@@ -405,6 +407,16 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
+                    public boolean isPartitionTopNonWalEnabled() {
+                        return partitionTopEnabled && super.isPartitionTopNonWalEnabled();
+                    }
+
+                    @Override
+                    public boolean isPartitionTopWalEnabled() {
+                        return partitionTopEnabled && super.isPartitionTopWalEnabled();
+                    }
+
+                    @Override
                     public boolean isWriterMixedIOEnabled() {
                         // Allow enabling mixed I/O only if the ff allows it.
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
@@ -501,6 +513,16 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public boolean isPartitionEncoderParquetStatisticsEnabled() {
                         return isParquetStatisticsEnabled();
+                    }
+
+                    @Override
+                    public boolean isPartitionTopNonWalEnabled() {
+                        return partitionTopEnabled && super.isPartitionTopNonWalEnabled();
+                    }
+
+                    @Override
+                    public boolean isPartitionTopWalEnabled() {
+                        return partitionTopEnabled && super.isPartitionTopWalEnabled();
                     }
 
                     @Override

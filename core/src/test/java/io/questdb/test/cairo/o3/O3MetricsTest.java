@@ -212,8 +212,9 @@ public class O3MetricsTest extends AbstractO3Test {
             Metrics metrics = engine.getMetrics();
             Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getCommittedRows());
 
-            // There was a single partition which had to be re-written, along with the additional record.
-            Assert.assertEquals(initRowCount * 2 + 1, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
+            // The zero-copy hardlink split leaves the 4-row prefix in place and hardlinks the
+            // 4-row suffix into a child partition, so only the new row is physically written.
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriterMetrics().getPhysicallyWrittenRows());
         });
     }
 
