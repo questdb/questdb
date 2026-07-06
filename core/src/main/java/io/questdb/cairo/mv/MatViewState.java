@@ -40,6 +40,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 import static io.questdb.TelemetryEvent.*;
 
@@ -76,6 +77,10 @@ public class MatViewState implements QuietCloseable {
     // single outlier (GC pause, O3 partition rewrite) from poisoning the EMA
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
+    // Enables the keep-strongest CAS in the no-arg markAsPendingInvalidation(): the no-reason
+    // sentinel only arms an empty marker and never demotes a reason-bearing deferral.
+    private static final AtomicReferenceFieldUpdater<MatViewState, Object> PENDING_INVALIDATION_MARKER_UPDATER =
+            AtomicReferenceFieldUpdater.newUpdater(MatViewState.class, Object.class, "pendingInvalidationMarker");
     // Sentinel stored in pendingInvalidationMarker to represent a pending invalidation that carries
     // no reason -- the full-refresh reschedule (see MatViewRefreshJob#fullRefresh). It is distinct
     // from null (not pending) so the whole marker stays a single atomically-written volatile
@@ -150,6 +155,10 @@ public class MatViewState implements QuietCloseable {
     //   null                            -> not pending
     //   PENDING_INVALIDATION_NO_REASON  -> pending, no reason (full-refresh reschedule)
     //   any String                      -> pending, with that invalidation reason
+    // Off-latch writes are monotone toward pending: a reason write overwrites anything, the sentinel
+    // CASes only into an empty slot, and clears run under the latch. A latch-holder's paired
+    // isPendingInvalidation()/getPendingInvalidationReason() reads therefore cannot observe a
+    // reason-bearing deferral demoted to the sentinel between them.
     private volatile Object pendingInvalidationMarker;
     // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
@@ -576,13 +585,26 @@ public class MatViewState implements QuietCloseable {
     }
 
     public void markAsPendingInvalidation() {
-        markAsPendingInvalidation(null);
+        // Keep-strongest CAS: the no-reason sentinel (a full-refresh reschedule, see
+        // MatViewRefreshJob#fullRefresh) only arms an empty marker. A reason-bearing deferral already
+        // present must not be demoted: whichever lock-holder completes finalizes it, whereas the
+        // sentinel is recovered only by the queued full refresh, which can strand it on its
+        // short-circuit exits (block list, write suspension, missing base table).
+        PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, null, PENDING_INVALIDATION_NO_REASON);
     }
 
     public void markAsPendingInvalidation(String invalidationReason) {
-        // Single atomic volatile write. A null reason is the full-refresh reschedule marker, stored as
-        // the sentinel so the marker is never the torn (pending=true, reason=null) composite.
-        this.pendingInvalidationMarker = invalidationReason != null ? invalidationReason : PENDING_INVALIDATION_NO_REASON;
+        // A null reason means the caller wants the reschedule sentinel; route it through the
+        // keep-strongest CAS so it cannot demote a reason-bearing deferral.
+        if (invalidationReason == null) {
+            markAsPendingInvalidation();
+            return;
+        }
+        // Single atomic volatile write. A reason-bearing deferral always wins the marker: it overwrites
+        // the sentinel (an upgrade -- the queued full refresh proceeds regardless) and refreshes a prior
+        // reason (the latest invalidation cause wins). Off-latch the marker thus only ever steps
+        // null -> non-null or non-null -> non-null; clears run under the latch.
+        this.pendingInvalidationMarker = invalidationReason;
     }
 
     public void markAsValid() {

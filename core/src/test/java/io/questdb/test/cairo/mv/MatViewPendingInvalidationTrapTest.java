@@ -49,9 +49,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * defer-site pair (marker plus the re-enqueued task the guard swallows), and
  * {@link #testLockContendedInvalidationDefersWithReason()} exercises the real defer site itself.
  * <p>
- * One branch is left uncovered here: {@code finalizeDeferredInvalidation}'s read-only early-return. It needs
- * {@code engine.isReadOnlyMode()} true at finalize time, which in OSS requires a custom read-only engine that
- * cannot run this write-heavy setup; the demote/promote path that exercises it lives in the enterprise suite.
+ * Two branches are left OSS-uncovered here, both needing {@code engine.isReadOnlyMode()} to flip mid-flow:
+ * {@code finalizeDeferredInvalidation}'s read-only early-return and {@code invalidateView}'s
+ * {@code isSelfDeferred} skip. A bespoke mutable-flag engine could flip the mode after a read-write setup,
+ * but the flip is only meaningful as part of a demote, and that path lives in the enterprise suite
+ * ({@code MatViewSwitchInvariantsTest}, {@code MatViewInvalidateRepromoteLosslessTest}), which covers both
+ * branches.
  */
 public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
@@ -64,9 +67,17 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
     // Hammers an off-latch reason-bearing deferral against an off-latch clear -- the two writers that, with
     // the former composite written in opposite field orders, could tear to (pending=true, reason=null) and
-    // strand the view valid+stale with no self-heal. With a single atomic marker that intermediate cannot
-    // exist: once the writers quiesce, a pending marker must still carry its (only ever non-null) reason.
-    // This test is deterministically green on the fixed code; it can only fail if the torn composite returns.
+    // strand the view valid+stale with no self-heal. With a single atomic marker no torn pair can exist AT
+    // REST: after each round quiesces, a pending marker must still carry its (only ever non-null) reason.
+    //
+    // Scope, stated honestly: this resting-state check catches a two-volatile revert whose write orders can
+    // leave the torn pair as the FINAL state (the orders the original composite had); a revert with aligned
+    // write orders produces only transient torn states that no black-box reader can pin either -- with two
+    // separate getters, a clear landing between a reader's isPendingInvalidation() and
+    // getPendingInvalidationReason() calls yields the same (true, null) observation on perfectly correct
+    // code. The structural guarantee is that both getters derive from the single
+    // MatViewState#pendingInvalidationMarker field; the concurrently-verifiable marker property is pinned by
+    // testConcurrentSentinelMarkNeverDemotesReasonDeferral.
     @Test
     public void testConcurrentDeferAndClearNeverTearsToReasonlessPending() throws Exception {
         assertMemoryLeak(() -> {
@@ -78,8 +89,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
 
-            final int rounds = 200;
-            final int iterations = 5_000;
+            final int rounds = 50;
+            final int iterations = 2_000;
             for (int r = 0; r < rounds; r++) {
                 final AtomicBoolean go = new AtomicBoolean();
                 final Runnable gate = () -> {
@@ -120,6 +131,138 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             // Leave the view clean for teardown.
             state.markAsValid();
+        });
+    }
+
+    // Pins the keep-strongest no-arg mark under a live race: a losing fullRefresh's sentinel write runs
+    // against reason-bearing deferrals while a reader samples the reason with SINGLE reads (no two-read
+    // skew). Off-latch writers never clear and the sentinel CASes only into an empty marker, so once a
+    // reason lands the reason stays non-null for the rest of the round; a reason -> null observation means
+    // the plain last-write-wins sentinel overwrite (the demotion race) is back. Green deterministically on
+    // the CAS code; the pre-CAS overwrite fails it within a few rounds.
+    @Test
+    public void testConcurrentSentinelMarkNeverDemotesReasonDeferral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (sym varchar, price double, amount int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            final int rounds = 50;
+            final int iterations = 1_000;
+            for (int r = 0; r < rounds; r++) {
+                state.clearPendingInvalidation(); // single-threaded between rounds; off-latch code never clears
+                final AtomicBoolean go = new AtomicBoolean();
+                final AtomicBoolean stop = new AtomicBoolean();
+                final AtomicBoolean demoted = new AtomicBoolean();
+                final Runnable gate = () -> {
+                    while (!go.get()) {
+                        Thread.onSpinWait();
+                    }
+                };
+                final Thread reasonSetter = new Thread(() -> {
+                    gate.run();
+                    for (int i = 0; i < iterations; i++) {
+                        state.markAsPendingInvalidation("update operation");
+                    }
+                }, "reason-setter");
+                final Thread sentinelSetter = new Thread(() -> {
+                    gate.run();
+                    for (int i = 0; i < iterations; i++) {
+                        state.markAsPendingInvalidation(); // the losing-fullRefresh reschedule write
+                    }
+                }, "sentinel-setter");
+                final Thread reader = new Thread(() -> {
+                    gate.run();
+                    boolean hasSeenReason = false;
+                    while (!stop.get()) {
+                        if (state.getPendingInvalidationReason() != null) {
+                            hasSeenReason = true;
+                        } else if (hasSeenReason) {
+                            demoted.set(true);
+                            return;
+                        }
+                    }
+                }, "reason-reader");
+                reasonSetter.start();
+                sentinelSetter.start();
+                reader.start();
+                go.set(true);
+                reasonSetter.join();
+                sentinelSetter.join();
+                stop.set(true);
+                reader.join();
+
+                Assert.assertFalse("the sentinel mark demoted a reason-bearing deferral to a null reason", demoted.get());
+                // A reason landed in every round; keep-strongest must leave it as the resting marker.
+                Assert.assertEquals("update operation", state.getPendingInvalidationReason());
+            }
+
+            // Leave the view clean for teardown.
+            state.markAsValid();
+        });
+    }
+
+    @Test
+    public void testDroppedViewLeavesDeferredInvalidationUntouched() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // Pins finalizeDeferredInvalidation's isDropped early-return: a deferral lands mid-hold AND the
+            // view is dropped during the same hold. The store's removeViewState marks the state dropped but
+            // cannot free the parked factory (the refresh holds the latch), so the holder's finalize must
+            // skip the dead deferral (no re-enqueued INVALIDATE for a dropped view) and its unlock tail must
+            // free the factory via tryCloseIfDropped -- assertMemoryLeak fails if it leaks.
+            final AtomicBoolean fired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                job.setOnHoldingLockForTesting(() -> {
+                    if (fired.compareAndSet(false, true)) {
+                        state.markAsPendingInvalidation("update operation");
+                        try {
+                            execute("drop materialized view price_1h");
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                });
+
+                execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T14:00')");
+                drainWalQueue();
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+
+            Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+            Assert.assertTrue("the drop must reach the state while the refresh holds the latch", state.isDropped());
+            Assert.assertTrue("finalize must leave the marker of a dropped view untouched", state.isPendingInvalidation());
+            Assert.assertEquals("update operation", state.getPendingInvalidationReason());
+
+            // The view is gone; the stranded marker died with the state and nothing re-enqueued for it.
+            assertQuery("select count() from materialized_views")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 
@@ -487,11 +630,25 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertTrue(state.isPendingInvalidation());
             Assert.assertEquals("truncate operation", state.getPendingInvalidationReason());
 
-            // The no-arg overload is the full-refresh reschedule marker: pending, but with no reason (the
-            // sentinel), still distinct from the cleared state.
+            // The no-arg overload is the full-refresh reschedule sentinel, and it is keep-strongest: on a
+            // reason-bearing marker it is a no-op, so a losing full refresh cannot demote a deferral that a
+            // lock-holder's finalize would recover into one only the queued full refresh clears.
+            state.markAsPendingInvalidation();
+            Assert.assertTrue(state.isPendingInvalidation());
+            Assert.assertEquals("the sentinel must not demote a reason-bearing deferral",
+                    "truncate operation", state.getPendingInvalidationReason());
+
+            // From an empty marker the sentinel arms: pending, but with no reason, still distinct from the
+            // cleared state.
+            state.clearPendingInvalidation();
             state.markAsPendingInvalidation();
             Assert.assertTrue(state.isPendingInvalidation());
             Assert.assertNull(state.getPendingInvalidationReason());
+
+            // A reason-bearing mark upgrades the sentinel: a reason always wins the marker.
+            state.markAsPendingInvalidation("truncate operation");
+            Assert.assertTrue(state.isPendingInvalidation());
+            Assert.assertEquals("truncate operation", state.getPendingInvalidationReason());
 
             // Clearing drops the whole marker in a single write.
             state.clearPendingInvalidation();

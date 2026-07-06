@@ -3588,10 +3588,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try {
                             viewState.refreshStats();
                         } finally {
-                            // This stats reset is a lock-holder like any refresh: an INVALIDATE that defers
-                            // while it holds the latch re-enqueues a task that invalidateView's pending guard
-                            // then swallows, so the unlock must finalize the deferral or the view freezes
-                            // valid-but-stale. See MatViewRefreshJob#finalizeAndUnlock.
+                            // This stats reset is a lock-holder like any refresh: its unlock must finalize an
+                            // invalidation that deferred during the hold. See MatViewRefreshJob#finalizeAndUnlock.
                             MatViewRefreshJob.finalizeAndUnlock(engine, matViewStateStore, matViewToken, viewState, false);
                         }
                     } else {
