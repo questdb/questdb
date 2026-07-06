@@ -310,10 +310,30 @@ public class SqlUtil {
         final CharacterStoreEntry entry = store.newEntry();
         final int entryStart = entry.length();
 
+        // Cache the first unquoted dot once: as a dedup suffix shrinks the content under truncation,
+        // whether a dot still falls inside the content reduces to a position compare (below), so no
+        // per-candidate re-scan is needed. Mirrors Chars.indexOfLastUnquoted's double-quote handling.
+        int firstContentDot = -1;
+        boolean inContentQuotes = false;
+        for (int i = start; i < baseLen; i++) {
+            final char c = base.charAt(i);
+            if (c == '"') {
+                inContentQuotes = !inContentQuotes;
+            } else if (c == '.' && !inContentQuotes) {
+                firstContentDot = i;
+                break;
+            }
+        }
+
         int seqSize = 0;
         while (true) {
             if (sequence > 1) {
-                seqSize = (int) Math.log10(sequence) + 2; // Remember the _
+                // decimal digit count of `sequence` plus 1 for the '_' separator (an integer count,
+                // not a libm log10)
+                seqSize = 1;
+                for (int s = sequence; s > 0; s /= 10) {
+                    seqSize++;
+                }
             }
             final int len = Math.min(truncatedLen, maxLength - seqSize - (quote ? 1 : 0));
             int contentLen = Math.max(0, len - (quote ? 2 : 0));
@@ -323,16 +343,21 @@ public class SqlUtil {
             // content still needs them: truncation may have dropped the discriminating dot, and
             // a dedup suffix turns an operator token into a plain identifier; in both cases the
             // bare name is unambiguous, so keeping the quotes would only leak them into
-            // result-set metadata (see toColumnName).
+            // result-set metadata (see toColumnName). The dot check reuses the cached position; the
+            // operator-token lookup is reached only for the un-suffixed candidate (sequence == 1).
+            final boolean deduped = sequence > 1;
+            final boolean contentHasDot = firstContentDot >= 0 && firstContentDot < start + contentLen;
             final boolean emitQuote = quote && contentLen > 0
-                    && aliasContentNeedsQuoting(base, start, start + contentLen, sequence > 1);
+                    && (contentHasDot || (!deduped && disallowedAliases.contains(base, start, start + contentLen)));
 
-            // The alias must never end in - or consist solely of - a space. Trim trailing
-            // spaces whenever the content is emitted bare (there are no wrapping quotes to
-            // contain them), keyed on !emitQuote rather than !quote: a quote-protected base
-            // whose dot is truncated off drops its quotes and would otherwise expose the
-            // space-terminated bare content. An all-space slice trims to nothing and falls
-            // through to the "column" placeholder below.
+            // Trim trailing spaces from bare content so a bare display name never ends in a space,
+            // matching the non-dotted early-exit check. Keyed on !emitQuote (not !quote): truncation
+            // can drop a quote-protected base's dot, flipping emitQuote to false, and the now-bare
+            // content must still be trimmed. A quote-protected candidate instead keeps its content
+            // verbatim - including a trailing space that is genuine data of the aliased value (e.g. a
+            // pivot value 'FNCL 2.5 '); toColumnName later strips the wrapping quotes, so such a
+            // display name can legitimately end in a space. An all-space slice trims to nothing and
+            // falls through to the "column" placeholder below.
             if (!emitQuote && contentLen > 0 && base.charAt(start + contentLen - 1) == ' ') {
                 final int lastNonSpace = Chars.lastIndexOfDifferent(base, start, start + contentLen, ' ') - start;
                 contentLen = lastNonSpace >= 0 ? lastNonSpace + 1 : 0;
@@ -1589,23 +1614,6 @@ public class SqlUtil {
         columns.add(columnName);
     }
 
-    /**
-     * Returns true when the {@code [lo, hi)} slice, used as a bare alias body, would still need
-     * the compiler's protective double quotes: it contains an unquoted dot (which the optimiser
-     * would split into a {@code table.column} reference) or, unless a dedup suffix has already
-     * been appended, it collides with an operator token. A dedup suffix (e.g. {@code in -> in_2})
-     * turns an operator token into a plain identifier that no longer needs protection, so quoting
-     * it would only leak the quotes into result-set metadata. Mirrors {@link #isQuoteProtectedAlias}
-     * so a generated alias is quoted exactly when that method would later recognise it as protected.
-     */
-    private static boolean aliasContentNeedsQuoting(CharSequence alias, int lo, int hi, boolean deduped) {
-        if (hi <= lo) {
-            return false;
-        }
-        return Chars.indexOfLastUnquoted(alias, '.', lo, hi) > -1
-                || (!deduped && disallowedAliases.contains(alias, lo, hi));
-    }
-
     private static void collectColumnReferencesFromExpression(
             @NotNull CairoEngine engine,
             @NotNull ExpressionNode expr,
@@ -1809,13 +1817,22 @@ public class SqlUtil {
             sequence = 0;
         }
 
+        // The content slice [contentLo, contentHi) is fixed for the whole loop (createColumnAlias
+        // never truncates), so its dot / operator-token classification is loop-invariant - compute it
+        // once here rather than re-scanning per dedup candidate. contentHasDot is the "deduped" form
+        // (a dotted interior always needs quotes); contentNeedsQuotingWhenFresh adds the operator-token
+        // case that a dedup suffix later sheds.
+        final boolean contentHasDot = contentLo >= 0 && Chars.indexOfLastUnquoted(base, '.', contentLo, contentHi) > -1;
+        final boolean contentNeedsQuotingWhenFresh = contentHasDot
+                || (contentLo >= 0 && disallowedAliases.contains(base, contentLo, contentHi));
+
         // A bare candidate that is itself quoting-worthy (an operator token; a dotted base reduces
         // to its dot-free tail, so it never surfaces dotted here) shares a display name with a
         // protective-quoted "<name>" sibling. Precompute that sibling once so the loop can force a
         // dedup suffix when it is already taken. It lives in its own store region, ahead of the
         // reused candidate entry, so the loop's trimTo never disturbs it.
         CharSequence bareQuotedSibling = null;
-        if (!quoteProtected && contentLo >= 0 && aliasContentNeedsQuoting(base, contentLo, contentHi, false)) {
+        if (!quoteProtected && contentNeedsQuotingWhenFresh) {
             final CharacterStoreEntry siblingEntry = store.newEntry();
             siblingEntry.put('"').put(base, contentLo, contentHi).put('"');
             bareQuotedSibling = siblingEntry.toImmutable();
@@ -1833,8 +1850,7 @@ public class SqlUtil {
             // needs them: a dotted interior always does; an operator token only until a dedup
             // suffix makes it a plain identifier (so "a.b" -> "a.b1", while "in" stays quoted
             // at sequence 0 to collide with the stored "in", then surfaces as bare in1).
-            final boolean emitQuote = quoteProtected && contentLo >= 0
-                    && aliasContentNeedsQuoting(base, contentLo, contentHi, deduped);
+            final boolean emitQuote = quoteProtected && (deduped ? contentHasDot : contentNeedsQuotingWhenFresh);
             entry.trimTo(entryStart);
             if (emitQuote) {
                 entry.put('"');
