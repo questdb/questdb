@@ -1012,17 +1012,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // Attached partition data (e.g. external parquet) bypasses the per-row validateBounds
-                // of the write path. Enforce the designated-timestamp domain ceiling here so no
-                // partition can hold an out-of-range value. attachMinTimestamp <= attachMaxTimestamp,
-                // so checking the max catches any violation. This also preserves the invariant that
-                // timestamp-function partition pruning relies on.
-                if (attachMaxTimestamp > timestampDriver.getMaxDesignatedTimestamp()) {
-                    throw CairoException.nonCritical()
-                            .put("cannot attach partition, designated timestamp exceeds the maximum supported value [table=")
-                            .put(tableToken.getTableName())
-                            .put(", timestamp=").ts(timestampDriver, attachMaxTimestamp)
-                            .put(']');
-                }
+                // of the write path. Re-check the reported partition bounds against the designated-
+                // timestamp domain so an out-of-range partition is rejected before any files move.
+                // Both edges matter: timestamp-function partition pruning assumes stored timestamps
+                // are non-negative and below the type ceiling; a value past either edge overflows a
+                // shift and wraps into the pruned interval, silently dropping rows. This trusts the
+                // reported min/max -- a partition whose data disagrees with its own metadata is
+                // already outside the contract.
+                timestampDriver.validateBounds(attachMinTimestamp);
+                timestampDriver.validateBounds(attachMaxTimestamp);
 
                 if (forceRenamePartitionDir && !attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen)) {
                     attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
