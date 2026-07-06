@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
@@ -43,6 +44,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -161,6 +163,59 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
                 driveRefreshToQuiescence(job);
             }
             assertViewMatchesRecompute(viewSql);
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testCheckpointsDirDoesNotLogInvalidPartition() throws Exception {
+        // Regression: the live view's _checkpoints directory (LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+        // lives inside the view's table folder. Both partition-purge scans used to try to parse it as a
+        // partition timestamp, fail, and log a spurious "invalid partition directory inside table folder"
+        // ERROR. The directory was always left intact, so the only observable symptom is the log line.
+        // Two scans are exercised here: TableSnapshotRestore's scan during restore, and
+        // TableWriter.removePartitionDirsNotAttached when the restored LV table writer reopens fresh.
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            capture.start();
+            try {
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    execute("INSERT INTO base (ts, sym, x) VALUES " +
+                            "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                            "('2026-01-02T00:00:02.000000Z', 'b', 2.0)");
+                    driveRefreshToQuiescence(job);
+                    assertViewMatchesRecompute(viewSql);
+                    execute("CHECKPOINT CREATE");
+                }
+
+                // The flush cycle must have written the _checkpoints dir, otherwise neither scan would
+                // encounter it and this test would trivially pass.
+                assertCheckpointsDirExists("lv");
+
+                // Restore re-scans the restored table folder (TableSnapshotRestore site), then the
+                // post-restore refresh reopens the LV table writer fresh with the restored _checkpoints
+                // present (TableWriter.purgeUnusedPartitions site). Both used to log the ERROR.
+                restoreFromCheckpoint();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                }
+                assertViewMatchesRecompute(viewSql);
+                assertCheckpointsDirExists("lv");
+
+                // Flush barrier on the same async log path: once this sentinel reaches the captured
+                // sink, any earlier ERROR (FIFO) is already present, so assertNotLogged is reliable.
+                LOG.info().$("live view checkpoints purge test flush barrier").$();
+                capture.waitForRegex("live view checkpoints purge test flush barrier");
+                capture.assertNotLogged("invalid partition directory");
+            } finally {
+                capture.stop();
+            }
 
             execute("CHECKPOINT RELEASE");
         });
@@ -612,6 +667,17 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
         row.putSym(1, sym);
         row.putDouble(2, x);
         row.append();
+    }
+
+    private void assertCheckpointsDirExists(String viewName) {
+        final TableToken token = engine.verifyTableName(viewName);
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).$();
+            Assert.assertTrue(
+                    "expected _checkpoints dir at " + path,
+                    configuration.getFilesFacade().exists(path.$())
+            );
+        }
     }
 
     // Drives a first_value(valueType) IGNORE NULLS live view over a RANGE frame with an UNBOUNDED
