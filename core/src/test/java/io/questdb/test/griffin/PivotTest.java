@@ -711,6 +711,26 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotProtectedColumnNotReferenceableFromEnclosingQuery() throws Exception {
+        // Documented limitation: a compiler-protected output column - a dotted user alias, or an
+        // operator-token pivot value - is not referenceable by name from an enclosing query, because
+        // the protective quotes cannot survive to the outer reference. These must keep failing
+        // cleanly in the parser with a SqlException, never a "wtf?" AssertionError from an
+        // unresolved compile-time lookup (a future refactor of the resolution path could regress it).
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT \"a.b\" FROM (SELECT 1 AS \"a.b\")")
+                    .fails(7, "Invalid table name or alias");
+            assertQuery("SELECT * FROM (SELECT 1 AS \"a.b\") ORDER BY \"a.b\"")
+                    .fails(43, "Invalid table name or alias");
+
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("SELECT t1.\"in\" FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1")
+                    .fails(7, "Invalid column: t1.in");
+        });
+    }
+
+    @Test
     public void testPivotStaticListWithCaseVariantOperatorTokenValues() throws Exception {
         // 'in' and 'IN' are distinct values (the duplicate-value guard is case-sensitive) but
         // collide in the case-insensitive alias space, so the second gets a dedup suffix. The

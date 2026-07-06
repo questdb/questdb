@@ -139,6 +139,20 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxSizeTruncationDropsProtectiveQuotes() throws Exception {
+        // A dotted expression auto-alias (longtablename.x+1) is quote-protected, but truncation to
+        // column.alias.generated.max.size cuts the discriminating dot off; the bare remainder needs
+        // no protection, so the surfaced column name must be clean, with no leaked quote - the
+        // integration counterpart to SqlUtilTest#testExprColumnAliasTruncationDropsStaleQuotes.
+        assertGeneratedColumnEqual(
+                "longtab\n",
+                "select longtablename.x + 1 from longtablename",
+                "create table longtablename (x int)",
+                10
+        );
+    }
+
+    @Test
     public void testDuplicates() throws Exception {
         assertGeneratedColumnEqual(
                 "a * b\ta * b_2\ta * b_3\ta * b_4\n",
