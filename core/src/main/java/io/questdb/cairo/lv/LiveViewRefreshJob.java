@@ -52,6 +52,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
@@ -4451,6 +4452,80 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    /**
+     * Recovery for a refresh cycle that failed with
+     * {@link TableReferenceOutOfDateException}: the base table's metadata version
+     * drifted from the cached compiled factory. Frees the compiled artifacts so
+     * the next factory use recompiles against current metadata, then rebuilds the
+     * window state that was lost with the old factory's function instances:
+     * <ul>
+     *     <li>BACKFILLING: re-arms the sweep's single-shot resume setup; the next
+     *     turn restores window state and the data offset from the surviving
+     *     {@code .bcp} against the recompiled factory (same SQL, so the snapshot
+     *     blocks stay shape-compatible), or re-sweeps from offset 0 behind the
+     *     skip-write floor. Both are idempotent on the already-written prefix.</li>
+     *     <li>ACTIVE on the primary: full head-miss replay over the applied base -
+     *     unconditionally correct and idempotent (mirrors the dedup restart path
+     *     and the checkpoint-less restore fallback). The replay resets window
+     *     state, recomputes every retained row through the recompiled factory,
+     *     rewrites the on-disk tier with a single REPLACE_RANGE, advances the
+     *     watermarks, and writes a fresh head {@code .cp}. Any un-flushed lead is
+     *     dropped first (its rows were computed by the old factory's state) and
+     *     {@code refreshedUpToSeqTxn} is pinned back to {@code lastProcessedSeqTxn}
+     *     so no phantom lead survives.</li>
+     *     <li>Read-only replica lead reconstruction: cannot rewrite the tier, and
+     *     has no head {@code .cp} to restore from (checkpoints do not replicate).
+     *     Mirrors {@code onLeadO3Detected}'s cold-start reset: clearing
+     *     {@code latestSeenTs} routes the next {@code reconcileLeadWithDisk} tick
+     *     through its unseeded cold-start branch, which arms the catch-up seam at
+     *     the on-disk max ts and re-derives the whole applied history through the
+     *     recompiled factory without staging the durable band.</li>
+     * </ul>
+     * Returns {@code null} when recovery completed (or was re-armed for the next
+     * tick); otherwise the error the recovery replay failed with, which the caller
+     * feeds into the standard flush-retry accounting.
+     */
+    private Throwable recoverFromBaseMetadataDrift(LiveViewInstance instance, boolean leadReconstruction) {
+        final String viewName = instance.getDefinition().getViewName();
+        instance.prepareForBaseSchemaRecompile();
+        if (leadReconstruction) {
+            instance.forceSetLatestSeenTs(Numbers.LONG_NULL);
+            instance.setLeadRowCount(0);
+            instance.setTierStale(true);
+            LOG.info().$("live view base table metadata changed, lead re-derives on next tick [view=")
+                    .$(viewName).I$();
+            return null;
+        }
+        if (instance.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING) {
+            instance.resetBackfillResumeAttempted();
+            LOG.info().$("live view base table metadata changed mid-backfill, sweep will resume recompiled [view=")
+                    .$(viewName).I$();
+            return null;
+        }
+        try {
+            final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+            final long writerTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            instance.setLeadRowCount(0);
+            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, writerTxn);
+            // Mirror o3Replay's post-replay steps: the REPLACE_RANGE rewrote the
+            // on-disk tier, so the in-mem tier's published slot (pre-drift rows plus
+            // any lead) is stale and must be rebuilt from the rewritten LV table;
+            // otherwise reads keep serving the pre-recompute rows over disk.
+            rebuildInMemoryTier(instance);
+            instance.setLeadRowCount(0);
+            instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
+            instance.recordRefreshSuccess();
+            LOG.info().$("live view recompiled and recomputed after base table metadata change [view=")
+                    .$(viewName).I$();
+            return null;
+        } catch (Throwable t) {
+            LOG.error().$("live view recompute failed after base table metadata change [view=")
+                    .$(viewName)
+                    .$(", error=").$(t).I$();
+            return t;
+        }
+    }
+
     private void refreshInstance(LiveViewInstance instance, long seqTxn) {
         if (!instance.tryLockForRefresh()) {
             return;
@@ -4763,6 +4838,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LOG.info().$("live view refresh refused by read-only gate, retrying later [view=")
                     .$(instance.getDefinition().getViewName()).I$();
             return null;
+        }
+        if (t instanceof TableReferenceOutOfDateException) {
+            // The base table's metadata version drifted from the cached compiled factory:
+            // a schema change that does not touch the view's referenced columns keeps the
+            // view valid by design (invalidateLiveViewsForBaseSchemaChange leaves it
+            // alone), but the factory's page-frame column mapping no longer matches the
+            // reader's column layout, so LiveViewRefreshSqlExecutionContext.getReader
+            // refused to serve the mismatched reader. Not a refresh failure: recompile
+            // and rebuild instead of counting toward the invalidation budget.
+            t = recoverFromBaseMetadataDrift(instance, leadReconstruction);
+            if (t == null) {
+                return null;
+            }
+            // The recovery replay itself failed; account for THAT error below.
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);

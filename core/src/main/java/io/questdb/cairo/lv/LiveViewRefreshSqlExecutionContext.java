@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 
@@ -54,6 +55,25 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
         if (baseTableReader != null && tableToken.equals(baseTableReader.getTableToken())) {
+            // Enforce the same staleness check as CairoEngine.checkReaderVersion. The LV
+            // keeps its compiled factory across refresh cycles, so after a base-table
+            // schema change that does not touch referenced columns (which leaves the
+            // view valid by design) the factory's page-frame column mapping no longer
+            // matches the reader's column layout. Serving the mismatched reader would
+            // make the cursor read the wrong columns with the wrong strides - garbage
+            // values at best, an out-of-bounds mmap read (SIGSEGV) at worst. Throwing
+            // routes the refresh into LiveViewRefreshJob's recompile-and-recover path.
+            // Unlike checkReaderVersion, the pinned reader must NOT be closed here: it
+            // is owned by the refresh method's own try/finally.
+            if (version > -1 && baseTableReader.getMetadataVersion() != version) {
+                throw TableReferenceOutOfDateException.of(
+                        tableToken,
+                        tableToken.getTableId(),
+                        baseTableReader.getMetadata().getTableId(),
+                        version,
+                        baseTableReader.getMetadataVersion()
+                );
+            }
             return getCairoEngine().getReaderAtTxn(baseTableReader, this);
         }
         return super.getReader(tableToken, version);

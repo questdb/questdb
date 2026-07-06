@@ -560,6 +560,99 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableAddColumnRecompilesFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (val, ts) VALUES " +
+                        "(10, '2026-01-01T00:00:00.000000Z'), " +
+                        "(20, '2026-01-01T00:02:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // ADD COLUMN bumps the base metadata version without invalidating the
+                // view (the new column is unreferenced). The cached factory is stale.
+                execute("ALTER TABLE base ADD COLUMN extra DOUBLE");
+                drainWalQueue();
+
+                setCurrentMicros(2_000_000L);
+                // Out-of-order row: routes the refresh through the O3 replay, which
+                // scans the base through the cached factory's page frames. The version
+                // check must reject the stale factory and the recovery recompile +
+                // recompute must produce the full, correct output.
+                execute("INSERT INTO base (val, ts) VALUES (15, '2026-01-01T00:01:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            assertQuery("SELECT val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("val\tts\trn\n" +
+                    "10\t2026-01-01T00:00:00.000000Z\t1\n" +
+                    "15\t2026-01-01T00:01:00.000000Z\t2\n" +
+                    "20\t2026-01-01T00:02:00.000000Z\t3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBaseTableDropUnreferencedColumnRecompilesFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            // "pad" sits BEFORE the referenced columns, so dropping it shifts the
+            // reader indices of val and ts. The cached compiled factory still maps
+            // the old layout; without the metadata-version check the O3 replay would
+            // read the wrong columns with the wrong strides (garbage timestamps at
+            // best, an out-of-bounds mmap read at worst).
+            execute("CREATE TABLE base (pad SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (pad, val, ts) VALUES " +
+                        "('a', 10, '2026-01-01T00:00:00.000000Z'), " +
+                        "('b', 20, '2026-01-01T00:02:00.000000Z'), " +
+                        "('c', 30, '2026-01-01T00:03:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The view does not reference pad, so the drop keeps it valid by
+                // design - but the base metadata version moves past the factory's.
+                execute("ALTER TABLE base DROP COLUMN pad");
+                drainWalQueue();
+
+                setCurrentMicros(2_000_000L);
+                // Out-of-order row: routes the refresh through the O3 replay's
+                // page-frame scan over the stale factory. The recovery must
+                // recompile and recompute the whole view against the new layout.
+                execute("INSERT INTO base (val, ts) VALUES (15, '2026-01-01T00:01:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(4_000_000L);
+                // Refresh must have resumed on the recompiled factory: a further
+                // in-order row keeps the row_number sequence going.
+                execute("INSERT INTO base (val, ts) VALUES (40, '2026-01-01T00:04:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            assertQuery("SELECT val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("val\tts\trn\n" +
+                    "10\t2026-01-01T00:00:00.000000Z\t1\n" +
+                    "15\t2026-01-01T00:01:00.000000Z\t2\n" +
+                    "20\t2026-01-01T00:02:00.000000Z\t3\n" +
+                    "30\t2026-01-01T00:03:00.000000Z\t4\n" +
+                    "40\t2026-01-01T00:04:00.000000Z\t5\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRefreshOnEmptyBaseProducesNoRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");

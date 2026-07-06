@@ -828,6 +828,26 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Prepares the view for a recompile after the base table's metadata version
+     * drifted from the cached compiled factory (a schema change that does not
+     * touch referenced columns - those invalidate the view instead). Frees the
+     * compiled-SQL artifacts so the next factory use ({@code ensureCompiledFactory})
+     * recompiles them against the base table's current metadata. Window state
+     * accumulated in the old factory's functions is lost with it; the caller
+     * must rebuild it (head-miss replay, backfill resume, or restart-restore)
+     * before resuming incremental processing. The in-memory tier is deliberately
+     * kept: the view's own projection is unchanged and reads keep serving
+     * through it.
+     * <p>
+     * Must be called on the refresh worker under the refresh latch.
+     */
+    public void prepareForBaseSchemaRecompile() {
+        compiledFactory = Misc.free(compiledFactory);
+        anchorWindow = Misc.free(anchorWindow);
+        anchorFunction = Misc.free(anchorFunction);
+    }
+
+    /**
      * Records a written rolling backfill checkpoint: stamps the {@code .bcp}
      * key and the checkpoint write time. The backfill cadence keys off the
      * {@code .bcp} data offset delta (not {@link #rowsSinceLastCheckpointWritten},
@@ -867,6 +887,18 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordRefreshSuccess() {
         flushRetryCount = 0;
         flushRetryStartUs = Numbers.LONG_NULL;
+    }
+
+    /**
+     * Re-arms the backfill sweep's single-shot resume setup (see
+     * {@link #isBackfillResumeAttempted()}). Called by the refresh worker after
+     * {@link #prepareForBaseSchemaRecompile()} on a BACKFILLING view so the next
+     * sweep turn restores window state and the data offset from the surviving
+     * {@code .bcp} against the recompiled factory, or re-sweeps from offset 0
+     * behind the skip-write floor. Mutated under the refresh latch only.
+     */
+    public void resetBackfillResumeAttempted() {
+        backfillResumeAttempted = false;
     }
 
     public void setAnchorFunction(Function function) {
