@@ -268,6 +268,10 @@ public class PostingGenLookup implements Closeable {
         cacheEntries.reopen();
         cacheUsedBytes = 0;
         cacheVersion++;
+        // Self-healing: a re-initialised (pooled) lookup starts unfrozen so a reused reader
+        // can never inherit a stale freeze if setFrozen(false) was skipped. Mirrors the
+        // frozen reset in AbstractPostingIndexReader.of(), which is this method's only caller.
+        frozen = false;
     }
 
     public void setFrozen(boolean frozen) {

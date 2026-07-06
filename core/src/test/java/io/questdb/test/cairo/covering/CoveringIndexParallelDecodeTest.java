@@ -197,10 +197,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         rpt.append(verdict("residual   ", aRes, bRes, cRes, warmup));
         rpt.append("==================================================================================\n");
 
-        // Emit to both the log and stdout so it is visible whichever way the
-        // harness is run.
+        // Emit to the log so the report is visible in the test harness output.
         LOG.advisory().$safe(rpt).$();
-        System.out.println(rpt);
 
         // The gated perf run is the only automated check of the headline claim. Assert the verdict
         // so a regression that loses parallelism or scan-parity FAILS the explicit -Dcovering.perf
@@ -2295,14 +2293,12 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                     "group-by over the covering index -- the parallel covered decode is NOT being measured for this shape.\n" +
                     "    query: " + coveredQuery + "\n    plan:\n" + p + "\n";
             LOG.error().$safe(msg).$();
-            System.out.println(msg);
             fail(msg);
         } else {
-            // Print the full plan so the vectorized-vs-reduce covered path is on
+            // Log the full plan so the vectorized-vs-reduce covered path is on
             // the record (covered_agg -> vectorized; residual -> non-vectorized).
             final String okMsg = "routing OK [" + name + "]: async covered group-by over covering index\n    plan:\n" + p;
             LOG.advisory().$safe(okMsg).$();
-            System.out.println(okMsg);
         }
         return async;
     }

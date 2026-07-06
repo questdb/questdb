@@ -931,6 +931,27 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final long[] frameVarDataAddrs;
         protected final int[] frameVarDataCap;
         protected final int[] frameVarDataPos;
+        // Reusable adapter so the shared CoveredColumnDecoder.writeCoveredRow can write this
+        // cursor's var-size (VARCHAR/STRING/BINARY/ARRAY) covered columns into the per-column
+        // frameVarData* buffers. Allocated once per cursor (no per-row allocation); ensureCapacity
+        // relocates a column's buffer on grow, so it always returns the current base address.
+        private final CoveredColumnDecoder.VarDataSink frameVarDataSink = new CoveredColumnDecoder.VarDataSink() {
+            @Override
+            public void advance(int q, int written) {
+                frameVarDataPos[q] += written;
+            }
+
+            @Override
+            public long ensureCapacity(int q, int needed) {
+                ensureVarDataCapacity(frameVarDataAddrs, frameVarDataPos, frameVarDataCap, q, needed);
+                return frameVarDataAddrs[q];
+            }
+
+            @Override
+            public long position(int q) {
+                return frameVarDataPos[q];
+            }
+        };
         protected final int indexColumnIndex;
         protected final int queryColCount;
         protected final int[] queryColToIncludeIdx;
@@ -1223,205 +1244,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return newCapacity;
         }
 
-        private void writeArrayToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                       int q, int count, @Nullable ArrayView value) {
-            // ARRAY aux: 16 bytes per row [8-byte data offset][8-byte data size].
-            // Layout matches ArrayTypeDriver.appendValue() so consumers reading
-            // the page frame use the same decoding path as on-disk arrays.
-            long auxEntry = auxAddr + (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
-            long dataOffset = varDataPos[q];
-            Unsafe.putLong(auxEntry, dataOffset);
-
-            if (value == null || value.isNull()) {
-                // NULL marker: size = 0
-                Unsafe.putLong(auxEntry + Long.BYTES, 0L);
-                return;
-            }
-
-            int nDims = value.getDimCount();
-            short elemType = value.getElemType();
-            int elemSize = ColumnType.sizeOf(elemType);
-            long cardinality = value.getCardinality();
-            int shapeBytes = nDims * Integer.BYTES;
-            // ArrayTypeDriver pads the data section so element writes are aligned
-            // to elemSize, then post-pads to Integer.BYTES for the next entry.
-            int prePad = elemSize > 1
-                    ? (int) ((-(dataOffset + shapeBytes)) & (elemSize - 1))
-                    : 0;
-            long dataBytes = cardinality * elemSize;
-            long postPad = (-(dataOffset + shapeBytes + prePad + dataBytes)) & (Integer.BYTES - 1);
-            // The var-data vector is int-addressed; guard before the (int) cast so a >2GB
-            // ARRAY fails loud rather than truncating and overrunning the buffer. Keep in
-            // sync with CoveredColumnDecoder.writeArray (the worker covered path).
-            long totalBytesLong = shapeBytes + prePad + dataBytes + postPad;
-            if (totalBytesLong > Integer.MAX_VALUE) {
-                throw CairoException.nonCritical().put("covered ARRAY value too large [bytes=").put(totalBytesLong).put(']');
-            }
-            int totalBytes = (int) totalBytesLong;
-
-            Unsafe.putLong(auxEntry + Long.BYTES, totalBytes);
-            ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, totalBytes);
-            long dst = varDataAddrs[q] + dataOffset;
-
-            for (int d = 0; d < nDims; d++) {
-                Unsafe.putInt(dst, value.getDimLen(d));
-                dst += Integer.BYTES;
-            }
-            if (prePad > 0) {
-                Unsafe.setMemory(dst, prePad, (byte) 0);
-                dst += prePad;
-            }
-            // Copy the real element data (bulk for a vanilla DOUBLE array, strided for a
-            // non-vanilla slice/transpose) via the shared primitive — never zero-fill — so a
-            // non-vanilla covered array stays correct and the eager and worker
-            // (PageFrameMemoryPool) covered paths agree byte-for-byte.
-            ArrayTypeDriver.appendArrayData(dst, value);
-            dst += dataBytes;
-            if (postPad > 0) {
-                Unsafe.setMemory(dst, postPad, (byte) 0);
-            }
-            varDataPos[q] += totalBytes;
-        }
-
-        private void writeBinaryToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                        int q, int count, @Nullable BinarySequence value) {
-            // BINARY aux: 8-byte offset per row into data vector
-            long auxEntry = auxAddr + (long) count * Long.BYTES;
-            long dataOffset = varDataPos[q];
-            Unsafe.putLong(auxEntry, dataOffset);
-
-            if (value == null) {
-                // Write negative length as NULL marker
-                ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, Long.BYTES);
-                Unsafe.putLong(varDataAddrs[q] + varDataPos[q], TableUtils.NULL_LEN);
-                varDataPos[q] += Long.BYTES;
-            } else {
-                long len = value.length();
-                // Guard the int cast (keep in sync with CoveredColumnDecoder.writeBinary).
-                long totalBytesLong = Long.BYTES + len;
-                if (totalBytesLong > Integer.MAX_VALUE) {
-                    throw CairoException.nonCritical().put("covered BINARY value too large [len=").put(len).put(']');
-                }
-                int totalBytes = (int) totalBytesLong;
-                ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, totalBytes);
-                long dst = varDataAddrs[q] + varDataPos[q];
-                Unsafe.putLong(dst, len);
-                value.copyTo(dst + Long.BYTES, 0, len);
-                varDataPos[q] += totalBytes;
-            }
-        }
-
-        protected void writeCoveredRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                       int count, CoveringRowCursor crc) {
+        protected void writeCoveredRow(long[] addrs, int count, CoveringRowCursor crc) {
             // Test-only: one row materialized eagerly at production. Single-key
             // production no longer calls this (metadata-only), so a non-zero
             // value means the multi-key eager merge ran. See
-            // getCoveredRowsWrittenForTesting.
-            assert (coveredRowsWrittenForTesting++) >= 0;
-            for (int q = 0; q < queryColCount; q++) {
-                int includeIdx = queryColToIncludeIdx[q];
-                if (includeIdx < 0) continue;
-                long addr = addrs[q];
-                final int tag = columnTypeTags[q];
-                // Fixed-width covered values go through the single shared layout (the worker
-                // path uses the same); only the var-size sink below is path-specific.
-                if (CoveredColumnDecoder.writeFixedWidthCovered(addr, count, tag, crc, includeIdx)) {
-                    continue;
-                }
-                switch (tag) {
-                    case ColumnType.VARCHAR ->
-                            writeVarcharToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredVarcharA(includeIdx));
-                    case ColumnType.STRING ->
-                            writeStringToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredStrA(includeIdx));
-                    case ColumnType.BINARY ->
-                            writeBinaryToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count, crc.getCoveredBin(includeIdx));
-                    case ColumnType.ARRAY -> writeArrayToFrame(addrs[q], varDataAddrs, varDataPos, varDataCap, q, count,
-                            crc.getCoveredArray(includeIdx, columnTypes[q]));
-                    // Mirrors the worker path (CoveredColumnDecoder): an unhandled covered type must
-                    // fail loud, not silently skip the slot.
-                    default ->
-                            throw CairoException.critical(0).put("unsupported covered column type [tag=").put(tag).put(']');
-                }
-            }
-        }
-
-        private void writeStringToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                        int q, int count, @Nullable CharSequence value) {
-            // STRING aux: 8-byte offset per row into data vector
-            long auxEntry = auxAddr + (long) count * Long.BYTES;
-            long dataOffset = varDataPos[q];
-            Unsafe.putLong(auxEntry, dataOffset);
-
-            if (value == null) {
-                // Write NULL_LEN (-1) as the length prefix
-                ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, Integer.BYTES);
-                Unsafe.putInt(varDataAddrs[q] + varDataPos[q], TableUtils.NULL_LEN);
-                varDataPos[q] += Integer.BYTES;
-            } else {
-                int charCount = value.length();
-                // charCount * 2 can overflow int for a multi-GB STRING; compute in long and
-                // guard (keep in sync with CoveredColumnDecoder.writeString).
-                long totalBytesLong = Integer.BYTES + (long) charCount * Character.BYTES;
-                if (totalBytesLong > Integer.MAX_VALUE) {
-                    throw CairoException.nonCritical().put("covered STRING value too large [chars=").put(charCount).put(']');
-                }
-                int totalBytes = (int) totalBytesLong;
-                ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, totalBytes);
-                long dst = varDataAddrs[q] + varDataPos[q];
-                Unsafe.putInt(dst, charCount);
-                for (int c = 0; c < charCount; c++) {
-                    Unsafe.putChar(dst + Integer.BYTES + (long) c * Character.BYTES, value.charAt(c));
-                }
-                varDataPos[q] += totalBytes;
-            }
-        }
-
-        private void writeVarcharToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                         int q, int count, @Nullable Utf8Sequence value) {
-            long auxEntry = auxAddr + (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-            long dataOffset = varDataPos[q];
-
-            if (value == null) {
-                Unsafe.putInt(auxEntry, VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL);
-                Unsafe.putInt(auxEntry + 4, 0);
-                Unsafe.putShort(auxEntry + 8, (short) 0);
-                Unsafe.putShort(auxEntry + 10, (short) dataOffset);
-                Unsafe.putInt(auxEntry + 12, (int) (dataOffset >> 16));
-            } else {
-                int size = value.size();
-                if (size <= VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED) {
-                    int header = (size << 4) | 1; // HEADER_FLAG_INLINED
-                    if (value.isAscii()) header |= 2; // HEADER_FLAG_ASCII
-                    Unsafe.putByte(auxEntry, (byte) header);
-                    for (int b = 0; b < size; b++) {
-                        Unsafe.putByte(auxEntry + 1 + b, value.byteAt(b));
-                    }
-                    for (int b = size; b < VarcharTypeDriver.VARCHAR_MAX_BYTES_FULLY_INLINED; b++) {
-                        Unsafe.putByte(auxEntry + 1 + b, (byte) 0);
-                    }
-                    Unsafe.putShort(auxEntry + 10, (short) dataOffset);
-                    Unsafe.putInt(auxEntry + 12, (int) (dataOffset >> 16));
-                } else {
-                    int header = (size << 4);
-                    if (value.isAscii()) header |= 2;
-                    Unsafe.putInt(auxEntry, header);
-                    for (int b = 0; b < VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES; b++) {
-                        Unsafe.putByte(auxEntry + 4 + b, value.byteAt(b));
-                    }
-                    ensureVarDataCapacity(varDataAddrs, varDataPos, varDataCap, q, size);
-                    // Use bulk copy when the Utf8Sequence has a stable native pointer
-                    // (always true for DirectUtf8String from covering sidecar reads)
-                    long srcPtr = value.ptr();
-                    if (srcPtr != 0) {
-                        Unsafe.copyMemory(srcPtr, varDataAddrs[q] + varDataPos[q], size);
-                    } else for (int b = 0; b < size; b++) {
-                        Unsafe.putByte(varDataAddrs[q] + varDataPos[q] + b, value.byteAt(b));
-                    }
-                    Unsafe.putShort(auxEntry + 10, (short) dataOffset);
-                    Unsafe.putInt(auxEntry + 12, (int) (dataOffset >> 16));
-                    varDataPos[q] += size;
-                }
-            }
+            // getCoveredRowsWrittenForTesting. Unconditional (not folded into an
+            // assert) so the count stays correct with -ea off; the field is
+            // volatile and this is already the eager multi-key path.
+            coveredRowsWrittenForTesting++;
+            // Single source of truth for the covered-row byte layout, shared with the worker
+            // decode (PageFrameMemoryPool). frameVarDataSink fronts this cursor's per-column
+            // var-data buffers; fixed-width columns are written inline by the decoder.
+            CoveredColumnDecoder.writeCoveredRow(
+                    addrs, frameVarDataSink, count, crc, queryColCount, queryColToIncludeIdx, columnTypeTags, columnTypes);
         }
 
         /**
@@ -2669,7 +2504,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
                 lastRowId = bestRow;
                 final CoveringRowCursor c = mergeCursors[best];
-                writeCoveredRow(frameAddrs, frameVarDataAddrs, frameVarDataPos, frameVarDataCap, count, c);
+                writeCoveredRow(frameAddrs, count, c);
                 Unsafe.putInt(symAddr + (long) count * Integer.BYTES, multiKeys.getQuick(best));
                 count++;
                 // Covered values are copied into the frame buffer, so the winning

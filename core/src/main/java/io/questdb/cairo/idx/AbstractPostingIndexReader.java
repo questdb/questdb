@@ -613,6 +613,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         this.ff = configuration.getFilesFacade();
         this.indexColumnName = columnName;
         this.sidecarBasePath.of(path);
+        // Self-healing freeze reset: re-initialising a pooled reader always starts it
+        // unfrozen, so a reused reader can never inherit a stale freeze if a prior query's
+        // reset()/setFrozen(false) was skipped (a permanently-frozen reader would silently
+        // no-op reloadConditionally() and miss writer republishes). genLookup.reopen()
+        // clears the mirrored genLookup freeze. See setFrozen().
+        this.frozen = false;
         genLookup.reopen();
         final int pLen = path.size();
 
