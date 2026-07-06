@@ -123,6 +123,10 @@ public class LiveViewRecordCursor implements RecordCursor {
     private final MergedRecord recordB = new MergedRecord();
     private RecordCursor diskCursor;
     private boolean diskExhausted;
+    // Set on the first hasNext() after of()/toTop(): once true the disk cursor
+    // may have advanced, so skipRows() can no longer take the fresh frame-skip
+    // fast path and falls back to the row-by-row default.
+    private boolean hasStartedIteration;
     private boolean inMemEligible;
     private long inMemRow;
     // Test-only count of in-mem rows served over this cursor's lifetime; lets
@@ -198,6 +202,7 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
+        hasStartedIteration = true;
         if (routingEligible) {
             // Seam routing: serve disk rows strictly below the slot's seam
             // timestamp, then serve the entire pinned slot. The slot holds every
@@ -287,6 +292,7 @@ public class LiveViewRecordCursor implements RecordCursor {
         this.leadRowsServed = 0;
         this.leadStart = 0;
         this.diskExhausted = false;
+        this.hasStartedIteration = false;
         this.inMemRow = -1;
         this.pinnedSlot = null;
         this.inMemEligible = false;
@@ -372,6 +378,58 @@ public class LiveViewRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        if (!routingEligible) {
+            // Disk-only: the read is a pure pass-through of the disk cursor, so
+            // its own (frame-level) skip applies directly and tracks its own
+            // position. This is what a plain table scan already gets, restoring
+            // O(frames) skipping for pruned/fenced-off reads through the view.
+            diskCursor.skipRows(rowCount, maxRowsAfterSkip);
+            return;
+        }
+        final long toSkip = rowCount.get();
+        if (toSkip <= 0) {
+            return;
+        }
+        // Seam routing serves [disk rows with ts < seamTs] then the whole pinned
+        // slot [0, rowCount). The frame-level split below assumes a fresh cursor
+        // (disk at its top, nothing served yet); the LIMIT rewrite always skips
+        // right after toTop(), so that holds. A mid-iteration call (disk already
+        // advanced) falls back to the safe row-by-row default, as does a disk
+        // cursor that cannot report its size (never a plain page-frame scan while
+        // routing, but guard rather than compute a bogus split).
+        final long diskSize = diskCursor.size();
+        if (hasStartedIteration || diskSize < 0) {
+            RecordCursor.super.skipRows(rowCount, maxRowsAfterSkip);
+            return;
+        }
+        // Disk rows before the seam number diskSize - leadStart: the overlap band
+        // [0, leadStart) sits at ts >= seamTs and is served from the slot, not
+        // disk. This is the same identity size() relies on (size == diskSize +
+        // leadRowCount), so the split stays consistent with LIMIT bound math.
+        final long diskRoutedCount = diskSize - leadStart;
+        if (toSkip < diskRoutedCount) {
+            // Landing inside the disk region: hand the skip to the disk cursor's
+            // frame skip. maxRowsAfterSkip (the consumer's post-skip bound) also
+            // covers the single seam-probe read hasNext() makes at the boundary
+            // (disk reads after the skip never exceed the consumer's bound), so
+            // the disk decode window is never clamped short.
+            diskCursor.skipRows(rowCount, maxRowsAfterSkip);
+            return;
+        }
+        // The skip spans the entire disk region and lands in the slot. Never walk
+        // disk row-by-row: mark it exhausted (hasNext() short-circuits the disk
+        // side) and position within the slot directly.
+        diskExhausted = true;
+        rowCount.dec(diskRoutedCount);
+        final long slotSkip = Math.min(rowCount.get(), pinnedSlot.rowCount());
+        // hasNext() pre-increments inMemRow, so land one row before the first row
+        // to serve. slotSkip == rowCount() leaves the slot exhausted (empty tail).
+        inMemRow = slotSkip - 1;
+        rowCount.dec(slotSkip);
+    }
+
+    @Override
     public void toTop() {
         // Restart both sides; the next hasNext() re-finds the seam by re-scanning
         // disk from the top. routingEligible is unchanged - the slot stays pinned
@@ -380,6 +438,7 @@ public class LiveViewRecordCursor implements RecordCursor {
             diskCursor.toTop();
         }
         diskExhausted = false;
+        hasStartedIteration = false;
         inMemRow = -1;
         recordA.toDiskMode();
     }

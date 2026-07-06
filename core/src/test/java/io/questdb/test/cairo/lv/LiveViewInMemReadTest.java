@@ -31,6 +31,7 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
@@ -2382,6 +2383,158 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
                             "2026-05-12T00:00:10.000000Z\t10\t5\n" +
                             "2026-05-12T00:00:11.000000Z\t11\t6\n" +
                             "2026-05-12T00:00:12.000000Z\t12\t7\n");
+        });
+    }
+
+    @Test
+    public void testSkipRowsDiskOnlyDelegatesToBase() throws Exception {
+        // With the fence forced off (mismatched stamps) the read is a pure
+        // pass-through of the disk cursor, so skipRows must delegate straight to
+        // the base's frame skip and never touch the tier.
+        assertMemoryLeak(() -> {
+            createSeamSplitLv(); // disk: 5 rows (x 1..5)
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            long s0 = tier.getSlot(0).lvSeqTxn();
+            long s1 = tier.getSlot(1).lvSeqTxn();
+            tier.getSlot(0).setLvSeqTxn(mismatch(s0));
+            tier.getSlot(1).setLvSeqTxn(mismatch(s1));
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertFalse("mismatched stamps must fence disk-only", cursor.isRoutingEligible());
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(3);
+                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                Assert.assertEquals("disk skip consumes all requested rows", 0, counter.get());
+                Assert.assertEquals("disk-only skip serves nothing from the tier", 0, cursor.inMemRowsServed());
+
+                Record record = cursor.getRecord();
+                LongList xs = new LongList();
+                while (cursor.hasNext()) {
+                    xs.add(record.getInt(1));
+                }
+                Assert.assertEquals(2, xs.size());
+                Assert.assertEquals(4, xs.get(0));
+                Assert.assertEquals(5, xs.get(1));
+                Assert.assertEquals("disk-only read never serves the tier", 0, cursor.inMemRowsServed());
+            } finally {
+                tier.getSlot(0).setLvSeqTxn(s0);
+                tier.getSlot(1).setLvSeqTxn(s1);
+            }
+        });
+    }
+
+    @Test
+    public void testSkipRowsFallsBackAfterIterationStarts() throws Exception {
+        // The frame-skip fast path assumes a fresh cursor. Once iteration has
+        // begun (the disk cursor may have advanced) skipRows must fall back to the
+        // row-by-row default and still land on the correct rows.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // 5 rows (x 1..5), all served through the slot
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue(cursor.isRoutingEligible());
+                Record record = cursor.getRecord();
+                // Advance one row so the cursor is no longer fresh.
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(1, record.getInt(1)); // x=1
+                Assert.assertEquals(1, cursor.inMemRowsServed());
+
+                // Mid-iteration skip: falls back to the default, walking x=2,3.
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(2);
+                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                Assert.assertEquals(0, counter.get());
+
+                LongList xs = new LongList();
+                while (cursor.hasNext()) {
+                    xs.add(record.getInt(1));
+                }
+                Assert.assertEquals(2, xs.size());
+                Assert.assertEquals(4, xs.get(0));
+                Assert.assertEquals(5, xs.get(1));
+                // The fallback walked every slot row (1 read + 2 skipped + 2 read),
+                // in contrast to the fast path which positions without serving.
+                Assert.assertEquals("fallback walks the skipped rows", 5, cursor.inMemRowsServed());
+            }
+        });
+    }
+
+    @Test
+    public void testSkipRowsFrameSkipsDiskRegion() throws Exception {
+        // A skip that lands inside the disk region (below the seam) is handed to
+        // the disk cursor's frame skip; the pinned slot is left untouched.
+        assertMemoryLeak(() -> {
+            createSeamSplitLv(); // disk: 5 rows (x 1..5); slot: 2 recent (x 4,5); seam after x=3
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue(cursor.isRoutingEligible());
+                // Skip 2 of the 3 below-seam disk rows.
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(2);
+                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                Assert.assertEquals(0, counter.get());
+                Assert.assertEquals("skipping the disk region serves nothing from the tier", 0, cursor.inMemRowsServed());
+
+                // Remaining: disk row x=3 (below seam), then the 2 slot rows (x 4,5).
+                Record record = cursor.getRecord();
+                LongList xs = new LongList();
+                while (cursor.hasNext()) {
+                    xs.add(record.getInt(1));
+                }
+                Assert.assertEquals(3, xs.size());
+                Assert.assertEquals(3, xs.get(0)); // disk, below the seam
+                Assert.assertEquals(4, xs.get(1)); // slot overlap
+                Assert.assertEquals(5, xs.get(2)); // slot overlap
+                Assert.assertEquals("only the two slot rows served from the tier", 2, cursor.inMemRowsServed());
+                Assert.assertEquals("both slot rows are flushed overlap, not lead", 0, cursor.leadRowsServed());
+            }
+        });
+    }
+
+    @Test
+    public void testSkipRowsFrameSkipsIntoSlotTail() throws Exception {
+        // The whole disk region sits inside the IN MEMORY window (seam at the
+        // minimum ts), so every row routes through the slot. A tail skip must land
+        // directly on the slot's tail WITHOUT walking the skipped rows through
+        // hasNext() - the row-by-row default would have counted them.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // disk: x 1..3; lead (RAM): x 4,5; diskRoutedCount == 0
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue(cursor.isRoutingEligible());
+                Assert.assertEquals("size folds the lead onto disk", 5, cursor.size());
+
+                // Emulate LIMIT -2: skip 3, take 2.
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(3);
+                cursor.skipRows(counter, 2);
+                Assert.assertEquals("skip consumes exactly the requested rows", 0, counter.get());
+                Assert.assertEquals("fast path positions without serving", 0, cursor.inMemRowsServed());
+                Assert.assertEquals(0, cursor.leadRowsServed());
+
+                // The two surviving rows are the un-flushed lead (x 4,5).
+                Record record = cursor.getRecord();
+                LongList xs = new LongList();
+                while (cursor.hasNext()) {
+                    xs.add(record.getInt(1));
+                }
+                Assert.assertEquals(2, xs.size());
+                Assert.assertEquals(4, xs.get(0));
+                Assert.assertEquals(5, xs.get(1));
+                Assert.assertEquals("only the two tail rows served from the tier", 2, cursor.inMemRowsServed());
+                Assert.assertEquals("both tail rows are un-flushed lead", 2, cursor.leadRowsServed());
+            }
         });
     }
 
