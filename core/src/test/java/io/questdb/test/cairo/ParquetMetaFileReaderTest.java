@@ -216,6 +216,58 @@ public class ParquetMetaFileReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetColumnMaxDefLevel() throws Exception {
+        // O3PartitionJob.hasLegacyRequiredNoSentinelColumn keys off this accessor to detect a
+        // legacy file whose BYTE/SHORT/CHAR/SYMBOL columns are Required (max def level 0) so it
+        // can force a full re-encode instead of corrupting the file with a migrated Optional
+        // footer over raw-copied Required pages. Verify the off-heap read of max_def_level.
+        assertMemoryLeak(() -> {
+            long writerPtr = ParquetMetaFileWriter.create();
+            try {
+                ParquetMetaFileWriter.setDesignatedTimestamp(writerPtr, 2);
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("legacy_byte"); // Required (legacy): max def level 0
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 100, ColumnType.BYTE, 0, 0, 0, 0, 0);
+                }
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("modern_short"); // Optional (modern): max def level 1
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 200, ColumnType.SHORT, 0, 0, 0, 0, 1);
+                }
+                try (DirectUtf8Sink name = new DirectUtf8Sink(16)) {
+                    name.put("ts"); // designated timestamp: always Required, max def level 0
+                    ParquetMetaFileWriter.addColumn(writerPtr, name.ptr(), name.size(), 300, ColumnType.TIMESTAMP, 0, 0, 0, 0, 0);
+                }
+                ParquetMetaFileWriter.addRowGroup(writerPtr, 500);
+                ParquetMetaFileWriter.setParquetFooter(writerPtr, 0, 0);
+                long resultPtr = ParquetMetaFileWriter.finish(writerPtr);
+                try {
+                    long dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
+                    long parquetMetaSize = ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr);
+
+                    ParquetMetaFileReader reader = new ParquetMetaFileReader();
+                    reader.of(dataPtr, parquetMetaSize);
+                    // Freshly staged single-snapshot _pm with no committed parquet size to
+                    // MVCC-match on: resolve the physically-last footer, same as the sibling
+                    // testColumnMetadataAccessors. resolveFooter(parquetFileSize) would never
+                    // match (derived size 0+0+PARQUET_TRAILER_SIZE != the requested size).
+                    Assert.assertTrue(reader.resolveLastFooter());
+
+                    // Required (legacy) columns report 0; Optional (modern) report 1. The
+                    // designated timestamp is Required in both old and new files, so the
+                    // detection predicate must exclude it by tag rather than by repetition.
+                    Assert.assertEquals(0, reader.getColumnMaxDefLevel(0));
+                    Assert.assertEquals(1, reader.getColumnMaxDefLevel(1));
+                    Assert.assertEquals(0, reader.getColumnMaxDefLevel(2));
+                } finally {
+                    ParquetMetaFileWriter.destroyResult(resultPtr);
+                }
+            } finally {
+                ParquetMetaFileWriter.destroyWriter(writerPtr);
+            }
+        });
+    }
+
+    @Test
     public void testCorruptedColumnCountValidatedBeforeAccess() throws Exception {
         assertMemoryLeak(() -> {
             try (ParquetMetaTestFile file = buildFile(1, 100)) {
