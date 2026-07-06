@@ -50,6 +50,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -261,7 +262,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 } else {
                     throw SqlException.$(ast.position, "expected first() or last() functions but got ").put(ast.token);
                 }
-                int underlyingColIndex = metadata.getColumnIndex(ast.rhs.token);
+                int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
                 queryToFrameColumnMapping[i] = underlyingColIndex;
 
                 int underlyingType = metadata.getColumnType(underlyingColIndex);
@@ -274,7 +275,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                             .put(" ");
                 }
             } else {
-                int underlyingColIndex = metadata.getColumnIndex(ast.token);
+                int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.token);
                 isKeyColumn[i] = true;
                 queryToFrameColumnMapping[i] = underlyingColIndex;
                 if (underlyingColIndex == timestampIndex) {

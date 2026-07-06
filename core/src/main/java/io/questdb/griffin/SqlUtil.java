@@ -408,7 +408,11 @@ public class SqlUtil {
                 entry.put('"');
             }
             if (emptyContent) {
-                entry.put("column");
+                // Keep the "column" placeholder within the configured cap (maxLength >= 4): reserve
+                // room for the dedup suffix (seqSize) and truncate, so an empty/all-space value at a
+                // small maxLength surfaces a bounded name rather than a fixed 6-char one (6 ==
+                // "column".length()).
+                entry.put("column", 0, Math.max(0, Math.min(6, maxLength - seqSize)));
             } else {
                 entry.put(base, start, start + contentLen);
             }

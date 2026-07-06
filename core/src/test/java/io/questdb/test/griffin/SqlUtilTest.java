@@ -66,12 +66,18 @@ public class SqlUtilTest {
         // A quote-protected base whose content truncates down to only spaces must not surface as
         // a bare space: the space-trim collapses it to nothing and the "column" placeholder takes
         // over (regression for the all-space alias leak - the old !quote-gated trim left " ").
+        // The placeholder honours maxLength too, so at maxLength 4 it surfaces the bounded "colu"
+        // rather than a fixed 6-char name.
         CharacterStore store = new CharacterStore(64, 4);
         LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
         LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
         CharSequence alias = SqlUtil.createExprColumnAlias(store, "  .z", aliasMap, seqMap, 4, true);
-        Assert.assertEquals("column", alias.toString());
+        Assert.assertEquals("colu", alias.toString());
         Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(alias));
+        // the full "column" placeholder still surfaces at a larger cap (see testExprColumnAliasEmptyBase)
+        CharSequence full = SqlUtil.createExprColumnAlias(new CharacterStore(64, 4), "   ",
+                new LowerCaseCharSequenceObjHashMap<>(8), new LowerCaseCharSequenceIntHashMap(), 64, true);
+        Assert.assertEquals("column", full.toString());
     }
 
     @Test
