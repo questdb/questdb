@@ -485,6 +485,11 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long getMaxDesignatedTimestamp() {
+        return Micros.YEAR_10000 - 1;
+    }
+
+    @Override
     public int getMicrosOfMilli(long timestamp) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;

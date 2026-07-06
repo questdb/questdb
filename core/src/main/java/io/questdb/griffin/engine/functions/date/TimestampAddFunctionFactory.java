@@ -174,7 +174,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             }
             if (CommonUtils.isFixedDurationUnit(period)) {
                 // a fixed unit adds the same constant to every timestamp
-                return MonotonicTimestampFunction.invertConstantShift(io, periodAddFunction.add(0, stride));
+                return MonotonicTimestampFunction.invertConstantShift(io, periodAddFunction.add(0, stride), getType());
             }
             return NONE;
         }

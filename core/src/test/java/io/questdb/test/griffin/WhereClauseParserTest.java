@@ -1251,18 +1251,32 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testDateaddLessThan() throws Exception {
-        // a positive dateadd near the domain max overflows to a low value that an open lower bound
-        // would match, so the predicate cannot prune and stays a row filter
         IntrinsicModel m = modelOf("dateadd('d', 1, timestamp) < '2015-05-10T00:00:00.000Z'");
-        Assert.assertFalse(m.hasIntervalFilters());
-        assertFilter(m, "'2015-05-10T00:00:00.000Z' timestamp 1 'd' dateadd <");
+        if (ColumnType.isTimestampNano(timestampType.getTimestampType())) {
+            // nanos have no domain cap, so a positive dateadd near the domain max overflows to a low
+            // value that an open lower bound would match; the predicate cannot prune and stays a filter
+            Assert.assertFalse(m.hasIntervalFilters());
+            assertFilter(m, "'2015-05-10T00:00:00.000Z' timestamp 1 'd' dateadd <");
+        } else {
+            // micros are capped at 9999-12-31, so a one-day shift cannot reach the overflow region;
+            // the inverse is exact and drops the filter
+            Assert.assertTrue(m.hasIntervalFilters());
+            TestUtils.assertEquals("[{lo=, hi=2015-05-08T23:59:59.999999Z}]", intervalToString(m));
+            assertFilter(m, null);
+        }
     }
 
     @Test
     public void testDateaddLessThanOrEqual() throws Exception {
         IntrinsicModel m = modelOf("dateadd('h', 2, timestamp) <= '2015-05-10T12:00:00.000Z'");
-        Assert.assertFalse(m.hasIntervalFilters());
-        assertFilter(m, "'2015-05-10T12:00:00.000Z' timestamp 2 'h' dateadd <=");
+        if (ColumnType.isTimestampNano(timestampType.getTimestampType())) {
+            Assert.assertFalse(m.hasIntervalFilters());
+            assertFilter(m, "'2015-05-10T12:00:00.000Z' timestamp 2 'h' dateadd <=");
+        } else {
+            Assert.assertTrue(m.hasIntervalFilters());
+            TestUtils.assertEquals("[{lo=, hi=2015-05-10T10:00:00.000000Z}]", intervalToString(m));
+            assertFilter(m, null);
+        }
     }
 
     @Test

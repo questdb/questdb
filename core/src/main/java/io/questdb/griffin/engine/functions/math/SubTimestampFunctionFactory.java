@@ -104,7 +104,7 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
                 return NONE;
             }
             // g(ts) = ts - k, so the constant shift is -k
-            return MonotonicTimestampFunction.invertConstantShift(io, -k);
+            return MonotonicTimestampFunction.invertConstantShift(io, -k, getType());
         }
 
         @Override

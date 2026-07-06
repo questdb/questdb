@@ -392,6 +392,12 @@ public class MillisTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long getMaxDesignatedTimestamp() {
+        // millis cannot be a designated timestamp (validateBounds is unsupported); stay conservative
+        return Long.MAX_VALUE;
+    }
+
+    @Override
     public int getMicrosOfMilli(long timestamp) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;

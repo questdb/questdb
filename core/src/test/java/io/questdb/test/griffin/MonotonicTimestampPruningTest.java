@@ -68,12 +68,12 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     public void testAddLongConstant() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
-            // the lower bound prunes via the interval scan; the upper bound (open below) could be
-            // matched by a forward-overflow wrap, so it stays a residual filter
+            // both bounds prune via the interval scan: micros are capped at 9999-12-31, so a one-day
+            // shift cannot reach the overflow region and the open-upper inverse stays exact
             assertQuery("SELECT * FROM trades WHERE timestamp + 86_400_000_000 >= '2022-01-03' AND timestamp + 86_400_000_000 < '2022-01-05'")
                     .timestamp("timestamp")
                     .withPlanContaining("Interval forward scan on: trades")
-                    .withPlanContaining("filter:")
+                    .withPlanNotContaining("filter:")
                     .returns("""
                             price\ttimestamp
                             150.0\t2022-01-02T12:00:00.000000Z
@@ -348,6 +348,24 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
                             250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testDateAddDayLessThanExact() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            // micros are capped at 9999-12-31, so a one-day shift cannot reach the overflow region:
+            // the open-upper comparison inverts exactly and drops the residual filter
+            assertQuery("SELECT * FROM trades WHERE dateadd('d', 1, timestamp) < '2022-01-04'")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
                             """);
         });
     }

@@ -59,7 +59,7 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
 
     @Override
     public int invertTimestampInterval(Interval io) {
-        return MonotonicTimestampFunction.invertConstantShift(io, offset);
+        return MonotonicTimestampFunction.invertConstantShift(io, offset, getType());
     }
 
     @Override

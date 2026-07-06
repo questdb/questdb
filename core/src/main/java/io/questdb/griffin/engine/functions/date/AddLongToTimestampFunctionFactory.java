@@ -99,7 +99,7 @@ public class AddLongToTimestampFunctionFactory implements FunctionFactory {
             if (k == Numbers.LONG_NULL) {
                 return NONE;
             }
-            return MonotonicTimestampFunction.invertConstantShift(io, k);
+            return MonotonicTimestampFunction.invertConstantShift(io, k, getType());
         }
 
         @Override

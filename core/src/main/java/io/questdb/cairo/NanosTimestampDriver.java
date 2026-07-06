@@ -487,6 +487,12 @@ public class NanosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long getMaxDesignatedTimestamp() {
+        // nanos are not capped below the long range, so a designated timestamp can reach Long.MAX_VALUE
+        return Long.MAX_VALUE;
+    }
+
+    @Override
     public int getMicrosOfMilli(long timestamp) {
         if (timestamp == Numbers.LONG_NULL) {
             return Numbers.INT_NULL;

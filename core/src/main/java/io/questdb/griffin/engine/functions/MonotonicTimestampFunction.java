@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.Interval;
@@ -61,11 +62,13 @@ public interface MonotonicTimestampFunction {
      * offset applied to every timestamp: the inverse subtracts {@code shift} back. Returns
      * {@link #EXACT}, or {@link #NONE} when subtracting {@code shift} would overflow the long
      * boundary or when the forward shift wraps part of the preimage out of a single interval.
+     * The {@code timestampType} identifies the designated-timestamp domain, whose write-time
+     * ceiling decides whether the forward shift can actually reach a storable overflow value.
      */
-    static int invertConstantShift(Interval io, long shift) {
+    static int invertConstantShift(Interval io, long shift, int timestampType) {
         final long inLo = io.getLo();
         final long inHi = io.getHi();
-        if (shiftWrapsIntoRange(shift, inLo, inHi)) {
+        if (shiftWrapsIntoRange(shift, inLo, inHi, ColumnType.getTimestampDriver(timestampType).getMaxDesignatedTimestamp())) {
             return NONE;
         }
         long lo = inLo;
@@ -134,9 +137,23 @@ public interface MonotonicTimestampFunction {
      * preimage when the upper bound is finite -- with an open upper bound the wrap merges
      * contiguously with the non-wrapping range. A split cannot be captured by a single interval, so
      * the inverse must decline ({@link #NONE}) and leave the predicate a row filter.
+     * <p>
+     * The split can only carry real rows if a <em>storable</em> timestamp overflows. The write path
+     * ({@code TableWriter}/{@code WalWriter.validateBounds}) caps every designated timestamp at
+     * {@code maxTimestamp}, so overflow is reachable only when {@code maxTimestamp + shift} itself
+     * wraps, i.e. {@code shift > Long.MAX_VALUE - maxTimestamp}. For micros the ceiling is
+     * {@code 9999-12-31}, leaving a gap of ~284000 years, so no realistic stride overflows and
+     * {@code dateadd('<fixed>', +stride, ts) < / <= bound} still prunes exactly. Nanos are not
+     * capped ({@code maxTimestamp == Long.MAX_VALUE}), so any positive shift is treated as wrapping
+     * and the predicate stays a row filter. Do not drop this ceiling check -- without it a
+     * {@code ts} whose {@code ts + stride} overflows negative satisfies the predicate but would be
+     * wrongly pruned away.
      */
-    static boolean shiftWrapsIntoRange(long shift, long lo, long hi) {
-        return shift > 0 && hi != Long.MAX_VALUE && lo <= Long.MIN_VALUE + (shift - 1);
+    static boolean shiftWrapsIntoRange(long shift, long lo, long hi, long maxTimestamp) {
+        return shift > 0
+                && hi != Long.MAX_VALUE
+                && lo <= Long.MIN_VALUE + (shift - 1)
+                && shift > Long.MAX_VALUE - maxTimestamp;
     }
 
     private static boolean tryZoneOffsetExact(
