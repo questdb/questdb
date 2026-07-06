@@ -1544,7 +1544,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         if (advanceTo > instance.getRefreshedUpToSeqTxn()) {
             if (appendedRows > 0 && populateTier) {
-                if (instance.isTierStale()) {
+                if (instance.isTierStale() && !isLeadReconstruction()) {
                     // The tier is stale: a prior both-slots-pinned O3 rebuild-skip
                     // (or an emergency flush) left the published slot inconsistent
                     // with the re-sequenced disk, and disk now holds every row up to
@@ -1560,12 +1560,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // instead: the seam lands at the IN MEMORY window's lower edge
                     // with the overlap present, and rebuildInMemoryTier clears the
                     // stale marking (or defers to the next cycle if both slots stay
-                    // pinned). Reachable only on the primary - a read-only replica
-                    // never sets tierStale, diverting O3 and publish stalls through
-                    // its own overrides before those setters run. instance.leadRowCount
-                    // is 0 here (both tierStale setters zero it), so flushLead
-                    // materialises exactly this cycle's staging rows, not the stale
-                    // slot rows. Pin that invariant explicitly rather than trusting
+                    // pinned).
+                    //
+                    // Gated to the primary via !isLeadReconstruction(): a read-only
+                    // replica ALSO sets tierStale (its reconcileLeadWithDisk arms it on
+                    // a Case B / cold-start reconcile to force a clean tier rebuild), but
+                    // it must never flushLead - that opens a WalWriter on a read-only
+                    // node. The replica instead falls through to publishToInMemoryTier's
+                    // dropRetained path, which resets the slot and rebuilds the pure lead
+                    // from this cycle's re-derived staging in RAM. It has no additive-
+                    // same-ts gap to fix: its reconcile seam already drops the on-disk
+                    // durable band (ts <= diskMaxTs) from staging, so the rebuilt slot is
+                    // seamed strictly above disk and every durable row is served by disk.
+                    // instance.leadRowCount is 0 here (both tierStale setters zero it), so
+                    // flushLead materialises exactly this cycle's staging rows, not the
+                    // stale slot rows. Pin that invariant explicitly rather than trusting
                     // upstream bookkeeping: the o3Replay non-capable resync only re-arms
                     // leadRowCount from a non-stale slot, but a from-scratch setLeadRowCount(0)
                     // here also keeps flushRows / lvRowPosition accounting exact against any
