@@ -1764,7 +1764,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             resetIterationState();
             columnMapping.clear();
             for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                columnMapping.addColumn(columnIndexes.getQuick(i), columnIndexes.getQuick(i));
+                columnMapping.addColumn(columnIndexes.getQuick(i), columnIndexes.getQuick(i), columnIndexes.getQuick(i));
             }
             freeBuffers();
         }

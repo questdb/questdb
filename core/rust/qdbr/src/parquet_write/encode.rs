@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
+use parquet2::schema::Repetition;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::array;
@@ -178,14 +179,31 @@ fn encode_boolean_dispatch(
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
     match (encoding, column_tag) {
-        (Encoding::Plain, ColumnTypeTag::Boolean) => plain::encode_boolean(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
+        // BOOLEAN is written Optional (column-top rows as def-level=0) on the current schema,
+        // but legacy files (and update mode preserving their schema) carry Required pages.
+        // Route by the schema's repetition so the page layout matches the footer; the notnull
+        // encoder writes bit-packed values with no def levels, the nullable one adds def levels.
+        (Encoding::Plain, ColumnTypeTag::Boolean) => {
+            if pt.field_info.repetition == Repetition::Required {
+                plain::encode_boolean(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                plain::encode_boolean_nullable(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
         _ => unsupported(encoding, column_tag, "Boolean"),
     }
 }
@@ -212,30 +230,82 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::Plain, Byte) => plain::encode_int_notnull::<i8, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
-        (Encoding::Plain, Short) => plain::encode_int_notnull::<i16, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
-        (Encoding::Plain, Char) => plain::encode_int_notnull::<u16, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
+        // Byte/Short/Char have no in-band null sentinel but need Optional repetition
+        // so column-top rows can be marked NULL via def-level=0. The Nullable impls
+        // for i8/i16/u16 return false unconditionally, so only column-top rows take
+        // the null branch; data values are never reported null. See schema.rs for
+        // the matching is_notnull_type narrowing and parquet_write/mod.rs for the
+        // Nullable impls.
+        //
+        // Files written before commit 247cb447cd carry Required repetition for
+        // these tags. In update mode the legacy schema is preserved (see
+        // ensure_schema_matches_columns), so the encoder dispatch picks
+        // encode_int_notnull to match the schema. The matching encoder asserts
+        // Required, so the Required branch is only safe when the schema actually
+        // says Required.
+        (Encoding::Plain, Byte) => {
+            if pt.field_info.repetition == Repetition::Required {
+                plain::encode_int_notnull::<i8, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                plain::encode_int_nullable::<i8, i32, false>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
+        (Encoding::Plain, Short) => {
+            if pt.field_info.repetition == Repetition::Required {
+                plain::encode_int_notnull::<i16, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                plain::encode_int_nullable::<i16, i32, false>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
+        (Encoding::Plain, Char) => {
+            if pt.field_info.repetition == Repetition::Required {
+                plain::encode_int_notnull::<u16, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                plain::encode_int_nullable::<u16, i32, true>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
         (Encoding::Plain, IPv4) => {
             plain::encode_int_nullable::<crate::parquet_write::IPv4, i32, true>(
                 columns,
@@ -286,32 +356,72 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::DeltaBinaryPacked, Byte) => delta_binary_packed::encode_int_notnull::<i8, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
-        (Encoding::DeltaBinaryPacked, Short) => {
-            delta_binary_packed::encode_int_notnull::<i16, i32>(
-                columns,
-                first_partition_start,
-                last_partition_end,
-                pt,
-                options,
-                bloom_set,
-            )
+        // Byte/Short/Char need Optional repetition for column-top NULL preservation;
+        // see the Plain arm above for rationale, including the legacy Required
+        // schema fallback.
+        (Encoding::DeltaBinaryPacked, Byte) => {
+            if pt.field_info.repetition == Repetition::Required {
+                delta_binary_packed::encode_int_notnull::<i8, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                delta_binary_packed::encode_int_nullable::<i8, i32, false>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
         }
-        (Encoding::DeltaBinaryPacked, Char) => delta_binary_packed::encode_int_notnull::<u16, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
+        (Encoding::DeltaBinaryPacked, Short) => {
+            if pt.field_info.repetition == Repetition::Required {
+                delta_binary_packed::encode_int_notnull::<i16, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                delta_binary_packed::encode_int_nullable::<i16, i32, false>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
+        (Encoding::DeltaBinaryPacked, Char) => {
+            if pt.field_info.repetition == Repetition::Required {
+                delta_binary_packed::encode_int_notnull::<u16, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                delta_binary_packed::encode_int_nullable::<u16, i32, true>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
         (Encoding::DeltaBinaryPacked, IPv4) => {
             delta_binary_packed::encode_int_nullable::<crate::parquet_write::IPv4, i32, true>(
                 columns,
@@ -362,30 +472,72 @@ fn encode_int32_dispatch(
             options,
             bloom_set,
         ),
-        (Encoding::RleDictionary, Byte) => rle_dictionary::encode_int_notnull::<i8, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
-        (Encoding::RleDictionary, Short) => rle_dictionary::encode_int_notnull::<i16, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
-        (Encoding::RleDictionary, Char) => rle_dictionary::encode_int_notnull::<u16, i32>(
-            columns,
-            first_partition_start,
-            last_partition_end,
-            pt,
-            options,
-            bloom_set,
-        ),
+        // Byte/Short/Char need Optional repetition for column-top NULL preservation;
+        // see the Plain arm above for rationale, including the legacy Required
+        // schema fallback.
+        (Encoding::RleDictionary, Byte) => {
+            if pt.field_info.repetition == Repetition::Required {
+                rle_dictionary::encode_int_notnull::<i8, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                rle_dictionary::encode_int_nullable::<i8, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
+        (Encoding::RleDictionary, Short) => {
+            if pt.field_info.repetition == Repetition::Required {
+                rle_dictionary::encode_int_notnull::<i16, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                rle_dictionary::encode_int_nullable::<i16, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
+        (Encoding::RleDictionary, Char) => {
+            if pt.field_info.repetition == Repetition::Required {
+                rle_dictionary::encode_int_notnull::<u16, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            } else {
+                rle_dictionary::encode_int_nullable::<u16, i32>(
+                    columns,
+                    first_partition_start,
+                    last_partition_end,
+                    pt,
+                    options,
+                    bloom_set,
+                )
+            }
+        }
         (Encoding::RleDictionary, IPv4) => {
             rle_dictionary::encode_int_nullable::<crate::parquet_write::IPv4, i32>(
                 columns,
