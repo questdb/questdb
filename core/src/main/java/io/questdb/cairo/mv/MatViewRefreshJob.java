@@ -498,7 +498,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * the caller held the latch (see {@link #finalizeDeferredInvalidation}), then unlocks. Every
      * lock-holder must route its unlock through here -- including holders outside this class, such as
      * the {@code REFRESH ... STATS} reset in {@code SqlCompilerImpl} -- or a deferral landing during
-     * its hold freezes the view valid-but-stale.
+     * its hold freezes the view valid-but-stale. The one deliberate exception is {@code invalidateView}'s
+     * auth-rollback self-deferral ({@code isSelfDeferred}), which unlocks inline: finalizing there would
+     * clear the marker that branch just set and busy-spin against the sticky read-only writer refusal.
      */
     public static void finalizeAndUnlock(
             CairoEngine engine,
@@ -510,7 +512,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // Only an OutOfMemoryError can throw out of finalizeDeferredInvalidation, but if one does, unlock()
         // must still run: a skipped unlock wedges the latch forever and leaks the parked cursorFactory at
         // teardown (close/tryCloseIf* all need the latch). Finalize stays under the latch, in the inner try,
-        // so the finalize->unlock race window stays narrow.
+        // so the finalize->unlock race window stays narrow. An OOM thrown between finalize's clear and its
+        // enqueue still drops the deferral outright (marker cleared, no task queued: the view reads healthy
+        // while stale); enqueue-before-clear would be no better -- a second worker could dequeue and swallow
+        // the task against the still-set marker -- and under OOM the process is lost anyway.
         try {
             finalizeDeferredInvalidation(engine, stateStore, viewToken, viewState);
         } finally {
@@ -1569,11 +1574,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // holds without minting), and the REFRESH ... STATS reset in SqlCompilerImpl -- clearing the guard so
         // the view ends invalid, not frozen. (MatViewState's close/tryCloseIf* holders are teardown-only: a
         // closed or dropped state dies with its marker and finalize skips it anyway.) Residuals: a
-        // read-only deferral rebuilds from disk on promote; and the lost-update window between a holder's
-        // finalize-clear and its unlock, where a second off-latch deferral re-sets the marker after the clear,
-        // so both the holder's re-enqueued INVALIDATE and the second deferral are then swallowed by this guard
-        // for good. When hit that is a terminal silent freeze -- far narrower than the pre-fix always-lost
-        // deferral, but, unlike it, not self-healing. (The pending marker is now a single volatile reference --
+        // read-only deferral rebuilds from disk on promote; and the lost-update window between finalize's
+        // marker read and the holder's unlock. A concurrent invalidateView landing in that window passes this
+        // guard (the marker is unset or just cleared), fails tryLock against the still-held latch, and defers
+        // -- too late for finalize to see. Whether finalize found no marker and returned early (stranding that
+        // first-and-only deferral) or had just cleared an earlier one (stranding its own re-enqueued
+        // INVALIDATE together with the new deferral), every queued task is then swallowed by this guard for
+        // good. When hit that is a terminal silent freeze, far narrower than the pre-fix always-lost deferral;
+        // but while finalize now recovers that pre-fix class, nothing recovers a deferral lost in this window.
+        // (The pending marker is now a single volatile reference --
         // see MatViewState#pendingInvalidationMarker -- so it can no longer *tear* to (pending=true,
         // reason=null) and strand a real deferral in finalize's null-reason no-op branch; the sentinel
         // null-reason marker is only ever written alongside a queued full refresh that recovers it. Only this
@@ -1886,6 +1895,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(viewDefinition, viewState, null, th);
             return false;
         } finally {
+            // Same tradeoff as fullRefresh's finally: a deferral landing mid-hold is finalized here even if
+            // this range refresh just recomputed the affected rows, so the view can end invalid right after a
+            // correct recompute. Conservatively safe (invalid is visible; REFRESH ... FULL recovers) --
+            // finalize is reason-blind here too; see fullRefresh's finally for the full rationale.
             finalizeAndUnlock(viewToken, viewState, false);
         }
 

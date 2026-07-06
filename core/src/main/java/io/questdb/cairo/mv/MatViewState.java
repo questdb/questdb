@@ -471,7 +471,7 @@ public class MatViewState implements QuietCloseable {
         // Single volatile read. A String carries the deferral reason; the sentinel (full-refresh
         // reschedule) and null (not pending) both report no reason.
         final Object marker = pendingInvalidationMarker;
-        return marker instanceof String ? (String) marker : null;
+        return marker instanceof String reason ? reason : null;
     }
 
     public long getRecordRowCopierMetadataVersion() {
