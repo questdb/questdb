@@ -626,6 +626,49 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotOperatorTokenColumnCollidesWithSiblingColumn() throws Exception {
+        // An operator-token pivot column ('in') surfaces bare as `in` via toColumnName, so a SELECT *
+        // that pairs it with a same-named sibling column must deduplicate on the DISPLAY name, not the
+        // raw compiler alias: the dedup used to key on the quote-protected "in", missing the collision
+        // with a bare in, so the projection metadata build threw "duplicate column [name=in]"
+        // (regression). Both representation orders are covered.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+
+            // bare column `in` beside a protective-quoted "in" pivot column -> in / in1
+            execute("CREATE TABLE t1 (\"in\" INT);");
+            execute("INSERT INTO t1 VALUES (99);");
+            assertQuery("""
+                    SELECT * FROM t1
+                      CROSS JOIN (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) p
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            in	grp	in1
+                            99	A	10
+                            99	B	30
+                            """);
+
+            // protective-quoted "in" pivot column beside a bare `in` user alias -> in / in1
+            assertQuery("""
+                    SELECT * FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) p
+                      CROSS JOIN (SELECT 1 AS "in") k
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in1
+                            A	10	1
+                            B	30	1
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotOperatorTokenValueThroughJoin() throws Exception {
         // An operator-token pivot column ('in') referenced through a join wildcard produces the
         // composed reference t1."in"; it must resolve against the join metadata (stored bare as

@@ -362,7 +362,11 @@ public class SqlUtil {
                 entry.put('"');
             }
             final CharSequence alias = entry.toImmutable();
-            if (aliasToColumnMap.excludes(alias)) {
+            // A quote-protected candidate ("in") and an already-taken bare identifier (in) reduce to
+            // the same toColumnName display name, so they collide in the projection metadata; reject
+            // the candidate in that case so it gets a dedup suffix. An operator-token base here always
+            // emits quoted first, so a bare candidate never needs the reverse (quoted-sibling) check.
+            if (isAliasNameAvailable(aliasToColumnMap, alias, emitQuote, null)) {
                 // Update the sequence tracker for next time
                 nextAliasSequenceMap.put(seqKey, sequence + 1);
                 return alias;
@@ -1683,6 +1687,36 @@ public class SqlUtil {
     }
 
     /**
+     * Tests whether {@code alias} (a freshly generated candidate, {@code quoted} when it carries the
+     * compiler's protective double quotes) is free of a result-set name collision in the already
+     * assigned {@code takenAliases}. The set holds raw aliases, but two aliases that reduce to the
+     * same {@link #toColumnName} display name still collide when the projection metadata is built:
+     * a protective-quoted {@code "in"} and a bare {@code in} both surface as {@code in}. So a
+     * candidate is available only when NEITHER representation of its display name is taken:
+     * <ul>
+     *     <li>a quoted {@code "<name>"} candidate must also find the bare {@code <name>} free;</li>
+     *     <li>a bare {@code <name>} candidate whose value is itself quoting-worthy must also find the
+     *     protective-quoted sibling free. {@code bareQuotedSibling} is that {@code "<name>"} form,
+     *     precomputed by the caller (null when the candidate has no protected sibling, e.g. an
+     *     ordinary identifier or a suffixed {@code in1}).</li>
+     * </ul>
+     */
+    private static boolean isAliasNameAvailable(
+            AbstractLowerCaseCharSequenceHashSet takenAliases,
+            CharSequence alias,
+            boolean quoted,
+            @Nullable CharSequence bareQuotedSibling
+    ) {
+        if (!takenAliases.excludes(alias)) {
+            return false;
+        }
+        if (quoted) {
+            return takenAliases.excludes(alias, 1, alias.length() - 1);
+        }
+        return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
+    }
+
+    /**
      * Creates a unique column alias with O(1) amortized complexity by tracking the next sequence
      * number for each base alias in the provided map.
      *
@@ -1702,12 +1736,8 @@ public class SqlUtil {
             LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
             boolean nonLiteral
     ) {
-        final boolean disallowed = nonLiteral && disallowedAliases.contains(base);
-
-        // early exit for simple cases
-        if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
-            return base;
-        }
+        final boolean containsDisallowed = disallowedAliases.contains(base);
+        final boolean disallowed = nonLiteral && containsDisallowed;
 
         // A quote-protected base carries its dedup suffix inside the quotes and re-derives
         // whether the quotes are still needed from the final content (see the loop below): a
@@ -1716,6 +1746,30 @@ public class SqlUtil {
         // in1). Putting the suffix after the quotes ("a.b"1) would fail isQuoteProtectedAlias
         // and leak them into the result set metadata.
         final boolean quoteProtected = isQuoteProtectedAlias(base);
+
+        // early exit for simple cases: return the base verbatim (preserving its object identity,
+        // which the wildcard '*' passthrough and other callers rely on) when it carries no
+        // result-set name collision. A base whose toColumnName display name matches an already-taken
+        // alias in the OTHER representation must instead run the dedup loop below, which forces a
+        // suffix:
+        //  - a quote-protected "in" and a bare in both surface as in (check the bare interior);
+        //  - a bare operator token (in, *, and, ...) and a protective-quoted "in" both surface as in
+        //    (check that "<base>" sibling).
+        if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
+            if (quoteProtected) {
+                if (aliasToColumnMap.excludes(base, 1, base.length() - 1)) {
+                    return base;
+                }
+            } else if (!containsDisallowed) {
+                return base;
+            } else {
+                final CharacterStoreEntry siblingEntry = store.newEntry();
+                siblingEntry.put('"').put(base).put('"');
+                if (aliasToColumnMap.excludes(siblingEntry.toImmutable())) {
+                    return base;
+                }
+            }
+        }
 
         // Resolve the dedup content: the [contentLo, contentHi) slice of base reused for every
         // candidate, or the "column" placeholder (contentLo < 0) for empty/numeric/disallowed
@@ -1755,19 +1809,32 @@ public class SqlUtil {
             sequence = 0;
         }
 
+        // A bare candidate that is itself quoting-worthy (an operator token; a dotted base reduces
+        // to its dot-free tail, so it never surfaces dotted here) shares a display name with a
+        // protective-quoted "<name>" sibling. Precompute that sibling once so the loop can force a
+        // dedup suffix when it is already taken. It lives in its own store region, ahead of the
+        // reused candidate entry, so the loop's trimTo never disturbs it.
+        CharSequence bareQuotedSibling = null;
+        if (!quoteProtected && contentLo >= 0 && aliasContentNeedsQuoting(base, contentLo, contentHi, false)) {
+            final CharacterStoreEntry siblingEntry = store.newEntry();
+            siblingEntry.put('"').put(base, contentLo, contentHi).put('"');
+            bareQuotedSibling = siblingEntry.toImmutable();
+        }
+
         // Reuse one store entry across dedup candidates: trimTo(entryStart) rewinds it each
-        // iteration so rejected candidates do not accumulate in the store. seqKey lives in an
-        // earlier entry and is left untouched.
+        // iteration so rejected candidates do not accumulate in the store. seqKey (and any sibling
+        // probe) live in earlier entries and are left untouched.
         final CharacterStoreEntry entry = store.newEntry();
         final int entryStart = entry.length();
 
         while (true) {
+            final boolean deduped = sequence > 0;
             // Re-emit the protective quotes per candidate only while the final content still
             // needs them: a dotted interior always does; an operator token only until a dedup
             // suffix makes it a plain identifier (so "a.b" -> "a.b1", while "in" stays quoted
             // at sequence 0 to collide with the stored "in", then surfaces as bare in1).
             final boolean emitQuote = quoteProtected && contentLo >= 0
-                    && aliasContentNeedsQuoting(base, contentLo, contentHi, sequence > 0);
+                    && aliasContentNeedsQuoting(base, contentLo, contentHi, deduped);
             entry.trimTo(entryStart);
             if (emitQuote) {
                 entry.put('"');
@@ -1777,7 +1844,7 @@ public class SqlUtil {
             } else {
                 entry.put("column");
             }
-            if (sequence > 0) {
+            if (deduped) {
                 entry.put(sequence);
             }
             if (emitQuote) {
@@ -1785,7 +1852,9 @@ public class SqlUtil {
             }
             sequence++;
             final CharSequence alias = entry.toImmutable();
-            if (aliasToColumnMap.excludes(alias)) {
+            // Only the un-suffixed candidate can share a display name with the "<name>" sibling; a
+            // suffixed in1 is a distinct display name that has no protected sibling.
+            if (isAliasNameAvailable(aliasToColumnMap, alias, emitQuote, deduped ? null : bareQuotedSibling)) {
                 // Update the sequence tracker for next time
                 nextAliasSequenceMap.put(seqKey, sequence);
                 return alias;
