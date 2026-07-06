@@ -2512,6 +2512,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return distressed;
     }
 
+    // A zero-copy suffix child hardlinks the donor's column files and the reader addresses them through a
+    // per-column +partitionTop gate that keys on colTopPartTs < childTimestamp. That gate misclassifies a
+    // BACKFILLED late column - one first added in a later partition (colTopPartTs > this partition's
+    // timestamp) yet materialized INTO this partition by an earlier O3 write - as child-local (shift 0),
+    // so the suffix child would read NULLs for it. A child-local file and a shared donor file are not
+    // distinguishable from the _cv record alone, so when the donor holds such a column we decline the
+    // zero-copy split and fall back to the classic copy split, which materializes every column correctly.
+    public boolean isHardlinkSplitBlockedByBackfilledColumn(long partitionTimestamp) {
+        for (int i = 0, n = columnCount; i < n; i++) {
+            if (metadata.getColumnType(i) < 0) {
+                continue; // dropped column
+            }
+            if (columnVersionWriter.getColumnTopPartitionTimestamp(i) > partitionTimestamp
+                    && columnVersionWriter.getColumnTop(partitionTimestamp, i) > -1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Whether the config allows zero-copy (hardlink) partition splits for this table. The split
     // creates a partition with a non-zero partition top; reading such partitions is always
     // supported, this only gates their creation.

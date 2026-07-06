@@ -1821,6 +1821,76 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitHardlinkSuffixChildBackfilledLateColumn() throws Exception {
+        // Reproduces WalWriterFuzzTest#testWalApplyEjectsMultipleTables (fuzzer seeds
+        // 8468096765183728379L, 5039381688179552672L): a column added when a LATER partition
+        // was last (so its default add-partition timestamp is greater than the mid partition's)
+        // but BACKFILLED into that mid partition via O3 shares the donor's column files. When the
+        // mid partition is later hardlink-split, the suffix child must apply +partitionTop to the
+        // backfilled column. The per-column gate keyed on colTopPartTs < partitionTimestamp
+        // wrongly classified it as child-local (offset 0): on a tiny suffix child mappedRowCount
+        // went <= 0 and the column opened as NullMemoryCMR, so every child row read NULL for it.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 3);
+
+            String tsType = timestampType.getTypeName();
+            // Mid partition 2020-02-04 with 1440 minute rows; nc absent (added later below).
+            String base = "SELECT" +
+                    " cast(x AS int) i," +
+                    " -x j," +
+                    " 's' || x AS str," +
+                    " ('2020-02-04'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts," +
+                    " null::LONG nc" +
+                    " FROM long_sequence(60 * 24)";
+            execute("CREATE TABLE x AS (" + base + ") TIMESTAMP(ts) PARTITION BY DAY");
+            // A strictly later partition so 2020-02-04 becomes a MID partition and the column
+            // added next records its default add-partition at 2020-02-06 (> 2020-02-04).
+            String later = "SELECT" +
+                    " cast(x AS int) i," +
+                    " -x j," +
+                    " 's' || x AS str," +
+                    " ('2020-02-06'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts," +
+                    " null::LONG nc" +
+                    " FROM long_sequence(5)";
+            execute("INSERT INTO x SELECT i, j, str, ts, nc FROM (" + later + ")");
+            // nc did not exist yet at CREATE / first INSERT; add it now (add-partition = 2020-02-06).
+            execute("ALTER TABLE x DROP COLUMN nc");
+            execute("ALTER TABLE x ADD COLUMN nc LONG");
+
+            // Commit 1: full O3 merge of 2020-02-04 (min == partition floor, max past its tail) so
+            // no split happens, but nc is backfilled - the tail row 23:59:59 now carries an nc value.
+            String c1 = "SELECT" +
+                    " cast(x AS int) * 1000000 i," +
+                    " -x - 1000000L AS j," +
+                    " 'a' || x AS str," +
+                    " (CASE x WHEN 1 THEN '2020-02-04T00:00:00'::timestamp ELSE '2020-02-04T23:59:59'::timestamp END)::" + tsType + " ts," +
+                    " (x * 1000)::LONG nc" +
+                    " FROM long_sequence(2)";
+            execute("INSERT INTO x SELECT i, j, str, ts, nc FROM (" + c1 + ")");
+
+            // Commit 2: O3 insert at 23:59:30 splits 2020-02-04 zero-copy 3-way, leaving the tail
+            // (the 23:59:59 row) as a tiny hardlinked suffix child that shares nc's donor file.
+            String c2 = "SELECT" +
+                    " cast(x AS int) * 2000000 i," +
+                    " -x - 2000000L AS j," +
+                    " 'b' || x AS str," +
+                    " '2020-02-04T23:59:30'::timestamp::" + tsType + " ts," +
+                    " (x * 7)::LONG nc" +
+                    " FROM long_sequence(1)";
+            execute("INSERT INTO x SELECT i, j, str, ts, nc FROM (" + c2 + ")");
+
+            String oracle = "(" + base
+                    + " UNION ALL " + later
+                    + " UNION ALL " + c1
+                    + " UNION ALL " + c2
+                    + ") ORDER BY ts";
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracle, "x", LOG, true);
+        });
+    }
+
+    @Test
     public void testSplitMidPartitionMaxSplitsConfigured() throws Exception {
         // cairo.o3.mid.partition.max.splits controls how many splits a non-last
         // (mid) logical partition is allowed to keep after commit. Raising the

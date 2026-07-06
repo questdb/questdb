@@ -1470,6 +1470,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         && suffixLo == suffixChildPartitionTop
                         && suffixChildRowCount > 0
                         && suffixChildTimestamp > o3TimestampHi
+                        && !tableWriter.isHardlinkSplitBlockedByBackfilledColumn(partitionTimestamp)
                         && tableWriter.isHardlinkSplitWithinSquashCap(partitionTimestamp);
 
                 // Split partition if the prefix is large enough (relatively and absolutely), OR whenever the

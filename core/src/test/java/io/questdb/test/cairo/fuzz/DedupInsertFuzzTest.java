@@ -1323,6 +1323,17 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    @Override
+    protected void setFuzzProperties(Rnd rnd) {
+        super.setFuzzProperties(rnd);
+        // Force zero-copy hardlink partition-top splits on every run of this dedup fuzz. A 3-way
+        // (or wider) hardlink split only happens once the split cap is at least 3, so raise the
+        // random floor from 1 to 3 for both the last- and mid-partition split caps.
+        int splitMaxCount = 3 + rnd.nextInt(6); // 3..8
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, splitMaxCount);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, splitMaxCount);
+    }
+
     private static class DedupCursor implements RecordCursor {
 
         private final StringSink currentRecordKeys = new StringSink();

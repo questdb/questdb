@@ -101,6 +101,18 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
+        // These tests verify posting-index seal/recovery internals (covering sidecar
+        // rebuild, incremental seal, seal-purge) against a classic partition layout:
+        // several surgically delete a specific partition's sidecar by index-0 timestamp
+        // or assert exact table_partitions() counts. The zero-copy hardlink partition
+        // split (partition top), globally on in the test config, changes that topology
+        // -- it makes partition 0 a tiny donor prefix that a later append never reseals,
+        // and turns a classic N-way copy split into a 3-way hardlink split -- which
+        // breaks those partition-addressed assertions without exercising anything these
+        // tests are about. The split has its own coverage in O3SquashPartitionTest /
+        // O3SplitPartitionTest, so pin it off here (classic copy splits still happen).
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, false);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_TOP_NON_WAL_ENABLED, false);
         // Every test must start with an empty shared posting-seal-purge ring. Many
         // tests here run a WorkerPool + O3, which publish purge tasks into the
         // engine-wide MessageBus ring; with no PostingSealPurgeJob draining it in the
