@@ -2081,6 +2081,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // next normal cycle republishes. The seqTxn fence keeps this safe either way.
         // See rebuildInMemoryTier.
         rebuildInMemoryTier(instance);
+        // rebuildInMemoryTier zeros the rebuilt SLOT's leadRowCount but not
+        // instance.leadRowCount. It is already 0 on entry (see the non-capable branch),
+        // so this is a no-op today; pin it explicitly to match the resets in
+        // finishLeadRefresh's stale-tier branch and the non-capable resync, keeping
+        // instance.leadRowCount from desyncing with the rebuilt slot if a future path
+        // ever reaches here non-zero.
+        instance.setLeadRowCount(0);
     }
 
     /**
