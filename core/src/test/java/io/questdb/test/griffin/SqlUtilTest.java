@@ -173,6 +173,49 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasQuotedContentValueDedupsClean() {
+        // A PIVOT value whose data is literally "in" displays as in (toColumnName strips the data
+        // quotes, the documented quoted-content-value tradeoff). When it collides with an operator-token
+        // value 'in', the dedup must yield a clean in_2 - not "in"_2, which left the quotes embedded
+        // mid-name where toColumnName could not strip them, leaking into result set metadata and breaking
+        // CREATE TABLE AS SELECT (regression, non-deterministic for a dynamic pivot where scan order
+        // decides which value collides).
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        // value 'in' -> protective "in" (displays in)
+        CharSequence first = SqlUtil.createExprColumnAlias(store, "in", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("\"in\"", first.toString());
+        aliasMap.put(first.toString(), null);
+
+        // value '"in"' (data literally "in") collides on display name in -> clean in_2, no leaked quotes
+        CharSequence second = SqlUtil.createExprColumnAlias(store, "\"in\"", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("in_2", second.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(second));
+        Assert.assertEquals("in_2", SqlUtil.toColumnName(second));
+    }
+
+    @Test
+    public void testExprColumnAliasQuotedDottedContentValueDedupsClean() {
+        // A dotted quoted-content value "a.b" displays as a.b; a second one must dedup to a clean a.b_2,
+        // re-protected as a WHOLE ("a.b_2"), not "a.b"_2 with the quotes embedded mid-name.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        CharSequence first = SqlUtil.createExprColumnAlias(store, "\"a.b\"", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("\"a.b\"", first.toString());
+        Assert.assertEquals("a.b", SqlUtil.toColumnName(first));
+        aliasMap.put(first.toString(), null);
+
+        CharSequence second = SqlUtil.createExprColumnAlias(store, "\"a.b\"", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("\"a.b_2\"", second.toString());
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias(second));
+        Assert.assertEquals("a.b_2", SqlUtil.toColumnName(second));
+    }
+
+    @Test
     public void testExprColumnAliasSimpleCase() {
         CharacterStore store = new CharacterStore(32, 1);
         LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);

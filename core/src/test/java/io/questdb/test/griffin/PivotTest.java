@@ -834,6 +834,51 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotQuotedContentValueCollidesWithOperatorToken() throws Exception {
+        // Regression: a pivot value whose data is literally "in" displays as in (the documented
+        // quoted-content-value tradeoff) and collides with the operator-token value 'in'. The dedup
+        // must yield clean in / in_2, not in / "in"_2 - the leaked quotes broke result set metadata
+        // and CREATE TABLE AS SELECT, and were non-deterministic for a dynamic pivot (scan order
+        // decided the collision).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', '"in"', 20),
+                        ('B', 'in', 30),
+                        ('B', '"in"', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', '"in"') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin\tin_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in', '"in"') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, \"in\", in_2 FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin\tin_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotStaticListWithCaseVariantOperatorTokenValues() throws Exception {
         // 'in' and 'IN' are distinct values (the duplicate-value guard is case-sensitive) but
         // collide in the case-insensitive alias space, so the second gets a dedup suffix. The

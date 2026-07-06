@@ -89,4 +89,12 @@ public class PriorityMetadata extends AbstractRecordMetadata {
         }
         return baseMetadata.getColumnMetadata(index - virtualColumnReservedSlots);
     }
+
+    @Override
+    public boolean splitsOnDot() {
+        // getColumnIndexQuiet delegates the ranged lookup to the base, so a wrapped join splits on
+        // the dot too; forward the flag so the compiler's quote-strip retry skips it (as it does for
+        // a bare join) instead of mis-splitting a dotted alias into an unrelated table.column.
+        return baseMetadata.splitsOnDot();
+    }
 }

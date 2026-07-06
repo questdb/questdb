@@ -223,6 +223,21 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
     }
 
     /**
+     * Whether {@link #getColumnIndexQuiet(CharSequence, int, int)} resolves a composed
+     * {@code table.column} name by splitting the slice on an unquoted dot (the join metadata used
+     * during SQL compilation), rather than matching the slice verbatim. A caller that strips
+     * compiler-protective quotes off a dotted alias and retries the bare slice must NOT feed it to
+     * such an implementation, or the content dot would be mis-split into a spurious {@code table.column}
+     * and bind to an unrelated column. Wrappers (e.g. PriorityMetadata) forward this to their delegate,
+     * so an {@code instanceof} check on the concrete type is not sufficient.
+     *
+     * @return true if the ranged lookup splits on an unquoted dot, false if it matches verbatim
+     */
+    default boolean splitsOnDot() {
+        return false;
+    }
+
+    /**
      * Create a JSON object with record metadata
      *
      * @param sink a character sink to write to

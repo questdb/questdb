@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.str.StringSink;
@@ -105,6 +106,28 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         JoinRecordMetadata opMetadata = new JoinRecordMetadata(configuration, 1);
         opMetadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
         Assert.assertEquals(0, SqlUtil.getColumnIndexQuiet(opMetadata, "\"in\""));
+    }
+
+    @Test
+    public void testQuoteProtectedDottedAliasDoesNotMisbindThroughPriorityMetadata() {
+        // Regression: the strip-retry guard must skip not only a bare JoinRecordMetadata but also a
+        // PriorityMetadata that WRAPS one and delegates the ranged lookup to it (the virtual-projection
+        // -over-join metadata). The guard keys on splitsOnDot(), which PriorityMetadata forwards to its
+        // base, so the stripped "a.b" is not split into side a / column b and mis-bound - an
+        // instanceof JoinRecordMetadata check would miss the wrapper and return a valid-but-wrong index.
+        JoinRecordMetadata join = new JoinRecordMetadata(configuration, 2);
+        join.add("a", "b", ColumnType.INT, IndexType.NONE, 0, false, null);
+        Assert.assertTrue(join.splitsOnDot());
+        PriorityMetadata pm = new PriorityMetadata(1, join);
+        Assert.assertTrue(pm.splitsOnDot());
+        Assert.assertEquals(-1, SqlUtil.getColumnIndexQuiet(pm, "\"a.b\""));
+
+        // an operator-token interior carries no dot to mis-split, so it still resolves through the
+        // wrapper via the bare retry (offset by the one reserved virtual slot)
+        JoinRecordMetadata opJoin = new JoinRecordMetadata(configuration, 1);
+        opJoin.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
+        PriorityMetadata opPm = new PriorityMetadata(1, opJoin);
+        Assert.assertEquals(1, SqlUtil.getColumnIndexQuiet(opPm, "\"in\""));
     }
 
     @Test

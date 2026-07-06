@@ -1093,7 +1093,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (dot > -1) {
                             final int len = node.token.length();
                             index = metadata.getColumnIndexQuiet(node.token, dot + 1, len);
-                            if (index < 0 && SqlUtil.isQuoteProtectedAlias(node.token, dot + 1, len)) {
+                            // Strip the protective quotes off the column part only against verbatim
+                            // metadata: a split-on-dot join would re-split a stripped dotted interior
+                            // and mis-bind, and it already resolved the composed reference above.
+                            if (index < 0 && !metadata.splitsOnDot() && SqlUtil.isQuoteProtectedAlias(node.token, dot + 1, len)) {
                                 index = metadata.getColumnIndexQuiet(node.token, dot + 2, len - 1);
                             }
                         }
@@ -11272,9 +11275,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (dot > -1) {
                     final int len = columnName.length();
                     columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, len);
-                    if (columnIndex < 0 && SqlUtil.isQuoteProtectedAlias(columnName, dot + 1, len)) {
-                        // composed "alias.column" reference whose column part carries protective
-                        // quotes; projection metadata stores the name unquoted
+                    // composed "alias.column" reference whose column part carries protective quotes;
+                    // verbatim projection metadata stores the name unquoted. Skip a split-on-dot join
+                    // (it re-splits a stripped dotted interior and mis-binds; it already resolved the
+                    // composed reference above).
+                    if (columnIndex < 0 && !metadata.splitsOnDot() && SqlUtil.isQuoteProtectedAlias(columnName, dot + 1, len)) {
                         columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 2, len - 1);
                     }
                     if (columnIndex > -1) {

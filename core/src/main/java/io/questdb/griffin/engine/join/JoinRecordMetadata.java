@@ -189,6 +189,12 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         this.timestampIndex = index;
     }
 
+    @Override
+    public boolean splitsOnDot() {
+        // getColumnIndexQuiet splits a composed reference on the unquoted dot (table.column).
+        return true;
+    }
+
     private void addAlias(CharSequence tableAlias, CharSequence columnName, int dot) {
         // add column with its own alias; the caller precomputes dot (the table.column split)
         MapKey key = map.withKey();

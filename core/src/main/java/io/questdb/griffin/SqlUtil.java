@@ -43,7 +43,6 @@ import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
-import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.ExecutionModel;
@@ -272,6 +271,15 @@ public class SqlUtil {
             boolean nonLiteral
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
+        // A base that is itself a protective-looking quoted string (e.g. a PIVOT value whose data is
+        // literally "in" or "a.b") displays as its stripped interior - toColumnName strips it - so alias
+        // the interior and let the per-candidate protection below re-wrap it only when the final content
+        // still needs it. Otherwise a dedup suffix would land outside the quotes ("in"_2), where
+        // isQuoteProtectedAlias no longer recognizes it and toColumnName cannot strip it, leaking the
+        // quotes into result set metadata and breaking CREATE TABLE AS SELECT.
+        if (nonLiteral && isQuoteProtectedAlias(base)) {
+            base = Chars.toString(base, 1, base.length() - 1);
+        }
         final int baseLen = base.length();
         final int indexOfDot = Chars.indexOfLastUnquoted(base, '.');
         final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
@@ -696,14 +704,15 @@ public class SqlUtil {
             return index;
         }
         // Retry with the protective quotes stripped: flat projection metadata stores the clean name.
-        // JoinRecordMetadata is the exception - its ranged lookup splits on an unquoted dot (a.b ->
-        // table a, column b), which is not the verbatim match this strip assumes. So for a DOTTED
-        // interior against a join, skip the retry and report a miss: a real dotted join column is
-        // stored re-quoted and was already matched verbatim above, so a split match here could only
-        // bind the stripped name to an unrelated column. The operator-token interior ("in") carries
-        // no dot and is looked up bare, so it stays verbatim and is left to the retry below.
+        // Dot-splitting metadata (join metadata, or a PriorityMetadata wrapping it - see
+        // RecordMetadata.splitsOnDot) is the exception: its ranged lookup splits on an unquoted dot
+        // (a.b -> table a, column b), which is not the verbatim match this strip assumes. So for a
+        // DOTTED interior against such metadata, skip the retry and report a miss: a real dotted join
+        // column is stored re-quoted and was already matched verbatim above, so a split match here
+        // could only bind the stripped name to an unrelated column. The operator-token interior
+        // ("in") carries no dot and is looked up bare, so it stays verbatim and is left to the retry.
         final int hi = columnName.length() - 1;
-        if (metadata instanceof JoinRecordMetadata && Chars.indexOfLastUnquoted(columnName, '.', 1, hi) > -1) {
+        if (metadata.splitsOnDot() && Chars.indexOfLastUnquoted(columnName, '.', 1, hi) > -1) {
             return -1;
         }
         return metadata.getColumnIndexQuiet(columnName, 1, hi);
