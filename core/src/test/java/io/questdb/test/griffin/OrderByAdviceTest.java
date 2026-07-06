@@ -197,6 +197,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 .ddl(null)
                 .noRandomAccess()
                 .expectSize()
+                .withPlanContaining("GroupBy", "Encode sort light", "keys: [seq]")
                 .returns("""
                         d
                         3335.893876029014
@@ -830,6 +831,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 .ddl(null)
                 .noRandomAccess()
                 .expectSize()
+                .withPlanContaining("GroupBy", "Encode sort light", "keys: [seq]")
                 .returns("""
                         s
                         A,B,C,D
