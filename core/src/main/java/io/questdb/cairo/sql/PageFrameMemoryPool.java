@@ -150,14 +150,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // referenced frame would be a use-after-free). For observability and tests only;
     // always == the sum of every retained CoveringBuffers' live allocation.
     //
-    // Covered buffers deliberately use GLOBAL native accounting (MemoryTag.NATIVE_INDEX_READER,
-    // no per-query MemoryTracker), exactly like the eager covering production path. They cannot
-    // be charged to the per-query tracker: a CoveringBuffers is freed lazily at the NEXT query's
+    // Covered allocations charge the per-query MemoryTracker (MemoryTag.NATIVE_INDEX_READER,
+    // via growNative/ensureCapacity), so the query memory limit sees and caps covered decode.
+    // The matching free is global-only: a CoveringBuffers is freed lazily at the NEXT query's
     // clear()/of() (the reduce task that owns the pool is reset on reuse, not at the owning
-    // query's teardown), which is after the owning query's tracker has been recycled — charging
-    // it would then decrement an unrelated workload's recycled tracker block and trip
-    // PerQueryMemoryTracker.acquire()'s used==0 guard. So per-query limits do not see covered
-    // decode memory (a documented limitation shared with the eager path), not a buggy charge.
+    // query's teardown), which is after the owning query's tracker has been recycled, so a
+    // tracker-charged free there would decrement an unrelated workload's recycled block. Instead
+    // MemoryTracker.reconcileCovered() releases the outstanding charge from used at tracker
+    // teardown, keeping the pooled block clean while the buffers stay accounted globally until
+    // their lazy free.
     private long coveredCachedBytes;
     private ParquetDecodeHint decodeHint = ParquetDecodeHint.MONOTONIC;
     private long effectiveBudgetBytes;
@@ -1591,8 +1592,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                             .put("covered var-data column too large [bytes=").put(newCapLong).put(']');
                 }
                 final int newCap = (int) newCapLong;
-                varDataAddr[q] = Unsafe.realloc(varDataAddr[q], varDataCap[q], newCap, MemoryTag.NATIVE_INDEX_READER);
-                coveredCachedBytes += newCap - varDataCap[q];
+                // Charge the per-query tracker at alloc so covered decode is capped by
+                // the query memory limit (a breach throws here); the matching release
+                // is deferred to MemoryTracker.reconcileCovered() at tracker teardown,
+                // NOT to the global-only free below. See growNative().
+                varDataAddr[q] = Unsafe.realloc(varDataAddr[q], varDataCap[q], newCap, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+                final long delta = (long) newCap - varDataCap[q];
+                coveredCachedBytes += delta;
+                if (memoryTracker != null) {
+                    memoryTracker.addCoveredBytes(delta);
+                }
                 varDataCap[q] = newCap;
             }
             return varDataAddr[q];
@@ -1744,6 +1753,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // content (each decode rewrites every row). Reuses the existing allocation
         // when it already covers newBytes so a steady-state frame size never
         // reallocs. oldBytes == 0 means unallocated.
+        //
+        // Allocation charges the per-query MemoryTracker (enforcing the query memory
+        // limit; a breach throws), but the matching free in freeColumnBuffers() is
+        // global-only. That asymmetry is deliberate: covered buffers outlive the
+        // owning query's tracker (freed lazily by the NEXT query's clear()/of() on
+        // the shared reduce-task pool), so decrementing the tracker at free would
+        // target a recycled block. MemoryTracker.reconcileCovered() instead releases
+        // the charge from used at tracker teardown; addCoveredBytes() feeds it.
         private long growNative(long addr, long oldBytes, long newBytes) {
             if (newBytes <= 0) {
                 return addr;
@@ -1751,8 +1768,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (addr != 0 && oldBytes >= newBytes) {
                 return addr;
             }
-            final long result = Unsafe.realloc(addr, oldBytes, newBytes, MemoryTag.NATIVE_INDEX_READER);
-            coveredCachedBytes += newBytes - oldBytes;
+            final long result = Unsafe.realloc(addr, oldBytes, newBytes, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+            final long delta = newBytes - oldBytes;
+            coveredCachedBytes += delta;
+            if (memoryTracker != null) {
+                memoryTracker.addCoveredBytes(delta);
+            }
             return result;
         }
 
