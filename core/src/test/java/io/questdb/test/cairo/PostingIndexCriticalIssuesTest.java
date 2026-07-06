@@ -760,6 +760,173 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testO3SealRestoreSkipsRowlessPostingColumnWithoutKeyFile() throws Exception {
+        // A POSTING-indexed column with no rows in a partition (columnTop >= partition
+        // size) has no .pk key file there: the O3 seal sweep skips row-less columns
+        // (sealPostingIndexForPartition), so it never builds one. The seal-sweep tail
+        // restorePostingIndexersToLastPartition used to open that column's index anyway
+        // and threw "index does not exist", which suspends a WAL table mid-apply (here,
+        // BYPASS WAL, it surfaces as the INSERT throwing).
+        //
+        // A last-partition split shrinks 2024-01-01 while `extra` stays row-less there
+        // (columnTop above the shrunk row count). The FilesFacade reports `extra`'s key
+        // file as absent on the day partition the seal-sweep restores to -- the exact
+        // production state -- but only once ADD COLUMN has built it (so the legitimate
+        // openNewColumnFiles path during ADD COLUMN is unaffected), and only for the
+        // day partition (not the split tail, whose dir carries a "...T..." suffix).
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+        final AtomicBoolean keyFileHidden = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (keyFileHidden.get()
+                        && Utf8s.containsAscii(path, "extra.pk")
+                        && !Utf8s.containsAscii(path, "2024-01-01T")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_rowless (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_rowless(ts, sym, v) SELECT ('2024-01-01T00:00:00.000000Z'::timestamp + x * 3_600_000_000L)::timestamp, 'a', x FROM long_sequence(20)");
+            // extra has no rows on 2024-01-01 (columnTop == partition size).
+            execute("ALTER TABLE t_rowless ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
+
+            keyFileHidden.set(true);
+            // O3 insert forces a last-partition split; the seal sweep then restores the
+            // posting indexers to the shrunk 2024-01-01, where `extra` is row-less.
+            execute("INSERT INTO t_rowless(ts, sym, v) VALUES ('2024-01-01T18:30:00.000000Z', 'a', 999)");
+            keyFileHidden.set(false);
+
+            // The table survived: all rows present, and the `sym` posting index serves reads.
+            assertQuery("SELECT count() FROM t_rowless")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+            assertQuery("SELECT count() FROM t_rowless WHERE sym = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+
+            // The row-less `extra` posting column stays queryable post-restore: an
+            // equality lookup matches nothing (extra is absent on every row).
+            assertQuery("SELECT count() FROM t_rowless WHERE extra = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("SELECT count() FROM t_rowless WHERE extra IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+        });
+    }
+
+    @Test
+    public void testO3SealRestoreSkipStrandsRowlessIndexerWithKeyFile() throws Exception {
+        // Counterpart to testO3SealRestoreSkipsRowlessPostingColumnWithoutKeyFile.
+        // There the row-less last-partition column has NO .pk (split tail) so the
+        // restore skip is correct. Here the row-less column DOES have a .pk: c is
+        // POSTING-indexed, added by ALTER while day2 (L) is the last partition, so
+        // ADD COLUMN created an empty .pk for c on day2 and c is row-less there
+        // (columnTop == day2 size), absent on day1 (P).
+        //
+        // An O3 back-fill of c into day1 seals day1 and points c's posting writer at
+        // day1. A blanket row-less skip in restorePostingIndexersToLastPartition()
+        // would skip c (columnTop >= partitionSize on L) and leave its writer on day1;
+        // the next in-order append into day2 would then index day2 rows into day1's
+        // .pk/.pv, making the appended row invisible to "WHERE c = ..." while the base
+        // data stays intact. The existence-based skip re-points c to day2 instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_probe (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // day1 rows start at 12:00 so the O3 back-fill at 00:00 lands at rowid 0
+            // (columnTop for c on day1 becomes 0).
+            execute("INSERT INTO t_probe(ts, sym, v) SELECT " +
+                    "('2024-01-01T12:00:00.000000Z'::timestamp + (x-1) * 3_600_000_000L)::timestamp, 'a', x " +
+                    "FROM long_sequence(5)");
+            // day2 (L): 3 rows.
+            execute("INSERT INTO t_probe(ts, sym, v) SELECT " +
+                    "('2024-01-02T00:00:00.000000Z'::timestamp + (x-1) * 3_600_000_000L)::timestamp, 'a', 100+x " +
+                    "FROM long_sequence(3)");
+            // c row-less on day2 (columnTop == 3), absent on day1.
+            execute("ALTER TABLE t_probe ADD COLUMN c SYMBOL INDEX TYPE POSTING");
+
+            // O3 back-fill of c into day1 -> seals day1, points c at day1, restore skips c.
+            execute("INSERT INTO t_probe(ts, sym, c, v) VALUES ('2024-01-01T00:00:00.000000Z', 'a', 'X', 999)");
+
+            // In-order append into day2 with a c value: indexes through c's stranded writer.
+            execute("INSERT INTO t_probe(ts, sym, c, v) VALUES ('2024-01-02T03:00:00.000000Z', 'a', 'Y', 555)");
+
+            // Base table integrity (no index involved).
+            assertQuery("SELECT count() FROM t_probe")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
+            // Control: sym is NOT row-less in day2, restore re-points it -> index correct.
+            assertQuery("SELECT count() FROM t_probe WHERE sym = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
+
+            // The day2 'Y' row must be found exactly once via c's index, with its real value.
+            assertQuery("SELECT count() FROM t_probe WHERE c = 'Y'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("SELECT v FROM t_probe WHERE c = 'Y'")
+                    .noLeakCheck().returns("v\n555\n");
+            assertQuery("SELECT v FROM t_probe WHERE c = 'X'")
+                    .noLeakCheck().returns("v\n999\n");
+        });
+    }
+
+    @Test
+    public void testO3SealRestoreRowlessNoKeyFileDoesNotSuspendWalTable() throws Exception {
+        // WAL counterpart to testO3SealRestoreSkipsRowlessPostingColumnWithoutKeyFile.
+        // The headline symptom of the no-.pk bug is a WAL table suspending mid-apply:
+        // restorePostingIndexersToLastPartition throws "index does not exist",
+        // ApplyWal2TableJob catches it and suspends the table -- the commit lands but
+        // apply halts and the table needs a manual RESUME WAL. With the fix the seal
+        // restore skips the row-less keyless column, apply completes, the table stays live.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+        final AtomicBoolean keyFileHidden = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (keyFileHidden.get()
+                        && Utf8s.containsAscii(path, "extra.pk")
+                        && !Utf8s.containsAscii(path, "2024-01-01T")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_rowless_wal (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_rowless_wal(ts, sym, v) SELECT ('2024-01-01T00:00:00.000000Z'::timestamp + x * 3_600_000_000L)::timestamp, 'a', x FROM long_sequence(20)");
+            // extra has no rows on 2024-01-01 (columnTop == partition size).
+            execute("ALTER TABLE t_rowless_wal ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
+            // Apply everything while the .pk is visible, so ADD COLUMN builds extra's
+            // .pk on the active partition exactly as in production.
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("t_rowless_wal");
+            Assert.assertFalse("table must apply cleanly before the O3 split", engine.getTableSequencerAPI().isSuspended(token));
+
+            // O3 insert forces a last-partition split; the seal sweep then restores the
+            // posting indexers to the shrunk 2024-01-01, where extra is row-less and
+            // reports no .pk. On master the apply throws and suspends the table here.
+            execute("INSERT INTO t_rowless_wal(ts, sym, v) VALUES ('2024-01-01T18:30:00.000000Z', 'a', 999)");
+            keyFileHidden.set(true);
+            drainWalQueue();
+            keyFileHidden.set(false);
+
+            // The table kept applying: not suspended, all rows present, sym index serves reads.
+            Assert.assertFalse(
+                    "WAL apply must not suspend the table on a row-less keyless posting column",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            assertQuery("SELECT count() FROM t_rowless_wal")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+            assertQuery("SELECT count() FROM t_rowless_wal WHERE sym = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+            assertQuery("SELECT count() FROM t_rowless_wal WHERE extra IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+        });
+    }
+
     /**
      * Rollback reencode publishes a bumped sealTxn for the compacted
      * {@code .pv.N}; it must also stage a sealed {@code .pc0.N} sidecar so a
