@@ -32,6 +32,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -74,6 +75,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
     protected final PostingIndexChainEntry.Snapshot entryScratch = new PostingIndexChainEntry.Snapshot();
     protected final PostingGenLookup genLookup = new PostingGenLookup();
+    // Reusable ascending-gen-order scratch for populateCacheForKey's metadata-only
+    // cache warm. Owned by the reader's operating thread (same single-owner discipline
+    // as the cursors); cleared at the start of every populateCacheForKey call.
+    private final LongList cacheBuilderEntries = new LongList();
     protected final PostingIndexChainHeader.Snapshot headerScratch = new PostingIndexChainHeader.Snapshot();
     protected final MemoryCMR infoMem = Vm.getCMRInstance();
     protected final MemoryMR keyMem = Vm.getCMRInstance();
@@ -115,6 +120,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private long columnTxn;
     private ColumnVersionReader columnVersionReader;
     private FilesFacade ff;
+    // While true, reloadConditionally() is a no-op. Set by the parallel-decode
+    // pipeline for the duration that async worker cursors hold raw page
+    // addresses into valueMem / sidecar mappings, so a concurrent writer's
+    // publish cannot trigger a remap (free+mmap / changeSize / sidecar
+    // close+resize) that would invalidate those in-flight addresses.
+    private boolean frozen = false;
     // Byte offset of the entry currently driving this reader's snapshot
     // (V2_NO_HEAD if the chain is empty / no visible entry).
     private long headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
@@ -218,6 +229,270 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return columnTxn;
     }
 
+    /**
+     * Highest row id the picked chain entry's index data covers (its
+     * {@code V2_ENTRY_OFFSET_MAX_VALUE}), or {@code -1} when the picker has no
+     * visible chain entry (empty partition / not yet visible at our pin). This
+     * is the inclusive clamp {@link #getCursor}/{@code getDetachedCursor} fold
+     * into a cursor's upper bound ({@code min(callerMax, entryMaxValue)} when
+     * {@code >= 0}); the covered-frame dispatcher reads it to pass
+     * {@link #selectKthMatch} the IDENTICAL {@code maxValueClamped} the cursor
+     * (and its {@code size()}) used, so the O(genCount) frame metadata matches
+     * the traverse byte for byte.
+     */
+    public long getEntryMaxValue() {
+        return entryMaxValue;
+    }
+
+    /**
+     * O(genCount) covered-frame metadata primitive: the EXACT number of {@code key}'s
+     * matching postings within {@code [minValue, maxValueClamped]} — the SAME count the
+     * forward cursor reaches at natural exhaustion over that clamped range, WITHOUT the
+     * O(rows) traverse. It is the companion to {@link #selectKthMatch}: it walks gens in
+     * forward (cursor) order applying the IDENTICAL per-gen EXACT coverage predicate
+     * (true first/last posting read directly via {@code select*KthValue}, not the slack
+     * max bound {@code size()} uses), summing the per-gen counts of fully-covered gens
+     * and skipping ALL_DIRTY gens.
+     * <p>
+     * Returns {@link Numbers#LONG_NULL} (so the caller falls back to the traverse) on a
+     * GENUINELY clipped (MIXED) gen — exactly the cases {@link #selectKthMatch} also
+     * sentinels — so that {@code countMatchesClamped} and {@code selectKthMatch} agree on
+     * which layouts are metadata-resolvable and compose with no sentinel surprise.
+     * <p>
+     * Unlike {@code coveringCursor.size()}, this does NOT false-bail when the encoding's
+     * slack max upper bound straddles {@code maxValueClamped} while the true max is within
+     * it (the common freshly-resealed partition, where {@code entryMaxValue} is the genuine
+     * last row id) — that is the case the covered dispatcher must keep on the cheap path.
+     *
+     * @param key             column key (>= 0); null-prefix handled when {@code key == 0 && columnTop > 0}
+     * @param minValue        inclusive lower bound of the cursor's range
+     * @param nullMaxValue    UNCLAMPED inclusive caller max; bounds ONLY the implicit-null prefix
+     *                        ({@code nullCount = min(columnTop, nullMaxValue + 1)}), mirroring the
+     *                        cursor's {@code NullCursor} — implicit nulls are independent of the
+     *                        index and clamped by {@code columnTop} only, NOT by {@code entryMaxValue}
+     * @param maxValueClamped inclusive upper bound for the GEN walk, already clamped to {@code entryMaxValue}
+     * @return the exact clamped match count, or {@link Numbers#LONG_NULL} to signal "fall back to traverse"
+     */
+    public long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped) {
+        if (key < 0 || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
+            return Numbers.LONG_NULL;
+        }
+
+        long total = 0;
+
+        // Null prefix: synthetic contiguous null row ids the cursor emits for key 0
+        // before any posting (mirrors selectKthMatch / NullCursor). The implicit
+        // nulls are independent of the index, so the cursor (getCursor / NullCursor)
+        // bounds them by the UNCLAMPED caller max and columnTop only:
+        // nullCount = min(columnTop, nullMaxValue + 1) — NOT maxValueClamped, which
+        // would under-count when entryMaxValue < columnTop. Matches are those at/after minValue.
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            long nullCount = Math.min(columnTop, nullMaxValue == Long.MAX_VALUE ? Long.MAX_VALUE : nullMaxValue + 1);
+            total += Math.max(0L, nullCount - minValue);
+        }
+
+        if (key >= keyCount) {
+            // Only the null prefix is addressable for a key past keyCount; if the key
+            // had real postings the cursor would visit gens, so a key past keyCount with
+            // no null prefix contributes nothing — total is exact (possibly 0).
+            return total;
+        }
+
+        // Forward gen walk (cursor order), applying selectKthMatch's EXACT coverage check.
+        for (int g = 0; g < genCount; g++) {
+            int gkc = genLookup.getGenKeyCount(g);
+            long count;
+            if (gkc >= 0) {
+                if (key >= gkc) {
+                    continue;
+                }
+                count = selectDenseKeyCount(key, g, gkc);
+            } else {
+                if (genLookup.notContainKey(valueMem, g, key)) {
+                    continue;
+                }
+                count = selectSparseKeyCount(key, g, -gkc);
+            }
+            if (count <= 0) {
+                continue; // key absent / empty in this gen
+            }
+            // The per-gen ordinal is int-indexed throughout the index format (the cursor
+            // itself walks int ordinals), so a single (key, gen) never holds > 2^31
+            // postings. Assert it so the (int) casts below fail loud rather than silently
+            // truncating if that cap is ever raised.
+            assert count <= Integer.MAX_VALUE : "per-gen match count exceeds int range: " + count;
+            long exactMin = gkc >= 0
+                    ? selectDenseKthValue(key, g, gkc, 0)
+                    : selectSparseKthValue(key, g, -gkc, 0);
+            long exactMax = gkc >= 0
+                    ? selectDenseKthValue(key, g, gkc, (int) (count - 1))
+                    : selectSparseKthValue(key, g, -gkc, (int) (count - 1));
+            if (exactMin == Numbers.LONG_NULL || exactMax == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
+            // Fully past the clamp: the cursor skips the whole gen (ALL_DIRTY).
+            if (exactMin > maxValueClamped) {
+                continue;
+            }
+            // Fully below the low bound: every posting in this gen is < minValue, so the
+            // cursor filters them all out and the gen contributes 0 — skip it (the symmetric
+            // counterpart of the fully-above-clamp case above). Without this, such a gen would
+            // trip the exactMin < minValue MIXED check below and force the whole (key,
+            // partition) onto the O(rows) traverse, even though it is cleanly empty here.
+            if (exactMax < minValue) {
+                continue;
+            }
+            // Partially clipped (genuine MIXED — straddles minValue or the clamp): bail to the
+            // traverse fallback. exactMax >= minValue here, so exactMin < minValue means a true
+            // straddle (some postings below minValue, some at/above), which the full count would
+            // over-count.
+            if (exactMax > maxValueClamped || exactMin < minValue) {
+                return Numbers.LONG_NULL;
+            }
+            total += count;
+        }
+        return total;
+    }
+
+    /**
+     * O(genCount) covered-frame metadata primitive: returns the absolute row id of the
+     * 0-based {@code k}-th matching posting of {@code key} within {@code [minValue, maxValueClamped]},
+     * WITHOUT the O(rows) cursor traverse. {@code maxValueClamped} is the SAME inclusive clamp
+     * the cursor applies ({@code min(callerHi - 1, entryMaxValue)}); callers pass it pre-computed.
+     * <p>
+     * Equivalence contract: the returned row id is IDENTICAL to the one the forward cursor's
+     * {@code next()} yields at iteration position {@code k} over the same clamped range, PROVIDED
+     * the range covers every visited gen's postings for the key fully. The method walks gens in
+     * forward (cursor) order using the SAME O(1) per-gen count reads {@link AbstractCoveringCursor#size}
+     * uses; the holding gen is the first where {@code acc + c_g > k}, with within-gen index
+     * {@code j = k - acc}. The within-gen value is then read by random access: FLAT stride via a
+     * single {@code unpackValue}; per-key Elias-Fano via the high-bits select + low-bits read;
+     * per-key delta-FoR by locating the owning block from the {@code valueCounts} prefix and
+     * accumulating that block's deltas up to the in-block index (O(j / BLOCK_CAPACITY + j % BLOCK_CAPACITY)).
+     * <p>
+     * Coverage is verified EXACTLY (not via the slack max bound {@code size()} uses): the gen's true
+     * first and last postings for the key are read directly. Returns the sentinel
+     * {@link Numbers#LONG_NULL} (so the caller falls back to the traverse) when exact equivalence
+     * cannot be guaranteed by metadata alone:
+     * <ul>
+     *   <li>a visited gen is partially clipped by {@code minValue} or {@code maxValueClamped}
+     *       (genuine MIXED — e.g. dirty rows past the chain entry's MAX_VALUE, or a narrow caller
+     *       range mid-gen) — the cursor would trim it but the O(1) full-gen count would over-count;</li>
+     *   <li>{@code k} is out of range for the clamped match set.</li>
+     * </ul>
+     * Never returns a wrong row id. Asserts {@code minValue <= result <= maxValueClamped} on success.
+     *
+     * @param key             column key (>= 0); null-prefix handled when {@code key == 0 && columnTop > 0}
+     * @param minValue        inclusive lower bound of the cursor's range
+     * @param nullMaxValue    UNCLAMPED inclusive caller max; bounds ONLY the implicit-null prefix
+     *                        ({@code nullCount = min(columnTop, nullMaxValue + 1)}), mirroring the
+     *                        cursor's {@code NullCursor} — implicit nulls are independent of the
+     *                        index and clamped by {@code columnTop} only, NOT by {@code entryMaxValue}
+     * @param maxValueClamped inclusive upper bound for the GEN walk, already clamped to {@code entryMaxValue}
+     * @param k               0-based match ordinal within the clamped range
+     * @return the absolute row id, or {@link Numbers#LONG_NULL} to signal "fall back to traverse"
+     */
+    public long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k) {
+        if (key < 0 || k < 0 || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
+            return Numbers.LONG_NULL;
+        }
+
+        long acc = 0;
+
+        // Null prefix: when the requested key is 0 and the column has a null
+        // (columnTop) prefix, rows [minValue .. nullCount - 1] are synthetic
+        // contiguous null row ids the cursor emits BEFORE any index posting,
+        // exactly mirroring NullCursor.hasNext()/getCursor's nullCount =
+        // min(columnTop, callerHi). Implicit nulls are independent of the index,
+        // so the bound is the UNCLAMPED caller max (columnTop only), NOT
+        // maxValueClamped: nullCount = min(columnTop, nullMaxValue + 1). A null row
+        // can therefore exceed maxValueClamped (when entryMaxValue < columnTop), so
+        // the result is asserted against nullMaxValue, the bound that actually clamps it.
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            long nullCount = Math.min(columnTop, nullMaxValue == Long.MAX_VALUE ? Long.MAX_VALUE : nullMaxValue + 1);
+            long nullMatches = Math.max(0L, nullCount - minValue);
+            if (k < nullMatches) {
+                long result = minValue + k;
+                assert result >= minValue && result <= nullMaxValue;
+                return result;
+            }
+            acc = nullMatches;
+        }
+
+        if (key >= keyCount) {
+            // Only the null prefix is addressable for a key past keyCount.
+            return Numbers.LONG_NULL;
+        }
+
+        // Forward gen walk (cursor order). Gen g's rows precede gen g+1's and are
+        // concatenated in gen order, so the k-th match lives in the first gen whose
+        // running count crosses k. Per-gen counts use the same O(1) reads size() uses.
+        for (int g = 0; g < genCount; g++) {
+            int gkc = genLookup.getGenKeyCount(g);
+            long count;
+            if (gkc >= 0) {
+                if (key >= gkc) {
+                    continue;
+                }
+                count = selectDenseKeyCount(key, g, gkc);
+            } else {
+                if (genLookup.notContainKey(valueMem, g, key)) {
+                    continue;
+                }
+                count = selectSparseKeyCount(key, g, -gkc);
+            }
+            if (count <= 0) {
+                continue; // key absent / empty in this gen
+            }
+            // Per-gen ordinals are int-indexed (see countMatchesClamped); assert so the
+            // (int) casts of count-1 / k-acc below fail loud rather than silently truncate.
+            assert count <= Integer.MAX_VALUE : "per-gen match count exceeds int range: " + count;
+            // Exact (not slack) coverage check: read the gen's first and last posting
+            // for the key directly. If the whole list sits inside [minValue, clamp] the
+            // O(1) full count equals the cursor's range-filtered count, so the walk is
+            // exact. Otherwise the gen is partially clipped — by a narrow caller range or
+            // by dirty rows past the chain entry's MAX_VALUE — and the metadata-only count
+            // would diverge from the cursor; return the sentinel so the caller traverses.
+            long exactMin = gkc >= 0
+                    ? selectDenseKthValue(key, g, gkc, 0)
+                    : selectSparseKthValue(key, g, -gkc, 0);
+            long exactMax = gkc >= 0
+                    ? selectDenseKthValue(key, g, gkc, (int) (count - 1))
+                    : selectSparseKthValue(key, g, -gkc, (int) (count - 1));
+            if (exactMin == Numbers.LONG_NULL || exactMax == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
+            }
+            // Fully past the clamp: the cursor skips the whole gen (ALL_DIRTY).
+            if (exactMin > maxValueClamped) {
+                continue;
+            }
+            // Fully below the low bound: every posting is < minValue, so the cursor skips the
+            // whole gen and it contributes 0 matches — skip it without disturbing the running
+            // acc (the symmetric counterpart of the fully-above-clamp case). Must mirror
+            // countMatchesClamped exactly, or the k-th-match index would desync from the count.
+            if (exactMax < minValue) {
+                continue;
+            }
+            // Partially clipped (genuine MIXED — straddles minValue or the clamp): bail to the
+            // traverse fallback.
+            if (exactMax > maxValueClamped || exactMin < minValue) {
+                return Numbers.LONG_NULL;
+            }
+            if (acc + count > k) {
+                int j = (int) (k - acc);
+                long result = gkc >= 0
+                        ? selectDenseKthValue(key, g, gkc, j)
+                        : selectSparseKthValue(key, g, -gkc, j);
+                assert result == Numbers.LONG_NULL || (result >= minValue && result <= maxValueClamped)
+                        : "selectKthMatch out of range: result=" + result + " min=" + minValue + " clamp=" + maxValueClamped;
+                return result;
+            }
+            acc += count;
+        }
+        // k is past the end of the clamped match set.
+        return Numbers.LONG_NULL;
+    }
+
     @Override
     public long getKeyBaseAddress() {
         return keyMem.addressOf(0);
@@ -226,6 +501,63 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     @Override
     public int getKeyCount() {
         return keyCountIncludingNulls;
+    }
+
+    /**
+     * O(genCount) covered-frame metadata primitive: pre-populates the per-reader genLookup
+     * cache for {@code key} IDENTICALLY to the cursor traverse's
+     * {@code genLookup.putCacheEntries(key, builderEntries)} at natural exhaustion, but via a
+     * metadata-only gen walk (no O(rows) decode). After this call a same-key cursor over this
+     * reader replays the cache instead of re-walking the SBBF/prefix-sum path, exactly as if a
+     * full traverse had warmed it.
+     * <p>
+     * The cache only ever holds sparse-gen hits, so this is gated on a layout with at
+     * least one sparse gen ({@code anySparseGen}); an all-dense layout (incl. single-gen-dense)
+     * never touches the cache, and dense gens are never cached. The entry list is emitted in
+     * ascending gen order — the canonical form: the forward traverse commits ascending, and the
+     * backward traverse builds descending then {@code reverse()}s, so both converge on ascending.
+     * <p>
+     * Byte-for-byte equivalent to the traverse: it applies the SAME per-gen predicates the
+     * traverse's {@code advanceTo*RelevantGen} applies — gen-key-range, SBBF {@code notContainKey},
+     * and {@code start != end} (the key is genuinely present in the sparse gen) — and packs the
+     * SAME {@code packCacheEntry(gen, start)} values. {@code putCacheEntries} itself is idempotent and
+     * budget-guarded, so a redundant call (or one over budget) is a safe no-op.
+     *
+     * @param key             column key (>= 0)
+     * @param maxValueClamped inclusive clamp the cursor uses; reserved for symmetry with
+     *                        {@link #selectKthMatch} — the cache predicate is value-independent,
+     *                        so it does not currently affect which gens are cached
+     */
+    public void populateCacheForKey(int key, long maxValueClamped) {
+        if (key < 0 || !genLookup.anySparseGen()) {
+            return;
+        }
+        cacheBuilderEntries.clear();
+        for (int g = 0; g < genCount; g++) {
+            if (genLookup.getGenKeyCount(g) >= 0) {
+                continue; // dense gen — never cached
+            }
+            if (key < genLookup.getGenMinKey(g) || key > genLookup.getGenMaxKey(g)) {
+                continue;
+            }
+            if (genLookup.notContainKey(valueMem, g, key)) {
+                continue;
+            }
+            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(g, valueMem));
+            int minKey = genLookup.getGenMinKey(g);
+            int start = Unsafe.getInt(prefixSumAddr + (long) (key - minKey) * Integer.BYTES);
+            int end = Unsafe.getInt(prefixSumAddr + (long) (key - minKey + 1) * Integer.BYTES);
+            // EXACT traverse predicate: the cursor's loadSparseGenByPrefixSum (and
+            // selectSparseKeyCount) record an entry for the key iff start != end. counts[start] > 0
+            // is NOT equivalent: for a key in [minKey, maxKey] but ABSENT from this gen (an SBBF
+            // false-positive that reaches here) start == end, yet counts[start] is the NEXT active
+            // key's count (> 0) — caching a spurious entry that points at a different key's postings.
+            if (start == end) {
+                continue;
+            }
+            cacheBuilderEntries.add(PostingGenLookup.packCacheEntry(g, start));
+        }
+        genLookup.putCacheEntries(key, cacheBuilderEntries);
     }
 
     @Override
@@ -281,6 +613,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         this.ff = configuration.getFilesFacade();
         this.indexColumnName = columnName;
         this.sidecarBasePath.of(path);
+        // Self-healing freeze reset: re-initialising a pooled reader always starts it
+        // unfrozen, so a reused reader can never inherit a stale freeze if a prior query's
+        // reset()/setFrozen(false) was skipped (a permanently-frozen reader would silently
+        // no-op reloadConditionally() and miss writer republishes). genLookup.reopen()
+        // clears the mirrored genLookup freeze. See setFrozen().
+        this.frozen = false;
         genLookup.reopen();
         final int pLen = path.size();
 
@@ -334,6 +672,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public void reloadConditionally() {
+        if (frozen) {
+            // Parallel decode in progress: in-flight worker cursors hold raw
+            // page addresses into valueMem / sidecar mappings. Suppress the
+            // entire reload (seqlock read, picker walk, and any remap) so those
+            // mmaps stay stable until the pipeline clears the freeze. This also
+            // makes reloadConditionally() calls nested inside getCursor /
+            // getDetachedCursor / warmForKeys no-ops while frozen, which is
+            // intended.
+            return;
+        }
         // Cheap pre-check: peek at the header's seqlock. If the writer
         // hasn't republished since our last pick, nothing to do. The
         // sequence advances on every publish — both appendNewEntry (new
@@ -405,6 +753,37 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 ((MemoryCMR) mem).changeSize(publishedEnd);
             }
         }
+    }
+
+    /**
+     * While frozen, {@link #reloadConditionally()} is a no-op so the value /
+     * sidecar mmaps stay stable for in-flight worker cursors that hold raw page
+     * addresses into them. The parallel-decode pipeline sets this around the
+     * window in which it dispatches async decode work and clears it once all
+     * worker cursors have finished.
+     * <p>
+     * {@code frozen} (and the warm-pass state it guards: the genLookup cache,
+     * {@code coveredAvailable}, the pre-extended mmaps) is a plain field. Visibility to
+     * worker threads relies entirely on the dispatch sequence's release/acquire: the
+     * freeze and all warm writes happen-before the {@code pubSeq.done(cursor)} publish on
+     * the single dispatch thread, and a worker observes them after its {@code Sequence}
+     * dequeue. Any future handoff of a covered reader to a worker through a channel OTHER
+     * than the reduce/collect sequences would have no happens-before and must add its own
+     * fence (or make this field volatile).
+     */
+    @Override
+    public void setFrozen(boolean frozen) {
+        this.frozen = frozen;
+        // Defence-in-depth for parallel decode: while frozen, no cursor may mutate the shared
+        // genLookup cache (workers run concurrently against this one reader). putCacheEntries
+        // asserts on a frozen write so any future regression of the read-only-worker invariant
+        // fails loud in tests rather than racing.
+        genLookup.setFrozen(frozen);
+    }
+
+    @Override
+    public boolean isFrozen() {
+        return frozen;
     }
 
     @TestOnly
@@ -1079,6 +1458,246 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return newlyFound;
     }
 
+    // ----- selectKthMatch support: per-gen random-access reads, parameterized by
+    // ----- key (the outer reader has no requestedKey field). These mirror, byte for
+    // ----- byte, the offset arithmetic the cursor's loadDenseGenerationCached /
+    // ----- loadSparseGenByPrefixSum / readDeltaBlockMetadata / decode*Block use, so a
+    // ----- random-access read at index j yields exactly the cursor's j-th value.
+
+    /**
+     * Count of {@code key}'s postings in dense gen {@code gen}. Mirrors the cursor's
+     * {@code getDenseGenKeyCount}: FLAT stride -> prefix {@code end - start}; DELTA stride ->
+     * {@code counts[localKey]}. Returns 0 when the stride is empty or the key absent.
+     */
+    private long selectDenseKeyCount(int key, int gen, int genKeyCount) {
+        if (key >= genKeyCount) {
+            return 0;
+        }
+        int stride = key / PostingIndexUtils.DENSE_STRIDE;
+        int localKey = key % PostingIndexUtils.DENSE_STRIDE;
+        long genAddr = valueMem.addressOf(genLookup.getGenFileOffset(gen));
+        long strideOff = Unsafe.getLong(genAddr + (long) stride * Long.BYTES);
+        long nextStrideOff = Unsafe.getLong(genAddr + (long) (stride + 1) * Long.BYTES);
+        if (nextStrideOff == strideOff) {
+            return 0;
+        }
+        long strideAddr = genAddr + PostingIndexUtils.strideIndexSize(genKeyCount) + strideOff;
+        byte mode = Unsafe.getByte(strideAddr);
+        if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+            int start = Unsafe.getInt(prefixAddr + (long) localKey * Integer.BYTES);
+            int end = Unsafe.getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES);
+            return end - start;
+        }
+        if (mode != PostingIndexUtils.STRIDE_MODE_DELTA) {
+            throw CairoException.critical(0).put(INDEX_CORRUPT).put(" [bad stride mode=").put(mode).put(']');
+        }
+        long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+        return Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
+    }
+
+    /**
+     * Absolute row id of the 0-based {@code j}-th posting of {@code key} in dense gen {@code gen}.
+     * FLAT stride -> single {@code unpackValue} at {@code startCount + j}; DELTA stride -> resolve
+     * the per-key blob and delegate to {@link #selectFromKeyBlob}. Caller guarantees
+     * {@code 0 <= j < count}.
+     */
+    private long selectDenseKthValue(int key, int gen, int genKeyCount, int j) {
+        int stride = key / PostingIndexUtils.DENSE_STRIDE;
+        int localKey = key % PostingIndexUtils.DENSE_STRIDE;
+        long genFileOffset = genLookup.getGenFileOffset(gen);
+        long genAddr = valueMem.addressOf(genFileOffset);
+        long strideOff = Unsafe.getLong(genAddr + (long) stride * Long.BYTES);
+        int siSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+        long strideAddr = genAddr + siSize + strideOff;
+        long strideFileOffset = genFileOffset + siSize + strideOff;
+        byte mode = Unsafe.getByte(strideAddr);
+        int ks = PostingIndexUtils.keysInStride(genKeyCount, stride);
+        if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+            int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+            long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+            long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+            int startCount = Unsafe.getInt(prefixAddr + (long) localKey * Integer.BYTES);
+            if (bitWidth == 0) {
+                // Stride-wide FoR with zero range: every value equals baseValue.
+                return baseValue;
+            }
+            long dataAddr = strideAddr + PostingIndexUtils.strideFlatHeaderSize(ks);
+            return BitpackUtils.unpackValue(dataAddr, startCount + j, bitWidth, baseValue);
+        }
+        if (mode != PostingIndexUtils.STRIDE_MODE_DELTA) {
+            throw CairoException.critical(0).put(INDEX_CORRUPT).put(" [bad stride mode=").put(mode).put(']');
+        }
+        long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+        long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
+        long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
+        long encodedOffset = strideFileOffset + PostingIndexUtils.strideDeltaHeaderSize(ks) + dataOffset;
+        return selectFromKeyBlob(encodedOffset, j);
+    }
+
+    /**
+     * Absolute row id of the 0-based {@code j}-th value in a per-key delta-FoR blob at
+     * {@code encodedOffset}. Locates the owning block by walking the {@code valueCounts} prefix,
+     * positions on its packed data via {@code packedOffsets} (implicitly 0 for a single-block key),
+     * then accumulates the block's deltas up to the in-block index — exactly the cumulative the
+     * cursor's {@code decodeBlock} performs. O(j / BLOCK_CAPACITY + j % BLOCK_CAPACITY).
+     */
+    private long selectFromDeltaBlob(long encodedOffset, long baseAddr, int blockCount, int j) {
+        long valueCountsOff = encodedOffset + 4;
+        long firstValuesOff = valueCountsOff + blockCount;
+        long minDeltasOff = firstValuesOff + (long) blockCount * Long.BYTES;
+        long bitWidthsOff = minDeltasOff + (long) blockCount * Long.BYTES;
+        long packedOffsetsOff = bitWidthsOff + blockCount;
+        long packedDataStartOff = blockCount > 1
+                ? packedOffsetsOff + (long) blockCount * Long.BYTES
+                : bitWidthsOff + blockCount;
+
+        // Locate the block that owns global index j by accumulating per-block counts.
+        int b = 0;
+        int blockStartIdx = 0;
+        while (b < blockCount) {
+            int c = Unsafe.getByte(baseAddr + valueCountsOff + b) & 0xFF;
+            if (blockStartIdx + c > j) {
+                break;
+            }
+            blockStartIdx += c;
+            b++;
+        }
+        if (b >= blockCount) {
+            return Numbers.LONG_NULL; // j past the blob — guarded against by the caller's count check
+        }
+        int r = j - blockStartIdx; // in-block index, 0-based
+        long firstValue = Unsafe.getLong(baseAddr + firstValuesOff + (long) b * Long.BYTES);
+        if (r == 0) {
+            return firstValue;
+        }
+        long minD = Unsafe.getLong(baseAddr + minDeltasOff + (long) b * Long.BYTES);
+        int bitWidth = Unsafe.getByte(baseAddr + bitWidthsOff + b) & 0xFF;
+        if (bitWidth == 0) {
+            // Constant arithmetic progression block: value at in-block index r.
+            return firstValue + (long) r * minD;
+        }
+        long packedOffset = b > 0
+                ? Unsafe.getLong(baseAddr + packedOffsetsOff + (long) b * Long.BYTES)
+                : 0;
+        long packedDataAddr = baseAddr + packedDataStartOff + packedOffset;
+        // unpackValue(addr, i, bw, minD) == minD + residual_i == the delta the cursor adds at step i.
+        long cum = firstValue;
+        for (int i = 0; i < r; i++) {
+            cum += BitpackUtils.unpackValue(packedDataAddr, i, bitWidth, minD);
+        }
+        return cum;
+    }
+
+    /**
+     * Absolute row id of the 0-based {@code j}-th value in a per-key Elias-Fano blob at
+     * {@code encodedOffset}. Selects the {@code j}-th set bit in the high-bits bitset
+     * ({@code high = bitPosition - j}) and reads the matching {@code L} low bits at {@code j*L};
+     * this is the random-access analogue of the cursor's forward EF chunk decode and the backward
+     * reverse decode. O(numHighWords) worst case, typically far less.
+     */
+    private long selectFromEFBlob(long baseAddr, long encodedOffset, int j) {
+        long pos = encodedOffset + 4; // skip EF_FORMAT_SENTINEL
+        int totalCount = Unsafe.getInt(baseAddr + pos);
+        pos += 4;
+        if (j >= totalCount) {
+            return Numbers.LONG_NULL;
+        }
+        int bitsL = Unsafe.getByte(baseAddr + pos) & 0xFF;
+        pos += 1;
+        long universe = Unsafe.getLong(baseAddr + pos);
+        pos += 8;
+        long lowOffset = pos;
+        long highOffset = pos + PostingIndexUtils.efLowBytesAligned(totalCount, bitsL);
+        int numHighWords = (int) ((totalCount + (universe >>> bitsL) + 63) / 64);
+        // Find the high-bits word holding the j-th set bit, then its in-word position.
+        int consumed = 0;
+        for (int w = 0; w < numHighWords; w++) {
+            long word = Unsafe.getLong(baseAddr + highOffset + (long) w * 8);
+            int bits = Long.bitCount(word);
+            if (consumed + bits <= j) {
+                consumed += bits;
+                continue;
+            }
+            // The (j - consumed)-th set bit within this word.
+            int within = j - consumed;
+            long masked = word;
+            for (int t = 0; t < within; t++) {
+                masked &= masked - 1; // clear lowest set bit
+            }
+            int trail = Long.numberOfTrailingZeros(masked);
+            long high = (long) w * 64 + trail - j; // global set-bit position minus ordinal
+            long low = PostingIndexUtils.readBitsWord(baseAddr + lowOffset, (long) j * bitsL, bitsL);
+            if (bitsL < 64) {
+                low &= (1L << bitsL) - 1;
+            }
+            return (high << bitsL) | low;
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    /**
+     * Dispatches a per-key encoded blob at {@code encodedOffset} to the matching select:
+     * EF (sentinel first word) or delta-FoR (positive block count). Returns {@link Numbers#LONG_NULL}
+     * for an empty/corrupt blob (the caller's count check makes this unreachable in practice).
+     */
+    private long selectFromKeyBlob(long encodedOffset, int j) {
+        long baseAddr = valueMem.addressOf(0);
+        int firstWord = Unsafe.getInt(baseAddr + encodedOffset);
+        if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+            return selectFromEFBlob(baseAddr, encodedOffset, j);
+        }
+        if (firstWord <= 0) {
+            return Numbers.LONG_NULL;
+        }
+        return selectFromDeltaBlob(encodedOffset, baseAddr, firstWord, j);
+    }
+
+    /**
+     * Count of {@code key}'s postings in sparse gen {@code gen}. Mirrors the cursor's
+     * {@code getSparseGenKeyCount}: prefix-sum {@code start = prefixSum[key - minKey]}, then
+     * {@code counts[start]}. Returns 0 when the key is out of the gen's key range or absent.
+     */
+    private long selectSparseKeyCount(int key, int gen, int activeKeyCount) {
+        int minKey = genLookup.getGenMinKey(gen);
+        int maxKey = genLookup.getGenMaxKey(gen);
+        if (key < minKey || key > maxKey) {
+            return 0;
+        }
+        long genFileOffset = genLookup.getGenFileOffset(gen);
+        long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+        int kk = key - minKey;
+        int start = Unsafe.getInt(prefixSumAddr + (long) kk * Integer.BYTES);
+        int end = Unsafe.getInt(prefixSumAddr + (long) (kk + 1) * Integer.BYTES);
+        // Equivalent to the cursor's start == end empty-key test (PostingIndexFwdReader's
+        // loadSparseGenByPrefixSum): prefix sums are monotonic non-decreasing so start > end
+        // cannot occur; >= is the same check, kept defensive against a corrupt prefix sum.
+        if (start >= end) {
+            return 0;
+        }
+        long countsBase = valueMem.addressOf(genFileOffset) + (long) activeKeyCount * Integer.BYTES;
+        return Unsafe.getInt(countsBase + (long) start * Integer.BYTES);
+    }
+
+    /**
+     * Absolute row id of the 0-based {@code j}-th posting of {@code key} in sparse gen {@code gen}.
+     * Resolves the per-key blob via the prefix-sum {@code start} index (mirroring
+     * {@code loadSparseGenByPrefixSum}) and delegates to {@link #selectFromKeyBlob}.
+     * Caller guarantees {@code 0 <= j < count}.
+     */
+    private long selectSparseKthValue(int key, int gen, int activeKeyCount, int j) {
+        int minKey = genLookup.getGenMinKey(gen);
+        long genFileOffset = genLookup.getGenFileOffset(gen);
+        long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+        int start = Unsafe.getInt(prefixSumAddr + (long) (key - minKey) * Integer.BYTES);
+        long genAddr = valueMem.addressOf(genFileOffset);
+        long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+        long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
+        long dataOffset = Unsafe.getLong(offsetsBase + (long) start * Long.BYTES);
+        long encodedOffset = genFileOffset + PostingIndexUtils.genHeaderSizeSparse(activeKeyCount) + dataOffset;
+        return selectFromKeyBlob(encodedOffset, j);
+    }
+
     protected static long readVarBlockOffset(long offsetsAddr, int ordinal, boolean longOffsets) {
         if (longOffsets) {
             return Unsafe.getLong(offsetsAddr + (long) ordinal * Long.BYTES);
@@ -1110,6 +1729,44 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected boolean assertStampOperatingThread() {
         assertOperatingThreadId = Thread.currentThread().threadId();
         return true;
+    }
+
+    /**
+     * Single-threaded warm-up so the reader can later be read concurrently by N worker
+     * cursors without any of them mutating shared state. For each key, drives a full cursor
+     * pass to natural exhaustion (populates the idempotent genLookup cache so later same-key
+     * cursors run read-only), pre-opens required sidecars, and pre-extends valueMem to its full
+     * published size so iteration-time extend() calls become no-ops.
+     */
+    public void warmForKeys(int[] keys, int[] requiredCoverColumns) {
+        reloadConditionally();
+        if (valueMemSize > 0) {
+            valueMem.extend(valueMemSize);
+        }
+        // Open sidecars up front so the pre-warm side effect (sidecar mmaps + coveredAvailable)
+        // holds even when keys is empty; getCursor below re-runs this idempotently per key.
+        openRequiredSidecars(requiredCoverColumns);
+        for (int i = 0, n = keys.length; i < n; i++) {
+            warmCacheForKey(keys[i], requiredCoverColumns);
+        }
+    }
+
+    private void warmCacheForKey(int key, int[] requiredCoverColumns) {
+        if (key < 0) {
+            return;
+        }
+        // Open a cursor over the full key range and iterate to natural exhaustion:
+        // the genLookup cache is only committed (putCacheEntries) when the gen walk
+        // reaches its end, so we must not stop early. Closing the cursor returns it
+        // to the reader's free list, which is safe because warming is single-threaded.
+        RowCursor cursor = getCursor(key, 0, Long.MAX_VALUE, requiredCoverColumns);
+        try {
+            while (cursor.hasNext()) {
+                cursor.next();
+            }
+        } finally {
+            cursor.close();
+        }
     }
 
     protected void ensureSidecarOpen(int c) {
@@ -1150,6 +1807,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         if (coverCount == 0) {
             return;
         }
+        if (frozen) {
+            // Parallel decode in progress. warmForKeys (single-threaded, pre-freeze)
+            // already opened every required sidecar and populated coveredAvailable[]
+            // for the query's full cover-column set. Detached worker cursors call this
+            // from N threads concurrently, so it MUST NOT mutate the shared reader state
+            // here: zeroing-then-rewriting coveredAvailable[] would race sibling workers
+            // and momentarily publish a false availability. The array is already correct,
+            // so this is a no-op while frozen.
+            assert allRequiredCoveredAvailable(requiredCoverColumns)
+                    : "frozen reader missing a warm-opened sidecar for the requested cover columns";
+            return;
+        }
         if (coveredAvailable == null || coveredAvailable.length < coverCount) {
             coveredAvailable = new boolean[coverCount];
         } else {
@@ -1166,6 +1835,25 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 coveredAvailable[c] = sidecarMems.getQuick(c).getFd() != -1;
             }
         }
+    }
+
+    // -ea-only invariant check used by the frozen no-op path of openRequiredSidecars:
+    // every column a detached worker cursor requests must already have been opened and
+    // marked available by the single-threaded warm pass, so the frozen reader never needs
+    // to (and never may) rewrite the shared coveredAvailable[] from a worker thread.
+    private boolean allRequiredCoveredAvailable(int[] requiredCoverColumns) {
+        if (requiredCoverColumns == null) {
+            return true;
+        }
+        if (coveredAvailable == null) {
+            return false;
+        }
+        for (int c : requiredCoverColumns) {
+            if (c >= 0 && c < coverCount && !coveredAvailable[c]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
