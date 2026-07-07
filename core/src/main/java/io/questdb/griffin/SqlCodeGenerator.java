@@ -8041,7 +8041,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
 
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
-            boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, baseMetadata);
+            // The first/last index optimisation reads values straight from raw page addresses
+            // with no type-cast guard, so it cannot read a parquet column decoded in its
+            // pre-conversion source type. Let the guarded SAMPLE BY group-by handle those.
+            boolean allGroupsFirstLast = isFillNone
+                    && allGroupsFirstLastWithSingleSymbolFilter(model, baseMetadata)
+                    && !factory.hasParquetConvertedColumns(executionContext);
             if (allGroupsFirstLast) {
                 SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexPageFrameCursorFactory();
                 if (symbolFilter != null) {
@@ -8747,8 +8752,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata baseMetadata = factory.getMetadata();
 
             boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled();
+            // The vectorized (Rosti) group-by runs SIMD over raw page addresses with no
+            // type-cast guard and no row-wise fallback, so it cannot read a column decoded
+            // in its pre-conversion source type. Let the guarded Async group-by handle those.
+            boolean canVectorize = !factory.hasParquetConvertedColumns(executionContext);
             // Inspect model for possibility of vector aggregate intrinsics.
-            if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
+            if (canVectorize && enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
                 // Create baseMetadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 

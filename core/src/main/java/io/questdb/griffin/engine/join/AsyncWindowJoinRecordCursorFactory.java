@@ -1558,7 +1558,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -1708,7 +1708,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -1888,7 +1888,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2065,7 +2065,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2329,7 +2329,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2487,7 +2487,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2644,7 +2644,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
@@ -2790,7 +2790,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
