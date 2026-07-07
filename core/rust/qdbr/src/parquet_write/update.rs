@@ -4001,7 +4001,8 @@ mod tests {
         // file matches the pre-247cb447cd layout. The repetition-aware
         // dispatch in encode.rs picks encode_int_notnull for this field, so
         // the pages on disk are also in the legacy shape (no def-levels).
-        let (modern_schema, additional_meta) = to_parquet_schema(&initial_partition, false, -1)?;
+        let (modern_schema, additional_meta) =
+            to_parquet_schema(&initial_partition, false, -1, SeqTxn::UNSET)?;
         let mut legacy_fields = modern_schema.fields().to_vec();
         for field in legacy_fields.iter_mut() {
             if let parquet2::schema::types::ParquetType::PrimitiveType(ref mut pt) = field {
@@ -4058,6 +4059,7 @@ mod tests {
             0,  // parquet_meta_file_size
             0,  // append_base
             -1, // existing_parquet_file_size
+            SeqTxn::UNSET,
         )?;
 
         let extra = [5i8, 6, 7, 8];
