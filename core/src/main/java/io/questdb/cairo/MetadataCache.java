@@ -97,12 +97,10 @@ public class MetadataCache implements QuietCloseable {
     // in sync incrementally, so hydrateAllTables() short-circuits. Reset by
     // clearCache() so a wiped cache is reconciled afresh.
     private volatile boolean cacheComplete;
-    // Test-only seam fired immediately before hydrateAllTables() publishes the
-    // completeness latch (see #latchCompleteTestHook). Lets a test deterministically
-    // race a clearCache() against the publish: because it sits right next to the
-    // publish, it stays inside whatever lock scope the publish lives in, so a
-    // regression that moved the publish back outside the read lock would expose it.
-    private volatile Runnable latchCompleteTestHook;
+    // Bumped by clearCache() on every wipe. hydrateAllTables() snapshots it before
+    // scanning, and assessReconcileGiveUp() refuses to spend the give-up budget when it
+    // moved - a concurrent clear, not an unreadable _meta, made that pass look stuck.
+    private volatile long clearEpoch;
     private TxReader txReader;
     private long version;
 
@@ -195,6 +193,10 @@ public class MetadataCache implements QuietCloseable {
         if (cacheComplete) {
             return;
         }
+        // Snapshot the clear epoch before scanning: if clearCache() bumps it before we
+        // reach the give-up path below, a concurrent wipe (not an unhydratable table) is
+        // what made this pass look stuck, so it must not spend the give-up budget.
+        final long startEpoch = clearEpoch;
         final ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
         engine.getTableTokens(tableTokensSet, false);
         final ObjList<TableToken> tableTokens = tableTokensSet.getList();
@@ -222,11 +224,7 @@ public class MetadataCache implements QuietCloseable {
                 // the observation + latch are mutually exclusive with clearCache()
                 // (write lock); otherwise a concurrent clear could slip in after the
                 // scan and leave an emptied cache marked complete.
-                final Runnable hook = latchCompleteTestHook;
-                if (hook != null) {
-                    hook.run();
-                }
-                cacheComplete = true;
+                publishCacheComplete();
             }
         }
 
@@ -275,27 +273,45 @@ public class MetadataCache implements QuietCloseable {
             return;
         }
 
-        // We could not confirm completeness this pass (some tables were missing).
-        // A per-table hydration can fail silently (throwError=false), so normally we
-        // leave cacheComplete unset and let the next reconcile re-scan - that is how
-        // a transient failure self-heals. But a table whose _meta is genuinely
-        // unreadable would otherwise be re-read (and logged CRITICAL) on every
-        // catalogue query forever. Bound that: after MAX_INCOMPLETE_RECONCILE_PASSES
-        // consecutive zero-progress passes, give up and latch the flag, leaving the
-        // unhydratable table(s) to be picked up by a writer (hydrateTable/registerName)
-        // or the next clearCache() epoch.
-        //
-        // The budget counts only zero-progress rounds: if this pass hydrated at least one
-        // previously-missing table the cache is still self-healing, so reset the counter
-        // instead of spending it. This keeps the give-up budget a function of sequential
-        // stuck rounds rather than of the number of concurrent invocations - a burst of
-        // catalogue queries that each make progress (e.g. a post-restart introspection
-        // storm racing the startup hydrator) cannot exhaust it.
-        //
-        // Do the progress check + budget bump + latch under the write lock, so they are
-        // mutually exclusive with clearCache() (which resets both the counter and the flag
-        // under the same lock). Otherwise a concurrent clear could slip between the budget
-        // check and the latch and leave an emptied cache marked complete.
+        // We could not confirm completeness this pass (some tables were missing):
+        // fall through to the bounded give-up assessment.
+        assessReconcileGiveUp(missing, startEpoch);
+    }
+
+    /**
+     * Assesses the give-up budget after a {@link #hydrateAllTables()} pass that could
+     * not confirm completeness. A per-table hydration can fail silently
+     * (throwError=false), so normally the pass leaves {@link #cacheComplete} unset and
+     * the next reconcile re-scans - that is how a transient failure self-heals. But a
+     * table whose {@code _meta} is genuinely unreadable would otherwise be re-read (and
+     * logged CRITICAL) on every catalogue query forever. Bound that: after
+     * {@link #MAX_INCOMPLETE_RECONCILE_PASSES} consecutive genuinely-stuck passes, give
+     * up and latch the flag, leaving the unhydratable table(s) to be picked up by a
+     * writer (hydrateTable/registerName) or the next clearCache() epoch.
+     * <p>
+     * Only genuinely-stuck rounds spend the budget:
+     * <ul>
+     * <li>a pass that hydrated at least one previously-missing table resets the counter
+     * - the cache is self-healing, and the budget must be a function of sequential
+     * stuck rounds, not of the number of concurrent invocations (e.g. a post-restart
+     * introspection storm racing the startup hydrator);</li>
+     * <li>a pass whose reconcile overlapped a {@link MetadataCacheWriter#clearCache()}
+     * ({@code clearEpoch} moved past {@code startEpoch}) is ignored: the wipe - not an
+     * unreadable {@code _meta} - made the pass look stuck, and spending the budget
+     * could latch {@link #cacheComplete} over a merely-emptied, still-hydratable cache.
+     * The clear already reset the counter; a later clear-free reconcile latches
+     * correctly (all tables present) or gives up (a table is truly unreadable).</li>
+     * </ul>
+     * The progress check, budget bump and latch run under the write lock, mutually
+     * exclusive with clearCache() (which resets both the counter and the flag under
+     * the same lock); otherwise a concurrent clear could slip between the budget check
+     * and the latch and leave an emptied cache marked complete.
+     * <p>
+     * Called while holding no lock. Protected so tests can subclass the cache and
+     * deterministically interleave concurrent operations (e.g. a clearCache()) right
+     * before the assessment.
+     */
+    protected void assessReconcileGiveUp(ObjList<TableToken> missing, long startEpoch) {
         final boolean gaveUp;
         try (MetadataCacheWriter ignore = writeLock()) {
             boolean progressed = false;
@@ -306,14 +322,18 @@ public class MetadataCache implements QuietCloseable {
                 }
             }
             if (progressed) {
-                // Progress this round - the cache is self-healing, so do not spend the
-                // give-up budget; the next reconcile re-scans for whatever is still missing.
+                // Self-healing round: do not spend the give-up budget; the next
+                // reconcile re-scans for whatever is still missing.
                 incompleteReconcilePasses = 0;
+                gaveUp = false;
+            } else if (clearEpoch != startEpoch) {
+                // A clearCache() overlapped this reconcile - not a genuinely stuck
+                // round, so do not spend the budget (see javadoc).
                 gaveUp = false;
             } else {
                 gaveUp = ++incompleteReconcilePasses >= MAX_INCOMPLETE_RECONCILE_PASSES;
                 if (gaveUp) {
-                    cacheComplete = true;
+                    publishCacheComplete();
                 }
             }
         }
@@ -390,7 +410,7 @@ public class MetadataCache implements QuietCloseable {
                 return;
             }
         }
-        cacheComplete = true;
+        publishCacheComplete();
     }
 
     /**
@@ -405,14 +425,17 @@ public class MetadataCache implements QuietCloseable {
     }
 
     /**
-     * Installs (or clears, when {@code null}) a hook fired immediately before
-     * {@link #hydrateAllTables()} publishes the completeness latch. Tests use it to
-     * deterministically interleave a {@link MetadataCacheWriter#clearCache()} with the
-     * publish; production never sets it.
+     * Publishes the completeness latch - the single choke point for every
+     * {@link #cacheComplete} publish. Callers invoke it inside a lock scope that
+     * excludes {@link MetadataCacheWriter#clearCache()} (read lock for the reconcile
+     * latches, write lock for the give-up latch), so a concurrent clear cannot slip
+     * between observing completeness and setting the flag. Protected so tests can
+     * subclass the cache and interleave a clearCache() with the publish; an override
+     * runs inside the caller's lock scope, so a regression that moved a publish
+     * outside its lock is still exposed.
      */
-    @TestOnly
-    public void setLatchCompleteTestHook(Runnable hook) {
-        this.latchCompleteTestHook = hook;
+    protected void publishCacheComplete() {
+        cacheComplete = true;
     }
 
     /**
@@ -963,6 +986,9 @@ public class MetadataCache implements QuietCloseable {
             // retry budget for any table that fails to hydrate.
             incompleteReconcilePasses = 0;
             cacheComplete = false;
+            // Advance the epoch so a reconcile that overlapped this clear does not count
+            // its (clear-induced) "no progress" toward the give-up budget.
+            clearEpoch++;
         }
 
         /**
