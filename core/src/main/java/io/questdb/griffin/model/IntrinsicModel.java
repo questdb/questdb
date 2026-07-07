@@ -119,6 +119,13 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
+    public void intersectMonotonicTimestamp(TimestampMonotonicInverter inverter) {
+        runtimeIntervalBuilder.intersectMonotonicTimestamp(inverter);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
+    }
+
     public void intersectRuntimeIntervals(Function intervalFunction) {
         runtimeIntervalBuilder.intersectRuntimeIntervals(intervalFunction);
         if (runtimeIntervalBuilder.isEmptySet()) {

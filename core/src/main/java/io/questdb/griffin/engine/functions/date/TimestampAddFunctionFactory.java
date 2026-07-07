@@ -35,12 +35,15 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 
 /**
  * Factory for the dateadd function: dateadd(char period, int stride, timestamp).
@@ -100,7 +103,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc, timestampType);
     }
 
-    private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction {
+    private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final char period;
         private final TimestampDriver.TimestampAddMethod periodAddFunction;
         private final int stride;
@@ -129,8 +132,60 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getTimestampArg() {
+            return timestampFunc;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            if (stride == Integer.MIN_VALUE) {
+                return NONE;
+            }
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (period == 'M' || period == 'y') {
+                // Calendar add clamps day-of-month, so it is non-monotonic by up to
+                // one unit; widen the naive inverse and keep the residual filter.
+                // A positive calendar add near the domain max overflows the long boundary and wraps
+                // to a low value; with an open lower but finite upper bound that wrapped value
+                // matches and splits the preimage into two disjoint ranges. The designated timestamp
+                // is non-negative, so a negative add cannot underflow.
+                if (stride > 0 && lo == Numbers.LONG_NULL && hi != Long.MAX_VALUE) {
+                    return NONE;
+                }
+                if (lo != Numbers.LONG_NULL) {
+                    final long m = periodAddFunction.add(lo, -stride);
+                    final long w = periodAddFunction.add(m, -1);
+                    if (addOverflows(lo, m, -stride) || w >= m) {
+                        return NONE;
+                    }
+                    lo = w;
+                }
+                if (hi != Long.MAX_VALUE) {
+                    final long m = periodAddFunction.add(hi, -stride);
+                    final long w = periodAddFunction.add(m, 1);
+                    if (addOverflows(hi, m, -stride) || w <= m) {
+                        return NONE;
+                    }
+                    hi = w;
+                }
+                io.of(lo, hi);
+                return SUPERSET;
+            }
+            if (CommonUtils.isFixedDurationUnit(period)) {
+                // a fixed unit adds the same constant to every timestamp
+                return MonotonicTimestampFunction.invertConstantShift(io, periodAddFunction.add(0, stride), shiftInputCeiling(getType()));
+            }
+            return NONE;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(')');
+        }
+
+        private static boolean addOverflows(long base, long result, int units) {
+            return units > 0 ? result <= base : units < 0 && result >= base;
         }
     }
 
