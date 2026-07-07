@@ -1873,9 +1873,13 @@ public final class TableUtils {
                     // parquet->native conversion can match columns by their original id even
                     // after a column-type conversion has re-keyed the column.
                     final int columnId = metadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
+                    // _cv entries (name txn, column top, symbol table name txn) are keyed by the
+                    // current writer index, which diverges from the dense metadata index once a
+                    // column is dropped or re-keyed by ALTER COLUMN TYPE. Mirror TableReader.
+                    final int writerIndex = metadata.getColumnMetadata(columnIndex).getWriterIndex();
 
-                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
@@ -1900,7 +1904,7 @@ public final class TableUtils {
                             ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
 
                             // root symbol files use separate txn
-                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
+                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(writerIndex);
 
                             offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             if (!ff.exists(path.$())) {

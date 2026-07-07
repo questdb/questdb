@@ -29,8 +29,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,8 +41,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -1367,6 +1372,80 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("c\nabc\n");
+        });
+    }
+
+    @Test
+    public void testProduceParquetFromNativeResolvesReKeyedColumnByWriterIndex() throws Exception {
+        // ALTER COLUMN TYPE removes the old column and appends the rewritten one at a new, higher
+        // writer index. In a TableReader's (compacted) metadata the column's dense index then
+        // differs from its writer index. TableUtils.produceParquetFromNative must resolve each
+        // column's _cv entries -- name txn, column top, symbol table name txn -- by writer index
+        // (as TableReader does), not by the dense index; otherwise the name txn resolves to the
+        // default and it opens 'x.d' instead of the real 'x.d.<txn>' and throws.
+        //
+        // No OSS SQL path reaches this: SQL CONVERT PARTITION TO PARQUET runs through the writer,
+        // whose metadata keeps deleted-column tombstones so dense == writer. The storage-policy
+        // TO PARQUET conversion calls produceParquetFromNative with a reader's metadata, which is
+        // where the divergence bites, so the reader-metadata call is exercised directly here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+            drainWalQueue();
+            // day2 leaves day1 (index 0) a non-active native partition.
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 30)");
+            drainWalQueue();
+
+            // Re-key x: in the reader metadata its dense index no longer equals its writer index.
+            execute("ALTER TABLE t ALTER COLUMN x TYPE DOUBLE");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            final DirectIntList bloomIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT);
+            final TableUtils.SymbolTableProviderFromReader symbolProvider = new TableUtils.SymbolTableProviderFromReader();
+            try (
+                    TableReader reader = engine.getReader(tt);
+                    Path path = new Path();
+                    Path other = new Path()
+            ) {
+                symbolProvider.of(reader);
+                final TxReader tx = reader.getTxFile();
+                final int partitionIndex = 0;
+                final long partitionTs = tx.getPartitionTimestampByIndex(partitionIndex);
+                final long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+                final long rowCount = tx.getPartitionSize(partitionIndex);
+
+                // Precondition: x really is re-keyed (dense index != writer index) in the reader.
+                final int xDense = reader.getMetadata().getColumnIndex("x");
+                Assert.assertNotEquals("test needs a re-keyed column (dense != writer)",
+                        xDense, reader.getMetadata().getColumnMetadata(xDense).getWriterIndex());
+
+                path.of(configuration.getDbRoot()).concat(tt);
+                other.of(configuration.getDbRoot()).concat(tt);
+
+                final long parquetLen = TableUtils.produceParquetFromNative(
+                        path,
+                        other,
+                        path.size(),
+                        partitionTs,
+                        partitionNameTxn,
+                        partitionNameTxn,
+                        tt.getTableName(),
+                        rowCount,
+                        reader.getMetadata(),
+                        reader.getColumnVersionReader(),
+                        symbolProvider,
+                        configuration,
+                        null,
+                        Double.NaN,
+                        bloomIndexes,
+                        -1L
+                );
+                Assert.assertTrue("produceParquetFromNative must encode the re-keyed column, not fail opening 'x.d'",
+                        parquetLen > 0);
+            } finally {
+                bloomIndexes.close();
+            }
         });
     }
 
