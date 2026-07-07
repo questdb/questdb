@@ -1298,6 +1298,22 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         );
     }
 
+    // Captures SHOW CREATE LIVE VIEW output, drops the view, re-executes the captured
+    // DDL, then captures SHOW CREATE again and asserts it matches the original. This
+    // proves the emitted DDL is valid, re-parseable, and stable across a round-trip -
+    // a plain string-compare against an expected literal would pass even for output
+    // that cannot be re-executed.
+    private void assertShowCreateLiveViewRoundTrips(String viewName) throws SqlException {
+        printSql("SHOW CREATE LIVE VIEW " + viewName + ";");
+        final String originalDdl = sink.toString().replace("ddl\n", "");
+
+        execute("DROP LIVE VIEW " + viewName);
+        execute(originalDdl);
+
+        printSql("SHOW CREATE LIVE VIEW " + viewName + ";");
+        TestUtils.assertEquals(originalDdl, sink.toString().replace("ddl\n", ""));
+    }
+
     @Test
     public void testCreateAndDropLiveView() throws Exception {
         assertMemoryLeak(() -> {
@@ -2218,6 +2234,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 200ms PARTITION BY DAY BACKFILL AS (\n" +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
                     ");\n");
+            assertShowCreateLiveViewRoundTrips("lv");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -15769,6 +15786,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY AS (\n" +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
                     ");\n");
+            assertShowCreateLiveViewRoundTrips("lv");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -16146,6 +16164,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
                     ");\n");
 
+            assertShowCreateLiveViewRoundTrips("lv");
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -17049,6 +17068,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')\n" +
                     ");\n");
+            assertShowCreateLiveViewRoundTrips("lv");
             execute("DROP LIVE VIEW lv");
         });
     }
