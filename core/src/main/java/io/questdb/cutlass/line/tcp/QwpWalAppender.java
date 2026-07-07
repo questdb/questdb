@@ -122,7 +122,7 @@ public class QwpWalAppender implements QuietCloseable {
             case TYPE_GEOHASH -> ColumnType.GEOLONG; // Default to GEOLONG, precision handled separately
             case TYPE_DOUBLE_ARRAY -> ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, false);
             case TYPE_LONG_ARRAY ->
-                    throw CairoException.nonCritical().put("long arrays are not supported, only double arrays");
+                    throw CairoException.schemaMismatch().put("long arrays are not supported, only double arrays");
             case TYPE_DECIMAL64 -> ColumnType.DECIMAL64;
             case TYPE_DECIMAL128 -> ColumnType.DECIMAL128;
             case TYPE_DECIMAL256 -> ColumnType.DECIMAL256;
@@ -224,7 +224,7 @@ public class QwpWalAppender implements QuietCloseable {
             if (batchDims == -1) {
                 batchDims = rowDims;
             } else if (batchDims != rowDims) {
-                throw CairoException.nonCritical()
+                throw CairoException.schemaMismatch()
                         .put("array dimensionality mismatch in QWP batch [column=")
                         .put(tableBlock.getColumnDef(colIndex).getName())
                         .put(", expectedDims=")
@@ -364,7 +364,7 @@ public class QwpWalAppender implements QuietCloseable {
         final int existingDims = ColumnType.decodeWeakArrayDimensionality(columnType);
         assert existingDims != -1 : "weak array dimensionality must not be persisted";
         if (existingDims != batchDims) {
-            throw CairoException.nonCritical()
+            throw CairoException.schemaMismatch()
                     .put("array dimensionality mismatch [column=")
                     .put(columnName)
                     .put(", expected=")
@@ -449,7 +449,7 @@ public class QwpWalAppender implements QuietCloseable {
                             ts = ts / 1000;
                         } else if (needsMicrosToNanos) {
                             if (ts > Long.MAX_VALUE / 1000 || ts < Long.MIN_VALUE / 1000) {
-                                throw CairoException.nonCritical()
+                                throw CairoException.schemaMismatch()
                                         .put("timestamp overflow converting micros to nanos: ").put(ts);
                             }
                             ts = ts * 1000;
@@ -967,7 +967,7 @@ public class QwpWalAppender implements QuietCloseable {
 
             if (columnName.isEmpty() && (colType == TYPE_TIMESTAMP || colType == TYPE_TIMESTAMP_NANOS)) {
                 if (timestampIndex < 0) {
-                    throw CairoException.nonCritical()
+                    throw CairoException.schemaMismatch()
                             .put("designated timestamp provided but table has no designated timestamp [table=")
                             .put(tud.getTableNameUtf16())
                             .put(']');
@@ -1002,14 +1002,14 @@ public class QwpWalAppender implements QuietCloseable {
                             }
                         }
                     } else if (!autoCreateNewColumns) {
-                        throw CairoException.nonCritical()
+                        throw CairoException.schemaMismatch()
                                 .put("new columns not allowed [table=")
                                 .put(tud.getTableNameUtf16())
                                 .put(", column=")
                                 .put(columnName)
                                 .put(']');
                     } else {
-                        throw CairoException.nonCritical()
+                        throw CairoException.schemaMismatch()
                                 .put("invalid column name [table=")
                                 .put(tud.getTableNameUtf16())
                                 .put(", column=")
