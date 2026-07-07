@@ -226,6 +226,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataTop,
             long srcDataPhysBaseRows,
             long srcDataMax,
+            boolean srcDataFilesShared,
             int prefixType,
             long prefixLo,
             long prefixHi,
@@ -318,7 +319,19 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // Do all of this beyond existing written data, using column as a buffer.
                     // It is also fine in case when last partition contains WAL LAG, since at the
                     // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
-                    newAuxSize = auxSizeOld + auxSizeNew;
+
+                    // On an inode-sharing partition (hardlink split donor or suffix child) the
+                    // aux and data files physically extend beyond this partition's logical view
+                    // with bytes a split relative reads through its own hardlink: writing the
+                    // scratch at the logical end would corrupt the sibling, so place it beyond
+                    // the physical end of each file instead. Downstream reads combine the aux
+                    // scratch base (srcDataFixOffset) and the data scratch base (srcDataOffset)
+                    // with entry offsets, so both bases move transparently.
+                    long auxScratchOffset = auxSizeOld;
+                    if (srcDataFilesShared) {
+                        auxScratchOffset = Math.max(auxScratchOffset, sharedFileScratchFloor(ff, srcFixFd, columnTypeDriver.auxRowsToBytes(1)));
+                    }
+                    newAuxSize = auxScratchOffset + auxSizeNew;
 
                     srcAuxAddr = mapRW(ff, srcFixFd, newAuxSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcAuxAddr, newAuxSize, Files.POSIX_MADV_SEQUENTIAL);
@@ -329,10 +342,13 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // At bottom of source var column set length of strings to null (-1) for as many strings
                     // as srcDataTop value.
                     srcDataOffset = srcDataSize;
+                    if (srcDataFilesShared) {
+                        srcDataOffset = Math.max(srcDataOffset, sharedFileScratchFloor(ff, srcVarFd, 1));
+                    }
                     // We need to reserve null values for every column top value
                     // in the variable len file. Each null value takes 4 bytes for string
                     final long reservedBytesForColTopNulls = srcDataTop * columnTypeDriver.getDataVectorMinEntrySize();
-                    srcDataSize += reservedBytesForColTopNulls;
+                    srcDataSize = srcDataOffset + reservedBytesForColTopNulls;
                     // This value may be lower than auxRowCount.
                     // We use it when copying non-column top column data.
                     if (auxRowCountNew > 0) {
@@ -355,7 +371,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                     // We need to shift copy the original column so that new block points at strings "below"
                     // the nulls we created above.
-                    final long dstOffset = auxSizeOld + columnTypeDriver.auxRowsToBytes(srcDataTop);
+                    final long dstOffset = auxScratchOffset + columnTypeDriver.auxRowsToBytes(srcDataTop);
                     final long dstAddr = srcAuxAddr + dstOffset;
                     final long dstAddrSize = newAuxSize - dstOffset;
                     columnTypeDriver.shiftCopyAuxVector(
@@ -371,9 +387,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // null strings we just added.
                     // Call to setPartAuxVectorNull must be after shiftCopyAuxVector
                     // because the data has to be shifted before being overwritten.
-                    columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + auxSizeOld, 0, srcDataTop);
+                    columnTypeDriver.setPartAuxVectorNull(srcAuxAddr + auxScratchOffset, 0, srcDataTop);
                     srcDataTop = 0;
-                    srcDataFixOffset = auxSizeOld;
+                    srcDataFixOffset = auxScratchOffset;
                 } else {
                     // When we are shuffling "empty" space we can just reduce column top instead
                     // of moving the data.
@@ -1670,6 +1686,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcDataTop,
                         srcDataPhysBaseRows,
                         srcDataMax,
+                        // Hardlink split relatives share column file inodes: the merge must not
+                        // use the shared files' physical tail as scratch space.
+                        tableWriter.isPartitionDonorByTimestamp(oldPartitionTimestamp),
                         prefixType,
                         prefixLo,
                         prefixHi,
@@ -2486,6 +2505,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataMax,
             long srcDataTop,
             long srcDataPhysBaseRows,
+            boolean srcDataFilesShared,
             long srcDataFixFd,
             long srcTimestampFd,
             long srcTimestampAddr,
@@ -2564,14 +2584,23 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // It is also fine in case when last partition contains WAL LAG, since at the
                     // beginning of the transaction LAG is copied into memory buffers (o3 mem columns).
 
-                    srcDataFixSize = srcDataActualBytesOld + (srcDataMax << shl);
+                    // On an inode-sharing partition (hardlink split donor or suffix child) the
+                    // file physically extends beyond this partition's logical view with bytes a
+                    // split relative reads through its own hardlink: writing the scratch at the
+                    // logical end would corrupt the sibling, so place it beyond the physical
+                    // end of file instead.
+                    long scratchOffset = srcDataActualBytesOld;
+                    if (srcDataFilesShared) {
+                        scratchOffset = Math.max(scratchOffset, sharedFileScratchFloor(ff, srcFixFd, 1L << shl));
+                    }
+                    srcDataFixSize = scratchOffset + (srcDataMax << shl);
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
                     ff.madvise(srcDataFixAddr, srcDataFixSize, Files.POSIX_MADV_SEQUENTIAL);
-                    TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytesOld, srcDataTop);
+                    TableUtils.setNull(columnType, srcDataFixAddr + scratchOffset, srcDataTop);
                     // srcDataActualBytesNew may be zero, so that the below memcpy call is no-op.
-                    Vect.memcpy(srcDataFixAddr + srcDataActualBytesOld + (srcDataTop << shl), srcDataFixAddr, srcDataActualBytesNew);
+                    Vect.memcpy(srcDataFixAddr + scratchOffset + (srcDataTop << shl), srcDataFixAddr, srcDataActualBytesNew);
                     srcDataTop = 0;
-                    srcDataFixOffset = srcDataActualBytesOld;
+                    srcDataFixOffset = scratchOffset;
                 } else {
                     // When we are shuffling "empty" space we can just reduce column top instead
                     // of moving the data.
@@ -2763,6 +2792,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcDataTop,
             long srcDataPhysBaseRows,
             long srcDataMax,
+            boolean srcDataFilesShared,
             int prefixType,
             long prefixLo,
             long prefixHi,
@@ -2812,6 +2842,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataTop,
                     srcDataPhysBaseRows,
                     srcDataMax,
+                    srcDataFilesShared,
                     prefixType,
                     prefixLo,
                     prefixHi,
@@ -2858,6 +2889,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataMax,
                     srcDataTop,
                     srcDataPhysBaseRows,
+                    srcDataFilesShared,
                     -activeFixFd,
                     srcTimestampFd,
                     srcTimestampAddr,
@@ -2936,6 +2968,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
         long srcDataPhysBaseRows = 0;
+        // Hardlink split relatives (prefix donor / suffix child) share column file inodes:
+        // the merge must not use the shared files' physical tail as scratch space.
+        final boolean srcDataFilesShared = tableWriter.isPartitionDonorByTimestamp(oldPartitionTimestamp);
         // not set, we need to check file existence and read
         try {
             final long columnPartitionTop = tableWriter.getPartitionTopByTimestamp(oldPartitionTimestamp, columnIndex);
@@ -3010,6 +3045,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataTop,
                     srcDataPhysBaseRows,
                     srcDataMax,
+                    srcDataFilesShared,
                     prefixType,
                     prefixLo,
                     prefixHi,
@@ -3080,6 +3116,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcDataMax,
                     srcDataTop,
                     srcDataPhysBaseRows,
+                    srcDataFilesShared,
                     srcDataFixFd,
                     srcTimestampFd,
                     srcTimestampAddr,
@@ -3393,6 +3430,19 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 partitionUpdateSinkAddr
         );
         tableWriter.getO3CopyPubSeq().done(cursor);
+    }
+
+    /**
+     * Lowest file offset the merge may use as null-materialization scratch in a column file
+     * whose inode is shared with a hardlink split relative: the file's physical end, rounded
+     * up to the given alignment. Bytes below it belong to a sibling's logical row range.
+     */
+    private static long sharedFileScratchFloor(FilesFacade ff, long fd, long align) {
+        final long len = ff.length(fd);
+        if (len < 0) {
+            throw CairoException.critical(ff.errno()).put("could not get shared column file length [fd=").put(fd).put(']');
+        }
+        return (len + align - 1) / align * align;
     }
 
     @Override

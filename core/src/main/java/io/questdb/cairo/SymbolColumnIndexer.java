@@ -272,7 +272,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void rollback(long maxRow) {
-        this.writer.rollbackValues(maxRow);
+        // maxRow is the LOGICAL last committed row (rollbackIndexes passes transientRowCount - 1),
+        // but the index stores PHYSICAL row ids (index() shifts by partitionTop). Translate the
+        // keep-bound the same way, or a rollback on a zero-copy split suffix child evicts every
+        // committed child entry (all physical ids exceed the logical bound). 0 == no-op.
+        this.writer.rollbackValues(maxRow + partitionTop);
     }
 
     @Override

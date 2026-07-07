@@ -350,9 +350,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Partition top (R2) of the active partition when it is a zero-copy split suffix child; 0 otherwise.
     // Threaded into the active-append addressing so shared columns land at the true tail of the donor file.
     private long lastOpenPartitionTop;
-    // Lazily-created bitmap indexer used to restore a hardlinked suffix child's index entries into the
-    // shared .k/.v after the donor's O3 index rollback truncated them (see hardlinkSuffixChild).
-    private SymbolColumnIndexer splitChildReindexer;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
     private long lastOpenPartitionTxnName = -1;
     private long lastPartitionTimestamp;
@@ -5305,7 +5302,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             columnNameTxn,
                             indexType,
                             partitionTimestamp,
-                            oldPartitionNameTxn
+                            oldPartitionNameTxn,
+                            false
                     );
                 }
             }
@@ -6399,7 +6397,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(attachMetaMem);
         Misc.free(attachColumnVersionReader);
         Misc.free(attachIndexBuilder);
-        splitChildReindexer = Misc.free(splitChildReindexer);
         Misc.free(columnVersionWriter);
         Misc.free(o3PartitionUpdateSink);
         Misc.free(slaveTxReader);
@@ -7163,11 +7160,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    // Zero-copy split suffix child: hardlink the donor partition's column files into a fresh child
-    // directory and record, per column, the donor's FULL column top unchanged in the child's _cv.
-    // The child's partition top (R2) is stored separately in _txn slot 3 by the caller; the read path
-    // combines them as file_row = logical + R2 - colTop. The child shares the donor's inodes, so POSIX
-    // link-count keeps them alive until the last hardlinked directory is unlinked.
+    // Zero-copy split suffix child: hardlink the donor partition's column files (.d/.i, BITMAP .k/.v, and
+    // POSTING .pv/.pc/.pci) into a fresh child directory, COPY the mutable POSTING .pk manifest, and record
+    // per column the donor's FULL column top unchanged in the child's _cv. The child's partition top (R2)
+    // is stored separately in _txn slot 3 by the caller; the read path combines them as
+    // file_row = logical + R2 - colTop. The child shares the donor's inodes, so POSIX link-count keeps them
+    // alive until the last hardlinked directory is unlinked.
     private void hardlinkSuffixChild(long donorTs, long donorNameTxn, long childTs, long childNameTxn, long r2, long suffixRowCount) {
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, donorTs, donorNameTxn);
         final int srcDirLen = path.size();
@@ -7196,7 +7194,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnVersionWriter.upsert(childTs, i, columnNameTxn, donorPartitionTop + donorFullSize);
                     continue;
                 }
-                // Primary .d for every column; .i aux for var-size; .k/.v (+ posting aux) for indexed symbol.
+                // Primary .d for every column; .i aux for var-size.
                 linkFile(ff,
                         dFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
                         dFile(other.trimTo(dstDirLen), columnName, columnNameTxn));
@@ -7205,11 +7203,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             iFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
                             iFile(other.trimTo(dstDirLen), columnName, columnNameTxn));
                 }
-                // Index files (BITMAP .k/.v and POSTING .pk/.pv) are never shared with the donor: the
-                // donor's own index maintenance truncates/rebuilds them to the donor size R1, which would
-                // evict the child's entries from a shared file. buildSuffixChildBitmapIndexes() creates
-                // fresh independent bitmap indexes after this method returns, and creates empty posting
-                // index files that the posting seal sweep of this commit rebuilds.
+                // Index files are shared with the donor. The donor already indexed all of [0, donorFullSize)
+                // at PHYSICAL row ids, so the child reads its rows [R2, donorFullSize) through the
+                // +partitionTop read shift with NO rebuild. Sharing is safe because the donor is frozen
+                // after the split (its index is never written in place -- appends and merges rewrite into a
+                // fresh directory), and the child only ever appends physical ids above every donor entry.
+                //   BITMAP: hardlink .k/.v outright. Only one writer is ever live per index inode (the
+                //   child-as-last reuses the table writer's indexer; transient writers open fresh), and
+                //   every writer loads its sizes from the .k header at open, so a truncate-to-cached-size
+                //   close only ever trims slack beyond both siblings' data.
+                //   POSTING: hardlink the immutable .pv/.pc/.pci data but COPY the mutable .pk manifest --
+                //   donor and child seal independently and cannot share one chain head. The copied .pk
+                //   points at the hardlinked live .pv; the donor's own reseal (this commit's seal sweep)
+                //   rotates the donor onto a fresh .pv, leaving the shared live .pv referenced only by the
+                //   child, whose hardlink keeps it alive when the donor's superseded copy is purged.
+                if (ColumnType.isSymbol(columnType)
+                        && metadata.isColumnIndexed(i)
+                        && donorColumnTop < donorFullSize) {
+                    final byte indexType = metadata.getColumnIndexType(i);
+                    linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, donorTs, donorNameTxn, IndexType.isPosting(indexType));
+                }
                 // The child records the donor's FULL column top in shared-file coordinates (NOT
                 // max(0, T - R2)); the caller stores the composed top in slot 3 and the read path
                 // combines them as file_row = logical + partitionTop - columnTop. A donor-LOCAL record
@@ -7231,61 +7244,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
-        }
-    }
-
-    // Builds fresh, INDEPENDENT bitmap indexes for a zero-copy split suffix child. Unlike the shared .d/.i
-    // (hardlinked), a shared bitmap .k/.v is unusable: the donor's O3 index rollbacks (O3CopyJob truncates the
-    // shared file to the donor size R1) evict the child's entries. Instead each indexed bitmap column gets its
-    // own .k/.v holding only the child's rows at PHYSICAL row ids [r2, srcDataMax), read from the shared .d, so
-    // the +R2 read-path shift (Step 3) still resolves them. Runs single-threaded in o3ConsumePartitionUpdateSink
-    // after hardlinkSuffixChild (which linked the .d), and owns `path` (restored on exit).
-    private void buildSuffixChildBitmapIndexes(long childTs, long childNameTxn, long r2, long srcDataMax) {
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, childTs, childNameTxn);
-        final int plen = path.size();
-        try {
-            for (int i = 0; i < columnCount; i++) {
-                final int columnType = metadata.getColumnType(i);
-                if (columnType < 0 || !ColumnType.isSymbol(columnType) || !metadata.isColumnIndexed(i)) {
-                    continue;
-                }
-                final byte indexType = metadata.getColumnIndexType(i);
-                final long donorColumnTop = columnVersionWriter.getColumnTop(childTs, i);
-                if (donorColumnTop < 0 || donorColumnTop >= srcDataMax) {
-                    continue; // column absent or has no data in the shared range
-                }
-                final CharSequence columnName = metadata.getColumnName(i);
-                final long columnNameTxn = getColumnNameTxn(childTs, i);
-                createIndexFiles(columnName, columnNameTxn, metadata.getIndexValueBlockCapacity(i), indexType, plen, true, false);
-                if (IndexType.isPosting(indexType)) {
-                    // POSTING: the empty .pk created above is enough here; the posting seal sweep of
-                    // this same commit (sealPostingIndexesForO3Partitions handles sink slot 9) rebuilds
-                    // the chain from the shared .d at physical row ids and materializes covering sidecars.
-                    continue;
-                }
-                if (splitChildReindexer == null) {
-                    splitChildReindexer = new SymbolColumnIndexer(configuration);
-                }
-                splitChildReindexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, donorColumnTop, childTs, childNameTxn);
-                final long dataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
-                try {
-                    // index() reads the shared .d at (row - columnTop) and stores physical row ids [r2, srcDataMax).
-                    // partitionTop is 0 on this reindexer, so it does NOT shift -- r2/srcDataMax are already physical.
-                    splitChildReindexer.index(ff, dataFd, r2, srcDataMax);
-                    splitChildReindexer.getWriter().commit();
-                } finally {
-                    ff.close(dataFd);
-                }
-            }
-        } finally {
-            if (splitChildReindexer != null) {
-                // BitmapIndexWriter.close() truncates .k/.v to its cached append sizes; release the
-                // writer NOW while those sizes are current. Left open until TableWriter close, the
-                // stale truncation would chop off any index blocks the writer's own indexers append
-                // to the child in the meantime (O3 append into the child-as-last).
-                splitChildReindexer.releaseIndexWriter();
-            }
-            path.trimTo(pathSize);
         }
     }
 
@@ -7746,7 +7704,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn,
             byte indexType,
             long partitionTimestamp,
-            long partitionNameTxn
+            long partitionNameTxn,
+            boolean copyKeyFile
     ) {
         long linkSealTxn = columnNameTxn;
         long liveSealTxn = -1L;
@@ -7754,14 +7713,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             liveSealTxn = dropFuturePostingIndexChainEntriesBeforeLink(srcDirLen, columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
             linkSealTxn = liveSealTxn >= 0 ? liveSealTxn : 0L;
         }
-        if (
-                !linkFile(ff,
-                        keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
-                        keyFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
-                ) || !linkFile(ff,
-                        valueFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn, linkSealTxn),
-                        valueFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn, linkSealTxn)
-                )) {
+        // copyKeyFile: a zero-copy split suffix child that SHARES a POSTING index gets a private COPY of
+        // the mutable .pk manifest (donor and child seal independently and cannot share a single chain
+        // head), while the immutable .pv/.pc/.pci data is hardlinked. Only the live generation is linked;
+        // older chain entries reference superseded .pv files, but a reader pinned at-or-after the split txn
+        // always picks the live entry, so those are never mapped -- exactly as detach/rename rely on.
+        // Every other caller moves into a namespace the source vacates, so it hardlinks the .pk (copyKeyFile
+        // == false).
+        final boolean keyLinked = copyKeyFile
+                ? ff.copy(
+                keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
+                keyFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
+        ) > -1
+                : linkFile(ff,
+                keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
+                keyFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
+        );
+        if (!keyLinked || !linkFile(ff,
+                valueFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn, linkSealTxn),
+                valueFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn, linkSealTxn)
+        )) {
             throw CairoException.critical(0)
                     .put("index files do not exist [path=")
                     .put(path.trimTo(srcDirLen))
@@ -7793,7 +7764,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         getColumnNameTxn(partitionTimestamp, columnIndex),
                         metadata.getColumnIndexType(columnIndex),
                         partitionTimestamp,
-                        partitionNameTxn
+                        partitionNameTxn,
+                        false
                 );
             }
         } catch (CairoException e) {
@@ -8465,8 +8437,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // overwritten in place. The donor is resized to R1 below (the shared 8281 path).
                         final long donorNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
                         hardlinkSuffixChild(partitionTimestamp, donorNameTxn, suffixChildTimestamp, txWriter.txn, suffixChildPartitionTop, suffixChildRowCount);
-                        // Bitmap indexes are not shared: build fresh independent ones for the child's rows.
-                        buildSuffixChildBitmapIndexes(suffixChildTimestamp, txWriter.txn, suffixChildPartitionTop, suffixChildPartitionTop + suffixChildRowCount);
                         // Attach after the middle insert so the child's insertion point reflects it.
                         final int suffixChildIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(suffixChildTimestamp);
                         txWriter.updateAttachedPartitionSizeByRawIndex(suffixChildIndexRaw, suffixChildTimestamp, suffixChildRowCount, txWriter.txn);
@@ -13395,17 +13365,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && sealPostingIndexForPartition(dataPartitionTimestamp, false)) {
                 anyPartitionProcessed = true;
             }
-            // A zero-copy hardlink split also created a suffix child partition (sink slot 9)
-            // that no open-column task wrote: its posting index files were created empty by
-            // buildSuffixChildBitmapIndexes and need the full rebuild here. The child cannot
-            // share the donor's posting files -- the donor's own reseal above rebuilds only
-            // [columnTop, R1) and would evict the child's entries from a shared chain.
-            if (Unsafe.getLong(blockAddress + 8 * Long.BYTES) == SPLIT_THREE_WAY_HARDLINK) {
-                final long suffixChildTimestamp = Unsafe.getLong(blockAddress + 9 * Long.BYTES);
-                if (suffixChildTimestamp != -1L && sealPostingIndexForPartition(suffixChildTimestamp, false)) {
-                    anyPartitionProcessed = true;
-                }
-            }
+            // A zero-copy hardlink split's suffix child (sink slot 9) is NOT resealed here: it shares the
+            // donor's POSTING index by hardlinking the immutable .pv/.pc and copying the .pk manifest
+            // (hardlinkSuffixChild). The donor's reseal above rotates the donor onto a fresh .pv, leaving
+            // the shared live .pv referenced only by the child -- so the child needs no rebuild.
         }
 
         if (anyPartitionProcessed) {

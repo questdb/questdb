@@ -1149,6 +1149,269 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitHardlinkSuffixChildIndexedAppendWriterReopen() throws Exception {
+        // The suffix child's index files are private (freshly built at split, holding PHYSICAL
+        // row ids), while its data files are hardlinks. This test exercises the index-write
+        // lifecycle on a child-as-last: committed in-order appends across multiple writer
+        // close/reopen cycles (BitmapIndexWriter.close truncates .k/.v to the writer's cached
+        // sizes - a stale cache would chop appended blocks), plus NEW symbol keys first seen
+        // after the split (child-only keys beyond the donor-era key count). Both index types.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 3);
+
+            String tsType = timestampType.getTypeName();
+            String baseSelect = "SELECT" +
+                    " cast(x AS int) i," +
+                    " CASE WHEN x % 3 = 0 THEN NULL ELSE 'sy' || (x % 5) END::SYMBOL sym," +
+                    " ('2020-02-04'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(60 * 24)";
+            for (String indexType : new String[]{"BITMAP", "POSTING"}) {
+                execute("DROP TABLE IF EXISTS x");
+                execute("CREATE TABLE x AS (" + baseSelect + "), INDEX(sym TYPE " + indexType + ") TIMESTAMP(ts) PARTITION BY DAY");
+
+                // O3 insert at 20:01 hardlink-splits the last partition; the child becomes the last partition.
+                String o3Select1 = "SELECT" +
+                        " cast(x AS int) * 1000000 i," +
+                        " CASE WHEN x % 4 = 0 THEN NULL ELSE 'sy' || (x % 5) END::SYMBOL sym," +
+                        " ('2020-02-04T20:01'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(200)";
+                execute("INSERT INTO x " + o3Select1);
+
+                // Prove the 3-way split happened (donor prefix + merged middle + suffix child).
+                assertQuery("SELECT minTimestamp, numRows, name FROM table_partitions('x') ORDER BY minTimestamp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("minTimestamp")
+                        .returns(replaceTimestampSuffix1("""
+                                minTimestamp\tnumRows\tname
+                                2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
+                                2020-02-04T20:01:00.000000Z\t204\t2020-02-04T200000-000001
+                                2020-02-04T20:05:00.000000Z\t235\t2020-02-04T200500
+                                """, tsType));
+
+                // Committed in-order append into the child, introducing NEW symbol keys ('nw...')
+                // absent from the donor-era symbol table.
+                String appendSelect1 = "SELECT" +
+                        " cast(x AS int) * 2000000 i," +
+                        " CASE WHEN x % 3 = 0 THEN NULL ELSE 'nw' || (x % 2) END::SYMBOL sym," +
+                        " ('2020-02-04T23:59:30'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(20)";
+                execute("INSERT INTO x " + appendSelect1);
+
+                // Close the writer (index writers truncate .k/.v to their cached sizes) and
+                // reopen it with another in-order append batch mixing old and new keys.
+                engine.releaseInactive();
+                String appendSelect2 = "SELECT" +
+                        " cast(x AS int) * 3000000 i," +
+                        " CASE WHEN x % 4 = 0 THEN 'sy' || (x % 5) ELSE 'nw' || (x % 2) END::SYMBOL sym," +
+                        " ('2020-02-04T23:59:51'::timestamp + (x - 1) * 100000L)::" + tsType + " ts" +
+                        " FROM long_sequence(30)";
+                execute("INSERT INTO x " + appendSelect2);
+                engine.releaseInactive();
+
+                String oracle = "(" + baseSelect
+                        + " UNION ALL " + o3Select1
+                        + " UNION ALL " + appendSelect1
+                        + " UNION ALL " + appendSelect2
+                        + ") ORDER BY ts";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracle, "x", LOG, true);
+                assertHardlinkChildIndexedScans("x", oracle, new String[]{"sym = null", "sym = 'sy1'", "sym = 'nw1'"});
+            }
+        });
+    }
+
+    @Test
+    public void testSplitHardlinkSuffixChildIndexedO3AppendNonLast() throws Exception {
+        // A hardlink suffix child of a NON-last logical partition receives an O3 append (rows
+        // after the child's max timestamp but before the next partition). That path appends
+        // data at the shared-file tail and updates the child's private index in place through
+        // O3CopyJob.updateIndex (rollbackConditionally + add), which must use PHYSICAL row ids
+        // (dstIndexAdjust carries the shared-file top). Both index types.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 3);
+
+            String tsType = timestampType.getTypeName();
+            // 60*36 minute rows span 2020-02-04 (1440 rows) and 2020-02-05 (720 rows), so the
+            // split family inside 2020-02-04 is NOT the last logical partition.
+            String baseSelect = "SELECT" +
+                    " cast(x AS int) i," +
+                    " CASE WHEN x % 3 = 0 THEN NULL ELSE 'sy' || (x % 5) END::SYMBOL sym," +
+                    " ('2020-02-04'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(60 * 36)";
+            for (String indexType : new String[]{"BITMAP", "POSTING"}) {
+                execute("DROP TABLE IF EXISTS x");
+                execute("CREATE TABLE x AS (" + baseSelect + "), INDEX(sym TYPE " + indexType + ") TIMESTAMP(ts) PARTITION BY DAY");
+
+                String o3Select1 = "SELECT" +
+                        " cast(x AS int) * 1000000 i," +
+                        " CASE WHEN x % 4 = 0 THEN NULL ELSE 'sy' || (x % 5) END::SYMBOL sym," +
+                        " ('2020-02-04T20:01'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(200)";
+                execute("INSERT INTO x " + o3Select1);
+
+                // O3 append into the non-last child: after its max (23:59) but inside 2020-02-04.
+                String o3Select2 = "SELECT" +
+                        " cast(x AS int) * 2000000 i," +
+                        " CASE WHEN x % 3 = 0 THEN NULL ELSE 'nw' || (x % 2) END::SYMBOL sym," +
+                        " ('2020-02-04T23:59:30'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(30)";
+                execute("INSERT INTO x " + o3Select2);
+
+                // The child grew in place and the family stayed un-squashed (3 pieces <= cap).
+                assertQuery("SELECT minTimestamp, numRows, name FROM table_partitions('x') ORDER BY minTimestamp")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("minTimestamp")
+                        .returns(replaceTimestampSuffix1("""
+                                minTimestamp\tnumRows\tname
+                                2020-02-04T00:00:00.000000Z\t1201\t2020-02-04
+                                2020-02-04T20:01:00.000000Z\t204\t2020-02-04T200000-000001
+                                2020-02-04T20:05:00.000000Z\t265\t2020-02-04T200500
+                                2020-02-05T00:00:00.000000Z\t720\t2020-02-05
+                                """, tsType));
+
+                engine.releaseInactive();
+                String oracle = "(" + baseSelect
+                        + " UNION ALL " + o3Select1
+                        + " UNION ALL " + o3Select2
+                        + ") ORDER BY ts";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracle, "x", LOG, true);
+                assertHardlinkChildIndexedScans("x", oracle, new String[]{"sym = null", "sym = 'sy1'", "sym = 'nw1'"});
+            }
+        });
+    }
+
+    @Test
+    public void testSplitHardlinkSuffixChildIndexedRollbackAsLast() throws Exception {
+        // Writer rollback while a hardlink suffix child is the ACTIVE partition. The child's
+        // private index stores PHYSICAL row ids [P, P + rows), but rollbackIndexes() computes
+        // the keep-bound from the LOGICAL committed row count - the indexer must translate it
+        // by its partition top, or the rollback evicts every committed child index entry and
+        // indexed scans lose the child's rows. Both index types, uncommitted in-order rows.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 3);
+
+            String tsType = timestampType.getTypeName();
+            TimestampDriver driver = timestampType.getDriver();
+            String baseSelect = "SELECT" +
+                    " cast(x AS int) i," +
+                    " CASE WHEN x % 3 = 0 THEN NULL ELSE 'sy' || (x % 5) END::SYMBOL sym," +
+                    " ('2020-02-04'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(60 * 24)";
+            for (String indexType : new String[]{"BITMAP", "POSTING"}) {
+                execute("DROP TABLE IF EXISTS x");
+                execute("CREATE TABLE x AS (" + baseSelect + "), INDEX(sym TYPE " + indexType + ") TIMESTAMP(ts) PARTITION BY DAY");
+
+                String o3Select1 = "SELECT" +
+                        " cast(x AS int) * 1000000 i," +
+                        " CASE WHEN x % 4 = 0 THEN NULL ELSE 'sy' || (x % 5) END::SYMBOL sym," +
+                        " ('2020-02-04T20:01'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(200)";
+                execute("INSERT INTO x " + o3Select1);
+
+                // Uncommitted in-order rows into the child-as-last, then rollback.
+                long ts = driver.parseFloorLiteral("2020-02-04T23:59:30");
+                long step = driver.fromMicros(1_000_000L);
+                try (TableWriter w = getWriter("x")) {
+                    for (int n = 0; n < 10; n++) {
+                        TableWriter.Row r = w.newRow(ts + n * step);
+                        r.putInt(0, 9_000_000 + n);
+                        r.putSym(1, n % 3 == 0 ? null : "rb" + (n % 2));
+                        r.append();
+                    }
+                    w.rollback();
+                }
+
+                String oracle1 = "(" + baseSelect + " UNION ALL " + o3Select1 + ") ORDER BY ts";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracle1, "x", LOG, true);
+                assertHardlinkChildIndexedScans("x", oracle1, new String[]{"sym = null", "sym = 'sy1'"});
+
+                // Post-rollback committed append must land and index correctly at the same rows.
+                String appendSelect = "SELECT" +
+                        " cast(x AS int) * 2000000 i," +
+                        " CASE WHEN x % 3 = 0 THEN NULL ELSE 'pr' || (x % 2) END::SYMBOL sym," +
+                        " ('2020-02-04T23:59:40'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(15)";
+                execute("INSERT INTO x " + appendSelect);
+                engine.releaseInactive();
+
+                String oracle2 = "(" + baseSelect + " UNION ALL " + o3Select1 + " UNION ALL " + appendSelect + ") ORDER BY ts";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracle2, "x", LOG, true);
+                assertHardlinkChildIndexedScans("x", oracle2, new String[]{"sym = null", "sym = 'sy1'", "sym = 'pr1'"});
+            }
+        });
+    }
+
+    @Test
+    public void testSplitHardlinkSuffixChildIndexedRollbackNonLast() throws Exception {
+        // Writer rollback of uncommitted O3 rows targeting a NON-last hardlink suffix child.
+        // The uncommitted rows never reach the child's files or index; the rollback must leave
+        // the child's physical-id index intact (rollbackIndexes only touches the active
+        // partition's indexers). A committed O3 append afterwards must still index correctly.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 3);
+
+            String tsType = timestampType.getTypeName();
+            TimestampDriver driver = timestampType.getDriver();
+            String baseSelect = "SELECT" +
+                    " cast(x AS int) i," +
+                    " CASE WHEN x % 3 = 0 THEN NULL ELSE 'sy' || (x % 5) END::SYMBOL sym," +
+                    " ('2020-02-04'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(60 * 36)";
+            for (String indexType : new String[]{"BITMAP", "POSTING"}) {
+                execute("DROP TABLE IF EXISTS x");
+                execute("CREATE TABLE x AS (" + baseSelect + "), INDEX(sym TYPE " + indexType + ") TIMESTAMP(ts) PARTITION BY DAY");
+
+                String o3Select1 = "SELECT" +
+                        " cast(x AS int) * 1000000 i," +
+                        " CASE WHEN x % 4 = 0 THEN NULL ELSE 'sy' || (x % 5) END::SYMBOL sym," +
+                        " ('2020-02-04T20:01'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(200)";
+                execute("INSERT INTO x " + o3Select1);
+
+                // Uncommitted O3 rows aimed at the non-last child (2020-02-04T23:59:30 is out of
+                // order relative to the table max in 2020-02-05), then rollback.
+                long ts = driver.parseFloorLiteral("2020-02-04T23:59:30");
+                long step = driver.fromMicros(1_000_000L);
+                try (TableWriter w = getWriter("x")) {
+                    for (int n = 0; n < 10; n++) {
+                        TableWriter.Row r = w.newRow(ts + n * step);
+                        r.putInt(0, 9_000_000 + n);
+                        r.putSym(1, n % 3 == 0 ? null : "rb" + (n % 2));
+                        r.append();
+                    }
+                    w.rollback();
+                }
+
+                String oracle1 = "(" + baseSelect + " UNION ALL " + o3Select1 + ") ORDER BY ts";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracle1, "x", LOG, true);
+                assertHardlinkChildIndexedScans("x", oracle1, new String[]{"sym = null", "sym = 'sy1'"});
+
+                // Committed O3 append into the same child region after the rollback.
+                String o3Select2 = "SELECT" +
+                        " cast(x AS int) * 2000000 i," +
+                        " CASE WHEN x % 3 = 0 THEN NULL ELSE 'pr' || (x % 2) END::SYMBOL sym," +
+                        " ('2020-02-04T23:59:40'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(15)";
+                execute("INSERT INTO x " + o3Select2);
+                engine.releaseInactive();
+
+                String oracle2 = "(" + baseSelect + " UNION ALL " + o3Select1 + " UNION ALL " + o3Select2 + ") ORDER BY ts";
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracle2, "x", LOG, true);
+                assertHardlinkChildIndexedScans("x", oracle2, new String[]{"sym = null", "sym = 'sy1'", "sym = 'pr1'"});
+            }
+        });
+    }
+
+    @Test
     public void testSplitHardlinkSuffixChildColumnTypeConversion() throws Exception {
         // Reproduces WalWriterFuzzTest#testWalMetadataChangeHeavy fuzz failure: a zero-copy
         // split suffix child hardlinks the donor's column files, so a shared column's rows
@@ -1425,6 +1688,246 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testSplitHardlinkSuffixChildAddColumnWhileLastThenSquash() throws Exception {
+        // A column added while a hardlink suffix child is the LAST partition records its default
+        // added-partition as the child's RAW timestamp (getLastPartitionTimestamp returns the raw
+        // split-child ts, not the floored day). When ALTER SQUASH later folds the child into the
+        // earlier prefix donor, ColumnVersionWriter.squashPartition remaps that default onto the
+        // target's (earlier) raw ts. If the squash does not also record an explicit per-partition
+        // column top, getColumnTopByIndexOrDefault then decides the column is present from row 0
+        // (default ts <= target ts) with top 0, so the prefix rows -- which never had the column --
+        // read the child's data at the wrong offset and the child's own rows read NULL.
+        assertMemoryLeak(() -> {
+            Overrides overrides = node1.getConfigurationOverrides();
+            overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            overrides.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 3);
+            overrides.setProperty(PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, "true");
+
+            String tsType = timestampType.getTypeName();
+
+            // Single DAY partition, 1440 one-minute rows. No later day: the split suffix child will
+            // be the last partition.
+            execute("CREATE TABLE x AS (" +
+                    " SELECT cast(x AS int) i, -x j," +
+                    " ('2020-02-04'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(60 * 24)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            // O3 insert at 20:01 splits day1 3-way: prefix donor + merged middle + hardlink suffix
+            // child. The child (floor ~20:05) is the last partition.
+            execute("INSERT INTO x SELECT cast(x AS int) i, -x j," +
+                    " ('2020-02-04T20:01'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                    " FROM long_sequence(200)");
+            drainWalQueue();
+
+            // Day1 must now be split into 3 pieces (donor + middle + hardlink suffix child).
+            assertQuery("SELECT count() FROM table_partitions('x')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n3\n");
+
+            // Add columns while the child is the LAST partition -> their default added-partition is
+            // the child's raw ts.
+            execute("ALTER TABLE x ADD COLUMN nc long");
+            execute("ALTER TABLE x ADD COLUMN ncv varchar");
+            drainWalQueue();
+
+            // Populate the new columns in the child's row range (in-order append into the child).
+            execute("INSERT INTO x(i,j,ts,nc,ncv)" +
+                    " SELECT 100000 + cast(x AS int) i, -100000L - x j," +
+                    " ('2020-02-04T23:00'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts," +
+                    " x AS nc, ('w' || x)::varchar AS ncv" +
+                    " FROM long_sequence(50)");
+            drainWalQueue();
+
+            // Snapshot the (correct) pre-squash state.
+            execute("CREATE TABLE oracle AS (SELECT * FROM x)");
+
+            // Independently sanity-check pre-squash: exactly the 50 appended rows carry non-null nc.
+            assertQuery("SELECT count() FROM x WHERE nc IS NOT NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n50\n");
+
+            // Force-squash the split day back into a single contiguous partition.
+            execute("ALTER TABLE x SQUASH PARTITIONS");
+            drainWalQueue();
+
+            // The consolidated partition must still return exactly the same rows.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "oracle", "x", LOG, true);
+            assertQuery("SELECT count() FROM x WHERE nc IS NOT NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n50\n");
+        });
+    }
+
+    @Test
+    public void testSplitHardlinkDonorMidPartitionColumnTopDoubleSplit() throws Exception {
+        // Mirrors WalWriterFuzzTest#testWalMetadataChangeHeavy: a column added to a partition that
+        // already has rows gets a MID-partition column top on the donor (log: new_col_6 added to
+        // 2022-02-25 with columnTop 2901). That partition is then hardlink-split more than once.
+        // The re-split's O3 merge null-materializes such a column using the source column file as
+        // scratch space (O3OpenColumnJob.mergeFixColumn / mergeVarColumn): on a hardlink donor
+        // those bytes are shared with the first suffix child, so the scratch must sit beyond the
+        // physical end of file or the child's data is overwritten from offset 0. Compares a WAL
+        // table with hardlink splits enabled against a non-WAL oracle keeping classic copy splits.
+        assertMemoryLeak(() -> {
+            Overrides o = node1.getConfigurationOverrides();
+            o.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            o.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 8);
+            o.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 8);
+            o.setProperty(PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, "true");
+            o.setProperty(PropertyKey.CAIRO_PARTITION_TOP_NON_WAL_ENABLED, "false");
+
+            String tsType = timestampType.getTypeName();
+            String[] tables = {"x", "y"};
+
+            // 3000 one-second rows on 2020-02-04 (00:00:00..00:49:59). nc/ncv absent.
+            for (String t : tables) {
+                String wal = t.equals("x") ? "WAL" : "BYPASS WAL";
+                execute("CREATE TABLE " + t + " AS (" +
+                        " SELECT cast(x AS int) i, -x j," +
+                        " ('2020-02-04'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(3000)) TIMESTAMP(ts) PARTITION BY DAY " + wal);
+            }
+            drainWalQueue();
+
+            // Add nc/ncv while the partition already has 3000 rows -> mid-partition column top 3000.
+            for (String t : tables) {
+                execute("ALTER TABLE " + t + " ADD COLUMN nc long");
+                execute("ALTER TABLE " + t + " ADD COLUMN ncv varchar");
+            }
+            drainWalQueue();
+
+            // Append 3000 more in-order rows (01:00:00..01:49:59) carrying nc/ncv values. The column
+            // top boundary (nc absent->present) sits at 01:00:00, row 3000.
+            for (String t : tables) {
+                execute("INSERT INTO " + t + "(i,j,ts,nc,ncv)" +
+                        " SELECT 10000 + cast(x AS int) i, -10000L - x j," +
+                        " ('2020-02-04T01:00:00'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts," +
+                        " x AS nc, ('w' || x)::varchar AS ncv" +
+                        " FROM long_sequence(3000)");
+            }
+            drainWalQueue();
+
+            // O3 insert at 00:30:00 (50 rows, 100ms apart) splits the day; the suffix child spans
+            // across 01:00:00, so it straddles nc's column-top boundary (absent below file row
+            // 3000, present at/above).
+            for (String t : tables) {
+                execute("INSERT INTO " + t + "(i,j,ts,nc,ncv)" +
+                        " SELECT 20000 + cast(x AS int) i, -20000L - x j," +
+                        " ('2020-02-04T00:30:00'::timestamp + (x - 1) * 100000L)::" + tsType + " ts," +
+                        " cast(NULL AS long) nc, cast(NULL AS varchar) ncv" +
+                        " FROM long_sequence(50)");
+            }
+            drainWalQueue();
+
+            // Guard the geometry: prefix donor + middle + hardlink suffix child.
+            assertQuery("SELECT count() FROM table_partitions('x')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n3\n");
+
+            // Second O3 insert at 00:15:00 re-splits the (now shrunken) prefix donor. Its merge must
+            // not use the donor's hardlinked column files as scratch below their physical end.
+            for (String t : tables) {
+                execute("INSERT INTO " + t + "(i,j,ts,nc,ncv)" +
+                        " SELECT 30000 + cast(x AS int) i, -30000L - x j," +
+                        " ('2020-02-04T00:15:00'::timestamp + (x - 1) * 100000L)::" + tsType + " ts," +
+                        " cast(NULL AS long) nc, cast(NULL AS varchar) ncv" +
+                        " FROM long_sequence(50)");
+            }
+            drainWalQueue();
+
+            // Guard the geometry: the donor prefix split again into prefix + middle + child.
+            assertQuery("SELECT count() FROM table_partitions('x')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n5\n");
+
+            // The first suffix child's nc/ncv values (1..3000) must survive the donor's re-split.
+            assertQuery("SELECT count() nn, min(nc) lo, max(nc) hi FROM x WHERE nc IS NOT NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("nn\tlo\thi\n3000\t1\t3000\n");
+            assertQuery("SELECT count() FROM x WHERE ncv IS NOT NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n3000\n");
+            // x (hardlink splits) must equal y (classic-split oracle).
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "y", "x", LOG, true);
+        });
+    }
+
+    @Test
+    public void testSplitHardlinkGrandchildAddColumnAtIntermediateGeneration() throws Exception {
+        // A column added while a hardlink suffix child C1 is the LAST partition has its default
+        // added-partition recorded as C1's raw ts, and its data lives in C1-local files. When C1 is
+        // later re-split (O3 into its middle), the grandchild C2 hardlinks C1's files and must read
+        // that intermediate-generation column through the composed partition top. This exercises the
+        // re-base branch in hardlinkSuffixChild (donorPartitionTop > 0). Compares a WAL table with
+        // hardlink splits enabled against a non-WAL oracle that keeps classic copy splits.
+        assertMemoryLeak(() -> {
+            Overrides o = node1.getConfigurationOverrides();
+            o.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            o.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 8);
+            o.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 8);
+            o.setProperty(PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, "true");
+            o.setProperty(PropertyKey.CAIRO_PARTITION_TOP_NON_WAL_ENABLED, "false");
+
+            String tsType = timestampType.getTypeName();
+            String[] tables = {"x", "y"};
+
+            // x: WAL, hardlink splits enabled. y: non-WAL oracle, classic copy splits.
+            for (String t : tables) {
+                String wal = t.equals("x") ? "WAL" : "BYPASS WAL";
+                execute("CREATE TABLE " + t + " AS (" +
+                        " SELECT cast(x AS int) i, -x j," +
+                        " ('2020-02-04'::timestamp + (x - 1) * 60 * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(60 * 24)) TIMESTAMP(ts) PARTITION BY DAY " + wal);
+            }
+            drainWalQueue();
+
+            // Split day1: O3 at 20:01. The suffix child C1 is the last partition.
+            for (String t : tables) {
+                execute("INSERT INTO " + t + " SELECT cast(x AS int) i, -x j," +
+                        " ('2020-02-04T20:01'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts" +
+                        " FROM long_sequence(200)");
+            }
+            drainWalQueue();
+
+            // Add columns while C1 is the last partition -> default added-partition is C1's raw ts.
+            for (String t : tables) {
+                execute("ALTER TABLE " + t + " ADD COLUMN nc long");
+                execute("ALTER TABLE " + t + " ADD COLUMN ncv varchar");
+            }
+            drainWalQueue();
+
+            // Populate nc/ncv in C1's row range at 22:00 (append into the child).
+            for (String t : tables) {
+                execute("INSERT INTO " + t + "(i,j,ts,nc,ncv)" +
+                        " SELECT 100000 + cast(x AS int) i, -100000L - x j," +
+                        " ('2020-02-04T22:00'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts," +
+                        " x AS nc, ('w' || x)::varchar AS ncv" +
+                        " FROM long_sequence(60)");
+            }
+            drainWalQueue();
+
+            // Re-split C1: O3 into its middle at 21:30 (before the 22:00 nc rows). Creates a
+            // grandchild whose rows include the 22:00 nc data read from C1's shared files.
+            for (String t : tables) {
+                execute("INSERT INTO " + t + "(i,j,ts,nc,ncv)" +
+                        " SELECT 200000 + cast(x AS int) i, -200000L - x j," +
+                        " ('2020-02-04T21:30'::timestamp + (x - 1) * 1000000L)::" + tsType + " ts," +
+                        " 500 + x AS nc, ('g' || x)::varchar AS ncv" +
+                        " FROM long_sequence(30)");
+            }
+            drainWalQueue();
+
+            // x (hardlink splits) must equal y (classic-split oracle).
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "y", "x", LOG, true);
+            // The intermediate-generation column data must survive: 60 (22:00) + 30 (21:30) rows.
+            assertQuery("SELECT count() FROM x WHERE nc IS NOT NULL")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n90\n");
         });
     }
 
@@ -2317,6 +2820,27 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     @Test
     public void testSquashPartitionsOnNonEmptyTableWal() throws Exception {
         testSquashPartitionsOnNonEmptyTable("WAL");
+    }
+
+    private void assertHardlinkChildIndexedScans(String tableName, String oracle, String[] filters) throws Exception {
+        for (String filter : filters) {
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM (" + oracle + ") WHERE " + filter + " ORDER BY ts",
+                    "SELECT * FROM " + tableName + " WHERE " + filter + " ORDER BY ts",
+                    LOG,
+                    true
+            );
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT * FROM (" + oracle + ") WHERE " + filter + " ORDER BY ts DESC",
+                    "SELECT * FROM " + tableName + " WHERE " + filter + " ORDER BY ts DESC",
+                    LOG,
+                    true
+            );
+        }
     }
 
     private int assertRowCount(int delta, int rowCount) {
