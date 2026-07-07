@@ -1597,19 +1597,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // holds without minting), and the REFRESH ... STATS reset in SqlCompilerImpl -- clearing the guard so
         // the view ends invalid, not frozen. (MatViewState's close/tryCloseIf* holders are teardown-only: a
         // closed or dropped state dies with its marker and finalize skips it anyway.) Residuals, each far
-        // narrower than the pre-fix always-lost deferral:
+        // narrower than the always-lost contended deferral this finalize replaces:
         // - a read-only deferral: left for the promote-time rebuild from disk;
         // - a deferral landing between finalize's marker read and the holder's unlock: too late for finalize
         //   to see, and every queued task is then swallowed by this guard for good -- a terminal silent
-        //   freeze. Every holder release re-runs this window, and timer-driven refreshes are re-admitted
-        //   holders once finalize clears the marker; a sentinel CASed into the just-cleared marker inside
-        //   the window swallows finalize's own re-enqueued INVALIDATE the same way;
+        //   freeze, never cleared automatically (every refresh entry point bails on a pending view before
+        //   tryLock; recovery is REFRESH ... FULL / STATS or a restart). Each holder release re-runs the
+        //   window, so timer-driven refreshes -- re-admitted as holders once a finalize clears the marker --
+        //   raise how often it recurs; a sentinel CASed into the just-cleared marker before the re-enqueued
+        //   INVALIDATE is delivered swallows that task the same way;
+        // - a re-enqueued INVALIDATE delivered while the view is write-suspended: the suspended gate below
+        //   drops it without re-deferring (the marker is already cleared), leaving the view valid-and-stale
+        //   until REFRESH ... FULL after RESUME WAL -- the same outcome as a direct invalidation hitting
+        //   that gate;
         // - a deferral during fullRefresh's hold whose queued task a sibling swallows before
-        //   resetInvalidState() runs is wiped together with the marker (see fullRefresh);
+        //   resetInvalidState() runs is wiped together with the marker: the view ends valid with the
+        //   invalidation lost (see fullRefresh);
         // - a stranded no-reason sentinel: the queued full refresh normally clears it, but its short-circuit
         //   exits (refresh block list, write suspension, missing base table) return without finalizing,
         //   freezing the view until a restart drops the in-memory marker or REFRESH ... FULL succeeds --
-        //   the same freeze the pre-fix boolean produced on these paths.
+        //   the replaced boolean marker froze identically on these paths.
         // The marker is a single volatile reference and the sentinel cannot demote a reason-bearing
         // deferral: see MatViewState#pendingInvalidationMarker.
         if (viewState != null && !viewState.isDropped() && !viewState.isInvalid() && !viewState.isPendingInvalidation()) {

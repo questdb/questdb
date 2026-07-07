@@ -156,7 +156,10 @@ public class MatViewState implements QuietCloseable {
     //   PENDING_INVALIDATION_NO_REASON  -> pending, no reason (full-refresh reschedule)
     //   any String                      -> pending, with that invalidation reason
     // Off-latch writes are monotone toward pending: a reason write overwrites anything, the sentinel
-    // CASes only into an empty slot, and clears run under the latch. A latch-holder's paired
+    // CASes only into an empty slot. Clears are a hard contract: no production caller may clear
+    // off-latch (clearPendingInvalidation/markAsValid cannot assert it -- stress tests clear off-latch
+    // by design). invalidateView's read-only self-deferral also writes a reason while holding the
+    // latch, which is monotone all the same. A latch-holder's paired
     // isPendingInvalidation()/getPendingInvalidationReason() reads therefore cannot observe a
     // reason-bearing deferral demoted to the sentinel between them.
     private volatile Object pendingInvalidationMarker;
