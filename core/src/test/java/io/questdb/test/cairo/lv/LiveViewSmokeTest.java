@@ -57,6 +57,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -3774,6 +3775,134 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(expected +
                     "2026-06-01T00:00:06.000000Z\ta\t63.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFailedRestartReplayDoesNotCorruptInvalidView() throws Exception {
+        // Regression (handoff item 0b): when a restart's replay-to-applied fails
+        // mid-gap, tryRestoreFromHead stashes a deferred invalidation but leaves
+        // the window accumulators a PARTIAL advance over disk (advanced over the
+        // gap seqTxns it did read, stuck short of the applied point). The refresh
+        // worker must NOT run the incremental refresh + flush for that turn: doing
+        // so materialises the inconsistent accumulators to the on-disk tier, and
+        // since an invalidated view stays queryable off its own disk tier, a
+        // reader then gets silently wrong window values rather than an error.
+        //
+        // Build a head-lags-applied gap that spans two base seqTxns (2 and 3) so
+        // the replay can advance over seqTxn 2 before failing on seqTxn 3, then
+        // delete seqTxn 3's WAL segment to force that mid-gap failure. A trailing
+        // un-refreshed commit (seqTxn 4) gives the post-failure refresh something
+        // to flush with the corrupt accumulator. Post-fix the view invalidates
+        // with its disk tier untouched (three correct rows); pre-fix it flushes a
+        // fourth row computed from the partial accumulator (sum 11 instead of 15).
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1);
+        assertMemoryLeak(() -> {
+            // Pin the clock near the epoch so the WAL purge interval gate never
+            // fires; data timestamps sit well above it (a non-BACKFILL view keeps
+            // every row).
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long t0 = MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z");
+
+            // Batch A -> base seqTxn 1 (wal1/0). The first flush writes the head
+            // .cp (covers base seqTxn 1, accumulator sum = 1) and advances the
+            // applied watermark to 1.
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals("head .cp covers base seqTxn 1", 1L, instance.getHeadCheckpointBaseSeqTxn());
+
+            // Batch B -> base seqTxn 2 (wal1/1). Flushes (applied -> 2) but the
+            // head cadence does not fire (clock advanced only 100ms), so the head
+            // still covers seqTxn 1.
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:01.000000Z', 'a', 2.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 100_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Batch C -> base seqTxn 3 (wal1/2). Flushes (applied -> 3), head still
+            // covers seqTxn 1. This widens the checkpoint-lags-applied gap to
+            // (1, 3], so the restart replay reads seqTxn 2 before it reaches 3.
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:02.000000Z', 'a', 4.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 200_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            Assert.assertEquals("head still covers base seqTxn 1", 1L, instance.getHeadCheckpointBaseSeqTxn());
+            Assert.assertEquals("applied watermark ran ahead of the head", 3L, instance.getAppliedWatermark());
+
+            // Batch D -> base seqTxn 4 (wal1/3). Applied to the base but NOT
+            // refreshed into the view, so the view's applied watermark stays at 3.
+            // It is the un-refreshed row the post-failure refresh would flush with
+            // the corrupt accumulator.
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:03.000000Z', 'a', 8.0)");
+            drainWalQueue();
+            Assert.assertEquals("view must not have consumed the trailing commit",
+                    3L, instance.getStateReader().getLvConsumedSeqTxn());
+
+            // Release pooled writers so the WAL segments unlock, then delete
+            // seqTxn 3's segment (wal1/2). The restart replay-to-applied(1, 3) then
+            // reads seqTxn 2 (advancing the accumulator to 3) and fails opening
+            // seqTxn 3's _event, invalidating the view mid-gap.
+            engine.releaseInactive();
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot())
+                        .concat(baseToken).concat("wal1").slash().put(2).slash().put(WalUtils.EVENT_FILE_NAME);
+                Assert.assertTrue("gap segment event file exists before delete",
+                        engine.getConfiguration().getFilesFacade().removeQuiet(p.$()));
+            }
+
+            // Restart: rebuild the registry and drive one refresh. The first cycle
+            // runs tryRestoreFromHead -> replayToApplied(1, 3), which fails on the
+            // deleted seqTxn 3 segment. The view must invalidate WITHOUT flushing a
+            // partial advance to disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(t0 + 300_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance recovered = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(recovered);
+            Assert.assertTrue("view must be invalid after the failed restart replay", recovered.isInvalid());
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("view_status\ninvalid\n");
+
+            // The invalidated view stays queryable off its disk tier. It must serve
+            // only the three rows flushed while the accumulators were consistent -
+            // NOT a fourth row (00:00:03) computed from the partial replay
+            // accumulator. Pre-fix this returns a fourth row 'a\t11.0' (accumulator
+            // stuck at 3 after seqTxn 2 + the trailing x=8, skipping seqTxn 3's
+            // x=4) instead of the correct running sum 15.
+            final String expected = "ts\tsym\ts\n" +
+                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                    "2026-06-01T00:00:01.000000Z\ta\t3.0\n" +
+                    "2026-06-01T00:00:02.000000Z\ta\t7.0\n";
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize().returns(expected);
 
             execute("DROP LIVE VIEW lv");
         });

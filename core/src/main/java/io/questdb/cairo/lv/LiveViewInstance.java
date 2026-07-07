@@ -721,6 +721,19 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setBackfillTargetSeqTxn(source.getBackfillTargetSeqTxn());
     }
 
+    /**
+     * @return {@code true} while a deferred invalidation reason is stashed (set
+     * by the head-checkpoint restore path when it cannot recover a consistent
+     * window state - a failed replay-to-applied, a failed dedup replay, or a
+     * version-too-old snapshot). The refresh worker peeks this after the restore
+     * to skip the refresh + flush for the turn (which would materialise the
+     * inconsistent accumulators to disk), then drains and applies the reason via
+     * {@link #takePendingInvalidationReason} outside the refresh latch.
+     */
+    public boolean hasPendingInvalidationReason() {
+        return pendingInvalidationReason != null;
+    }
+
     public boolean hasWarnedBelowLowerBoundDrop() {
         return hasWarnedBelowLowerBoundDrop;
     }

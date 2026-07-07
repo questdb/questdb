@@ -4575,6 +4575,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the sufficient half is the drain actually failing to read the base
             // WAL (a live primary's WAL is present, so it never falls back).
             boolean firstCycleWithoutCheckpoint = false;
+            // Labels the refresh body so a compromised head-checkpoint restore
+            // can break straight to the out-of-latch invalidation below, skipping
+            // the refresh + flush that would otherwise materialise the
+            // inconsistent accumulators to disk.
+            refreshBody:
             try {
                 // First cycle after restart restores from the head
                 // .cp (if any). Single-shot per LV lifetime - the flag flips
@@ -4587,6 +4592,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     reconcileAppliedFloorAfterRestart(instance);
                     if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
                         tryRestoreFromHead(instance, getWindowFactory(instance));
+                        if (instance.hasPendingInvalidationReason()) {
+                            // The restore could not rebuild a consistent window
+                            // state (replay-to-applied failed mid-gap leaving the
+                            // accumulators a partial advance over disk, a dedup
+                            // replay failed, or the head .cp was a version-too-old
+                            // snapshot). Do NOT run the incremental refresh + flush
+                            // below: they would advance and flush the inconsistent
+                            // accumulators, leaving the (about-to-be-invalidated)
+                            // view serving corrupted content off its own on-disk
+                            // tier - an invalid view stays queryable. Break to the
+                            // out-of-latch invalidation, which drains the stashed
+                            // reason and marks the view invalid without a partial
+                            // advance ever reaching disk.
+                            break refreshBody;
+                        }
                     } else {
                         firstCycleWithoutCheckpoint = true;
                     }
