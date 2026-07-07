@@ -4472,6 +4472,26 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoiningSubqueriesWithQualifiedDuplicateDottedColumnRefs() throws Exception {
+        // Regression: two join sides expose the same dotted alias referenced by its qualified name
+        // (t1."a.b", t2."a.b"), NOT via a wildcard. The composed reference is aliased through
+        // createColumnAlias's prefixed path; its column part is quote-protected, so the dedup suffix
+        // must land INSIDE the quotes ("a.b1") and strip to a clean a.b / a.b1 - not "a.b"1, which
+        // leaks the protective quotes into result set metadata. Fails without the composed-reference
+        // fix in SqlUtil.createColumnAlias.
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT t1."a.b", t2."a.b" FROM (SELECT 1 AS "a.b") t1 CROSS JOIN (SELECT 2 AS "a.b") t2
+                """)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        a.b	a.b1
+                        1	2
+                        """));
+    }
+
+    @Test
     public void testJoiningSubqueryWithDotInColumnName() throws Exception {
         assertMemoryLeak(() -> assertQuery("""
                 SELECT * FROM (SELECT x as "foo.bar" FROM long_sequence(5))

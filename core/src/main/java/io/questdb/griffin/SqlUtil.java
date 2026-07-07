@@ -319,6 +319,12 @@ public class SqlUtil {
         // shared whether or not a given candidate re-emits the protective quotes.
         final int contentLo;
         final int contentHi;
+        // True when the content is the stripped interior of a quote-protected alias - a whole
+        // "a.b"/"in" base, or the column part of a composed t1."a.b" reference. The loop below then
+        // re-wraps the protective quotes around the content AND its dedup suffix, so a duplicate
+        // strips to a clean name (t2."a.b" -> "a.b1" -> a.b1) instead of leaking the quotes outside
+        // a copied "a.b" ("a.b"1).
+        boolean contentProtected = false;
         final CharacterStoreEntry baseEntry = store.newEntry();
         if (indexOfDot == -1) {
             if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NULL) {
@@ -326,6 +332,7 @@ public class SqlUtil {
                 contentHi = -1;
                 baseEntry.put("column");
             } else if (quoteProtected) {
+                contentProtected = true;
                 contentLo = 1;
                 contentHi = base.length() - 1;
                 baseEntry.put(base, contentLo, contentHi);
@@ -338,6 +345,13 @@ public class SqlUtil {
             contentLo = -1;
             contentHi = -1;
             baseEntry.put("column");
+        } else if (isQuoteProtectedAlias(base, indexOfDot + 1, base.length())) {
+            // composed "table.column" whose column part is itself quote-protected: key on the bare
+            // interior so the per-candidate protection re-wraps it (dedup suffix inside the quotes).
+            contentProtected = true;
+            contentLo = indexOfDot + 2;
+            contentHi = base.length() - 1;
+            baseEntry.put(base, contentLo, contentHi);
         } else {
             contentLo = indexOfDot + 1;
             contentHi = base.length();
@@ -366,7 +380,7 @@ public class SqlUtil {
         // dedup suffix when it is already taken. It lives in its own store region, ahead of the
         // reused candidate entry, so the loop's trimTo never disturbs it.
         CharSequence bareQuotedSibling = null;
-        if (!quoteProtected && contentNeedsQuotingWhenFresh) {
+        if (!contentProtected && contentNeedsQuotingWhenFresh) {
             final CharacterStoreEntry siblingEntry = store.newEntry();
             siblingEntry.put('"').put(base, contentLo, contentHi).put('"');
             bareQuotedSibling = siblingEntry.toImmutable();
@@ -384,7 +398,7 @@ public class SqlUtil {
             // needs them: a dotted interior always does; an operator token only until a dedup
             // suffix makes it a plain identifier (so "a.b" -> "a.b1", while "in" stays quoted
             // at sequence 0 to collide with the stored "in", then surfaces as bare in1).
-            final boolean emitQuote = quoteProtected && (deduped ? contentHasDot : contentNeedsQuotingWhenFresh);
+            final boolean emitQuote = contentProtected && (deduped ? contentHasDot : contentNeedsQuotingWhenFresh);
             entry.trimTo(entryStart);
             if (emitQuote) {
                 entry.put('"');
@@ -434,15 +448,28 @@ public class SqlUtil {
         if (nonLiteral && isQuoteProtectedAlias(base)) {
             base = Chars.toString(base, 1, base.length() - 1);
         }
-        final int baseLen = base.length();
-        final int indexOfDot = Chars.indexOfLastUnquoted(base, '.');
-        final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
+        int baseLen = base.length();
+        int indexOfDot = Chars.indexOfLastUnquoted(base, '.');
+        // A literal composed reference whose column part is itself quote-protected (t1."a.b"): drop
+        // the table prefix and alias the column part's stripped interior, forcing the protective
+        // quotes back on per candidate (like a whole quote-protected base). Without this a dedup
+        // suffix lands OUTSIDE the copied quotes ("a.b"_2), which toColumnName cannot strip - leaking
+        // them into result set metadata and breaking CREATE TABLE AS SELECT.
+        boolean forceQuote = false;
+        if (!nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1
+                && isQuoteProtectedAlias(base, indexOfDot + 1, baseLen)) {
+            base = Chars.toString(base, indexOfDot + 2, baseLen - 1);
+            baseLen = base.length();
+            indexOfDot = Chars.indexOfLastUnquoted(base, '.');
+            forceQuote = true;
+        }
+        final boolean prefixedLiteral = !forceQuote && !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
         // Hoisted so the non-literal path tests it once (mirrors createColumnAlias's containsDisallowed)
         // rather than at both the quote decision and the early-exit sibling check below.
         final boolean baseDisallowed = disallowedAliases.contains(base);
-        boolean quote = nonLiteral
+        boolean quote = forceQuote || (nonLiteral
                 ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || baseDisallowed)
-                : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, base.length());
+                : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, baseLen));
 
         // early exit for simple cases. A bare operator-token base (in, and, ...) shares its
         // toColumnName display name with an already-taken protective-quoted "<token>" sibling

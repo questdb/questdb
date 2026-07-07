@@ -108,6 +108,28 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasComposedQuoteProtectedDottedDedupsClean() {
+        // Regression: a composed literal reference whose column part is a quote-protected dotted
+        // alias (t1."a.b") must alias the bare interior and re-wrap the protective quotes around the
+        // dedup suffix ("a.b_2"), not leave them outside a copied "a.b" ("a.b"_2), which
+        // isQuoteProtectedAlias no longer recognizes and toColumnName cannot strip - leaking the
+        // quotes into result set metadata.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        CharSequence first = SqlUtil.createExprColumnAlias(store, "t1.\"a.b\"", aliasMap, seqMap, 64, false);
+        Assert.assertEquals("\"a.b\"", first.toString());
+        Assert.assertEquals("a.b", SqlUtil.toColumnName(first));
+        aliasMap.put(first.toString(), null);
+
+        CharSequence second = SqlUtil.createExprColumnAlias(store, "t2.\"a.b\"", aliasMap, seqMap, 64, false);
+        Assert.assertEquals("\"a.b_2\"", second.toString());
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias(second));
+        Assert.assertEquals("a.b_2", SqlUtil.toColumnName(second));
+    }
+
+    @Test
     public void testExprColumnAliasDedupManyCollisions() {
         // Drives the dedup loop through many collisions in a single call. The candidate store
         // entry is rewound (trimTo) and rebuilt each iteration, so the sequence numbering must

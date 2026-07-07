@@ -60,6 +60,23 @@ public class SqlUtilCreateColumnAliasTest {
     }
 
     @Test
+    public void testComposedQuoteProtectedDottedRefDedupsClean() {
+        // Regression: a composed table.column reference whose column part is a quote-protected dotted
+        // alias (t1."a.b") keys the dedup on the bare interior and re-wraps the protective quotes
+        // around the suffix ("a.b1"), so a duplicate strips to a clean a.b1 - not "a.b"1, which leaks
+        // the quotes into result set metadata.
+        Ctx ctx = new Ctx();
+        CharSequence first = alias(ctx, "t1.\"a.b\"", false);
+        Assert.assertEquals("\"a.b\"", first.toString());
+        Assert.assertEquals("a.b", SqlUtil.toColumnName(first));
+        ctx.take(first.toString());
+        CharSequence second = alias(ctx, "t2.\"a.b\"", false);
+        Assert.assertEquals("\"a.b1\"", second.toString());
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias(second));
+        Assert.assertEquals("a.b1", SqlUtil.toColumnName(second));
+    }
+
+    @Test
     public void testNumericBaseDedupsToColumnPlaceholder() {
         // A numeric base has no valid identifier content, so a collision falls through to the
         // "column" placeholder rather than appending a suffix to the digits.
