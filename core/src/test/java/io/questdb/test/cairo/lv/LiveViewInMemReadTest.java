@@ -1368,6 +1368,66 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredReadFiltersUnflushedLead() throws Exception {
+        // Regression guard for a filter-bypass concern flagged in review: does a
+        // WHERE over an LV skip tier rows (the disk-backed overlap and the
+        // un-flushed lead served from RAM) and over-return them?
+        //
+        // It does not, and cannot, with the current pushdown rules. A predicate that
+        // an LV read cannot turn into an intrinsic index scan (LV tables never carry
+        // an index) is re-attached to the model by generateTableQuery0
+        // (model.setWhereClause(intrinsicModel.filter)) and applied by a Filter node
+        // wrapping the LiveView; the base cursor the LiveView routes through is an
+        // unfiltered full forward scan. So every row the tier yields - overlap AND
+        // lead - passes through the outer filter. (A timestamp-interval predicate is
+        // the one shape pushed under the tier, and the routing fence disables tier
+        // routing for it; a backward LATEST BY scan is disabled by the ascending-scan
+        // fence.) This test pins that a filtered read matches a from-scratch oracle
+        // and never leaks a non-matching tier row, including a lead-only symbol.
+        assertMemoryLeak(() -> {
+            buildSymbolFlushedPlusLead();
+
+            // The tier is actively leading disk: 5 rows resident, 2 of them the
+            // un-flushed lead (cc @ rn=4, bb @ rn=5). This is the state under which a
+            // filter bypass would surface as over-returned tier rows.
+            InnerRead lead = readInner("SELECT * FROM lv");
+            Assert.assertTrue("lead read must be routing-eligible", lead.routingEligible);
+            Assert.assertEquals("all rows served from the tier", 5, lead.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, lead.leadRowsServed);
+
+            // The read must be full-schema (SELECT *) so it routes through the tier
+            // and serves the lead; a pruned projection (e.g. SELECT g) would fence to
+            // disk-only and never see the lead. g='bb' matches one disk-overlap row
+            // (rn=2) and one un-flushed lead row (rn=5). rn=5 lives only in RAM, so
+            // its presence in the filtered output proves the lead is both served AND
+            // filtered; the aa/cc rows must be dropped even though the tier serves
+            // every one of them from RAM. Differential oracle (a from-scratch recompute
+            // over base) plus an explicit expectation. printSql, not assertQuery: the
+            // latter's battery clears the engine and drops the un-flushed lead.
+            assertLvMatchesOracle("SELECT * FROM lv WHERE g = 'bb'",
+                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE g = 'bb'");
+            StringSink bb = new StringSink();
+            printSql("SELECT * FROM lv WHERE g = 'bb'", bb);
+            Assert.assertEquals("ts\tg\trn\n" +
+                    "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
+                    "2026-05-12T00:00:05.000000Z\tbb\t5\n", bb.toString());
+
+            // A lead-only symbol ('cc', first seen in the un-flushed lead) is returned
+            // through the filter - the freshest match, correctly filtered.
+            StringSink cc = new StringSink();
+            printSql("SELECT * FROM lv WHERE g = 'cc'", cc);
+            Assert.assertEquals("ts\tg\trn\n2026-05-12T00:00:04.000000Z\tcc\t4\n", cc.toString());
+
+            // A disk-only symbol ('aa', never in the lead) returns just its overlap rows.
+            StringSink aa = new StringSink();
+            printSql("SELECT * FROM lv WHERE g = 'aa'", aa);
+            Assert.assertEquals("ts\tg\trn\n" +
+                    "2026-05-12T00:00:01.000000Z\taa\t1\n" +
+                    "2026-05-12T00:00:03.000000Z\taa\t3\n", aa.toString());
+        });
+    }
+
+    @Test
     public void testArrayPassthroughServesLeadFromRam() throws Exception {
         // Passthrough DOUBLE[] output column: the tier carries the raw arrays from
         // RAM via ArrayTypeDriver, so an array LV gets the same lead-serving
