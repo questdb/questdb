@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,6 +56,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final int pathRootLen;
     private final TableWriter purgeLogWriter;
     private final ScoreboardUseMode scoreboardUseMode;
+    private final SealedPostingFileScanProbe sealedPostingFileScanProbe = new SealedPostingFileScanProbe();
     private final String updateCompleteColumnName;
     private final int updateCompleteColumnWriterIndex;
     private long longBytes;
@@ -172,6 +176,87 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
+    private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
+            if (IndexType.isPosting(indexType)) {
+                boolean sidecarRemovalFailed = PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
+                path.trimTo(pathTrimToPartition);
+                if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                    return true;
+                }
+                if (sidecarRemovalFailed) {
+                    // .pci or one of the .pc<N>.*.* files survived. Tell the
+                    // caller the purge is incomplete so it retries instead
+                    // of marking the task done and leaking the sidecars.
+                    return true;
+                }
+            } else {
+                path.trimTo(pathTrimToPartition);
+                if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                    return true;
+                }
+                path.trimTo(pathTrimToPartition);
+                if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion, columnVersion))) {
+                    return true;
+                }
+            }
+        }
+        path.trimTo(pathTrimToPartition);
+        if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
+            return true;
+        }
+        path.trimTo(pathTrimToPartition);
+        return couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
+    }
+
+    private boolean existsIndexFile(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
+            path.trimTo(pathTrimToPartition);
+            if (ff.exists(IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
+                return true;
+            }
+            if (IndexType.isPosting(indexType)) {
+                path.trimTo(pathTrimToPartition);
+                long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
+                if (fromPk >= 0) {
+                    // .pk gave us the live sealTxn; probe the exact .pv path.
+                    path.trimTo(pathTrimToPartition);
+                    if (ff.exists(PostingIndexUtils.valueFileName(path, columnName, columnVersion, fromPk))) {
+                        return true;
+                    }
+                } else {
+                    // .pk is gone or unreadable -- cannot resolve the live
+                    // sealTxn, and the previous fallback to
+                    // sealTxn = columnVersion probed a path that almost
+                    // never matched. Scan the partition for any orphan
+                    // .pv.<columnVersion>.<sealTxn> or
+                    // .pc<N>.<columnVersion>.<C>.<sealTxn>; if one exists
+                    // the purge is not complete and must retry, otherwise
+                    // the caller's "files all gone" shortcut leaks them.
+                    sealedPostingFileScanProbe.of(columnVersion);
+                    PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, sealedPostingFileScanProbe);
+                    if (sealedPostingFileScanProbe.hasMatch()) {
+                        return true;
+                    }
+                }
+            } else {
+                // BITMAP: valueFileName ignores the sealTxn arg.
+                path.trimTo(pathTrimToPartition);
+                if (ff.exists(IndexFactory.valueFileName(indexType, path, columnName, columnVersion, columnVersion))) {
+                    return true;
+                }
+            }
+        }
+        // Always check legacy .k/.v
+        path.trimTo(pathTrimToPartition);
+        if (ff.exists(BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
+            return true;
+        }
+        path.trimTo(pathTrimToPartition);
+        return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
+    }
+
     private boolean openScoreboardAndTxn(ColumnPurgeTask task) {
         switch (scoreboardUseMode) {
             case BAU_QUEUE_PROCESSING:
@@ -250,12 +335,11 @@ public class ColumnPurgeOperator implements Closeable {
                             // In the case of symbol root files, we need to check if .k and .v files exist in table root.
                             // In the case of symbol files in partition, we need to check if .k and .v files exist in partition
                             // that can be index files after index drop SQL.
+                            byte idxType = task.getIndexType();
                             if (!ff.exists(TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
-                                if (!ff.exists(BitmapIndexUtils.keyFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
-                                    if (!ff.exists(BitmapIndexUtils.valueFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
-                                        completedRowIds.add(updateRowId);
-                                        continue;
-                                    }
+                                if (!existsIndexFile(idxType, columnName, columnVersion, pathTrimToPartition)) {
+                                    completedRowIds.add(updateRowId);
+                                    continue;
                                 }
                             }
                         } else {
@@ -304,7 +388,10 @@ public class ColumnPurgeOperator implements Closeable {
                     }
 
                     if (columnVersion < minUnlockedTxnRangeStarts) {
-                        if (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task)) {
+                        // When a backup checkpoint is in progress, defer column purge — the
+                        // checkpoint may reference these column versions via snapshotted metadata.
+                        if (engine.getCheckpointStatus().isInProgress()
+                                || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;
                             LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
@@ -332,8 +419,9 @@ public class ColumnPurgeOperator implements Closeable {
                         }
                     }
 
-                    // Check if it's a symbol, try to remove .k and .v files in the partition
+                    // Check if it's a symbol, try to remove index files in the partition
                     if (ColumnType.isSymbol(columnType) || columnTypeRogue) {
+                        byte idxType = task.getIndexType();
                         if (isSymbolRootFiles) {
                             path.trimTo(pathTrimToPartition);
                             if (couldNotRemove(ff, TableUtils.charFileName(path, columnName, columnVersion))) {
@@ -346,18 +434,28 @@ public class ColumnPurgeOperator implements Closeable {
                                 allDone = false;
                                 continue;
                             }
-                        }
 
-                        path.trimTo(pathTrimToPartition);
-                        if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
-                            allDone = false;
-                            continue;
-                        }
+                            // Symbol map files (.k/.v) always exist in the table root directory
+                            // regardless of whether the column is indexed
+                            path.trimTo(pathTrimToPartition);
+                            if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
+                                allDone = false;
+                                continue;
+                            }
 
-                        path.trimTo(pathTrimToPartition);
-                        if (couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion))) {
-                            allDone = false;
-                            continue;
+                            path.trimTo(pathTrimToPartition);
+                            if (couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion))) {
+                                allDone = false;
+                                continue;
+                            }
+                        } else {
+                            // Remove partition-level index files. Use IndexFactory for the known
+                            // type; always try legacy .k/.v as well (old index files may remain
+                            // after DROP INDEX when indexType is NONE).
+                            if (couldNotRemoveIndexFiles(idxType, columnName, columnVersion, pathTrimToPartition)) {
+                                allDone = false;
+                                continue;
+                            }
                         }
                     }
                     completedRowIds.add(updateRowId);
@@ -392,7 +490,7 @@ public class ColumnPurgeOperator implements Closeable {
             if (ff.read(fd, longBytes, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) != Integer.BYTES) {
                 return INVALID_TABLE_ID;
             }
-            return Unsafe.getUnsafe().getInt(longBytes);
+            return Unsafe.getInt(longBytes);
         } finally {
             ff.close(fd);
         }
@@ -423,7 +521,7 @@ public class ColumnPurgeOperator implements Closeable {
     private void setCompletionTimestamp(LongList completedRecordIds, long timeMicro) {
         // This is an in-place update for known record ids of completed column in column version cleanup log table
         try {
-            Unsafe.getUnsafe().putLong(longBytes, timeMicro);
+            Unsafe.putLong(longBytes, timeMicro);
             for (int rec = 0, n = completedRecordIds.size(); rec < n; rec++) {
                 long recordId = completedRecordIds.getQuick(rec);
                 int partitionIndex = Rows.toPartitionIndex(recordId);
@@ -464,6 +562,42 @@ public class ColumnPurgeOperator implements Closeable {
     private void setUpPartitionPath(int timestampType, int partitionBy, long partitionTimestamp, long partitionTxnName) {
         path.trimTo(pathTableLen);
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionTxnName);
+    }
+
+    /**
+     * Reusable {@link PostingIndexUtils.SealedFileVisitor} that flags
+     * whether any sealed POSTING file (.pv or .pc&lt;N&gt;) for a target
+     * columnVersion exists in the scanned partition. Stateful but
+     * non-allocating: callers call {@link #of(long)} to reset state for
+     * a new probe, run {@link PostingIndexUtils#scanSealedFiles}, then
+     * read {@link #hasMatch()}.
+     */
+    private static final class SealedPostingFileScanProbe implements PostingIndexUtils.SealedFileVisitor {
+        private long columnVersion;
+        private boolean hasMatch;
+
+        public boolean hasMatch() {
+            return hasMatch;
+        }
+
+        public void of(long columnVersion) {
+            this.columnVersion = columnVersion;
+            this.hasMatch = false;
+        }
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn == columnVersion) {
+                hasMatch = true;
+            }
+        }
+
+        @Override
+        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn == columnVersion) {
+                hasMatch = true;
+            }
+        }
     }
 
     public enum ScoreboardUseMode {

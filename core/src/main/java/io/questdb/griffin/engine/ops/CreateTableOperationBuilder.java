@@ -28,13 +28,16 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.str.Sinkable;
 
 public interface CreateTableOperationBuilder extends ExecutionModel, Sinkable {
     int COLUMN_FLAG_CACHED = 1;
-    int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
-    int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
+    // Bits 1-3 store the index type (0-7), shifted left by 1
+    int COLUMN_FLAG_INDEX_TYPE_SHIFT = 1;
+    int COLUMN_FLAG_INDEX_TYPE_MASK = 0x0E; // bits 1-3
+    int COLUMN_FLAG_DEDUP_KEY = 1 << 4;
+    int COLUMN_FLAG_COVERING = 1 << 5;
 
     CreateTableOperation build(
             SqlCompiler sqlCompiler,
@@ -47,5 +50,5 @@ public interface CreateTableOperationBuilder extends ExecutionModel, Sinkable {
         return CREATE_TABLE;
     }
 
-    void setSelectModel(QueryModel selectModel);
+    void setSelectModel(IQueryModel selectModel);
 }

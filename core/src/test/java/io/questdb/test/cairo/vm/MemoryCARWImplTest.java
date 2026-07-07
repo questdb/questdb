@@ -101,12 +101,12 @@ public class MemoryCARWImplTest {
                 actual.copyTo(buffer, 0, 1024);
 
                 for (int i = 0; i < N; i++) {
-                    assertEquals(seq.byteAt(i), Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(seq.byteAt(i), Unsafe.getByte(buffer + i));
                 }
 
                 // rest of the buffer must not be overwritten
                 for (int i = N; i < 1024; i++) {
-                    assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(5, Unsafe.getByte(buffer + i));
                 }
 
                 // copy from middle
@@ -114,12 +114,12 @@ public class MemoryCARWImplTest {
                 actual.copyTo(buffer, O, 1024);
 
                 for (int i = 0; i < N - O; i++) {
-                    assertEquals(seq.byteAt(i + O), Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(seq.byteAt(i + O), Unsafe.getByte(buffer + i));
                 }
 
                 // rest of the buffer must not be overwritten
                 for (int i = N - O; i < 1024; i++) {
-                    assertEquals(5, Unsafe.getUnsafe().getByte(buffer + i));
+                    assertEquals(5, Unsafe.getByte(buffer + i));
                 }
             } finally {
                 Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
@@ -182,7 +182,7 @@ public class MemoryCARWImplTest {
                 long address = mem.addressOf(offset);
                 offset += len;
                 while (len > 0 & i < N) {
-                    assertEquals(i++, Unsafe.getUnsafe().getShort(address));
+                    assertEquals(i++, Unsafe.getShort(address));
                     address += 2;
                     len -= 2;
                 }
@@ -1283,7 +1283,7 @@ public class MemoryCARWImplTest {
                 int sz = buffer.length;
                 for (int j = 0; j < sz; j++) {
                     buffer[j] = rnd.nextByte();
-                    Unsafe.getUnsafe().putByte(bufAddr + j, buffer[j]);
+                    Unsafe.putByte(bufAddr + j, buffer[j]);
                 }
 
                 o = mem.putBin(binarySequence);
@@ -1352,15 +1352,25 @@ public class MemoryCARWImplTest {
         final byte[] buf = new byte[0];
         binarySequence.of(buf);
         mem.putBin(null);
+        // putBin(from, len) with len == 0 writes an empty (non-null) BINARY
+        // entry. Callers signal null via putNullBin() or a negative len.
+        long emptyOff = mem.getAppendOffset();
         mem.putBin(0, 0);
-        long o1 = mem.putBin(binarySequence);
+        long emptyOff2 = mem.getAppendOffset();
+        mem.putBin(binarySequence);
+        long nullOff1 = mem.getAppendOffset();
         mem.putNullBin();
+        long nullOff2 = mem.getAppendOffset();
+        mem.putBin(0L, -1L);
 
         assertNull(mem.getBin(0));
-        assertNull(mem.getBin(8));
-        BinarySequence bsview = mem.getBin(16);
-        assertNotNull(bsview);
-        assertEquals(0, bsview.length());
-        assertNull(mem.getBin(o1));
+        BinarySequence empty1 = mem.getBin(emptyOff);
+        assertNotNull(empty1);
+        assertEquals(0, empty1.length());
+        BinarySequence empty2 = mem.getBin(emptyOff2);
+        assertNotNull(empty2);
+        assertEquals(0, empty2.length());
+        assertNull(mem.getBin(nullOff1));
+        assertNull(mem.getBin(nullOff2));
     }
 }

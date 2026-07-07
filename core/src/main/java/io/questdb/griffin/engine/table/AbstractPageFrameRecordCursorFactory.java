@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -103,6 +104,24 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     }
 
     @Override
+    public boolean hasParquetConvertedColumns(SqlExecutionContext executionContext) {
+        if (!partitionFrameCursorFactory.hasParquetFormatPartitions(executionContext)) {
+            return false;
+        }
+        // A column re-keyed by ALTER COLUMN TYPE has writerIndex != originalWriterIndex.
+        // The reader metadata held by partitionFrameCursorFactory carries the chain head
+        // (originalWriterIndex), unlike the projected query metadata seen downstream.
+        final RecordMetadata metadata = partitionFrameCursorFactory.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(i);
+            if (columnMetadata.getWriterIndex() != columnMetadata.getOriginalWriterIndex()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return partitionFrameCursorFactory.supportsTableRowId(tableToken);
     }
@@ -129,7 +148,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                         columnIndexes,
                         columnSizeShifts,
                         partitionFrameCursorFactory.getPushdownFilterConditions(),
-                        1 // used for single-threaded exec plans,
+                        1 // used for single-threaded exec plans
                 );
             } else {
                 pageFrameCursor = new BwdTableReaderPageFrameCursor(
@@ -140,7 +159,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 );
             }
         }
-        return pageFrameCursor.of(executionContext, partitionFrameCursor, executionContext.getPageFrameMinRows(), executionContext.getPageFrameMaxRows());
+        return pageFrameCursor.of(executionContext, partitionFrameCursor);
     }
 
     /**

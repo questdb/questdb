@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -36,16 +37,16 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
     @Test
     public void testDuplicateColumnAlias() {
         JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 3);
-        metadata.add("A", "x", ColumnType.INT, false, 0, false, null);
+        metadata.add("A", "x", ColumnType.INT, IndexType.NONE, 0, false, null);
         try {
-            metadata.add("a", "X", ColumnType.FLOAT, false, 0, false, null);
+            metadata.add("a", "X", ColumnType.FLOAT, IndexType.NONE, 0, false, null);
             Assert.fail();
         } catch (Exception e) {
             TestUtils.assertContains(e.getMessage(), "duplicate column [name=X, alias=a]");
         }
 
         try {
-            metadata.add("A", "X", ColumnType.FLOAT, false, 0, false, null);
+            metadata.add("A", "X", ColumnType.FLOAT, IndexType.NONE, 0, false, null);
             Assert.fail();
         } catch (Exception e) {
             TestUtils.assertContains(e.getMessage(), "duplicate column [name=X, alias=A]");
@@ -61,21 +62,21 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
     @Test
     public void testSimple() {
         JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 10);
-        metadata.add("a", "x", ColumnType.INT, false, 0, false, null);
-        metadata.add("a", "y", ColumnType.DOUBLE, false, 0, false, null);
-        metadata.add("a", "m", ColumnType.DOUBLE, false, 0, false, null);
-        metadata.add("b", "x", ColumnType.DOUBLE, false, 0, false, null);
-        metadata.add("b", "y", ColumnType.BINARY, false, 0, false, null);
-        metadata.add("b", "z", ColumnType.FLOAT, false, 0, false, null);
+        metadata.add("a", "x", ColumnType.INT, IndexType.NONE, 0, false, null);
+        metadata.add("a", "y", ColumnType.DOUBLE, IndexType.NONE, 0, false, null);
+        metadata.add("a", "m", ColumnType.DOUBLE, IndexType.NONE, 0, false, null);
+        metadata.add("b", "x", ColumnType.DOUBLE, IndexType.NONE, 0, false, null);
+        metadata.add("b", "y", ColumnType.BINARY, IndexType.NONE, 0, false, null);
+        metadata.add("b", "z", ColumnType.FLOAT, IndexType.NONE, 0, false, null);
         try {
-            metadata.add("b", "y", ColumnType.FLOAT, false, 0, false, null);
+            metadata.add("b", "y", ColumnType.FLOAT, IndexType.NONE, 0, false, null);
             Assert.fail();
         } catch (Exception e) {
             TestUtils.assertContains(e.getMessage(), "duplicate column [name=y, alias=b]");
         }
 
-        metadata.add(null, "c.x", ColumnType.STRING, false, 0, false, null);
-        metadata.add(null, "c.vch", ColumnType.VARCHAR, false, 0, false, null);
+        metadata.add(null, "c.x", ColumnType.STRING, IndexType.NONE, 0, false, null);
+        metadata.add(null, "c.vch", ColumnType.VARCHAR, IndexType.NONE, 0, false, null);
 
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("x"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.x"));
@@ -92,7 +93,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("b.k"));
 
         // add ambiguity to column names without aliases
-        metadata.add(null, "z.m", ColumnType.STRING, false, 0, false, null);
+        metadata.add(null, "z.m", ColumnType.STRING, IndexType.NONE, 0, false, null);
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("m"));
 
         Assert.assertEquals(ColumnType.BINARY, metadata.getColumnType("b.y"));

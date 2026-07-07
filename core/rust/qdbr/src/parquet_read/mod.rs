@@ -3,10 +3,12 @@ use qdb_core::col_type::ColumnType;
 
 pub mod column_sink;
 pub mod decode;
+pub mod decode_column;
 pub mod decoders;
 pub mod jni;
 pub mod meta;
 pub mod page;
+pub mod parquet_meta_decode;
 pub mod row_groups;
 pub mod slicer;
 
@@ -19,7 +21,14 @@ pub struct DecodeContext {
     pub dict_decompress_buffer: Vec<u8>,
     pub decompress_buffer: Vec<u8>,
     pub varchar_slice_buf_pool: Vec<Vec<u8>>,
-    pub varchar_slice_dict_buf: Vec<u8>,
+    /// Scratch outer-vec for varchar_slice data-page buffers, hoisted out of the
+    /// per-column-chunk decode loop so the heap-allocated outer storage is reused
+    /// across calls. The inner `Vec<u8>` buffers are still moved into
+    /// `ColumnChunkBuffers::page_buffers` at the end of the column-chunk decode.
+    pub varchar_slice_page_bufs_scratch: Vec<Vec<u8>>,
+    /// Scratch outer-vec for varchar_slice dict-page buffers, hoisted for the same
+    /// reason as `varchar_slice_page_bufs_scratch`.
+    pub varchar_slice_dict_bufs_scratch: Vec<Vec<u8>>,
 }
 
 impl DecodeContext {
@@ -30,8 +39,55 @@ impl DecodeContext {
             dict_decompress_buffer: Vec::new(),
             decompress_buffer: Vec::new(),
             varchar_slice_buf_pool: Vec::new(),
-            varchar_slice_dict_buf: Vec::new(),
+            varchar_slice_page_bufs_scratch: Vec::new(),
+            varchar_slice_dict_bufs_scratch: Vec::new(),
         }
+    }
+}
+
+/// Scope guard that empties the VarcharSlice reuse pool and scratch vecs when it
+/// drops, so a row-group decode releases them on success and error paths alike.
+///
+/// During a decode the column loop parks a column's old `page_buffers` in
+/// `varchar_slice_buf_pool` so the next column can reuse them, and stages
+/// in-flight page/dict buffers in the scratch vecs. On a successful return the
+/// scratch vecs have already drained into `ColumnChunkBuffers::page_buffers`
+/// (counted by the Java byte budget via `page_buffers_size`) and only unused
+/// spares remain in the pool, so the drop is equivalent to the previous explicit
+/// end-of-decode pool clear. On an error return the parked and in-flight buffers
+/// are still in the context; without the guard they would survive as RSS
+/// invisible to the cache budget until the decoder is destroyed, because Java
+/// only closes the `RowGroupBuffers` shell when a decode fails — the configured
+/// cache budget could read zero while the context still held varchar page bytes.
+///
+/// Clearing the scratch vecs on an error frees buffers that the failed chunk's
+/// aux entries may still point into. That is safe because no caller reads a
+/// chunk after a failed decode (the Java cache evicts and closes the shell),
+/// and the next decode would free those buffers anyway when it clears the
+/// scratch vecs at the start of each column chunk.
+///
+/// Same-slot reuse is preserved: the next decode re-parks the live
+/// `page_buffers` it drains from `ColumnChunkBuffers`.
+pub struct VarcharSliceBufGuard<'a> {
+    ctx: &'a mut DecodeContext,
+}
+
+impl<'a> VarcharSliceBufGuard<'a> {
+    pub fn new(ctx: &'a mut DecodeContext) -> Self {
+        Self { ctx }
+    }
+
+    /// Reborrows the guarded context for the decode body.
+    pub fn ctx(&mut self) -> &mut DecodeContext {
+        self.ctx
+    }
+}
+
+impl Drop for VarcharSliceBufGuard<'_> {
+    fn drop(&mut self) {
+        self.ctx.varchar_slice_buf_pool.clear();
+        self.ctx.varchar_slice_page_bufs_scratch.clear();
+        self.ctx.varchar_slice_dict_bufs_scratch.clear();
     }
 }
 
@@ -96,12 +152,6 @@ pub struct ColumnMeta {
     pub name_vec: AcVec<u16>,
 }
 
-#[repr(C)]
-pub struct RowGroupStatBuffers {
-    column_chunk_stats_ptr: *const ColumnChunkStats,
-    column_chunk_stats: AcVec<ColumnChunkStats>,
-}
-
 /// QuestDB-format Column Data
 ///
 /// The memory is owned by the Rust code, read by Java.
@@ -118,17 +168,43 @@ pub struct ColumnChunkBuffers {
     pub aux_ptr: *mut u8,
     pub aux_vec: AcVec<u8>,
 
+    /// Total `len()` of the buffers retained in `page_buffers`. For VarcharSlice
+    /// columns under the Plain / DeltaLengthByteArray / dictionary encodings the
+    /// decoded string bytes live in these retained pages (the aux entries hold
+    /// pointers into them) while `data_vec` stays empty, so this is the decode's
+    /// heap footprint beyond `data_size` + `aux_size`. Java's decode-cache byte
+    /// budget adds it so VarcharSlice frames are not undercounted. Refreshed by
+    /// `refresh_ptrs` at the end of each column-chunk decode; 0 for every other
+    /// column type (and for uncompressed pages borrowed from the mmap).
+    pub page_buffers_size: usize,
     pub page_buffers: Vec<Vec<u8>>,
-}
 
-#[repr(C)]
-pub struct ColumnChunkStats {
-    pub min_value_ptr: *mut u8,
-    pub min_value_size: usize,
-    pub min_value: AcVec<u8>,
-    pub max_value_ptr: *mut u8,
-    pub max_value_size: usize,
-    pub max_value: AcVec<u8>,
+    /// Number of leading column-top rows in the decoded chunk. For a source type with no
+    /// in-band null sentinel (BYTE/SHORT/CHAR) these are its only nulls, so Java consults
+    /// this count to surface NULL for column-top rows during a lazy fixed->var conversion
+    /// (the in-band decoded value is 0, indistinguishable from a real 0). Read from Java via
+    /// the `chunkColumnTopOffset` field offset. 0 when there is no column top.
+    pub column_top: usize,
+
+    /// Bytes of `page_buffers` currently charged against the per-query memory
+    /// tracker. The `page_buffers` payload is backed by the system allocator,
+    /// not the tracker-aware `AcVec`, so it would otherwise escape the per-query
+    /// limit: a wide-payload VarcharSlice row group could materialize unbounded
+    /// while the tracked `aux_vec` (16 bytes per row) stays small. `refresh_ptrs`
+    /// charges the growth and `reset` / `Drop` credit it back, keeping the
+    /// tracker balanced. Always equals the amount this chunk last added to the
+    /// tracker; 0 when nothing is charged. Not read from Java.
+    page_buffers_charged: usize,
+
+    /// Count of `page_buffers` entries already summed into `page_buffers_size`.
+    /// `refresh_ptrs` adds only the buffers appended since the last refresh
+    /// instead of re-summing the whole vector, keeping a multi-row-group decode
+    /// (decode_row_group_range concatenates into the same buffers without
+    /// resetting between groups) linear rather than quadratic. Entries below
+    /// this index stay immutable once retained -- aux entries hold raw pointers
+    /// into them -- so the partial sum is exact; a shrink (len below this index)
+    /// falls back to a full recompute, and `reset` zeroes it. Not read from Java.
+    page_buffers_counted: usize,
 }
 
 #[cfg(test)]
@@ -165,6 +241,7 @@ mod tests {
                 column_top: 0,
                 format: None, // It should error because this is missing.
                 ascii: None,
+                id: None,
             },
         );
 
@@ -187,6 +264,118 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("could not decode page for column \"sym\" in row group 0"));
         assert!(msg.contains("only special LocalKeyIsGlobal-encoded symbol columns are supported"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_error_releases_varchar_slice_bufs() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut qdb_meta = QdbMeta::new(1);
+        qdb_meta.schema.insert(
+            0,
+            QdbMetaCol {
+                column_type: ColumnTypeTag::Symbol.into_type(),
+                column_top: 0,
+                format: None, // Missing format makes the page decode fail mid-chunk.
+                ascii: None,
+                id: None,
+            },
+        );
+
+        let (buf, row_count) = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
+        let buf_len = buf.len() as u64;
+
+        let mut reader = Cursor::new(&buf);
+        let parquet_decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+
+        // Simulate buffers parked or staged by an in-flight decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
+        ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
+
+        let res = parquet_decoder.decode_row_group(
+            &mut ctx,
+            &mut rgb,
+            &[(0, ColumnTypeTag::Symbol.into_type())],
+            0,
+            0,
+            row_count as u32,
+        );
+        assert!(res.is_err());
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "a failed row-group decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "a failed row-group decode must release the page-buffer scratch"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "a failed row-group decode must release the dict-buffer scratch"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_filtered_error_releases_varchar_slice_bufs() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut qdb_meta = QdbMeta::new(1);
+        qdb_meta.schema.insert(
+            0,
+            QdbMetaCol {
+                column_type: ColumnTypeTag::Symbol.into_type(),
+                column_top: 0,
+                format: None, // Missing format makes the page decode fail mid-chunk.
+                ascii: None,
+                id: None,
+            },
+        );
+
+        let (buf, row_count) = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
+        let buf_len = buf.len() as u64;
+
+        let mut reader = Cursor::new(&buf);
+        let parquet_decoder = ParquetDecoder::read(allocator.clone(), &mut reader, buf_len)?;
+        let mut rgb = RowGroupBuffers::new(allocator);
+        let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
+
+        // Simulate buffers parked or staged by an in-flight decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
+        ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
+
+        let res = parquet_decoder.decode_row_group_filtered::<false>(
+            &mut ctx,
+            &mut rgb,
+            0,
+            &[(0, ColumnTypeTag::Symbol.into_type())],
+            0,
+            0,
+            row_count as u32,
+            &[0, 1],
+        );
+        assert!(res.is_err());
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "a failed filtered decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "a failed filtered decode must release the page-buffer scratch"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "a failed filtered decode must release the dict-buffer scratch"
+        );
 
         Ok(())
     }
@@ -1417,5 +1606,74 @@ mod tests {
         assert!(!decoder.can_skip_row_group(0, &buf, &filters, u64::MAX)?);
 
         Ok(())
+    }
+
+    // ── Group 5: bloom filter read_from_slice_at_offset tests ───────
+
+    #[test]
+    fn bloom_at_offset_matches_column_metadata_path() -> ParquetResult<()> {
+        use parquet2::bloom_filter::{read_from_slice, read_from_slice_at_offset};
+        use parquet2::read::read_metadata_with_size;
+
+        let data: Vec<i64> = (100..200).collect();
+        let buf = gen_i64_parquet_with_bloom(&data)?;
+
+        // Read metadata via parquet2.
+        let mut cursor = Cursor::new(&buf);
+        let metadata = read_metadata_with_size(&mut cursor, buf.len() as u64)
+            .map_err(|e| crate::parquet::error::fmt_err!(Unsupported, "metadata: {}", e))?;
+
+        let chunk_meta = &metadata.row_groups[0].columns()[0];
+
+        // Path A: read bloom via column metadata reference.
+        let bitset_a = read_from_slice(chunk_meta, &buf)
+            .map_err(|e| crate::parquet::error::fmt_err!(Unsupported, "bloom read: {}", e))?;
+
+        // Path B: read bloom at raw offset (the _pm path).
+        let offset = chunk_meta
+            .metadata()
+            .bloom_filter_offset
+            .expect("bloom filter offset should be present");
+        let bitset_b = read_from_slice_at_offset(offset as u64, &buf).map_err(|e| {
+            crate::parquet::error::fmt_err!(Unsupported, "bloom offset read: {}", e)
+        })?;
+
+        assert!(
+            !bitset_a.is_empty(),
+            "bloom filter bitset should not be empty"
+        );
+        assert_eq!(
+            bitset_a, bitset_b,
+            "read_from_slice and read_from_slice_at_offset should return identical bitsets"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bloom_at_offset_out_of_bounds() {
+        use parquet2::bloom_filter::read_from_slice_at_offset;
+        let data = vec![0u8; 100];
+        let result = read_from_slice_at_offset(200, &data);
+        assert!(result.is_err(), "should error on out-of-bounds offset");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("exceeds"),
+            "error should mention 'exceeds': {err_msg}"
+        );
+    }
+
+    #[test]
+    fn bloom_at_offset_truncated_data() {
+        use parquet2::bloom_filter::read_from_slice_at_offset;
+        // A valid bloom filter header but truncated data (only 10 bytes total,
+        // not enough for header + bitset).
+        let data = vec![0u8; 10];
+        let result = read_from_slice_at_offset(0, &data);
+        // Should error or return empty because the data is too short to parse
+        // a valid bloom filter header + bitset.
+        assert!(
+            result.is_err() || result.unwrap().is_empty(),
+            "should error or return empty on truncated data"
+        );
     }
 }

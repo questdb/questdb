@@ -31,6 +31,7 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -259,7 +260,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.5;
+        return 0.7;
     }
 
     @Override
@@ -343,6 +344,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return IndexType.BITMAP;
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return 509;
     }
@@ -380,6 +386,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getGroupByAllocatorMaxChunkSize() {
         return Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public int getGroupByBatchSize() {
+        return 2048;
     }
 
     @Override
@@ -481,6 +492,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getJsonUnnestMaxValueSize() {
+        return 4096;
+    }
+
+    @Override
     public int getLatestByQueueCapacity() {
         return 32;
     }
@@ -541,13 +557,28 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshBusyRetryLimit() {
+        return 10;
+    }
+
+    @Override
+    public long getMatViewRefreshBusyRetryTimeout() {
+        return 1000;
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return 15_000;
     }
 
     @Override
-    public long getMatViewRefreshOomRetryTimeout() {
-        return 200;
+    public int getMatViewRefreshMaxClusters() {
+        return 32;
+    }
+
+    @Override
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -639,6 +670,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getO3MemMaxPages() {
         return Integer.MAX_VALUE;
+    }
+
+    @Override
+    public int getO3MidPartitionMaxSplits() {
+        return 1;
     }
 
     @Override
@@ -750,13 +786,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public double getPartitionEncoderParquetMinCompressionRatio() {
-        return 0.0;
+    public int getPartitionEncoderParquetDataPageSize() {
+        return 0; // use default (1024*1024) bytes
     }
 
     @Override
-    public int getPartitionEncoderParquetDataPageSize() {
-        return 0; // use default (1024*1024) bytes
+    public double getPartitionEncoderParquetMinCompressionRatio() {
+        return 0.0;
     }
 
     @Override
@@ -800,6 +836,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingSealGenThreshold() {
+        return 16;
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }
@@ -807,6 +848,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return 4;
+    }
+
+    @Override
+    public long getQueryContinuationWakeIntervalMillis() {
+        return 1_000L;
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -852,6 +903,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getSampleByDefaultAlignmentCalendar() {
         return true;
+    }
+
+    @Override
+    public int getSampleByFillSortStrategy() {
+        return SampleBySortStrategy.LIGHT_ENCODED;
     }
 
     @Override
@@ -1132,8 +1188,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetFrameCacheCapacity() {
-        return 8;
+    public long getSqlParquetCacheMemorySize() {
+        return 256L * Numbers.SIZE_1MB;
     }
 
     @Override
@@ -1172,8 +1228,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortKeyMaxPages() {
-        return 1024;
+    public long getSqlSortKeyMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1182,8 +1238,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortLightValueMaxPages() {
-        return 1024;
+    public long getSqlSortLightValueMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1192,8 +1248,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortValueMaxPages() {
-        return 1024;
+    public long getSqlSortValueMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1207,6 +1263,22 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlWindowCacheMaxBytes() {
+        return Long.MAX_VALUE;
+    }
+
+    @Override
+    public String getSqlWindowCacheMaxPagesConfigKey() {
+        return PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES.getPropertyPath();
+    }
+
+    @Override
+    public int getSqlWindowCacheMaxPagesResolved() {
+        final long fromBytes = Math.max(1L, getSqlWindowCacheMaxBytes() / getSqlWindowStorePageSize());
+        return (int) Math.min(fromBytes, Integer.MAX_VALUE);
+    }
+
+    @Override
     public int getSqlWindowInitialRangeBufferSize() {
         return 32;
     }
@@ -1217,8 +1289,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowRowIdMaxPages() {
-        return Integer.MAX_VALUE;
+    public long getSqlWindowRowIdMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1237,8 +1309,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowTreeKeyMaxPages() {
-        return Integer.MAX_VALUE;
+    public long getSqlWindowTreeKeyMaxBytes() {
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1312,6 +1384,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getTimerShardCount() {
+        return Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4));
+    }
+
+    @Override
     public int getTxnScoreboardEntryCount() {
         return 8192;
     }
@@ -1344,6 +1421,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
+    }
+
+    @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -1476,6 +1558,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCairoMetadataCacheSnapshotOrdered() {
+        return false;
+    }
+
+    @Override
     public boolean isCheckpointRecoveryEnabled() {
         return false;
     }
@@ -1503,6 +1590,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return false;
     }
 
     @Override
@@ -1561,6 +1653,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return true;
+    }
+
+    @Override
     public boolean isQueryTracingEnabled() {
         return false;
     }
@@ -1568,6 +1665,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return false;
+    }
+
+    @Override
+    public boolean isSqlDistinctGroupByRewriteEnabled() {
+        return true;
     }
 
     @Override
@@ -1612,6 +1714,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlWindowCachedLightEnabled() {
         return true;
     }
 

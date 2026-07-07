@@ -26,13 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -42,9 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -74,21 +70,12 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             @NotNull RecordMetadata markoutMetadata,
             @NotNull RecordCursorFactory slaveFactory,
             int masterTimestampColumnIndex,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
-            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
-            @Transient @Nullable BitSet asOfWriteSymbolAsString,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
-            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
-            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -118,15 +105,6 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 asOfJoinKeyTypes,
                 masterAsOfJoinMapSinkClass,
                 slaveAsOfJoinMapSinkClass,
-                masterAsOfJoinColumnTypes,
-                masterAsOfJoinColumnFilter,
-                slaveAsOfJoinColumnTypes,
-                slaveAsOfJoinColumnFilter,
-                asOfWriteSymbolAsString,
-                asOfWriteStringAsVarcharMaster,
-                asOfWriteStringAsVarcharSlave,
-                writeTimestampAsNanosMaster,
-                writeTimestampAsNanosSlave,
                 masterColumnCount,
                 masterSymbolKeyColumnIndices,
                 slaveSymbolKeyColumnIndices,
@@ -232,23 +210,13 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
-            PageFrameAddressCache slaveFrameAddressCache,
-            DirectIntList slaveFramePartitionIndexes,
-            LongList slaveFrameRowCounts,
-            LongList slavePartitionTimestamps,
-            LongList slavePartitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         super.initTimeFrameCursors(
                 executionContext,
                 masterSymbolTableSource,
                 slavePageFrameCursor,
-                slaveFrameAddressCache,
-                slaveFramePartitionIndexes,
-                slaveFrameRowCounts,
-                slavePartitionTimestamps,
-                slavePartitionCeilings,
-                frameCount
+                sharedState
         );
 
         // Initialize key functions (for expression keys) with combined symbol table source
@@ -280,6 +248,11 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
 
     @Override
     public void reopen() {
+        // Bind the per-query tracker (captured in the base init()) on the sharding context
+        // before reopening it, so the per-worker fragment maps and destination shards count
+        // their growth against the per-query limit. The base reopen() binds the allocators
+        // and ASOF maps.
+        shardingCtx.setMemoryTracker(memoryTracker);
         shardingCtx.reopen();
         super.reopen();
     }
@@ -296,22 +269,6 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         sink.val("AsyncHorizonGroupByAtom");
     }
 
-    @Override
-    protected void clearAggregationState() {
-        shardingCtx.clear();
-    }
-
-    @Override
-    protected void closeAggregationState() {
-        shardingCtx.close();
-        Misc.freeObjList(ownerKeyFunctions);
-        if (perWorkerKeyFunctions != null) {
-            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
-            }
-        }
-    }
-
     private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
         if (slotId == -1 || perWorkerGroupByFunctions == null) {
             return ownerGroupByFunctions;
@@ -326,5 +283,23 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             totalCardinality += groupByFunctions.getQuick(i).getCardinalityStat();
         }
         return totalCardinality;
+    }
+
+    @Override
+    protected void clearAggregationState() {
+        shardingCtx.clear();
+    }
+
+    @Override
+    protected void closeAggregationState() {
+        // Null-safe: the base ctor calls close() on its error path before this subclass
+        // ctor has assigned shardingCtx, so it can still be null here.
+        Misc.free(shardingCtx);
+        Misc.freeObjList(ownerKeyFunctions);
+        if (perWorkerKeyFunctions != null) {
+            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
+            }
+        }
     }
 }

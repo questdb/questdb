@@ -49,11 +49,13 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -467,7 +469,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -572,7 +574,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
 
             long val = value != null ? value.getLong(0) : Numbers.LONG_NULL;
 
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), val);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
         }
     }
 
@@ -895,7 +897,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -926,6 +928,15 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             dequeFreeList.clear();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 
@@ -1222,7 +1233,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1383,15 +1394,14 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             timestampIndex = timestampIdx;
 
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             maxMin = Numbers.LONG_NULL;
 
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
-                dequeCapacity = initialCapacity;
-                dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Long.BYTES) - dequeMemory.getPageAddress(0);
+                // dequeMemory allocates lazily on reopen(), under the tracker bound by the cursor
             }
             this.comparator = comparator;
             this.name = name;
@@ -1593,7 +1603,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -1633,6 +1643,14 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             memory.close();
             if (dequeMemory != null) {
                 dequeMemory.close();
+            }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
             }
         }
 
@@ -1876,7 +1894,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2082,7 +2100,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2182,7 +2200,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**
@@ -2294,7 +2312,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
          */
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxMin);
         }
 
         /**

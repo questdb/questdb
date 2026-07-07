@@ -46,6 +46,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
@@ -79,11 +80,14 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
             mapValueTypes.add(RECORD_INDEX_VALUE_IDX, ColumnType.LONG);
             mapValueTypes.add(TIMESTAMP_VALUE_IDX, base.getMetadata().getColumnType(timestampIndex));
-            latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes);
+            // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
+            // so the first allocation is charged to the per-query counter.
+            latestByMap = MapFactory.createOrderedMap(configuration, columnTypes, mapValueTypes, false);
             this.cursor = new LatestByRecordCursor(latestByMap, timestampIndex);
             latestByMap = null; // cursor owns the map now
             this.rowIndexesInitialCapacity = configuration.getSqlLatestByRowCount();
-            this.rowIndexes = new DirectLongList(rowIndexesInitialCapacity, MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+            // keepClosed=true: rowIndexes is allocated lazily on the first reopen() under the bound tracker.
+            this.rowIndexes = new DirectLongList(rowIndexesInitialCapacity, MemoryTag.NATIVE_LATEST_BY_LONG_LIST, true);
         } catch (Throwable th) {
             Misc.free(latestByMap);
             close();
@@ -100,7 +104,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor, recordSink, rowIndexes, rowIndexesInitialCapacity, executionContext.getCircuitBreaker());
+            cursor.of(baseCursor, recordSink, rowIndexes, rowIndexesInitialCapacity, executionContext.getCircuitBreaker(), executionContext.getMemoryTracker());
             return cursor;
         } catch (Throwable th) {
             cursor.close();
@@ -163,13 +167,9 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (isOpen) {
                 isOpen = false;
                 baseCursor = Misc.free(baseCursor);
-                if (rowIndexes != null) {
-                    rowIndexes.clear();
-                    if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
-                        // This call will shrink down the underlying array
-                        rowIndexes.setCapacity(rowIndexesCapacityThreshold);
-                    }
-                }
+                // Free rowIndexes (and the map) here, under the per-query tracker bound in of(),
+                // so the next cursor reallocates from zero against its own tracker.
+                Misc.free(rowIndexes);
                 latestByMap.close();
             }
         }
@@ -217,16 +217,21 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
                 RecordSink recordSink,
                 DirectLongList rowIndexes,
                 long rowIndexesCapacityThreshold,
-                SqlExecutionCircuitBreaker circuitBreaker
+                SqlExecutionCircuitBreaker circuitBreaker,
+                MemoryTracker memoryTracker
         ) {
             this.baseCursor = baseCursor;
             baseRecord = baseCursor.getRecord();
-            if (!isOpen) {
-                isOpen = true;
-                latestByMap.reopen();
-            }
+            isOpen = true;
+            // Bind the per-query tracker before (re)allocating either the map (dominant allocator,
+            // one entry per distinct key) or the rowIndexes list, so both are charged to the
+            // per-query counter and freed against it at close.
+            latestByMap.setMemoryTracker(memoryTracker);
+            latestByMap.reopen();
             this.recordSink = recordSink;
             this.rowIndexes = rowIndexes;
+            rowIndexes.setMemoryTracker(memoryTracker);
+            rowIndexes.reopen();
             this.circuitBreaker = circuitBreaker;
             this.rowIndexesCapacityThreshold = rowIndexesCapacityThreshold;
             rowIndexesPos = 0;

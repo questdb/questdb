@@ -24,7 +24,7 @@
 use crate::col_driver::{ColumnDriver, MappedColumn};
 use crate::col_type::ColumnTypeTag;
 use crate::error::{CoreResult, fmt_err};
-use paste::paste;
+use pastey::paste;
 
 macro_rules! impl_primitive_type_driver {
     ($tag:ident) => {

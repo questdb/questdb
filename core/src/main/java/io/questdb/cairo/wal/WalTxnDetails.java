@@ -39,8 +39,9 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
@@ -51,7 +52,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class WalTxnDetails implements QuietCloseable {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
     public static final long LAST_ROW_COMMIT = Long.MAX_VALUE - 1;
-    private static final ThreadLocal<DirectString> DIRECT_STRING = new ThreadLocal<>(DirectString::new);
+    private static final CarrierLocal<DirectString> DIRECT_STRING = new CarrierLocal<>(DirectString::new);
     private static final int FLAG_IS_LAST_SEGMENT_USAGE = 0x2;
     private static final int FLAG_IS_OOO = 0x1;
     private static final int SEQ_TXN_OFFSET = 0;
@@ -71,6 +72,7 @@ public class WalTxnDetails implements QuietCloseable {
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
+    private final MicrosecondClock clock;
     private final CairoConfiguration config;
     private final long maxLookaheadRows;
     private final SymbolMapDiffCursorImpl symbolMapDiffCursor = new SymbolMapDiffCursorImpl();
@@ -102,7 +104,12 @@ public class WalTxnDetails implements QuietCloseable {
     public WalTxnDetails(CairoConfiguration configuration, long maxLookaheadRows) {
         walEventReader = new WalEventReader(configuration);
         this.config = configuration;
+        this.clock = configuration.getMicrosecondClock();
         this.maxLookaheadRows = maxLookaheadRows;
+    }
+
+    public static byte dedupModeOf(long walTxnTypeAndFlags) {
+        return (byte) (Numbers.decodeLowInt(walTxnTypeAndFlags) >> 24);
     }
 
     public static int loadTxns(TransactionLogCursor transactionLogCursor, int txnCount, DirectLongList txnList) {
@@ -138,6 +145,10 @@ public class WalTxnDetails implements QuietCloseable {
                     .put(", ").put(ex.getFlyweightMessage()).put(']');
         }
         return walEventCursor;
+    }
+
+    public static byte walTxnTypeOf(long walTxnTypeAndFlags) {
+        return (byte) Numbers.decodeHighInt(walTxnTypeAndFlags);
     }
 
     /**
@@ -281,7 +292,12 @@ public class WalTxnDetails implements QuietCloseable {
                 totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
                 lastWalSegment = currentWalSegment;
 
-                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
+                if (totalRowCount > maxBlockRecordCount) {
+                    // Block is too big, commit what we have so far
+                    break;
+                }
+                if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT) {
+                    blockSize++;
                     break;
                 }
                 if (getDedupMode(nextTxn) == WAL_DEDUP_MODE_REPLACE_RANGE) {
@@ -331,8 +347,7 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public byte getDedupMode(long seqTxn) {
-        int flags = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
-        return (byte) (flags >> 24);
+        return dedupModeOf(getWalTxnTypeAndFlags(seqTxn));
     }
 
     public long getFullyCommittedTxn(long fromSeqTxn, long toSeqTxn, long maxCommittedTimestamp) {
@@ -413,7 +428,11 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public byte getWalTxnType(long seqTxn) {
-        return (byte) Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
+        return walTxnTypeOf(getWalTxnTypeAndFlags(seqTxn));
+    }
+
+    public long getWalTxnTypeAndFlags(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE));
     }
 
     public boolean isLastSegmentUsage(long seqTxn) {
@@ -488,7 +507,8 @@ public class WalTxnDetails implements QuietCloseable {
             final TransactionLogCursor transactionLogCursor,
             final int rootLen,
             long appliedSeqTxn,
-            final long maxCommittedTimestamp
+            final long maxCommittedTimestamp,
+            final long deadlineMicros
     ) {
         final long lastLoadedSeqTxn = getLastSeqTxn();
         long loadFromSeqTxn = appliedSeqTxn + 1;
@@ -543,7 +563,9 @@ public class WalTxnDetails implements QuietCloseable {
                         maxLookaheadTxn
                 );
             }
-        } while (rowsToLoad > 0 && getLastSeqTxn() < transactionLogCursor.getMaxTxn());
+        } while (rowsToLoad > 0
+                && getLastSeqTxn() < transactionLogCursor.getMaxTxn()
+                && clock.getTicks() < deadlineMicros);
 
         if (transactionMeta.size() == initialSize) {
             // No transactions loaded, no need to do anything

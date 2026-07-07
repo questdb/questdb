@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -39,8 +40,10 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -61,6 +64,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
     private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final RecordSink slaveKeySink;
     private final Function slaveRecordFilter;
+    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private final long toleranceInterval;
     private boolean origHasSlave;
 
@@ -91,7 +95,9 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             @NotNull Record slaveNullRecord,
             @Nullable IntList slaveColumnCrossIndex,
             int slaveTimestampIndex,
-            long toleranceInterval
+            long toleranceInterval,
+            int @Nullable [] masterSymbolKeyColumnIndices,
+            int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
@@ -116,6 +122,9 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             this.selectedTimeFrameCursor = null;
         }
         this.toleranceInterval = toleranceInterval;
+        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                ? new SymbolTranslatingRecord(masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                : null;
     }
 
     @Override
@@ -132,11 +141,18 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             Record filterRecord = baseTimeFrameCursor.getRecordB();
             slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
             slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.of(baseTimeFrameCursor);
+            // Bind the per-query tracker before of(); the cursor's of()
+            // reopens its SingleRecordSinks, so the first malloc lands
+            // under the bound tracker.
+            cursor.setMemoryTracker(executionContext.getMemoryTracker());
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() reopens the sinks before adopting the cursors, so close() here frees only the partial heap.
+            Misc.free(cursor);
             throw e;
         }
     }
@@ -155,6 +171,9 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
     public void toPlan(PlanSink sink) {
         sink.type("Filtered AsOf Join Fast");
         sink.attr("filter").val(slaveRecordFilter, slaveFactory);
+        if (symbolTranslatingRecord != null) {
+            sink.attr("symbolKeyJoin").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -165,6 +184,7 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(slaveRecordFilter);
+        Misc.free(symbolTranslatingRecord);
     }
 
     private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
@@ -172,6 +192,10 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         private final SingleRecordSink slaveSinkTarget;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private Record filterRecord;
+        // Record used for master key serialization. Set once in of() to either
+        // masterRecord or SymbolTranslatingRecord wrapping it, so that getInt()
+        // on symbol key columns returns slave symbol IDs.
+        private Record masterKeyRecord;
         private int unfilteredCursorFrameIndex = -1;
         private long unfilteredRecordRowId = -1;
 
@@ -231,8 +255,15 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
 
             // ok, the non-keyed matcher found a record with a matching timestamp.
             // we have to make sure the JOIN keys match as well.
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
+            }
             masterSinkTarget.clear();
-            masterKeySink.copy(masterRecord, masterSinkTarget);
+            masterKeySink.copy(masterKeyRecord, masterSinkTarget);
+            if (symbolTranslatingRecord != null && symbolTranslatingRecord.hadNonExistentKey()) {
+                record.hasSlave(false);
+                return true;
+            }
 
             // first, we have to set the time frame cursor to the record found by the non-filtering algo
             // and then we have to traverse the slave cursor backwards until we find a match
@@ -293,16 +324,29 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         }
 
         public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, Record filterRecord, SqlExecutionCircuitBreaker circuitBreaker) {
+            // Reopen the sinks before super.of() adopts the cursors so an open-time breach frees each exactly once.
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
             super.of(masterCursor, slaveCursor);
             this.circuitBreaker = circuitBreaker;
             this.filterRecord = filterRecord;
-            masterSinkTarget.reopen();
-            slaveSinkTarget.reopen();
+            this.masterKeyRecord = masterRecord;
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
+                symbolTranslatingRecord.of(masterRecord);
+                masterKeyRecord = symbolTranslatingRecord;
+            }
         }
 
         @Override
         public long preComputedStateSize() {
             return 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            masterSinkTarget.setMemoryTracker(tracker);
+            slaveSinkTarget.setMemoryTracker(tracker);
         }
 
         @Override

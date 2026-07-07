@@ -103,6 +103,7 @@ public class Base64DecodeFunctionFactory implements FunctionFactory {
 
         private static class BinarySequenceUtf8Sink implements BinarySequence, Utf8Sink {
             private final Utf8StringSink sink = new Utf8StringSink();
+            private int[] ryuE10;
 
             @Override
             public byte byteAt(long index) {
@@ -131,6 +132,14 @@ public class Base64DecodeFunctionFactory implements FunctionFactory {
             @Override
             public Utf8Sink putNonAscii(long lo, long hi) {
                 return sink.putNonAscii(lo, hi);
+            }
+
+            @Override
+            public int[] ryuScratch() {
+                if (ryuE10 == null) {
+                    ryuE10 = new int[1];
+                }
+                return ryuE10;
             }
         }
     }

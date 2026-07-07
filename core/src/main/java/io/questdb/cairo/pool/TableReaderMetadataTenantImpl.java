@@ -161,7 +161,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
             // We have to be sure last txn is acquired in Scoreboard
             // otherwise writer can delete partition version files
             // between reading txn file and acquiring txn in the Scoreboard.
-            Unsafe.getUnsafe().loadFence();
+            Unsafe.loadFence();
             return txFile.getVersion() == txFile.unsafeReadVersion();
         }
         return false;

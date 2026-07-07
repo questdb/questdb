@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -35,7 +34,7 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -53,11 +52,9 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -82,8 +79,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     protected final AsyncFilterContext filterCtx;
     protected final int masterTimestampColumnIndex;
     protected final long masterTimestampScale;
+    // Per-query native memory tracker captured from the execution context in init() and
+    // bound on the allocators and ASOF lookup maps in reopen(). Null when no per-query
+    // limit applies, in which case the tracker-aware Unsafe overloads degrade to global-only.
+    protected MemoryTracker memoryTracker;
     protected final long offsetCount;
-    protected final LongList offsets;
+    protected final long[] offsets;
     protected final GroupByAllocator ownerAllocator;
     protected final Map ownerAsOfJoinMap;
     protected final HorizonJoinRecord ownerCombinedRecord;
@@ -117,19 +118,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory slaveFactory,
             int masterTimestampColumnIndex,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
             @Nullable Class<RecordSink> slaveAsOfJoinMapSinkClass,
-            @Transient @Nullable ColumnTypes masterAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter masterAsOfJoinColumnFilter,
-            @Transient @Nullable ColumnTypes slaveAsOfJoinColumnTypes,
-            @Transient @Nullable ColumnFilter slaveAsOfJoinColumnFilter,
-            @Transient @Nullable BitSet asOfWriteSymbolAsString,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharMaster,
-            @Transient @Nullable BitSet asOfWriteStringAsVarcharSlave,
-            @Transient @Nullable BitSet writeTimestampAsNanosMaster,
-            @Transient @Nullable BitSet writeTimestampAsNanosSlave,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
@@ -156,7 +148,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
         this.masterTimestampColumnIndex = masterTimestampColumnIndex;
         this.offsets = offsets;
-        this.offsetCount = offsets.size();
+        this.offsetCount = offsets.length;
         this.horizonJoinSymbolTableSource = new HorizonJoinSymbolTableSource(columnSources, columnIndexes);
 
         // Filter and memory pool resources (ownership transferred from caller)
@@ -170,8 +162,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 perWorkerFilters,
                 workerCount,
                 workerCount,
-                1, // owner memory pool capacity
-                1  // per-worker memory pool capacity
+                0L, // owner memory pool budget (single-buffer effective behavior)
+                0L  // per-worker memory pool budget
         );
 
         // Group by functions (ownership transferred from caller)
@@ -181,49 +173,13 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         try {
             // Per-worker ASOF join map sinks (each worker needs its own sink for thread safety with DECIMAL types)
             if (masterAsOfJoinMapSinkClass != null || slaveAsOfJoinMapSinkClass != null) {
-                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                        masterAsOfJoinMapSinkClass,
-                        masterAsOfJoinColumnTypes,
-                        masterAsOfJoinColumnFilter,
-                        null,
-                        null,
-                        asOfWriteSymbolAsString,
-                        asOfWriteStringAsVarcharMaster,
-                        writeTimestampAsNanosMaster
-                );
-                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(
-                        slaveAsOfJoinMapSinkClass,
-                        slaveAsOfJoinColumnTypes,
-                        slaveAsOfJoinColumnFilter,
-                        null,
-                        null,
-                        asOfWriteSymbolAsString,
-                        asOfWriteStringAsVarcharSlave,
-                        writeTimestampAsNanosSlave
-                );
+                this.ownerMasterAsOfJoinMapSink = RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
+                this.ownerSlaveAsOfJoinMapSink = RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null);
                 this.perWorkerMasterAsOfJoinMapSinks = new ObjList<>(workerCount);
                 this.perWorkerSlaveAsOfJoinMapSinks = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
-                            masterAsOfJoinMapSinkClass,
-                            masterAsOfJoinColumnTypes,
-                            masterAsOfJoinColumnFilter,
-                            null,
-                            null,
-                            asOfWriteSymbolAsString,
-                            asOfWriteStringAsVarcharMaster,
-                            writeTimestampAsNanosMaster
-                    ));
-                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(
-                            slaveAsOfJoinMapSinkClass,
-                            slaveAsOfJoinColumnTypes,
-                            slaveAsOfJoinColumnFilter,
-                            null,
-                            null,
-                            asOfWriteSymbolAsString,
-                            asOfWriteStringAsVarcharSlave,
-                            writeTimestampAsNanosSlave
-                    ));
+                    perWorkerMasterAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(masterAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
+                    perWorkerSlaveAsOfJoinMapSinks.add(RecordSinkFactory.getInstance(slaveAsOfJoinMapSinkClass, null, null, null, null, null, null, null));
                 }
             } else {
                 this.ownerMasterAsOfJoinMapSink = null;
@@ -241,22 +197,37 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             // Create time frame cursors from slave factory - one per worker + owner
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
-            this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale);
+            this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
+                    lookahead,
+                    slaveTsScale,
+                    bwdScanAbsoluteThreshold,
+                    bwdScanMinGap,
+                    bwdScanSwitchFactor
+            );
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
-                perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(lookahead, slaveTsScale));
+                perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
+                        lookahead,
+                        slaveTsScale,
+                        bwdScanAbsoluteThreshold,
+                        bwdScanMinGap,
+                        bwdScanSwitchFactor
+                ));
             }
 
-            // Per-worker ASOF maps and SingleRecordSink targets for key comparison
+            // Per-worker ASOF maps and SingleRecordSink targets for key comparison.
+            // openOnInit=false: the backing is allocated lazily by reopen() (in
+            // initTimeFrameCursors()) under the per-query tracker bound in the atom's reopen(),
+            // keeping malloc (reopen) and free (clear) symmetric on the per-query counter.
             if (asOfJoinKeyTypes != null) {
                 this.perWorkerAsOfJoinMaps = new ObjList<>(workerCount);
                 final SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes));
+                    perWorkerAsOfJoinMaps.add(MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes, false, false));
                 }
-                this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
+                this.ownerAsOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes, false, false);
             } else {
                 this.perWorkerAsOfJoinMaps = null;
                 this.ownerAsOfJoinMap = null;
@@ -288,13 +259,14 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
                 }
             }
 
-            // Allocators
-            this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Allocators. Lazy variant (openOnInit=false): the chunk index is global-counter
+            // bookkeeping; only the data chunks it hands out are charged to the per-query tracker.
+            this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
                 this.perWorkerAllocators = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                     perWorkerAllocators.add(allocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), allocator);
                 }
@@ -353,13 +325,29 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
         // Let subclass clear its resources
         clearAggregationState();
+        memoryTracker = null;
     }
 
     @Override
     public void close() {
+        // clear() already freed the data chunks and ASOF maps under the bound tracker (the index
+        // is on the global counter), so close() has nothing tracked to free. Nulling is defensive:
+        // any stray free hits the global counter and cannot underflow an already-recycled block.
+        if (ownerAllocator != null) {
+            ownerAllocator.setMemoryTracker(null);
+        }
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                final GroupByAllocator allocator = perWorkerAllocators.getQuick(i);
+                if (allocator != null) {
+                    allocator.setMemoryTracker(null);
+                }
+            }
+        }
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
-        Misc.freeObjList(ownerGroupByFunctions);
+        // ownerGroupByFunctions are freed by the owning factory via
+        // recordFunctions/groupByFunctions field, so we only free per-worker clones here.
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
@@ -387,18 +375,6 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             return ownerAsOfJoinMap;
         }
         return perWorkerAsOfJoinMaps != null ? perWorkerAsOfJoinMaps.getQuick(slotId) : null;
-    }
-
-    public long getBwdScanAbsoluteThreshold() {
-        return bwdScanAbsoluteThreshold;
-    }
-
-    public long getBwdScanMinGap() {
-        return bwdScanMinGap;
-    }
-
-    public long getBwdScanSwitchFactor() {
-        return bwdScanSwitchFactor;
     }
 
     public AsyncFilterContext getFilterContext() {
@@ -460,7 +436,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
      * Get the offset value at the given index. Offsets are in master's scale.
      */
     public long getOffset(int index) {
-        return offsets.getQuick(index);
+        return offsets[index];
     }
 
     public long getOffsetCount() {
@@ -490,53 +466,33 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        memoryTracker = executionContext.getMemoryTracker();
         filterCtx.initFilters(symbolTableSource, executionContext);
         // Note: group by functions are initialized in initTimeFrameCursors() where we have
         // access to both master and slave symbol table sources
     }
 
     /**
-     * Initialize all time frame cursors with shared frame data.
-     * Must be called after the slave page frame cursor has been fully iterated.
+     * Initialize all time frame cursors with shared state.
+     * Must be called after {@link ConcurrentTimeFrameState#of} has been called.
      */
     public void initTimeFrameCursors(
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor slavePageFrameCursor,
-            PageFrameAddressCache slaveFrameAddressCache,
-            DirectIntList slaveFramePartitionIndexes,
-            LongList slaveFrameRowCounts,
-            LongList slavePartitionTimestamps,
-            LongList slavePartitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         // Initialize owner cursor
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
-        ownerSlaveTimeFrameCursor.of(
-                slavePageFrameCursor,
-                slaveFrameAddressCache,
-                slaveFramePartitionIndexes,
-                slaveFrameRowCounts,
-                slavePartitionTimestamps,
-                slavePartitionCeilings,
-                frameCount,
-                timestampIndex
-        );
+        ownerSlaveTimeFrameCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
+        ownerSlaveTimeFrameCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
         ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
 
-        // Initialize per-worker cursors with the same shared data
+        // Initialize per-worker cursors with the same shared state
         for (int i = 0, n = perWorkerSlaveTimeFrameCursors.size(); i < n; i++) {
-            ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
-            workerCursor.of(
-                    slavePageFrameCursor,
-                    slaveFrameAddressCache,
-                    slaveFramePartitionIndexes,
-                    slaveFrameRowCounts,
-                    slavePartitionTimestamps,
-                    slavePartitionCeilings,
-                    frameCount,
-                    timestampIndex
-            );
+            final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
+            workerCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
+            workerCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 
@@ -596,11 +552,30 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
 
     @Override
     public void reopen() {
-        // The maps/values will be opened lazily by worker threads, but we need to reopen the allocators.
+        // init() runs before reopen() (frameSequence.of() -> atom.init(), then cursor.of()
+        // -> atom.reopen()), so memoryTracker is available here to bind on the allocators and
+        // ASOF lookup maps before any backing is allocated. The allocators' chunk index is
+        // lazy (openOnInit=false) and reopened here; the ASOF maps are reopened later in
+        // initTimeFrameCursors(). Both pick up the bound tracker so their growth counts
+        // against the per-query limit.
+        ownerAllocator.setMemoryTracker(memoryTracker);
         ownerAllocator.reopen();
         if (perWorkerAllocators != null) {
             for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
-                perWorkerAllocators.getQuick(i).reopen();
+                final GroupByAllocator allocator = perWorkerAllocators.getQuick(i);
+                allocator.setMemoryTracker(memoryTracker);
+                allocator.reopen();
+            }
+        }
+        if (ownerAsOfJoinMap != null) {
+            ownerAsOfJoinMap.setMemoryTracker(memoryTracker);
+        }
+        if (perWorkerAsOfJoinMaps != null) {
+            for (int i = 0, n = perWorkerAsOfJoinMaps.size(); i < n; i++) {
+                final Map map = perWorkerAsOfJoinMaps.getQuick(i);
+                if (map != null) {
+                    map.setMemoryTracker(memoryTracker);
+                }
             }
         }
     }

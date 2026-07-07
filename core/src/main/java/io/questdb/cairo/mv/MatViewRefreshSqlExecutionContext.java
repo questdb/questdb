@@ -44,6 +44,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
+    private final boolean coveringIndexEnabled;
     private TableReader baseTableReader;
     private TableToken viewTableToken;
 
@@ -56,6 +57,7 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
             setParallelWindowJoinEnabled(false);
             setParallelReadParquetEnabled(false);
         }
+        this.coveringIndexEnabled = engine.getConfiguration().isMatViewCoveringIndexEnabled();
         this.securityContext = new ReadOnlySecurityContext() {
             @Override
             public void authorizeInsert(TableToken tableToken) {
@@ -96,18 +98,23 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
                         baseTableReader.getMetadataVersion()
                 );
             }
-            return getCairoEngine().getReaderAtTxn(baseTableReader);
+            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
         }
-        return getCairoEngine().getReader(tableToken, version);
+        return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
     }
 
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
             // Base table reader txn is fixed throughout the mat view refresh.
-            return getCairoEngine().getReaderAtTxn(baseTableReader);
+            return getCairoEngine().getReaderAtTxn(baseTableReader, this);
         }
-        return getCairoEngine().getReader(tableToken);
+        return getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
+    }
+
+    @Override
+    public boolean isCoveringIndexEnabled() {
+        return coveringIndexEnabled;
     }
 
     @Override

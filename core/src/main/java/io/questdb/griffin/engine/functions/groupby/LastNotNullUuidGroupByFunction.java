@@ -58,7 +58,7 @@ public class LastNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || Uuid.isNull(destValue.getLong128Lo(valueIndex + 1), destValue.getLong128Hi(valueIndex + 1))) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong128(valueIndex + 1, srcValLo, srcValHi);
         }

@@ -67,8 +67,11 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             this.groupByFunctions = groupByFunctions;
             // sink will be storing record columns to map key
             mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
-            // this is the map itself, which we must not forget to free when factory closes
-            map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+            // this is the map itself, which we must not forget to free when factory closes.
+            // Lazy variant (openOnInit=false): the native backing is allocated by the first
+            // reopen() in getCursor(), after the per-query MemoryTracker is bound, so the
+            // map's malloc and the matching free at cursor close balance on the per-query counter.
+            map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes, false);
         } catch (Throwable th) {
             close();
             throw th;
@@ -80,6 +83,10 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
         AbstractNoRecordSampleByCursor cursor = null;
         try {
             cursor = getRawCursor();
+            // Bind the active workload's MemoryTracker before reopen() so the map's
+            // initial allocation is charged to it; the matching free at cursor close
+            // keeps the per-query counter balanced.
+            map.setMemoryTracker(executionContext.getMemoryTracker());
             if (cursor instanceof Reopenable) {
                 ((Reopenable) cursor).reopen();
             }
@@ -88,7 +95,16 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             throw th;
         }
 
-        final RecordCursor baseCursor = base.getCursor(executionContext);
+        final RecordCursor baseCursor;
+        try {
+            baseCursor = base.getCursor(executionContext);
+        } catch (Throwable th) {
+            // The map was already reopened above; free the cursor so its native
+            // backing is released under the bound tracker rather than lingering
+            // until factory close.
+            Misc.free(cursor);
+            throw th;
+        }
         return initFunctionsAndCursor(executionContext, baseCursor);
     }
 

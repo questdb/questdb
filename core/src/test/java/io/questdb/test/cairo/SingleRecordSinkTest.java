@@ -33,6 +33,7 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -75,6 +76,29 @@ public class SingleRecordSinkTest extends AbstractTest {
             for (int i = 0; i < 300; i++) {
                 sink.putInt(i);
             }
+        });
+    }
+
+    @Test
+    public void testPutVarcharErasesAsciiFlag() throws Exception {
+        // Two identical ASCII VARCHAR values with different isAscii() flags must
+        // produce the same serialized key, so memeq() returns true. Before the fix,
+        // the ASCII flag was preserved in the header, causing visually identical
+        // values to compare as unequal in ASOF JOIN key matching.
+        runWithSinks((sinkLeft, sinkRight) -> {
+            Utf8String withAscii = new Utf8String(new byte[]{'h', 'e', 'l', 'l', 'o'}, true);
+            Utf8String withoutAscii = new Utf8String(new byte[]{'h', 'e', 'l', 'l', 'o'}, false);
+
+            sinkLeft.putVarchar(withAscii);
+            sinkRight.putVarchar(withoutAscii);
+            Assert.assertTrue(sinkLeft.memeq(sinkRight));
+
+            // Sanity check: different values must still compare as unequal.
+            sinkLeft.clear();
+            sinkRight.clear();
+            sinkLeft.putVarchar(withAscii);
+            sinkRight.putVarchar(new Utf8String(new byte[]{'w', 'o', 'r', 'l', 'd'}, true));
+            Assert.assertFalse(sinkLeft.memeq(sinkRight));
         });
     }
 

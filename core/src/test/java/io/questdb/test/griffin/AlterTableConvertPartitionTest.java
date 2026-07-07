@@ -30,9 +30,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
@@ -42,6 +47,11 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.cairo.TableUtils.PARQUET_METADATA_FILE_NAME;
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 
 public class AlterTableConvertPartitionTest extends AbstractCairoTest {
@@ -75,6 +85,42 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertAllNullDeltaDataPageRoundTrips() throws Exception {
+        // Regression for the all-null DELTA_BINARY_PACKED page bug (questdb#7212).
+        // The bug needs a real, delta-encoded data page that is entirely null,
+        // read EAGERLY: a lazy SELECT fills nulls from definition levels without
+        // decoding the values page, and a column top is written without the delta
+        // value encoder, so neither reproduces. Here 'b' has column_top=0 plus a
+        // leading null run that fills one whole delta page (page size set small),
+        // and converting the parquet partition back to native decodes every page
+        // eagerly -- the same read WAL apply performs.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 64); // 8 LONG rows per page
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, b LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            // Partition 1970-01-01: b is null for the first full page (8 rows), then 99.
+            execute("INSERT INTO x SELECT (x * 1000000)::timestamp, CASE WHEN x <= 8 THEN NULL ELSE 99 END FROM long_sequence(9)");
+            // 1970-01-02 keeps the active partition out of the conversion.
+            execute("INSERT INTO x VALUES ('1970-01-02T00:00:00.000000Z', 7)");
+            execute("ALTER TABLE x ALTER COLUMN b SET PARQUET(DELTA_BINARY_PACKED)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+
+            // Lazy read over the parquet partition returns nulls (no eager decode).
+            assertQuery("SELECT b FROM x WHERE ts = '1970-01-01T00:00:01.000000Z'")
+                    .noLeakCheck()
+                    .returns("b\nnull\n");
+
+            // Eager full-page decode: pre-fix this fails with
+            // "delta binary packed block size must be greater than zero".
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '1970-01-01'");
+
+            // Data survived the parquet round trip.
+            assertQuery("SELECT b FROM x WHERE ts = '1970-01-01T00:00:09.000000Z'")
+                    .noLeakCheck()
+                    .returns("b\n99\n");
+        });
+    }
+
+    @Test
     public void testConvertAllPartitionsToParquetAndBack() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertAllPartitionsToParquetAndBack";
@@ -97,8 +143,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionDoesNotExist(tableName, "2024-06-10.12");
             assertPartitionDoesNotExist(tableName, "2024-06-11.11");
             assertPartitionDoesNotExist(tableName, "2024-06-12.10");
-            assertSql(
-                    replaceTimestampSuffix("""
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(replaceTimestampSuffix("""
                             id\tstr\ttimestamp
                             1\tabc\t2024-06-10T00:00:00.000000Z
                             2\tedf\t2024-06-11T00:00:00.000000Z
@@ -106,9 +155,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             4\tedf\t2024-06-12T00:00:01.000000Z
                             6\tedf\t2024-06-12T00:00:02.000000Z
                             5\tabc\t2024-06-15T00:00:00.000000Z
-                            """, timestampType.getTypeName()),
-                    "select * from " + tableName
-            );
+                            """, timestampType.getTypeName()));
         });
     }
 
@@ -190,81 +237,568 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             );
 
             // missing '('
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH bloom_filter_columns",
-                    66,
-                    "'(' expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH bloom_filter_columns")
+                    .fails(66, "'(' expected");
 
             // unknown option
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (unknown_option = 'val')",
-                    67,
-                    "bloom_filter_columns or fpp expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (unknown_option = 'val')")
+                    .fails(67, "bloom_filter_columns or fpp expected");
 
             // missing '=' after bloom_filter_columns
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns 'id')",
-                    88,
-                    "'=' expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns 'id')")
+                    .fails(88, "'=' expected");
 
             // missing '=' after fpp
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp '0.05')",
-                    71,
-                    "'=' expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp '0.05')")
+                    .fails(71, "'=' expected");
 
             // fpp = 0 (out of range)
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = 0)",
-                    73,
-                    "fpp must be between 0 and 1 (exclusive)"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = 0)")
+                    .fails(73, "fpp must be between 0 and 1 (exclusive)");
 
             // fpp = 1 (out of range)
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = 1)",
-                    73,
-                    "fpp must be between 0 and 1 (exclusive)"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = 1)")
+                    .fails(73, "fpp must be between 0 and 1 (exclusive)");
 
             // fpp = 1.5 (out of range)
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = '1.5')",
-                    73,
-                    "fpp must be between 0 and 1 (exclusive)"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = '1.5')")
+                    .fails(73, "fpp must be between 0 and 1 (exclusive)");
 
             // fpp = -0.1 (negative, out of range)
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = '-0.1')",
-                    73,
-                    "fpp must be between 0 and 1 (exclusive)"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = '-0.1')")
+                    .fails(73, "fpp must be between 0 and 1 (exclusive)");
 
             // fpp = non-numeric
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = abc)",
-                    73,
-                    "invalid fpp value"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (fpp = abc)")
+                    .fails(73, "invalid fpp value");
 
             // non-existent bloom filter column
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns = 'nonexistent')",
-                    90,
-                    "bloom_filter_columns contains non-existent column: nonexistent"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns = 'nonexistent')")
+                    .fails(90, "bloom_filter_columns contains non-existent column: nonexistent");
 
             // bad delimiter (missing ',' or ')')
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns = 'id' fpp = 0.05)",
-                    95,
-                    "',' or ')' expected"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10' WITH (bloom_filter_columns = 'id' fpp = 0.05)")
+                    .fails(95, "',' or ')' expected");
+        });
+    }
+
+    // ============================================================
+    // Metadata-driven bloom filter conversion tests (A1-A4, B1, C1-C2, D1-D2, H1)
+    // ============================================================
+
+    @Test
+    public void testMetadataBloomFilterBasic() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Convert WITHOUT explicit bloom_filter_columns — should use metadata
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Verify bloom filter is active by querying for a non-existent value
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("metadata bloom filter should enable row group skipping",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Verify existing value is still found
+            assertQuery("SELECT val FROM x WHERE val = 50_000")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterSelectiveColumns() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        a INT PARQUET(BLOOM_FILTER),
+                        b INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, 50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, 100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, 100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Column 'a' has bloom filter — row groups should be skipped
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT a FROM x WHERE a = 25_000")
+                    .noLeakCheck()
+                    .returns("a\n");
+            long skippedWithBloom = ParquetRowGroupFilter.getRowGroupsSkipped();
+            Assert.assertTrue("column with BLOOM_FILTER should skip row groups", skippedWithBloom > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterNoColumns() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // No bloom filter columns — should convert without error
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            assertQuery("SELECT val FROM x WHERE val = 1")
+                    .noLeakCheck()
+                    .returns("""
+                            val
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithEncodingAndCompression() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("bloom filter with custom encoding should still skip row groups",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterExplicitOverride() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            // Column 'a' has bloom filter in metadata, column 'b' does not
+            execute("""
+                    CREATE TABLE x (
+                        a INT PARQUET(BLOOM_FILTER),
+                        b INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, 50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, 100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, 100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Explicit override: bloom filter on 'b' only, ignoring metadata on 'a'
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'b')");
+
+            // Column 'b' should have bloom filter (from explicit override)
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 25_000")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue("explicit bloom_filter_columns should override metadata",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterSetViaDdlThenConvert() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Add bloom filter via ALTER TABLE, then convert
+            execute("ALTER TABLE x ALTER COLUMN val SET PARQUET(BLOOM_FILTER)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("bloom filter set via ALTER TABLE should be used during conversion",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterClearViaDdlThenConvert() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Clear bloom filter, then convert
+            execute("ALTER TABLE x ALTER COLUMN val SET PARQUET(default)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // With bloom filter cleared, row group skipping should not happen via bloom filter
+            // (min/max statistics may still skip some groups, so we just verify no error)
+            assertQuery("SELECT val FROM x WHERE val = 50_000")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithDeletedColumn() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        a INT PARQUET(BLOOM_FILTER),
+                        b INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, 50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, 100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, 100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Drop column 'a', then convert — bloom filter on 'b' should still work
+            execute("ALTER TABLE x DROP COLUMN a");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 25_000")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue("bloom filter on remaining column should work after sibling column dropped",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithColumnTop() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        a INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z')
+                    """);
+
+            // Add column with bloom filter after initial data — creates a column top
+            execute("ALTER TABLE x ADD COLUMN b INT");
+            execute("ALTER TABLE x ALTER COLUMN b SET PARQUET(BLOOM_FILTER)");
+            execute("""
+                    INSERT INTO x VALUES
+                    (3, '2024-01-01T02:00:00.000000Z', 50_000),
+                    (4, '2024-01-02T01:00:00.000000Z', 100_000)
+                    """);
+
+            // Convert — column 'b' has a column top in the first partition
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Verify data is correct (nulls for column top rows)
+            assertQuery("SELECT * FROM x WHERE ts < '2024-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            a\tts\tb
+                            1\t2024-01-01T00:00:00.000000Z\tnull
+                            2\t2024-01-01T01:00:00.000000Z\tnull
+                            3\t2024-01-01T02:00:00.000000Z\t50000
+                            """);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterSymbolColumn() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        s SYMBOL PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('aaa', '2024-01-01T00:00:00.000000Z'),
+                    ('bbb', '2024-01-01T01:00:00.000000Z'),
+                    ('ccc', '2024-01-01T02:00:00.000000Z'),
+                    ('ddd', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT s FROM x WHERE s = 'zzz'")
+                    .noLeakCheck()
+                    .returns("s\n");
+            Assert.assertTrue("bloom filter on SYMBOL column should enable row group skipping",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQuery("SELECT s FROM x WHERE s = 'aaa'")
+                    .noLeakCheck()
+                    .returns("s\naaa\n");
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterSurvivesNativeRoundTrip() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            // Convert to parquet, back to native, then re-convert
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE WHERE ts >= 0");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Bloom filter metadata should still be active after round-trip
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("bloom filter should survive parquet→native→parquet cycle",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithNulls() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (NULL, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (NULL, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Bloom filter should still skip row groups for absent values
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("bloom filter should handle NULL values and still skip row groups",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Present value should still be found
+            assertQuery("SELECT val FROM x WHERE val = 50_000")
+                    .noLeakCheck()
+                    .returns("val\n50000\n");
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterWithEmptyStrings() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val VARCHAR PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('', '2024-01-01T00:00:00.000000Z'),
+                    ('hello', '2024-01-01T01:00:00.000000Z'),
+                    ('world', '2024-01-01T02:00:00.000000Z'),
+                    ('test', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Bloom filter should skip row groups for absent values
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 'nonexistent'")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("bloom filter should handle empty strings and skip row groups for absent values",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Empty string should still be found
+            assertQuery("SELECT val FROM x WHERE val = ''")
+                    .noLeakCheck()
+                    .returns("val\n\n");
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterMultiplePartitions() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val INT PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-02T00:00:00.000000Z'),
+                    (200_000, '2024-01-02T01:00:00.000000Z'),
+                    (300_000, '2024-01-03T00:00:00.000000Z'),
+                    (400_000, '2024-01-03T01:00:00.000000Z'),
+                    (999_999, '2024-01-04T00:00:00.000000Z')
+                    """);
+
+            // Convert all sealed partitions at once
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // Bloom filter should work across multiple parquet partitions
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 25_000")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("bloom filter should work across multiple converted partitions",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            // Verify a value in a later partition is found
+            assertQuery("SELECT val FROM x WHERE val = 300_000")
+                    .noLeakCheck()
+                    .returns("val\n300000\n");
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterLong() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val LONG PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (10_000_000_000, '2024-01-01T01:00:00.000000Z'),
+                    (20_000_000_000, '2024-01-01T02:00:00.000000Z'),
+                    (30_000_000_000, '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 5_000_000_000")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("bloom filter on LONG column should skip row groups",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQuery("SELECT val FROM x WHERE val = 10_000_000_000")
+                    .noLeakCheck()
+                    .returns("val\n10000000000\n");
+        });
+    }
+
+    @Test
+    public void testMetadataBloomFilterVarchar() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("""
+                    CREATE TABLE x (
+                        val VARCHAR PARQUET(BLOOM_FILTER),
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('alpha', '2024-01-01T00:00:00.000000Z'),
+                    ('bravo', '2024-01-01T01:00:00.000000Z'),
+                    ('charlie', '2024-01-01T02:00:00.000000Z'),
+                    ('delta', '2024-01-02T01:00:00.000000Z')
+                    """);
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 'zulu'")
+                    .noLeakCheck()
+                    .returns("val\n");
+            Assert.assertTrue("bloom filter on VARCHAR column should skip row groups",
+                    ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            assertQuery("SELECT val FROM x WHERE val = 'alpha'")
+                    .noLeakCheck()
+                    .returns("val\nalpha\n");
         });
     }
 
@@ -302,11 +836,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Verify initial row count.
-            assertQueryNoLeakCheck(
-                    "count\n10\n",
-                    "SELECT count() FROM x",
-                    null, false, true
-            );
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
 
             // Convert the last (and only) partition to parquet.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'");
@@ -314,27 +848,29 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             // Verify parquet file exists and count is still correct after conversion.
             assertPartitionExists("x", "2024-06.1");
-            assertSql(
-                    "count\n10\n",
-                    "SELECT count() FROM x"
-            );
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
 
             // Insert O3 data into the same parquet partition.
             execute("INSERT INTO x(id, designated_ts) VALUES (100, '2024-06-15T00:00:00.000000Z')");
             drainWalQueue();
 
             // Verify data correctness: original 10 rows + 1 new row.
-            assertSql(
-                    "count\n11\n",
-                    "SELECT count() FROM x"
-            );
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n11\n");
 
             // Verify the O3-inserted row is present.
-            assertSql(
-                    "id\tdesignated_ts\n" +
-                            "100\t2024-06-15T00:00:00.000000" + (timestampType == TestTimestampType.NANO ? "000Z" : "Z") + "\n",
-                    "SELECT id, designated_ts FROM x WHERE id = 100"
-            );
+            assertQuery("SELECT id, designated_ts FROM x WHERE id = 100")
+                    .noLeakCheck()
+                    .timestamp("designated_ts")
+                    .returns("id\tdesignated_ts\n" +
+                            "100\t2024-06-15T00:00:00.000000" + (timestampType == TestTimestampType.NANO ? "000Z" : "Z") + "\n");
         });
     }
 
@@ -428,11 +964,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'",
-                    0,
-                    "cannot convert partition to parquet, partition does not exist"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'")
+                    .fails(0, "cannot convert partition to parquet, partition does not exist");
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01', '1970-02'");
             assertPartitionExists("x", "1970-01.1");
@@ -475,6 +1008,141 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionDoesNotFsyncParquetMetadataInNoSyncMode() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+
+        final AtomicLong pmFd = new AtomicLong(-1);
+        final AtomicReference<String> partitionDirRef = new AtomicReference<>();
+        final AtomicLong partitionDirFd = new AtomicLong(-1);
+        final AtomicBoolean pmFsynced = new AtomicBoolean();
+        final AtomicBoolean partitionDirFsynced = new AtomicBoolean();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void fsync(long fd) {
+                if (fd == pmFd.get()) {
+                    pmFsynced.set(true);
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (fd == partitionDirFd.get()) {
+                    partitionDirFsynced.set(true);
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ path) {
+                long fd = super.openRONoCache(path);
+                String parent = partitionDirRef.get();
+                if (parent != null && parent.equals(Utf8s.stringFromUtf8Bytes(path))) {
+                    partitionDirFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.endsWithAscii(name, Files.SEPARATOR + PARQUET_METADATA_FILE_NAME)) {
+                    String pmPath = Utf8s.stringFromUtf8Bytes(name);
+                    pmFd.set(fd);
+                    partitionDirRef.set(pmPath.substring(0, pmPath.length() - PARQUET_METADATA_FILE_NAME.length() - 1));
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "testConvertParquetMetadataNoSync";
+            createTable(
+                    tableName,
+                    "INSERT INTO " + tableName + " VALUES(1, '2024-06-10T00:00:00.000000Z')",
+                    "INSERT INTO " + tableName + " VALUES(2, '2024-06-15T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            Assert.assertNotEquals("openRW for parquet metadata file was not intercepted", -1L, pmFd.get());
+            Assert.assertFalse("parquet metadata file must not be fsynced when commit mode is nosync", pmFsynced.get());
+            Assert.assertEquals("partition dir must not be opened with openRONoCache when commit mode is nosync", -1L, partitionDirFd.get());
+            Assert.assertFalse("partition dir must not be fsynced when commit mode is nosync", partitionDirFsynced.get());
+        });
+    }
+
+    @Test
+    public void testConvertPartitionFsyncsParquetMetadataInSyncMode() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+
+        final AtomicLong pmFd = new AtomicLong(-1);
+        final AtomicReference<String> partitionDirRef = new AtomicReference<>();
+        final AtomicLong partitionDirFd = new AtomicLong(-1);
+        final AtomicBoolean pmFsynced = new AtomicBoolean();
+        final AtomicBoolean partitionDirFsynced = new AtomicBoolean();
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public void fsync(long fd) {
+                if (fd == pmFd.get()) {
+                    pmFsynced.set(true);
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (fd == partitionDirFd.get()) {
+                    partitionDirFsynced.set(true);
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
+            public long openRONoCache(LPSZ path) {
+                long fd = super.openRONoCache(path);
+                String parent = partitionDirRef.get();
+                if (parent != null && parent.equals(Utf8s.stringFromUtf8Bytes(path))) {
+                    partitionDirFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.endsWithAscii(name, Files.SEPARATOR + PARQUET_METADATA_FILE_NAME)) {
+                    String pmPath = Utf8s.stringFromUtf8Bytes(name);
+                    pmFd.set(fd);
+                    partitionDirRef.set(pmPath.substring(0, pmPath.length() - PARQUET_METADATA_FILE_NAME.length() - 1));
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            final String tableName = "testConvertParquetMetadataSync";
+            createTable(
+                    tableName,
+                    "INSERT INTO " + tableName + " VALUES(1, '2024-06-10T00:00:00.000000Z')",
+                    "INSERT INTO " + tableName + " VALUES(2, '2024-06-15T00:00:00.000000Z')"
+            );
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+
+            Assert.assertNotEquals("openRW for parquet metadata file was not intercepted", -1L, pmFd.get());
+            Assert.assertTrue("parquet metadata file must be fsynced when commit mode is sync", pmFsynced.get());
+            if (Os.isWindows()) {
+                Assert.assertEquals("partition dir fsync is skipped on Windows", -1L, partitionDirFd.get());
+                Assert.assertFalse("partition dir fsync is skipped on Windows", partitionDirFsynced.get());
+            } else {
+                Assert.assertNotEquals("openRONoCache for partition dir was not intercepted", -1L, partitionDirFd.get());
+                Assert.assertTrue("partition dir must be fsynced when commit mode is sync", partitionDirFsynced.get());
+            }
+        });
+    }
+
+    @Test
     public void testConvertPartitionParquetAndBackAllTypes() throws Exception {
         final long rows = 1000;
         Overrides overrides = node1.getConfigurationOverrides();
@@ -513,11 +1181,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("create table y as (select * from x)", sqlExecutionContext);
 
-            assertException(
-                    "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'",
-                    0,
-                    "cannot convert partition to parquet, partition does not exist"
-            );
+            assertQuery("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06'")
+                    .fails(0, "cannot convert partition to parquet, partition does not exist");
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '1970-01'");
             assertPartitionExists("x", "1970-01.1");
@@ -605,23 +1270,17 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
 
-            assertQuery(
-                    replaceTimestampSuffix("""
-                            id\ttimestamp\ta
-                            1\t2024-11-01T00:00:00.000000Z\tnull
-                            2\t2024-11-02T00:00:00.000000Z\tnull
-                            3\t2024-11-03T00:00:00.000000Z\tnull
-                            4\t2024-11-04T00:00:00.000000Z\tnull
-                            5\t2024-11-05T00:00:00.000000Z\tnull
-                            5\t2024-11-05T00:00:00.000000Z\t5
-                            6\t2024-11-06T00:00:00.000000Z\t6
-                            7\t2024-11-07T00:00:00.000000Z\t7
-                            """, timestampType.getTypeName()),
-                    tableName,
-                    "timestamp",
-                    true,
-                    true
-            );
+            assertQuery(tableName).timestamp("timestamp").expectSize().returns(replaceTimestampSuffix("""
+                    id\ttimestamp\ta
+                    1\t2024-11-01T00:00:00.000000Z\tnull
+                    2\t2024-11-02T00:00:00.000000Z\tnull
+                    3\t2024-11-03T00:00:00.000000Z\tnull
+                    4\t2024-11-04T00:00:00.000000Z\tnull
+                    5\t2024-11-05T00:00:00.000000Z\tnull
+                    5\t2024-11-05T00:00:00.000000Z\t5
+                    6\t2024-11-06T00:00:00.000000Z\t6
+                    7\t2024-11-07T00:00:00.000000Z\t7
+                    """, timestampType.getTypeName()));
         });
     }
 
@@ -659,38 +1318,34 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "INSERT INTO " + tableName + " VALUES(6, '2024-06-12T00:00:02.000000Z')"
             );
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             index\tname\treadOnly\tisParquet\tparquetFileSize
                             0\t2024-06-10\tfalse\tfalse\t-1
                             1\t2024-06-11\tfalse\tfalse\t-1
                             2\t2024-06-12\tfalse\tfalse\t-1
                             3\t2024-06-15\tfalse\tfalse\t-1
-                            """,
-                    "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
-                    null,
-                    false,
-                    true
-            );
+                            """);
 
             execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
 
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix(
+            assertQuery("select index, name, readOnly, isParquet, parquetFileSize   > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(replaceTimestampSuffix(
                             """
                                     index\tname\treadOnly\tisParquet\tisNonEmpty\tminTimestamp\tmaxTimestamp
                                     0\t2024-06-10\tfalse\tfalse\tfalse\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z
                                     1\t2024-06-11\tfalse\tfalse\tfalse\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z
-                                    2\t2024-06-12\tfalse\ttrue\ttrue\t\t
+                                    2\t2024-06-12\tfalse\ttrue\ttrue\t2024-06-12T00:00:00.000000Z\t2024-06-12T00:00:02.000000Z
                                     3\t2024-06-15\tfalse\tfalse\tfalse\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z
                                     """,
                             timestampType.getTypeName()
-                    ),
-                    "select index, name, readOnly, isParquet, parquetFileSize   > 0 isNonEmpty, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
-                    null,
-                    false,
-                    true
-            );
+                    ));
 
             assertPartitionDoesNotExist(tableName, "2024-06-10");
             assertPartitionDoesNotExist(tableName, "2024-06-11.0");

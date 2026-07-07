@@ -46,6 +46,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -114,7 +115,7 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(count);
 
         if (count > 0) {
-            final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
+            final ReadOnlyObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
             for (int i = 0; i < count; i++) {
                 final CharSequence name = namedVariables.get(i);
                 eventMem.putStr(name);
@@ -490,6 +491,49 @@ class WalEventWriter implements Closeable {
             eventMem.sync(commitMode == CommitMode.ASYNC);
             eventIndexMem.sync(commitMode == CommitMode.ASYNC);
         }
+    }
+
+    /**
+     * Rewrites the last data record in the event file. This is used when a symbol
+     * column is added after the event was already written (e.g., during segment roll
+     * in addColumn). The method jumps back to the start of the last event, resets
+     * the index entry, and rewrites the event so that the updated symbolMapNullFlags
+     * are included in the symbol map diffs.
+     */
+    int rewriteLastDataRecord(
+            byte txnType,
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode
+    ) {
+        // Jump back to the start of the last event and write the -1 sentinel
+        // so that appendData finds it at the expected position.
+        // NB: if appendData() throws, the event file is left in a partially
+        // rewritten state. This is acceptable because the exception will
+        // close the WalWriter and the segment will not be used for writing anymore
+        eventMem.jumpTo(startOffset);
+        eventMem.putInt(-1);
+
+        // Remove the last index entry (one long) so appendData can re-add it.
+        eventIndexMem.jumpTo(eventIndexMem.getAppendOffset() - Long.BYTES);
+
+        // Decrement txn because appendData will increment it.
+        txn--;
+
+        return appendData(
+                txnType, startRowID, endRowID,
+                minTimestamp, maxTimestamp, outOfOrder,
+                lastRefreshBaseTxn, lastRefreshTimestamp, lastPeriodHi,
+                replaceRangeLowTs, replaceRangeHiTs, dedupMode
+        );
     }
 
     int truncate() {

@@ -25,16 +25,23 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
+    private final int argColumnIndex;
 
     public CountSymbolGroupByFunction(@NotNull Function arg) {
         super(arg);
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SYMBOL);
     }
 
     @Override
@@ -44,6 +51,45 @@ public class CountSymbolGroupByFunction extends AbstractCountGroupByFunction {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
+        }
+    }
+
+    @Override
+    public void computeKeyedBatch(
+            PageFrameMemoryRecord record,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddr,
+            long batchAddr,
+            long rowCount,
+            long baseRowId
+    ) {
+        // setEmpty stores 0, so the etalon seed matches the identity element for count
+        // and new entries need no branching. Each non-null row adds 1.
+        final long valueColumnOffset = mapValue.getOffset(valueIndex);
+        // Fast path: arg is a direct symbol column with data on the current frame.
+        // Symbols are stored as 4-byte ids; null = SymbolTable.VALUE_IS_NULL.
+        // Zero page address means a column top; fall through to the record-based path.
+        final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
+        if (argAddr != 0) {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                final long rowIndex = Map.decodeBatchRowIndex(encoded);
+                final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
+                if (value != SymbolTable.VALUE_IS_NULL) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
+                }
+            }
+        } else {
+            for (long i = 0; i < rowCount; i++) {
+                final long encoded = Unsafe.getLong(batchAddr + (i << 3));
+                record.setRowIndex(Map.decodeBatchRowIndex(encoded));
+                final int value = arg.getInt(record);
+                if (value != SymbolTable.VALUE_IS_NULL) {
+                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                    Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
+                }
+            }
         }
     }
 

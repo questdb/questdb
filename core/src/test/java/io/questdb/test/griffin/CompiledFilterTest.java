@@ -113,10 +113,15 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " and adate = :adate" +
                     " and ageolong = :ageolong" +
                     " and atimestamp = :atimestamp";
-            final String expected = "aboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tageoint\tasymbol\tafloat\talong\tadouble\tadate\tageolong\tatimestamp\n" +
-                    "false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.48820508\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z\n";
+            final String expected = """
+                    aboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tageoint\tasymbol\tafloat\talong\tadouble\tadate\tageolong\tatimestamp
+                    false\t28\t0000\t243\t011011000010\tO\t2085282008\t0101011010111101\tHYRX\t0.48820508\t-4986232506486815364\t0.42281342727402726\t2015-09-28T22:29:45.706Z\t11010000001110101000110100011010\t1970-01-05T15:15:00.000000Z
+                    """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("atimestamp")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -138,11 +143,42 @@ public class CompiledFilterTest extends AbstractCairoTest {
             bindVariableService.setLong(0, 3);
 
             final String query = "select * from t1 where x = $1";
-            final String expected = "x\tts\tj\n" +
-                    "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
-                    "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
+            final String expected = """
+                    x\tts\tj
+                    3\t1970-01-01T00:00:02.000000Z\tnull
+                    3\t1970-01-01T00:01:42.000000Z\t7746536061816329025
+                    """;
 
             testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
+        });
+    }
+
+    @Test
+    public void testByteIntArithmeticWidenedToLongInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // BYTE * INT can overflow int32 (e.g., 127 * 20_000_000), so the same
+            // SX_I64 widening must apply to non-INT narrow operands as well when
+            // the predicate has integer arithmetic and a LONG operand.
+            execute("CREATE TABLE x (b BYTE, i INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(127, 20000000, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-128, 20000000, 0, '2024-01-01T00:00:00.000001Z')," +
+                    " (10, 5, 0, '2024-01-01T00:00:00.000002Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // 127 * 20_000_000 = 2_540_000_000L (positive long, overflows int32);
+            // -128 * 20_000_000 negative; 10*5=50 positive -> two rows match.
+            assertQuery("SELECT count(*) FROM x WHERE (b * i) > l")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (b * i) > l")) {
+                Assert.assertTrue("BYTE*INT in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
         });
     }
 
@@ -158,10 +194,15 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // The column order is important here, since we want
             // query and table column indexes to be different.
             final String query = "select sym, l, ts from x where sym = 'B' or sym = 'D' or sym = 'F'";
-            final String expected = "sym\tl\tts\n" +
-                    "B\t3\t1970-01-05T15:23:20.000000Z\n";
+            final String expected = """
+                    sym\tl\tts
+                    B\t3\t1970-01-05T15:23:20.000000Z
+                    """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
 
             execute("insert into x select " +
@@ -170,55 +211,164 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " rnd_symbol('D','E','F') sym " +
                     "from long_sequence(5)");
 
-            final String expected2 = "sym\tl\tts\n" +
-                    "B\t3\t1970-01-05T15:23:20.000000Z\n" +
-                    "F\t6\t1970-01-06T18:53:20.000000Z\n" +
-                    "F\t7\t1970-01-06T19:01:40.000000Z\n" +
-                    "D\t9\t1970-01-06T19:18:20.000000Z\n";
+            final String expected2 = """
+                    sym\tl\tts
+                    B\t3\t1970-01-05T15:23:20.000000Z
+                    F\t6\t1970-01-06T18:53:20.000000Z
+                    F\t7\t1970-01-06T19:01:40.000000Z
+                    D\t9\t1970-01-06T19:18:20.000000Z
+                    """;
 
-            assertSql(expected2, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected2);
             assertSqlRunWithJit(query);
         });
     }
 
     @Test
     public void testFilteringOnSingleQuote() throws Exception {
-        assertQueryAndPlan("Time\tSpread\tBid_Volume\task_volume\n",
-                "SELECT timestamp as Time,\n" +
-                        "avg(asks[1,1]-bids[1,1]) as Spread,\n" +
-                        "sum(bids[1,1]*bids[2,1]) as Bid_Volume,\n" +
-                        "sum(asks[1,1]*asks[2,1]) as ask_volume\n" +
-                        "FROM market_data\n" +
-                        "WHERE symbol = ''''\n" +
-                        "SAMPLE BY 1s\n" +
-                        "ORDER BY timestamp DESC\n" +
-                        "LIMIT 6;",
-                "\n" +
-                        "CREATE TABLE 'market_data' ( \n" +
-                        "\ttimestamp TIMESTAMP,\n" +
-                        "\tsymbol SYMBOL CAPACITY 16384 CACHE,\n" +
-                        "\tbids DOUBLE[][],\n" +
-                        "\tasks DOUBLE[][]\n" +
-                        ") timestamp(timestamp);",
-                "Time###DESC",
-                "INSERT INTO market_data (timestamp, symbol, bids, asks) " +
+        assertQuery("""
+                SELECT timestamp as Time,
+                avg(asks[1,1]-bids[1,1]) as Spread,
+                sum(bids[1,1]*bids[2,1]) as Bid_Volume,
+                sum(asks[1,1]*asks[2,1]) as ask_volume
+                FROM market_data
+                WHERE symbol = ''''
+                SAMPLE BY 1s
+                ORDER BY timestamp DESC
+                LIMIT 6;""")
+                .withPlan("""
+                        Long Top K lo: 6
+                          keys: [Time desc]
+                            Async JIT Group By workers: 1
+                              keys: [Time]
+                              keyFunctions: [timestamp_floor_utc('1s',timestamp)]
+                              values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]
+                              filter: symbol='''
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: market_data
+                        """)
+                .ddl("""
+                        
+                        CREATE TABLE 'market_data' (\s
+                        \ttimestamp TIMESTAMP,
+                        \tsymbol SYMBOL CAPACITY 16384 CACHE,
+                        \tbids DOUBLE[][],
+                        \tasks DOUBLE[][]
+                        ) timestamp(timestamp);""")
+                .timestampDesc("Time")
+                .mutateWith("INSERT INTO market_data (timestamp, symbol, bids, asks) " +
                         "VALUES " +
                         "(0, 'abc', array[[1d,2d],[3d,4d]], array[[2d,3d],[4d,5d]]), " +
-                        "(10_000_000, '''', array[[10d,20d],[30d,40d]], array[[20d,30d],[40d,50d]]);",
-                "Time\tSpread\tBid_Volume\task_volume\n" +
-                        "1970-01-01T00:00:10.000000Z\t10.0\t300.0\t800.0\n",
-                true,
-                true,
-                false,
-                "Long Top K lo: 6\n" +
-                        "  keys: [Time desc]\n" +
-                        "    Async JIT Group By workers: 1\n" +
-                        "      keys: [Time]\n" +
-                        "      values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]\n" +
-                        "      filter: symbol='''\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: market_data\n");
+                        "(10_000_000, '''', array[[10d,20d],[30d,40d]], array[[20d,30d],[40d,50d]]);")
+                .expectSize()
+                .returns("Time\tSpread\tBid_Volume\task_volume\n", """
+                        Time\tSpread\tBid_Volume\task_volume
+                        1970-01-01T00:00:10.000000Z\t10.0\t300.0\t800.0
+                        """);
+    }
+
+    @Test
+    public void testFloatColumnAgainstFoldedI8ConstantPicksScalarPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // The descend()-time fold of 258558L * -259815L emits a single I8
+            // IMM directly without observing the I8 type, so the predicate's
+            // global TypesObserver only saw F4 (from c5). hasMixedSizes()
+            // returned false, exec_hint went to SINGLE_SIZE_TYPE, and the
+            // backend picked the AVX2 path. AVX2 has no convert from a
+            // 4-element i64 vector to an 8-element f32 vector, and the I8 -
+            // F4 sub fell through convert() unchanged into vpsubq, garbage
+            // for non-NULL c5 and a false comparison for NULL c5 -- which
+            // dropped the NULL rows that the Java filter included via
+            // NaN < x = false / NOT(false) = true. The fold path now
+            // observes I8 in both observers so getExecHint() reports mixed
+            // sizes and the scalar path is used instead.
+            execute("CREATE TABLE x (c5 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Eight rows so the AVX2 step (256 / (4 * 8) = 8) covers the
+            // whole frame in a single vector iteration without falling back
+            // to the scalar tail. Row 4 is NULL; the predicate is true for
+            // all rows because the folded LHS is around -6.7e10 and c5 is
+            // either a small float or NaN (NaN < x is false, NOT false is
+            // true).
+            execute("INSERT INTO x VALUES " +
+                    "(0.50::FLOAT, '2024-01-01T00:00:00.000000Z')," +
+                    " (0.51::FLOAT, '2024-01-01T00:00:01.000000Z')," +
+                    " (0.52::FLOAT, '2024-01-01T00:00:02.000000Z')," +
+                    " (0.53::FLOAT, '2024-01-01T00:00:03.000000Z')," +
+                    " (NULL,         '2024-01-01T00:00:04.000000Z')," +
+                    " (0.55::FLOAT, '2024-01-01T00:00:05.000000Z')," +
+                    " (0.56::FLOAT, '2024-01-01T00:00:06.000000Z')," +
+                    " (0.57::FLOAT, '2024-01-01T00:00:07.000000Z')");
+
+            String sql = "SELECT count(*) FROM x WHERE NOT (c5 < ((258558L * -259815L) - (708206 - c5)))";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testInShortCircuitDoesNotLeakColumnCacheAfterEndSc() throws Exception {
+        assertMemoryLeak(() -> {
+            // Multi-value IN() in a scalar AND chain emits BEGIN_SC, EQ pairs
+            // gated by OR_SC, AND_SC and END_SC. Column reads for the IN
+            // values populate the C++ ColumnValueCache, which is keyed on
+            // (column, type) and persists across the OR_SC forward jump. If
+            // OR_SC takes its jump to END_SC, the load that populated the
+            // cache entry is skipped, but a later MEM read for the same
+            // column would otherwise hit the cache and use a register that
+            // was never written on the jumped-to path -- returning garbage.
+            // Here c0 is loaded both inside the IN block (for c0 = c1) and
+            // outside it (for c0 != null), and c1 IN (c0, c1) trips the
+            // OR_SC short-circuit on the c1 = c1 leaf for every non-NULL
+            // c1, so the bug surfaces as JIT including rows where c0 IS
+            // NULL. The fix snapshots the cache size at BEGIN_SC and
+            // truncates back at END_SC so entries from inside the block do
+            // not leak past it.
+            execute("CREATE TABLE x (c0 FLOAT, c1 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(0.5::FLOAT, 0.7, '2024-01-01T00:00:00.000000Z')," +
+                    " (NULL,       0.4, '2024-01-01T00:00:01.000000Z')");
+
+            // Predicates sort by priority: IN (PRIORITY_OTHER=5) before
+            // c0 != null (PRIORITY_OTHER_NEQ=6), so IN's END_SC sits right
+            // before the NE predicate that re-reads c0.
+            String sql = "SELECT count(*) FROM x WHERE NOT (c0 IS NULL) AND c1 IN (c0, c1)";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
+            }
+        });
     }
 
     @Test
@@ -238,6 +388,333 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntArithmeticWrapsAtInt32InMixedLongDoubleContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // The fuzzer hit a JIT/Java divergence on a predicate of shape
+            //   ((d_const + d_const) - c6_long) > (c9_int * int_const)
+            // where the int product overflows int32. serializeUntypedNumber
+            // skipped the I4 emit path whenever the predicate had any LONG
+            // operand and widened the integer constant to I8, which made
+            // convert() promote c9 to i64 at MUL time and the JIT compute
+            // c9 * 403251 at long width. The Java filter went through
+            // IntFunction#getDouble = intToDouble(getInt) and wrapped at
+            // int32, so the two paths disagreed for c9 large enough that
+            // the inner product overflowed int32. After the fix the JIT
+            // keeps the constant at I4 when any FLOAT / DOUBLE source is
+            // present in the predicate, and int32_mul wraps on both sides.
+            execute("CREATE TABLE x (c6 LONG, c9 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(0,  5328, '2024-01-01T00:00:00.000000Z')," +
+                    " (0,  6000, '2024-01-01T00:00:00.000001Z')," +
+                    " (0,  1000, '2024-01-01T00:00:00.000002Z')," +
+                    " (0, -6000, '2024-01-01T00:00:00.000003Z')," +
+                    " (0,  -100, '2024-01-01T00:00:00.000004Z')");
+
+            String sql = "SELECT count(*) FROM x WHERE ((0.983116 + 0.206995) - c6) > (c9 * 403251)";
+            //  5328 *   403251 wraps to -2_146_445_968 at int32. 1.19 > -2.146e9 -> true.
+            //  6000 *   403251 wraps to -1_875_461_296 at int32. 1.19 > -1.875e9 -> true.
+            //  1000 *   403251 =        403_251_000  at int32.   1.19 > 4e8      -> false.
+            // -6000 *   403251 wraps to  1_875_461_296 at int32. 1.19 > 1.875e9  -> false.
+            //  -100 *   403251 =         -40_325_100  at int32.  1.19 > -4e7     -> true.
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n3\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n3\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("INT*INT in mixed LONG/DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntColumnArithmeticInDoubleContextStaysAtIntWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            // Negative case: in DOUBLE context the Java filter goes through
+            // IntFunction#getDouble = intToDouble(getInt) at int width, so
+            // the JIT must NOT widen INT operands to i64. NarrowI64WidenDetector
+            // only triggers when a LONG operand is present and no FLOAT/DOUBLE
+            // source is in the predicate, leaving the FLOAT / DOUBLE path at
+            // int width (matching int32_mul / int32_add overflow semantics on
+            // both sides).
+            execute("CREATE TABLE x (i INT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(46341, 0.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (46340, 0.0, '2024-01-01T00:00:00.000001Z')," +
+                    " (10, 0.0, '2024-01-01T00:00:00.000002Z')");
+
+            String sql = "SELECT count(*) FROM x WHERE (i * i) > d";
+            // 46341 * 46341 = 2_147_488_281 -> int32 wraps to negative -> excluded.
+            // 46340 * 46340 = 2_147_395_600 -> fits int32, positive -> included.
+            // 10 * 10 = 100 -> included. So two rows match.
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("INT*INT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntColumnArithmeticInFloatContextStaysAtFloatWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT-FLOAT arithmetic resolves to `-(FF)` (FloatFunctionFactory),
+            // matching `+(FF)` / `*(FF)` / `/(FF)`. Both interpreter and JIT
+            // therefore compute at f32 width and agree on rounding. Without
+            // `-(FF)`, the parser's only viable match is `-(DD)` (since FLOAT
+            // does not widen to INT or LONG), which would push the interpreter
+            // to f64 while JIT stays at f32 -- the original divergence the
+            // fuzzer found on `(c0 - (c0 - c5)) <= c5`.
+            execute("CREATE TABLE x (c0 INT, c5 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(999999, 0.123456, '2024-01-01T00:00:00.000000Z')," +
+                    " (10, 0.5, '2024-01-01T00:00:00.000001Z')");
+
+            // Row 1 is excluded under f32 rounding: `999999 - 0.123456` rounds
+            // to 999998.875, so `999999 - 999998.875 = 0.125`, which is
+            // strictly greater than 0.123456. Row 2 has small magnitudes that
+            // fit exactly in f32 and matches.
+            String sql = "SELECT count(*) FROM x WHERE (c0 - (c0 - c5)) <= c5";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("INT-FLOAT arithmetic must still JIT", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntColumnArithmeticStaysAtIntWidthWhenFloatSuppressesWidening() throws Exception {
+        assertMemoryLeak(() -> {
+            // Inverse of testIntColumnArithmeticWidenedToLongInLongContext:
+            // when the predicate also has a FLOAT/DOUBLE source, the int-
+            // arithmetic subtree is consumed by IntFunction#getDouble, which
+            // calls IntFunction.getInt() and wraps modulo 2^32. The IR
+            // emitter must suppress widening when any F operand appears,
+            // including lexical float CONSTANT tokens like 0.5.
+            execute("CREATE TABLE x (a INT, b INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(46341, 46341, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (10, 5, 0, '2024-01-01T00:00:00.000001Z')");
+
+            // 46341 * 46341 = 2_147_488_281L; wraps to -2_147_479_015 at
+            // int32, so row 1's 0.5 * (a*b) is negative and only row 2
+            // matches. Without the suppression the JIT keeps the long
+            // product and the count would be 2.
+            String sql = "SELECT count(*) FROM x WHERE ((l + 0.5) * (a * b)) > 0";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntColumnArithmeticWidenedToLongInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // INT-INT arithmetic compared to a LONG column would compute at int32
+            // width on the JIT path (load_registers third branch + int32_*),
+            // wrapping for inputs that exceed INT_MAX. The Java filter promotes
+            // the inner expression via AddInt.getLong / MulInt.getLong /
+            // SubInt.getLong, computing at long width with no overflow. To match,
+            // the IR emitter inserts a SX_I64 opcode after each narrow operand
+            // when the predicate has both integer arithmetic and a LONG operand,
+            // so convert() promotes to i64 before the arithmetic dispatches to
+            // int64_*.
+            execute("CREATE TABLE x (a INT, b INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(2147483640, 1, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-2147483640, -1, 0, '2024-01-01T00:00:00.000001Z')," +
+                    " (46341, 46341, 0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 5, 0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // a + b: 2147483640+1=2147483641 (positive long), -2147483640-1 negative,
+            // 46341+46341=92682 positive, 10+5=15 positive -> three rows match.
+            assertQuery("SELECT count(*) FROM x WHERE (a + b) > l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            // a - b: 2147483640-1=positive, -2147483640-(-1)=negative,
+            // 46341-46341=0 (not > 0), 10-5=5 positive -> two rows match.
+            assertQuery("SELECT count(*) FROM x WHERE (a - b) > l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            // a * b: 2147483640*1=positive, -2147483640*-1=positive long,
+            // 46341*46341=2_147_488_281L (positive long, overflows int32),
+            // 10*5=50 -> four rows match.
+            assertQuery("SELECT count(*) FROM x WHERE (a * b) > l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (a + b) > l")) {
+                Assert.assertTrue("INT-INT arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (a * b) > l")) {
+                Assert.assertTrue("INT*INT arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testIntegerArithmeticPreservesNullThroughVectorPath() throws Exception {
+        assertMemoryLeak(() -> {
+            // The AVX2 i64 mul kernel mutated its lhs vector while computing the
+            // 64-bit product, then passed the now-clobbered vector into the
+            // null-propagation blend. With a LONG null sentinel (Long.MIN_VALUE)
+            // multiplied by an even constant, the low-32-bit product wraps to
+            // zero, so the blend no longer recognised the lane as null and the
+            // JIT result diverged from the scalar path.
+            // The audit walked every AVX2 arithmetic kernel (add/sub/mul/div
+            // for i32 and i64) and only i64 mul actually mutated its inputs.
+            // This test covers the original bug and locks the audit in: each
+            // predicate would return zero JIT rows (and diverge from the Java
+            // filter) if any of these kernels stopped feeding pristine lhs/rhs
+            // into blend_with_nulls.
+            // Predicate shape: <col> = (<col> <op> <const>). Under QuestDB's
+            // EqXxxFunctionFactory, NULL == NULL is true (both sides return
+            // the type's null sentinel and the primitive == matches), so a
+            // NULL row matches iff arithmetic on a NULL preserves NULL.
+            //   col = NULL -> Java: <op> propagates NULL, NULL = NULL -> true.
+            //   col != NULL -> any of these <op>s yield a different value,
+            //                  so the predicate is false.
+            // Need enough rows so each kernel's AVX2 main loop runs at least
+            // once: i64 step=4, i32 step=8. Use 9 rows so both kernels exercise
+            // a main iteration plus a scalar tail (the bug never reached the
+            // scalar tail path, which preserves lhs).
+            execute("CREATE TABLE x (l LONG, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(NULL, NULL, '2024-01-01T00:00:00.000000Z')," +
+                    " (1L, 1, '2024-01-01T00:00:01.000000Z')," +
+                    " (2L, 2, '2024-01-01T00:00:02.000000Z')," +
+                    " (3L, 3, '2024-01-01T00:00:03.000000Z')," +
+                    " (4L, 4, '2024-01-01T00:00:04.000000Z')," +
+                    " (5L, 5, '2024-01-01T00:00:05.000000Z')," +
+                    " (6L, 6, '2024-01-01T00:00:06.000000Z')," +
+                    " (7L, 7, '2024-01-01T00:00:07.000000Z')," +
+                    " (8L, 8, '2024-01-01T00:00:08.000000Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // i64 (LONG): the original failing shape plus the other operators.
+            assertQuery("SELECT count(*) FROM x WHERE l = (l * 939722L)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE l = (l + 1L)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE l = (l - 1L)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE l = (l / 2L)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+
+            // i32 (INT): all four operators.
+            assertQuery("SELECT count(*) FROM x WHERE i = (i * 939722)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE i = (i + 1)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE i = (i - 1)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            assertQuery("SELECT count(*) FROM x WHERE i = (i / 2)")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+
+            // Sanity check that JIT actually compiled (otherwise the test
+            // would silently pass via the Java filter).
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE l = (l * 939722L)")) {
+                Assert.assertTrue("JIT must compile this filter", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testMixedSelectPreTouchEnabled() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -248,18 +725,25 @@ public class CompiledFilterTest extends AbstractCairoTest {
             );
 
             final String query = "select /*+ ENABLE_PRE_TOUCH(t1) */ 1 as one, (4 + 2) as the_answer, ts as col_ts, x as col_x, sqrt(x) as root_x from t1 where x > 1";
-            final String expected = "one\tthe_answer\tcol_ts\tcol_x\troot_x\n" +
-                    "1\t6\t1970-01-01T00:00:00.100000Z\t2\t1.4142135623730951\n" +
-                    "1\t6\t1970-01-01T00:00:00.200000Z\t3\t1.7320508075688772\n" +
-                    "1\t6\t1970-01-01T00:00:00.300000Z\t4\t2.0\n" +
-                    "1\t6\t1970-01-01T00:00:00.400000Z\t5\t2.23606797749979\n" +
-                    "1\t6\t1970-01-01T00:00:00.500000Z\t6\t2.449489742783178\n" +
-                    "1\t6\t1970-01-01T00:00:00.600000Z\t7\t2.6457513110645907\n" +
-                    "1\t6\t1970-01-01T00:00:00.700000Z\t8\t2.8284271247461903\n" +
-                    "1\t6\t1970-01-01T00:00:00.800000Z\t9\t3.0\n" +
-                    "1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795\n";
+            final String expected = """
+                    one\tthe_answer\tcol_ts\tcol_x\troot_x
+                    1\t6\t1970-01-01T00:00:00.100000Z\t2\t1.4142135623730951
+                    1\t6\t1970-01-01T00:00:00.200000Z\t3\t1.7320508075688772
+                    1\t6\t1970-01-01T00:00:00.300000Z\t4\t2.0
+                    1\t6\t1970-01-01T00:00:00.400000Z\t5\t2.23606797749979
+                    1\t6\t1970-01-01T00:00:00.500000Z\t6\t2.449489742783178
+                    1\t6\t1970-01-01T00:00:00.600000Z\t7\t2.6457513110645907
+                    1\t6\t1970-01-01T00:00:00.700000Z\t8\t2.8284271247461903
+                    1\t6\t1970-01-01T00:00:00.800000Z\t9\t3.0
+                    1\t6\t1970-01-01T00:00:00.900000Z\t10\t3.1622776601683795
+                    """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -278,13 +762,20 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     "from long_sequence(1000)");
 
             final String query = "select * from t1 where x < 3 order by ts desc";
-            final String expected = "x\tts\n" +
-                    "2\t1970-01-02T00:00:00.100000Z\n" +
-                    "1\t1970-01-02T00:00:00.000000Z\n" +
-                    "2\t1970-01-01T00:00:00.100000Z\n" +
-                    "1\t1970-01-01T00:00:00.000000Z\n";
+            final String expected = """
+                    x\tts
+                    2\t1970-01-02T00:00:00.100000Z
+                    1\t1970-01-02T00:00:00.000000Z
+                    2\t1970-01-01T00:00:00.100000Z
+                    1\t1970-01-01T00:00:00.000000Z
+                    """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -306,6 +797,647 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowIntArithmeticPreservesNullInFloatContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Narrow int arithmetic (i8/i16/i32 add/sub/mul/div via int32_*)
+            // runs at i32 width and can carry INT_NULL: either an INT operand
+            // was INT_NULL, or division by zero produced INT_NULL via
+            // int32_div. Before the fix the kernel returned the result tagged
+            // with the narrower lhs dtype (e.g. i8 for BYTE * INT). The
+            // downstream f32 / f64 conversion then went through
+            // cvt_null_check(i8) = false and skipped the NaN substitution, so
+            // INT_NULL flowed into the float comparison as -2_147_483_648.0.
+            // Java's path (MulInt.getDouble = intToDouble(getInt)) substitutes
+            // NaN whenever the int product was INT_NULL, and the negating `<=`
+            // / `<` wrapper treats any NaN side as matching, so the two paths
+            // diverged.
+            //
+            // Rows: b/s/i columns drive the narrow arithmetic; the (0, 0,
+            // NULL) row covers div-by-zero and the i = NULL rows cover
+            // INT_NULL propagation through mul / add / sub.
+            execute("CREATE TABLE x (b BYTE, s SHORT, i INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1, 1, NULL, '2024-01-01T00:00:00.000000Z')," +
+                    " (2, 2, NULL, '2024-01-01T00:00:00.000001Z')," +
+                    " (5, 5, 7, '2024-01-01T00:00:00.000002Z')," +
+                    " (0, 0, NULL, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // BYTE * INT (the original fuzzer divergence). Three of the four
+            // rows have i = NULL, so the int product is INT_NULL and the
+            // f64 cast returns NaN; the (b=5, i=7) row gives 35 and 1.74256
+            // <= 35.0, so the predicate excludes every row.
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            // Same shape with addition (int32_add propagates INT_NULL).
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b + i))")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            // Subtraction: NaN rows still excluded; the (b=5, i=7) row gives
+            // -2, so NOT(1.74256 <= -2.0) matches and the count is 1.
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b - i))")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            // SHORT * INT exercises the i16 narrow path.
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * s) <= (s * i))")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            // Division by zero on narrow operands: int32_div returns INT_NULL
+            // when rhs is 0 even though both inputs are BYTE / SHORT, so the
+            // i32 widening matters here too. The (0, 0, _) row divides by
+            // zero -> NaN -> excluded; the (5, 5, _) row gives 1 and
+            // NOT(1.74256 <= 1.0) matches, so the count is 1.
+            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+
+            // JIT must still compile each predicate -- the fix is at the C++
+            // kernel level (result dtype tagging), the IR side is unchanged.
+            try (RecordCursorFactory factory = select(
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")) {
+                Assert.assertTrue("BYTE * INT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select(
+                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")) {
+                Assert.assertTrue("BYTE / SHORT in DOUBLE context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithmeticWithIntLiteralInDoubleContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Same shape as the FLOAT case but with a DOUBLE column. F8 also
+            // does not trigger the I8-IMM path -- IntFunction.getDouble keeps
+            // the int math at int width regardless of whether the consumer is
+            // FLOAT or DOUBLE.
+            execute("CREATE TABLE x (s SHORT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(32767, 0.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-32768, 0.0, '2024-01-01T00:00:00.000001Z')," +
+                    " (30000, 0.0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 0.0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery("SELECT count(*) FROM x WHERE (s * 78941) > d")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > d")) {
+                Assert.assertTrue("narrow * int literal vs double must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithmeticWithIntLiteralInFloatContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Predicate (s * 78941) > f compares a SHORT*INT product against a
+            // FLOAT column. The Java filter consumes the IntFunction via
+            // CastIntToDouble.getDouble = intToDouble(getInt), keeping the
+            // multiplication at int width with overflow. The JIT must do the
+            // same: emitting 78941 at I8 here would force long-width mul and
+            // diverge. serializeUntypedNumber's hasI8() check excludes F4
+            // exactly so this case stays at I4 IMM and matches the Java path.
+            execute("CREATE TABLE x (s SHORT, f FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(32767, 0.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-32768, 0.0, '2024-01-01T00:00:00.000001Z')," +
+                    " (30000, 0.0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 0.0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // At int width: 32767*78941 wraps to -1_707_954_509,
+            // 30000*78941 wraps to -1_926_737_296, both negative -- excluded.
+            // -32768*78941 wraps to +1_708_228_608 (positive int after wrap)
+            // and 10*78941 = 789_410 -- both included. So two rows match.
+            assertQuery("SELECT count(*) FROM x WHERE (s * 78941) > f")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > f")) {
+                Assert.assertTrue("narrow * int literal vs float must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowIntArithmeticWithIntLiteralInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // Predicate (s * 78941) > l mixes a SHORT column with an INT literal
+            // and a LONG column. The Java filter's MulInt.getLong promotes via
+            // ((long) l) * r and computes the product at long width; the JIT
+            // used to emit 78941 as an I4 IMM (serializeUntypedNumber's first
+            // try is parseInt) so load_registers normalised both operands to
+            // i32 and dispatched int32_mul, overflowing for s = +-30000-ish.
+            // After the fix, the IMM is emitted at I8 when the predicate has a
+            // LONG operand, so convert() widens s to i64 and mul dispatches to
+            // int64_mul, matching the Java filter.
+            execute("CREATE TABLE x (s SHORT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(32767, 0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-32768, 0, '2024-01-01T00:00:00.000001Z')," +
+                    " (30000, 0, '2024-01-01T00:00:00.000002Z')," +
+                    " (10, 0, '2024-01-01T00:00:00.000003Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            // s = 32767, 30000, 10 all yield positive long products; s = -32768
+            // yields negative -2_586_738_688L. So three rows match.
+            assertQuery("SELECT count(*) FROM x WHERE (s * 78941) > l")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n3\n");
+
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE (s * 78941) > l")) {
+                Assert.assertTrue("narrow * int literal vs long must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowIntColumnVsOutOfRangeLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT" +
+                    " rnd_byte() b," +
+                    " rnd_short() s," +
+                    " timestamp_sequence(0, 1_000_000) ts" +
+                    " FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // SHORT range is [-32768, 32767]; literals outside this range must yield no rows.
+            // Before the fix, JIT silently truncated the literal to the column's width
+            // (e.g. (short) 346548 = 18868), letting matching values through and diverging
+            // from the Java filter. The fix throws SqlException at IR serialization time so
+            // SqlCodeGenerator falls back to the Java filter, which evaluates the comparison
+            // at int width.
+            assertQuery("SELECT count(*) FROM x WHERE s > 346548")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM x WHERE s <= -897671")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM x WHERE s = 100000")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            // != against an out-of-range literal is true for every row.
+            assertQuery("SELECT count(*) FROM x WHERE s != 100000")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1000\n");
+            // BYTE range is [-128, 127].
+            assertQuery("SELECT count(*) FROM x WHERE b > 200")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM x WHERE b <= -300")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count(*) FROM x WHERE b = 1000")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+
+            // Sanity-check the fallback path.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE s > 346548")) {
+                Assert.assertFalse("JIT must not compile out-of-range short comparison",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE b <= -300")) {
+                Assert.assertFalse("JIT must not compile out-of-range byte comparison",
+                        factory.usesCompiledFilter());
+            }
+
+            // In-range literals must continue to JIT.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE s > 100")) {
+                Assert.assertTrue("in-range short comparison must JIT",
+                        factory.usesCompiledFilter());
+            }
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE b > 100")) {
+                Assert.assertTrue("in-range byte comparison must JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNarrowMixedWidthArithmetic() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SHORT, i INT, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // s=200 -> s*s = 40_000 in int math, but overflows SHORT (low 16 bits = -25_536).
+            // s*s + i = 40_000, matches d=40_000.0; the Java filter widens s to int via the
+            // *.sql.Function classes and returns the row. A SIMD JIT computing s*s at SHORT
+            // width would miss it. Same for s=-200; s=10 stays in range, so its row is
+            // uncontroversial.
+            execute("INSERT INTO x VALUES (200, 0, 40000.0, '2024-01-01T00:00:00.000000Z')," +
+                    " (-200, 0, 40000.0, '2024-01-01T00:00:01.000000Z')," +
+                    " (10, 0, 100.0, '2024-01-01T00:00:02.000000Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery("SELECT count(*) FROM x WHERE d = (s * s) + i")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n3\n");
+
+            // Narrow arithmetic mixed with a wider operand must JIT in scalar mode --
+            // SIMD would overflow at narrow width, but scalar upcasts to int.
+            try (RecordCursorFactory factory = select("SELECT count(*) FROM x WHERE d = (s * s) + i")) {
+                Assert.assertTrue("narrow arithmetic must JIT (scalar mode)",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNestedIntArithmeticWidenedToLongInLongContext() throws Exception {
+        assertMemoryLeak(() -> {
+            // The fuzzer hit a JIT/Java divergence on a predicate of shape
+            //   c0 <= ((-732674 * c5) + -238927)
+            // where c0 is LONG and c5 is INT. The Java filter computed
+            // AddInt.getLong as ((long) MulInt.getInt()) + rightInt, so the
+            // inner -732674 * c5 wrapped at int32 before the outer cast
+            // widened the sum to long. The JIT pre-pass widens every narrow
+            // operand to i64 up front and computes at long width throughout,
+            // so the two paths disagreed for c5 large enough that the inner
+            // product overflowed int32. After the fix MulInt / AddInt /
+            // SubInt / NegInt's getLong recurse via .getLong on their
+            // subtrees, keeping nested INT arithmetic at long width too.
+            execute("CREATE TABLE x (c0 LONG, c5 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1_000_000_000, 10000, '2024-01-01T00:00:00.000000Z')," +
+                    " (-7_326_979_000, 10000, '2024-01-01T00:00:00.000001Z')," +
+                    " (2_000_000_000, 10000, '2024-01-01T00:00:00.000002Z')");
+
+            // -732674 * 10000 = -7_326_740_000L (overflows int32). Adding
+            // -238927 yields -7_326_978_927L. Only c0 = -7_326_979_000
+            // satisfies c0 <= rhs at long width. Pre-fix the inner mul
+            // wrapped to 1_263_194_592 at int32, so rhs became 1_262_955_665
+            // and the c0 = 1_000_000_000 row also matched, giving a count
+            // of 2 on the Java filter while JIT (with widening) returned 1.
+            String sql = "SELECT count(*) FROM x WHERE c0 <= ((-732674 * c5) + -238927)";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("nested INT arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+
+            // Same shape with subtraction: (-732674 * c5) - 238927 reaches
+            // SubInt.getLong, which must recurse through MulInt as well.
+            String subSql = "SELECT count(*) FROM x WHERE c0 <= ((-732674 * c5) - 238927)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(subSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(subSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+
+            // Same shape under unary minus: -((-732674 * c5) + 238927)
+            // reaches NegInt.getLong, which must also recurse. At long width
+            // rhs = 7_326_501_073L and all three rows satisfy c0 <= rhs.
+            // Pre-fix the inner mul wrapped to 1_263_194_592 at int32, so
+            // rhs became -1_263_433_519 and only c0 = -7_326_979_000
+            // matched, giving a count of 1 on the Java filter while JIT
+            // returned 3.
+            String negSql = "SELECT count(*) FROM x WHERE c0 <= -((-732674 * c5) + 238927)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(negSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(negSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testNestedIntArithmeticWidenedToLongInLongContextViaDivision() throws Exception {
+        assertMemoryLeak(() -> {
+            // Division sibling of testNestedIntArithmeticWidenedToLongInLongContext.
+            // DivInt.getLong inherited IntFunction.getLong = intToLong(getInt()), so the
+            // inner 732674 * c5 wrapped at int32 before the outer divide and cast widened
+            // to long, while the JIT widens every narrow operand up front. After the fix
+            // DivInt.getLong recurses via .getLong, keeping the product at long width.
+            execute("CREATE TABLE x (c0 LONG, c5 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(0, 10000, '2024-01-01T00:00:00.000000Z')," +
+                    " (-200_000_000, 10000, '2024-01-01T00:00:00.000001Z')," +
+                    " (2_000_000_000, 10000, '2024-01-01T00:00:00.000002Z')");
+
+            // 732674 * 10000 = 7_326_740_000L (overflows int32); / 7 = 1_046_677_142L.
+            // c0 = 0 and c0 = -200_000_000 satisfy c0 <= rhs -> count 2. Pre-fix the inner
+            // mul wrapped to -1_263_194_592 at int32, so rhs became -180_456_370 and only
+            // c0 = -200_000_000 matched, giving count 1 on the Java filter while JIT
+            // (with widening) returned 2.
+            String sql = "SELECT count(*) FROM x WHERE c0 <= ((732674 * c5) / 7)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("nested INT division in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testNestedIntArithmeticWidenedToLongOnLhsAgainstLongRhs() throws Exception {
+        assertMemoryLeak(() -> {
+            // Regression: (c4 INT * (536728 * c8 BYTE)) >= ((-432577L - c8) + c7).
+            // Java's LtLong calls MulInt.getLong which widens; the JIT widen pre-pass
+            // observed only FLOAT constants, so -432577L did not flip
+            // needsNarrowI64Widening and the LHS ran at int32 (wrapping). Fix: observe
+            // LONG constants (L/l suffix or magnitude > INT_MAX) too.
+            execute("CREATE TABLE x (c4 INT, c7 BYTE, c8 BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(-1000000, 0, 127, '2024-01-01T00:00:00.000000Z')," +
+                    "  (100000, 0, 100, '2024-01-01T00:00:00.000001Z')," +
+                    "      (10, 0,   5, '2024-01-01T00:00:00.000002Z')");
+
+            // long-correct LHS: -6.8e13, 5.4e12, 2.7e7; rhs ~= -4.3e5. Rows 2 and 3 match.
+            // Pre-fix the wrapped int LHS was 9.7e8, -1.4e9, 2.7e7, flipping rows 1 and 2.
+            String sql = "SELECT count(*) FROM x WHERE (c4 * (536728 * c8)) >= ((-432577L - c8) + c7)";
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("nested INT*BYTE arithmetic in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+
+            // Double NOT around the comparison must not move the widening signal.
+            String notSql = "SELECT count(*) FROM x WHERE NOT (NOT ((c4 * (536728 * c8)) >= ((-432577L - c8) + c7)))";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(notSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(notSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+
+            // Magnitude-only LONG (no L suffix, > INT_MAX): only row 2's 5.4e12 clears 5e9.
+            String bigSql = "SELECT count(*) FROM x WHERE (c4 * (536728 * c8)) >= (5000000000 - c8 + c7)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(bigSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(bigSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testNullTokenDoesNotForceNarrowI64Widening() throws Exception {
+        assertMemoryLeak(() -> {
+            // null / true / false end in 'l' / 'e' and were folded into
+            // a bogus I8 / F8 observation by longConstantTypeCode /
+            // floatConstantTypeCode. In a predicate with narrow-int
+            // arithmetic the spurious I8 flipped needsNarrowI64Widening,
+            // emitted SX_I64 around the column read, and the JIT then
+            // computed at long width while the Java filter wrapped at int
+            // width.
+            execute("CREATE TABLE x (c4 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "( 1, '2024-01-01T00:00:00.000000Z')," +
+                    "( 0, '2024-01-01T00:00:00.000001Z')," +
+                    "(-1, '2024-01-01T00:00:00.000002Z')");
+
+            // c4=1: sum overflows int and wraps to INT_NULL, so the row
+            // is null in the Java path; the long-widened path stays at
+            // 2_147_483_648 and is never null.
+            String neqSql = "SELECT count(*) FROM x WHERE c4 + 2_147_483_647 != null";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(neqSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(neqSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n2\n");
+
+            try (RecordCursorFactory factory = select(neqSql)) {
+                Assert.assertTrue("predicate must remain JIT-compiled after the fix",
+                        factory.usesCompiledFilter());
+            }
+
+            // Same shape with =: only the wrap-to-null row matches.
+            String eqSql = "SELECT count(*) FROM x WHERE c4 + 2_147_483_647 = null";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(eqSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(eqSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n1\n");
+
+            // Cover true / false in the same JIT'd filter as wrapping
+            // int arithmetic to guard floatConstantTypeCode too.
+            execute("CREATE TABLE y (c4 INT, b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y VALUES " +
+                    "( 1, true,  '2024-01-01T00:00:00.000000Z')," +
+                    "( 0, true,  '2024-01-01T00:00:00.000001Z')," +
+                    "(-1, false, '2024-01-01T00:00:00.000002Z')");
+
+            String orSql = "SELECT count(*) FROM y WHERE (c4 + 2_147_483_647 != 0) OR (b = true)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertQuery(orSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n3\n");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertQuery(orSql)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testNonEqualityNullCompareWithVarSizeColumnRejectedByJit() throws Exception {
+        assertMemoryLeak(() -> {
+            // The fuzzer surfaced JIT-vs-Java divergences on queries like
+            //   WHERE null >= v AND d <= 0.7    (v VARCHAR)
+            // The IR serializer's ensureOnlyVarSizeHeaderChecks() fired only when
+            // both operands were var-size, but serializeNull() emitted the null
+            // sentinel as an I8/I4 IMM. So <varsize_col> >= null was accepted by
+            // the JIT path and the native kernel produced an arbitrary integer
+            // comparison against the var-size header that diverged from the Java
+            // filter's evaluation. Now JIT must reject any non-equality binary
+            // operator that touches a var-size operand and fall back to the Java
+            // filter, leaving IS NULL / IS NOT NULL (which lower to EQ/NE
+            // against the NULL header IMM) on the JIT path.
+            execute("CREATE TABLE x (v VARCHAR, s STRING, b BINARY, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES ('a', 'a', null, 0.1, '2024-01-01T00:00:00.000000Z')," +
+                    " ('b', 'b', null, 0.2, '2024-01-01T00:00:01.000000Z')," +
+                    " ('c', 'c', null, 0.3, '2024-01-01T00:00:02.000000Z')," +
+                    " ('d', 'd', null, 0.4, '2024-01-01T00:00:03.000000Z')," +
+                    " ('e', 'e', null, 0.5, '2024-01-01T00:00:04.000000Z')");
+
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+            // Non-equality comparisons against NULL with a var-size column on
+            // either side must not JIT.
+            String[] nonJitQueries = {
+                    "SELECT count(*) FROM x WHERE null >= v AND d <= 0.7",
+                    "SELECT count(*) FROM x WHERE v >= null AND d <= 0.7",
+                    "SELECT count(*) FROM x WHERE v < null",
+                    "SELECT count(*) FROM x WHERE null > s",
+            };
+            for (String q : nonJitQueries) {
+                try (RecordCursorFactory factory = select(q)) {
+                    Assert.assertFalse("must not JIT: " + q, factory.usesCompiledFilter());
+                }
+            }
+
+            // var-size IS NULL / IS NOT NULL must continue to JIT (these lower
+            // to EQ/NE against the NULL header IMM, which is the only legitimate
+            // var-size operand the JIT runtime supports). BINARY non-equality vs
+            // NULL is rejected at SQL parse time before reaching the JIT path,
+            // so only IS [NOT] NULL is meaningful to assert here for it.
+            String[] jitQueries = {
+                    "SELECT count(*) FROM x WHERE v IS NULL",
+                    "SELECT count(*) FROM x WHERE v IS NOT NULL",
+                    "SELECT count(*) FROM x WHERE s IS NULL",
+                    "SELECT count(*) FROM x WHERE s IS NOT NULL",
+                    "SELECT count(*) FROM x WHERE b IS NULL",
+                    "SELECT count(*) FROM x WHERE b IS NOT NULL",
+            };
+            for (String q : jitQueries) {
+                try (RecordCursorFactory factory = select(q)) {
+                    Assert.assertTrue("must JIT: " + q, factory.usesCompiledFilter());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameMaxSize() throws Exception {
         int pageFrameMaxRows = 128;
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, pageFrameMaxRows);
@@ -317,11 +1449,16 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     "from long_sequence(" + N + ")) timestamp(ts) partition by day");
 
             final String query = "select * from t1 where x < 3";
-            final String expected = "x\tts\n" +
-                    "1\t1970-01-01T00:00:00.000000Z\n" +
-                    "2\t1970-01-01T00:00:00.100000Z\n";
+            final String expected = """
+                    x\tts
+                    1\t1970-01-01T00:00:00.000000Z
+                    2\t1970-01-01T00:00:00.100000Z
+                    """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -335,11 +1472,16 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " from long_sequence(5)) timestamp(ts)");
 
             final String query = "select * from x where l > 3";
-            final String expected = "l\tts\n" +
-                    "4\t1970-01-05T15:31:40.000000Z\n" +
-                    "5\t1970-01-05T15:40:00.000000Z\n";
+            final String expected = """
+                    l\tts
+                    4\t1970-01-05T15:31:40.000000Z
+                    5\t1970-01-05T15:40:00.000000Z
+                    """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
 
             try (RecordCursorFactory factory = select(query)) {
@@ -387,11 +1529,16 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     "from long_sequence(5)");
 
             final String query = "select * from x where l > 3 and j = null";
-            final String expected = "l\tts\tj\n" +
-                    "4\t1970-01-05T15:31:40.000000Z\tnull\n" +
-                    "5\t1970-01-05T15:40:00.000000Z\tnull\n";
+            final String expected = """
+                    l\tts\tj
+                    4\t1970-01-05T15:31:40.000000Z\tnull
+                    5\t1970-01-05T15:40:00.000000Z\tnull
+                    """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
 
             try (RecordCursorFactory factory = select(query)) {
@@ -502,8 +1649,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
                 }
-                TestUtils.assertEquals("ts\tsym\n" +
-                        "1970-01-05T15:23:20.000000Z\tB\n", sink);
+                TestUtils.assertEquals("""
+                        ts\tsym
+                        1970-01-05T15:23:20.000000Z\tB
+                        """, sink);
 
                 BindVariableServiceImpl bindService2 = new BindVariableServiceImpl(configuration);
                 bindService2.setStr("sym", "C");
@@ -513,9 +1662,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 ) {
                     println(factory, cursor);
                 }
-                TestUtils.assertEquals("ts\tsym\n" +
-                        "1970-01-05T15:31:40.000000Z\tC\n" +
-                        "1970-01-05T15:40:00.000000Z\tC\n", sink);
+                TestUtils.assertEquals("""
+                        ts\tsym
+                        1970-01-05T15:31:40.000000Z\tC
+                        1970-01-05T15:40:00.000000Z\tC
+                        """, sink);
             }
         });
     }
@@ -526,27 +1677,61 @@ public class CompiledFilterTest extends AbstractCairoTest {
             execute("create table test (s symbol)");
             execute("insert into test values ('C'), ('B'), ('A')");
 
-            assertSql("s\nB\nA\n", "select s from test where s <  'C'");
-            assertSql("s\nC\nB\nA\n", "select s from test where s <= 'C'");
-            assertSql("s\n", "select s from test where s >  'C'");
-            assertSql("s\nC\n", "select s from test where s >= 'C'");
+            assertQuery("select s from test where s <  'C'")
+                    .noLeakCheck()
+                    .returns("s\nB\nA\n");
+            assertQuery("select s from test where s <= 'C'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\nA\n");
+            assertQuery("select s from test where s >  'C'")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("select s from test where s >= 'C'")
+                    .noLeakCheck()
+                    .returns("s\nC\n");
 
-            assertSql("s\nA\n", "select s from test where s <  'B'");
-            assertSql("s\nB\nA\n", "select s from test where s <= 'B'");
-            assertSql("s\nC\n", "select s from test where s >  'B'");
-            assertSql("s\nC\nB\n", "select s from test where s >= 'B'");
+            assertQuery("select s from test where s <  'B'")
+                    .noLeakCheck()
+                    .returns("s\nA\n");
+            assertQuery("select s from test where s <= 'B'")
+                    .noLeakCheck()
+                    .returns("s\nB\nA\n");
+            assertQuery("select s from test where s >  'B'")
+                    .noLeakCheck()
+                    .returns("s\nC\n");
+            assertQuery("select s from test where s >= 'B'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\n");
 
-            assertSql("s\n", "select s from test where s <  'A'");
-            assertSql("s\nA\n", "select s from test where s <= 'A'");
-            assertSql("s\nC\nB\n", "select s from test where s >  'A'");
-            assertSql("s\nC\nB\nA\n", "select s from test where s >= 'A'");
+            assertQuery("select s from test where s <  'A'")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("select s from test where s <= 'A'")
+                    .noLeakCheck()
+                    .returns("s\nA\n");
+            assertQuery("select s from test where s >  'A'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\n");
+            assertQuery("select s from test where s >= 'A'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\nA\n");
 
-            assertSql("s\nC\nB\nA\n", "select s from test where s <  'Z'");
-            assertSql("s\nC\nB\nA\n", "select s from test where s <= 'Z'");
-            assertSql("s\n", "select s from test where s >  'Z'");
-            assertSql("s\n", "select s from test where s >= 'Z'");
+            assertQuery("select s from test where s <  'Z'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\nA\n");
+            assertQuery("select s from test where s <= 'Z'")
+                    .noLeakCheck()
+                    .returns("s\nC\nB\nA\n");
+            assertQuery("select s from test where s >  'Z'")
+                    .noLeakCheck()
+                    .returns("s\n");
+            assertQuery("select s from test where s >= 'Z'")
+                    .noLeakCheck()
+                    .returns("s\n");
 
-            assertSql("s\n", "select s from test where s <  null");
+            assertQuery("select s from test where s <  null")
+                    .noLeakCheck()
+                    .returns("s\n");
         });
     }
 
@@ -571,7 +1756,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     10bb226e-b424-4e36-83b9-1ec970b04e78\t1970-01-05T19:25:00.000000Z
                     """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
 
             // check JIT uses both hi and lo for comparison
@@ -581,19 +1769,28 @@ public class CompiledFilterTest extends AbstractCairoTest {
             String expectedEmpty = """
                     u	ts
                     """;
-            assertSql(expectedEmpty, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedEmpty);
             assertSqlRunWithJit(query);
 
             // use a dummy hi
             bindVariableService.clear();
             bindVariableService.setUuid(0, uuid.getLo(), 0);
-            assertSql(expectedEmpty, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedEmpty);
             assertSqlRunWithJit(query);
 
             // switch hi and lo
             bindVariableService.clear();
             bindVariableService.setUuid(0, uuid.getHi(), uuid.getLo());
-            assertSql(expectedEmpty, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedEmpty);
             assertSqlRunWithJit(query);
 
             // null uuid
@@ -604,7 +1801,49 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     u	ts
                     	2020-01-01T00:00:00.000000Z
                     """;
-            assertSql(expectedWithNull, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedWithNull);
+            assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testUuidBindFollowedByOtherBinds() throws Exception {
+        // Reproduces the case where a UUID bind variable precedes other bind
+        // variables in the same JIT-compiled filter. The bind-var memory layout
+        // has a 16-byte UUID slot, but the JIT addresses every slot at idx*8,
+        // so subsequent bind variables would be read from the wrong offset.
+        assertMemoryLeak(() -> {
+            execute("""
+                    create table x (\
+                        u UUID, sym SYMBOL, ts TIMESTAMP\
+                    ) timestamp(ts) partition by day""");
+
+            Uuid uuid = new Uuid();
+            uuid.of("10bb226e-b424-4e36-83b9-1ec970b04e78");
+
+            execute("insert into x values ('10bb226e-b424-4e36-83b9-1ec970b04e78', '1m', '2023-01-01T00:00:00.000Z')");
+
+            bindVariableService.clear();
+            bindVariableService.setUuid(0, uuid.getLo(), uuid.getHi());
+            bindVariableService.setStr(1, "1m");
+            bindVariableService.setTimestamp(2, 0L);
+            bindVariableService.setTimestamp(3, Long.MAX_VALUE);
+
+            final String query = "select u from x where u = $1 and sym = $2 and ts >= $3 and ts <= $4";
+            final String expected = """
+                    u
+                    10bb226e-b424-4e36-83b9-1ec970b04e78
+                    """;
+
+            assertQuery(query)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -624,8 +1863,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 println(factory, cursor);
             }
-            TestUtils.assertEquals("a\tl\n" +
-                    "1000\t1\n", sink);
+            TestUtils.assertEquals("""
+                    a\tl
+                    1000\t1
+                    """, sink);
 
             BindVariableServiceImpl bindService2 = new BindVariableServiceImpl(configuration);
             bindService2.setInt(0, 2);
@@ -636,8 +1877,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             ) {
                 println(factory, cursor);
             }
-            TestUtils.assertEquals("a\tl\n" +
-                    "1002\t2\n", sink);
+            TestUtils.assertEquals("""
+                    a\tl
+                    1002\t2
+                    """, sink);
         }
     }
 
@@ -657,8 +1900,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 println(factory, cursor);
             }
-            TestUtils.assertEquals("a\tl\n" +
-                    "1000\t1\n", sink);
+            TestUtils.assertEquals("""
+                    a\tl
+                    1000\t1
+                    """, sink);
 
             BindVariableServiceImpl bindService2 = new BindVariableServiceImpl(configuration);
             bindService2.setInt("v1", 2);
@@ -670,8 +1915,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             ) {
                 println(factory, cursor);
             }
-            TestUtils.assertEquals("a\tl\n" +
-                    "1002\t2\n", sink);
+            TestUtils.assertEquals("""
+                    a\tl
+                    1002\t2
+                    """, sink);
         }
     }
 
@@ -692,7 +1939,10 @@ public class CompiledFilterTest extends AbstractCairoTest {
             final String query = "select * from x where l + :l = " + (Numbers.LONG_NULL + value);
             final String expected = "l\tts\n";
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -718,34 +1968,40 @@ public class CompiledFilterTest extends AbstractCairoTest {
                             "from long_sequence(20)"
             );
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
             assertSqlRunWithJit(query);
         });
     }
 
     private void testSelectAllBothPageFramesFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
         final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " * from t1 where x >= 3 and x <= 4";
-        final String expected = "x\tts\tj\n" +
-                "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
-                "4\t1970-01-01T00:00:03.000000Z\tnull\n" +
-                "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n" +
-                "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n";
+        final String expected = """
+                x\tts\tj
+                3\t1970-01-01T00:00:02.000000Z\tnull
+                4\t1970-01-01T00:00:03.000000Z\tnull
+                3\t1970-01-01T00:01:42.000000Z\t7746536061816329025
+                4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475
+                """;
 
         testFilterWithColTops(query, expected, jitMode);
     }
 
     private void testSelectAllFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
         final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " * from t1 where j < 0";
-        final String expected = "x\tts\tj\n" +
-                "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n" +
-                "7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998\n" +
-                "8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881\n" +
-                "9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006\n" +
-                "10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536\n" +
-                "14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807\n" +
-                "15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839\n" +
-                "16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712\n" +
-                "17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060\n";
+        final String expected = """
+                x\tts\tj
+                4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475
+                7\t1970-01-01T00:01:46.000000Z\t-7611843578141082998
+                8\t1970-01-01T00:01:47.000000Z\t-5354193255228091881
+                9\t1970-01-01T00:01:48.000000Z\t-2653407051020864006
+                10\t1970-01-01T00:01:49.000000Z\t-1675638984090602536
+                14\t1970-01-01T00:01:53.000000Z\t-7489826605295361807
+                15\t1970-01-01T00:01:54.000000Z\t-4094902006239100839
+                16\t1970-01-01T00:01:55.000000Z\t-4474835130332302712
+                17\t1970-01-01T00:01:56.000000Z\t-6943924477733600060
+                """;
 
         testFilterWithColTops(query, expected, jitMode);
     }
@@ -753,12 +2009,14 @@ public class CompiledFilterTest extends AbstractCairoTest {
     private void testSelectAllTypesFromRecord(boolean preTouch) throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(x) */" : "") + " * from x where b = true and kk < 10";
-            final String expected = "kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c\n" +
-                    "2\t1637847416\ttrue\tV\t0.4900510449885239\t0.8258367\t553\t2015-12-28T22:25:40.934Z\t\t-7611030538224290496\t1970-01-05T15:15:00.000000Z\t37\t00000000 3e e3 f1 f1 1e ca 9c 1d 06 ac\tKGHVUVSDOTSED\tY\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t0\t10\t110\te\tsj\tfhcq\t35jvygt2\n" +
-                    "3\t844704299\ttrue\t\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-05T15:23:20.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
-                    "00000010 e7 0c 89\tLJUMLGLHMLLEO\tY\t0xabbcbeeddca3d4fe4f25a88863fc0f467f24de22c77acf93e983e65f5551d073\t0\t01\t000\tf\t33\teusj\tb5z6npxr\n" +
-                    "6\t-1501720177\ttrue\tP\t0.18158967304439033\t0.8196554\t501\t2015-06-08T17:20:46.703Z\tPEHN\t-4229502740666959541\t1970-01-05T15:48:20.000000Z\t19\t\tTNLEGP\tU\t0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\t1\t01\t010\tr\tc0\twhjh\trcqfw2hw\n" +
-                    "8\t526232578\ttrue\tE\t0.6379992093447574\t0.85148495\t850\t2015-08-19T05:52:05.329Z\tPEHN\t-5157086556591926155\t1970-01-05T16:05:00.000000Z\t42\t00000000 6d 8c d8 ac c8 46 3b 47 3c e1 72 3b 9d\tJSMKIXEYVTUPD\tH\t0x2337f7e6b82ebc2405c5c1b231cffa455a6e970fb8b80abcc4129ae493cc6076\t0\t11\t000\t5\ttp\tx578\ttdnxkw6d\n";
+            final String expected = """
+                    kk\ta\tb\tc\td\te\tf\tg\ti\tj\tk\tl\tm\tn\tcc\tl2\thash1b\thash2b\thash3b\thash1c\thash2c\thash4c\thash8c
+                    2\t1637847416\ttrue\tV\t0.4900510449885239\t0.8258367\t553\t2015-12-28T22:25:40.934Z\t\t-7611030538224290496\t1970-01-05T15:15:00.000000Z\t37\t00000000 3e e3 f1 f1 1e ca 9c 1d 06 ac\tKGHVUVSDOTSED\tY\t0x772c8b7f9505620ebbdfe8ff0cd60c64712fde5706d6ea2f545ded49c47eea61\t0\t10\t110\te\tsj\tfhcq\t35jvygt2
+                    3\t844704299\ttrue\t\t0.3456897991538844\t0.24008358\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-05T15:23:20.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a
+                    00000010 e7 0c 89\tLJUMLGLHMLLEO\tY\t0xabbcbeeddca3d4fe4f25a88863fc0f467f24de22c77acf93e983e65f5551d073\t0\t01\t000\tf\t33\teusj\tb5z6npxr
+                    6\t-1501720177\ttrue\tP\t0.18158967304439033\t0.8196554\t501\t2015-06-08T17:20:46.703Z\tPEHN\t-4229502740666959541\t1970-01-05T15:48:20.000000Z\t19\t\tTNLEGP\tU\t0x79423d4d320d2649767a4feda060d4fb6923c0c7d965969da1b1140a2be25241\t1\t01\t010\tr\tc0\twhjh\trcqfw2hw
+                    8\t526232578\ttrue\tE\t0.6379992093447574\t0.85148495\t850\t2015-08-19T05:52:05.329Z\tPEHN\t-5157086556591926155\t1970-01-05T16:05:00.000000Z\t42\t00000000 6d 8c d8 ac c8 46 3b 47 3c e1 72 3b 9d\tJSMKIXEYVTUPD\tH\t0x2337f7e6b82ebc2405c5c1b231cffa455a6e970fb8b80abcc4129ae493cc6076\t0\t11\t000\t5\ttp\tx578\ttdnxkw6d
+                    """;
             final String ddl = "create table x as (select" +
                     " cast(x as int) kk," +
                     " rnd_int() a," +
@@ -785,13 +2043,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " rnd_geohash(40) hash8c" +
                     " from long_sequence(100)) timestamp(k)";
 
-            assertQueryNoLeakCheck(
-                    expected,
-                    query,
-                    ddl,
-                    "k",
-                    true
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .ddl(ddl)
+                    .timestamp("k")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }
@@ -800,9 +2056,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
         // The column order is important here, since we want
         // query and table column indexes to be different.
         final String query = "select " + (preTouch ? "/*+ ENABLE_PRE_TOUCH(t1) */" : "") + " j from t1 where j <> null and x < 3";
-        final String expected = "j\n" +
-                "4689592037643856\n" +
-                "4729996258992366\n";
+        final String expected = """
+                j
+                4689592037643856
+                4729996258992366
+                """;
 
         testFilterWithColTops(query, expected, jitMode);
     }
@@ -820,10 +2078,15 @@ public class CompiledFilterTest extends AbstractCairoTest {
             bindVariableService.setLong("l", 3614738589890112276L);
 
             final String query = "select * from x where l = :l";
-            final String expected = "l\tts\n" +
-                    "3614738589890112276\t1970-01-05T16:38:20.000000Z\n";
+            final String expected = """
+                    l\tts
+                    3614738589890112276\t1970-01-05T16:38:20.000000Z
+                    """;
 
-            assertSql(expected, query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
             assertSqlRunWithJit(query);
         });
     }

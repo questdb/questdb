@@ -25,6 +25,8 @@ import java.math.RoundingMode;
  * </p>
  */
 public class Decimal128 implements Sinkable, Decimal {
+
+    public static final int BYTES = 16;
     /**
      * Maximum allowed precision (number of digits)
      */
@@ -206,6 +208,7 @@ public class Decimal128 implements Sinkable, Decimal {
     private final DecimalKnuthDivider divider = new DecimalKnuthDivider();
     private long high;  // High 64 bits
     private long low;   // Low 64 bits
+    private int[] ryuE10;
     private int scale;  // Number of decimal places
 
     /**
@@ -241,8 +244,6 @@ public class Decimal128 implements Sinkable, Decimal {
         }
     }
 
-    /* ---------- helpers (use built-in power-of-ten tables) ---------- */
-
     /**
      * Add two Decimal128 numbers and store the result in sink
      *
@@ -254,6 +255,8 @@ public class Decimal128 implements Sinkable, Decimal {
         sink.copyFrom(a);
         sink.add(b);
     }
+
+    /* ---------- helpers (use built-in power-of-ten tables) ---------- */
 
     /**
      * Compares 2 Decimal128, ignoring scaling.
@@ -516,13 +519,13 @@ public class Decimal128 implements Sinkable, Decimal {
     }
 
     public static void put(long high, long low, long addr) {
-        Unsafe.getUnsafe().putLong(addr, high);
-        Unsafe.getUnsafe().putLong(addr + Long.BYTES, low);
+        Unsafe.putLong(addr, high);
+        Unsafe.putLong(addr + Long.BYTES, low);
     }
 
     public static void putNull(long addr) {
-        Unsafe.getUnsafe().putLong(addr, Decimals.DECIMAL128_HI_NULL);
-        Unsafe.getUnsafe().putLong(addr + 8L, Decimals.DECIMAL128_LO_NULL);
+        Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
+        Unsafe.putLong(addr + 8L, Decimals.DECIMAL128_LO_NULL);
     }
 
     /**
@@ -1108,6 +1111,14 @@ public class Decimal128 implements Sinkable, Decimal {
         }
 
         divide(0, 1, 0, targetScale, roundingMode);
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     /**

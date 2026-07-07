@@ -35,6 +35,7 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -55,8 +56,8 @@ import static io.questdb.cairo.wal.WalUtils.*;
 
 public class TableTransactionLog implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
-    private static final ThreadLocal<AlterOperation> tlAlterOperation = new ThreadLocal<>();
-    private static final ThreadLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new ThreadLocal<>();
+    private static final CarrierLocal<AlterOperation> tlAlterOperation = new CarrierLocal<>();
+    private static final CarrierLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxMetadataVersion = new AtomicLong();
@@ -232,7 +233,7 @@ public class TableTransactionLog implements Closeable {
 
     long endMetadataChangeEntry() {
         fullSync();
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
         maxMetadataVersion.incrementAndGet();
         return txn;
@@ -240,6 +241,10 @@ public class TableTransactionLog implements Closeable {
 
     TransactionLogCursor getCursor(long txnLo) {
         return txnLogFile.getCursor(txnLo, Path.getThreadLocal(rootPath));
+    }
+
+    long getMaxMetadataVersion() {
+        return maxMetadataVersion.get();
     }
 
     @NotNull
@@ -366,7 +371,7 @@ public class TableTransactionLog implements Closeable {
                     return;
                 }
 
-                throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
+                throw CairoException.critical(0).put("expected to read table structure changes but there is none saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
             } finally {
                 ff.close(txnMetaFd);
                 ff.close(txnMetaIndexFd);

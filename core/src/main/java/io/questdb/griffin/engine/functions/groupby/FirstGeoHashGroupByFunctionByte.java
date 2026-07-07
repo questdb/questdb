@@ -46,12 +46,12 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
     }
 
     @Override
-    public void computeBatch(MapValue mapValue, long ptr, int count, long startRowId) {
-        if (count > 0) {
+    public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
+        if (rowCount > 0) {
             long existingRowId = mapValue.getLong(valueIndex);
             if (startRowId < existingRowId || existingRowId == Numbers.LONG_NULL) {
                 mapValue.putLong(valueIndex, startRowId);
-                mapValue.putByte(valueIndex + 1, Unsafe.getUnsafe().getByte(ptr));
+                mapValue.putByte(valueIndex + 1, Unsafe.getByte(dataAddr));
             }
         }
     }
@@ -64,7 +64,9 @@ public class FirstGeoHashGroupByFunctionByte extends GeoByteFunction implements 
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        // empty
+        if (rowId < mapValue.getLong(valueIndex)) {
+            computeFirst(mapValue, record, rowId);
+        }
     }
 
     @Override

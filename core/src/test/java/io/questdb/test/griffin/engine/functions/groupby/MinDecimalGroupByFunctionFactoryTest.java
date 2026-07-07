@@ -31,11 +31,8 @@ public class MinDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMin() throws Exception {
-        assertQuery(
-                "m8\tm16\tm32\tm64\tm128\tm256\n" +
-                        "0\t0.0\t0.0\t0.00\t0.000\t1.000000\n",
-                "select min(d8) m8, min(d16) m16, min(d32) m32, min(d64) m64, min(d128) m128, min(d256) m256 from x",
-                "create table x as (" +
+        assertQuery("select min(d8) m8, min(d16) m16, min(d32) m32, min(d64) m64, min(d128) m128, min(d256) m256 from x")
+                .ddl("create table x as (" +
                         "select" +
                         " cast(x%2 as decimal(2,0)) d8, " +
                         " cast(x%3 as decimal(4,1)) d16, " +
@@ -45,38 +42,30 @@ public class MinDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " cast(x%1000 as decimal(76,6)) d256, " +
                         " timestamp_sequence(0, 1000) ts" +
                         " from long_sequence(100)" +
-                        ") timestamp(ts) partition by month",
-                null,
-                false,
-                true
-        );
+                        ") timestamp(ts) partition by month")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        m8\tm16\tm32\tm64\tm128\tm256
+                        0\t0.0\t0.0\t0.00\t0.000\t1.000000
+                        """);
     }
 
     @Test
     public void testMinAllNull() throws Exception {
-        assertQuery(
-                "min\n\n",
-                "select min(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))",
-                null,
-                false,
-                true
-        );
+        assertQuery("select min(x) from (select cast(null as decimal(10,2)) x from long_sequence(1000))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("min\n\n");
     }
 
     @Test
     public void testMinKeyed() throws Exception {
-        assertQuery(
-                "key\tm8\tm16\tm32\tm64\tm128\tm256\n" +
-                        "4\t0\t0.7\t45.6\t9516116412.42\t1249700766257304067881104.715\t26569896652744545227258357538980448808375418037382703146739545.53411\n" +
-                        "3\t0\t1.0\t764.3\t14413140006.68\t14009899734713494655243293.977\t18424786054828937641371486332303834735549581809675825882017721.24503\n" +
-                        "2\t0\t0.1\t108.0\t2355986723.93\t29350537582167712880732141.975\t98251806332045731296204472304201465326768046788025211797176160.79739\n" +
-                        "1\t0\t1.0\t58.5\t4613783414.13\t9334117075839212356219090.391\t57394877098324224183907040745420083885435039013499806304650942.51905\n" +
-                        "0\t0\t0.6\t1412.2\t2945918070.21\t13538565735969580352006935.514\t26143183604600090594250684619353778141518714287817295801364560.99782\n",
-                "select id%5 key, min(d8) m8, min(d16) m16, min(d32) m32, " +
-                        "min(d64) m64, min(d128) m128, min(d256) m256 " +
-                        "from x " +
-                        "order by key desc",
-                "create table x as (" +
+        assertQuery("select id%5 key, min(d8) m8, min(d16) m16, min(d32) m32, " +
+                "min(d64) m64, min(d128) m128, min(d256) m256 " +
+                "from x " +
+                "order by key desc")
+                .ddl("create table x as (" +
                         "select" +
                         " x id," +
                         " rnd_decimal(2,0,2) d8," +
@@ -87,10 +76,15 @@ public class MinDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " rnd_decimal(70,5,2) d256," +
                         " timestamp_sequence(0, 1000) ts" +
                         " from long_sequence(10000)" +
-                        ") timestamp(ts) partition by month",
-                null,
-                true,
-                true
-        );
+                        ") timestamp(ts) partition by month")
+                .expectSize()
+                .returns("""
+                        key\tm8\tm16\tm32\tm64\tm128\tm256
+                        4\t0\t0.7\t45.6\t9516116412.42\t1249700766257304067881104.715\t26569896652744545227258357538980448808375418037382703146739545.53411
+                        3\t0\t1.0\t764.3\t14413140006.68\t14009899734713494655243293.977\t18424786054828937641371486332303834735549581809675825882017721.24503
+                        2\t0\t0.1\t108.0\t2355986723.93\t29350537582167712880732141.975\t98251806332045731296204472304201465326768046788025211797176160.79739
+                        1\t0\t1.0\t58.5\t4613783414.13\t9334117075839212356219090.391\t57394877098324224183907040745420083885435039013499806304650942.51905
+                        0\t0\t0.6\t1412.2\t2945918070.21\t13538565735969580352006935.514\t26143183604600090594250684619353778141518714287817295801364560.99782
+                        """);
     }
 }

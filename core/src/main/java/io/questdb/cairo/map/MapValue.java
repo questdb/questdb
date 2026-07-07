@@ -77,7 +77,7 @@ public interface MapValue extends Record {
     short getShort(int index);
 
     /**
-     * Depending on Map implementation, returns either the key-value pair start address (FastMap)
+     * Depending on Map implementation, returns either the key-value pair start address (OrderedMap)
      * or the value address (other Maps).
      * <p>
      * In any case, the returned value can be used to make a {@link Map#valueAt(long)} call.
@@ -131,8 +131,6 @@ public interface MapValue extends Record {
     void putShort(int index, short value);
 
     void putTimestamp(int index, long value);
-
-    void setMapRecordHere();
 
     default void setNew(boolean isNew) {
     }

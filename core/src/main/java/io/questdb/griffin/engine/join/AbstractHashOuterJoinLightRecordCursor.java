@@ -50,7 +50,7 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
             LongChain slaveChain
     ) {
         super(columnSplit);
-        isOpen = true;
+        isOpen = false;
         this.joinKeyMap = joinKeyMap;
         this.slaveChain = slaveChain;
     }
@@ -91,14 +91,15 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
             RecordCursor cursor,
             Map keyMap,
             RecordSink recordSink,
-            LongChain rowIDChain
+            LongChain rowIDChain,
+            Record keyRecord
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             MapKey key = keyMap.withKey();
-            key.put(record, recordSink);
+            key.put(keyRecord, recordSink);
             MapValue value = key.createValue();
             if (value.isNew()) {
                 value.putInt(0, rowIDChain.put(record.getRowId(), -1));
@@ -113,14 +114,15 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
             RecordCursor cursor,
             Map keyMap,
             RecordSink recordSink,
-            LongChain rowIDChain
+            LongChain rowIDChain,
+            Record keyRecord
     ) {
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
             MapKey key = keyMap.withKey();
-            key.put(record, recordSink);
+            key.put(keyRecord, recordSink);
             MapValue value = key.createValue();
             if (value.isNew()) {
                 value.putInt(0, rowIDChain.put(record.getRowId(), -1));
@@ -132,13 +134,21 @@ public abstract class AbstractHashOuterJoinLightRecordCursor extends AbstractJoi
     }
 
     protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (!isOpen) {
-            isOpen = true;
-            slaveChain.reopen();
-            joinKeyMap.reopen();
-        }
+        ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
         this.masterCursor = masterCursor;
         this.slaveCursor = slaveCursor;
+    }
+
+    // Sets up the per-run join state from the master/slave cursors without adopting them into the owned
+    // fields, letting a filtered subclass run its throwing filter.init() and adopt the cursors last.
+    protected void ofWithoutAdopt(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (!isOpen) {
+            isOpen = true;
+            slaveChain.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+            slaveChain.reopen();
+            joinKeyMap.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
+            joinKeyMap.reopen();
+        }
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         masterRecord = masterCursor.getRecord();
         slaveRecord = slaveCursor.getRecordB();

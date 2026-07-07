@@ -36,7 +36,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -77,13 +76,14 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
             new Thread(() -> {
                 started.countDown();
                 try {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        TestUtils.assertSql(compiler, regularUserContext1, query, sink, "t\n1\n");
-                        Assert.fail("Query should have been cancelled");
-                    } catch (Exception e) {
-                        if (!e.getMessage().contains("cancelled by user")) {
-                            error.set(e);
-                        }
+                    assertQuery(query)
+                            .withContext(regularUserContext1)
+                            .noLeakCheck()
+                            .returnsOnce("t\n1\n");
+                    Assert.fail("Query should have been cancelled");
+                } catch (Exception e) {
+                    if (!e.getMessage().contains("cancelled by user")) {
+                        error.set(e);
                     }
                 } finally {
                     stopped.countDown();
@@ -135,19 +135,29 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testListQueriesWithNoQueryRunningShowsOwnSelect() throws Exception {
-        assertQuery(
-                "username\tquery\n" +
-                        "admin\tselect username, query from query_activity()\n",
-                "select username, query from query_activity()",
-                null,
-                false,
-                false
-        );
-        assertMemoryLeak(() -> assertQuery("username\tquery\n" +
-                        "admin\tselect username, query from query_activity()\n",
-                "select username, query from query_activity()",
-                null, false, false
-        ));
+        assertQuery("select username, query from query_activity()")
+                .noRandomAccess()
+                .returns("""
+                        username\tquery
+                        admin\tselect username, query from query_activity()
+                        """);
+        assertMemoryLeak(() -> assertQuery("select username, query from query_activity()")
+                .noRandomAccess()
+                .returns("""
+                        username\tquery
+                        admin\tselect username, query from query_activity()
+                        """));
+    }
+
+    @Test
+    public void testMemoryColumnsWithoutLimit() throws Exception {
+        // With no per-query limit configured (the default), memory_limit is NULL
+        // (0 means unlimited) while memory_used is still populated for the running
+        // top-level query: its bound tracker reports a non-negative byte count.
+        assertQuery("select memory_used >= 0 used_ok, memory_limit is null limit_null from query_activity()")
+                .noRandomAccess()
+                .returns("used_ok\tlimit_null\n" +
+                        "true\ttrue\n");
     }
 
     @Test
@@ -162,13 +172,14 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
             new Thread(() -> {
                 started.countDown();
                 try {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        TestUtils.assertSql(compiler, adminUserContext1, query, new StringSink(), "t\n1\n");
-                        Assert.fail("Query should have been cancelled");
-                    } catch (Exception e) {
-                        if (!e.getMessage().contains("cancelled by user")) {
-                            error.set(e);
-                        }
+                    assertQuery(query)
+                            .withContext(adminUserContext1)
+                            .noLeakCheck()
+                            .returnsOnce("t\n1\n");
+                    Assert.fail("Query should have been cancelled");
+                } catch (Exception e) {
+                    if (!e.getMessage().contains("cancelled by user")) {
+                        error.set(e);
                     }
                 } finally {
                     stopped.countDown();
@@ -195,15 +206,12 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     // regular user can't see admins command
-                    assertQueryNoLeakCheck(
-                            compiler,
-                            "query_id\tquery\n",
-                            activityQuery,
-                            null,
-                            regularUserContext1,
-                            false,
-                            false
-                    );
+                    assertQuery(activityQuery)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(regularUserContext1)
+                            .noRandomAccess()
+                            .returns("query_id\tquery\n");
 
                     execute("cancel query " + queryId, adminUserContext2);
                 }
@@ -220,19 +228,42 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testQueryIdToCancelMustBeNonNegativeInteger() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("cancel ", 6, "'QUERY' expected", adminUserContext1);
-            assertExceptionNoLeakCheck("cancel SQL 1", 7, "'QUERY' expected", adminUserContext1);
-            assertExceptionNoLeakCheck("cancel query 9223372036854775808", 13, "non-negative integer literal expected as query id", adminUserContext1);
-            assertExceptionNoLeakCheck("cancel query -123456789", 13, "non-negative integer literal expected as query id", adminUserContext1);
-            assertExceptionNoLeakCheck("cancel query 123456789 BLAH", 23, "unexpected token [BLAH]", adminUserContext1);
-            assertExceptionNoLeakCheck("cancel query 12.01f", 15, "unexpected token [.]", adminUserContext1);
-            assertExceptionNoLeakCheck("cancel query 1A", 13, "non-negative integer literal expected as query id", adminUserContext1);
+            assertQuery("cancel ")
+                    .withContext(adminUserContext1)
+                    .noLeakCheck()
+                    .fails(6, "'QUERY' expected");
+            assertQuery("cancel SQL 1")
+                    .withContext(adminUserContext1)
+                    .noLeakCheck()
+                    .fails(7, "'QUERY' expected");
+            assertQuery("cancel query 9223372036854775808")
+                    .withContext(adminUserContext1)
+                    .noLeakCheck()
+                    .fails(13, "non-negative integer literal expected as query id");
+            assertQuery("cancel query -123456789")
+                    .withContext(adminUserContext1)
+                    .noLeakCheck()
+                    .fails(13, "non-negative integer literal expected as query id");
+            assertQuery("cancel query 123456789 BLAH")
+                    .withContext(adminUserContext1)
+                    .noLeakCheck()
+                    .fails(23, "unexpected token [BLAH]");
+            assertQuery("cancel query 12.01f")
+                    .withContext(adminUserContext1)
+                    .noLeakCheck()
+                    .fails(15, "unexpected token [.]");
+            assertQuery("cancel query 1A")
+                    .withContext(adminUserContext1)
+                    .noLeakCheck()
+                    .fails(13, "non-negative integer literal expected as query id");
         });
     }
 
     @Test
     public void testRegularUserCanNotCancelQueries() throws Exception {
-        assertException("cancel query 123456789", 13, "Query cancellation is disabled", regularUserContext1);
+        assertQuery("cancel query 123456789")
+                .withContext(regularUserContext1)
+                .fails(13, "Query cancellation is disabled");
     }
 
     private static class AdminContext extends AllowAllSecurityContext {

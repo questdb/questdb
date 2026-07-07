@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -35,14 +34,13 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameState;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectIntIntHashMap;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntMultiLongHashMap;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -55,7 +53,7 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
     static final int KEY_SHIFT = 2;
     static final int NULL_KEY = 1;
     static final int SLAVE_MAP_INITIAL_CAPACITY = 16;
-    static final double SLAVE_MAP_LOAD_FACTOR = 0.5;
+    static final double SLAVE_MAP_LOAD_FACTOR = 0.7;
     private final int masterSymbolIndex;
     private final WindowJoinPrevailingCache ownerPrevailingCache;
     private final DirectIntMultiLongHashMap ownerSlaveData;
@@ -237,23 +235,13 @@ public class AsyncWindowJoinFastAtom extends AsyncWindowJoinAtom {
             SqlExecutionContext executionContext,
             SymbolTableSource masterSymbolTableSource,
             TablePageFrameCursor pageFrameCursor,
-            PageFrameAddressCache frameAddressCache,
-            DirectIntList framePartitionIndexes,
-            LongList frameRowCounts,
-            LongList partitionTimestamps,
-            LongList partitionCeilings,
-            int frameCount
+            ConcurrentTimeFrameState sharedState
     ) throws SqlException {
         super.initTimeFrameCursors(
                 executionContext,
                 masterSymbolTableSource,
                 pageFrameCursor,
-                frameAddressCache,
-                framePartitionIndexes,
-                frameRowCounts,
-                partitionTimestamps,
-                partitionCeilings,
-                frameCount
+                sharedState
         );
 
         slaveSymbolLookupMap.reopen();

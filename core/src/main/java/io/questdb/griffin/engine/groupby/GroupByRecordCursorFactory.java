@@ -45,13 +45,16 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.AbstractVirtualFunctionRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
@@ -61,6 +64,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
     private final ObjList<Function> recordFunctions;
+    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private ObjList<GroupBySharedCursor> sharedCursors;
 
     public GroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -72,7 +77,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordMetadata groupByMetadata,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> keyFunctions,
-            ObjList<Function> recordFunctions
+            ObjList<Function> recordFunctions,
+            @Nullable ObjList<ObjList<Function>> sharedRecordFunctions
     ) {
         super(groupByMetadata);
         try {
@@ -80,6 +86,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.groupByFunctions = groupByFunctions;
             this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
+            this.sharedRecordFunctions = sharedRecordFunctions;
             // sink will be storing record columns to map key
             this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
@@ -87,6 +94,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         } catch (Throwable e) {
             close();
             throw e;
+        }
+    }
+
+    public static void freeSharedRecordFunctions(@Nullable ObjList<ObjList<Function>> sharedRecordFunctions) {
+        if (sharedRecordFunctions != null) {
+            for (int i = 0, n = sharedRecordFunctions.size(); i < n; i++) {
+                Misc.freeObjListAndClear(sharedRecordFunctions.getQuick(i));
+            }
         }
     }
 
@@ -129,6 +144,23 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        if (sharedCursors == null) {
+            sharedCursors = new ObjList<>();
+        }
+        int idx = sharedId - 1;
+        GroupBySharedCursor shared = sharedCursors.getQuiet(idx);
+        if (shared == null) {
+            assert sharedRecordFunctions != null;
+            assert idx < sharedRecordFunctions.size();
+            shared = new GroupBySharedCursor(cursor, sharedRecordFunctions.getQuick(idx));
+            sharedCursors.extendAndSet(idx, shared);
+        }
+        shared.of(cursor.dataMap);
+        return shared;
+    }
+
+    @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
         final int columnType = getMetadata().getColumnType(columnIndex);
         return columnType == ColumnType.LONG || ColumnType.isTimestamp(columnType);
@@ -137,6 +169,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public boolean supportsSharedCursors() {
+        return sharedRecordFunctions != null;
     }
 
     @Override
@@ -162,8 +199,61 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     protected void _close() {
         Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
         Misc.freeObjList(keyFunctions);
+        freeSharedRecordFunctions(sharedRecordFunctions);
         Misc.free(base);
         Misc.free(cursor);
+        // Shared cursors hold no native memory; primary state freed above covers it.
+        Misc.clear(sharedCursors);
+    }
+
+    private static class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {
+        private final GroupByRecordCursor primaryCursor;
+        private MapRecordCursor cachedMapCursor;
+        private Map dataMap;
+
+        GroupBySharedCursor(GroupByRecordCursor cursor, ObjList<Function> functions) {
+            super(functions, true);
+            this.primaryCursor = cursor;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            buildMapConditionally();
+            baseCursor.calculateSize(circuitBreaker, counter);
+        }
+
+        @Override
+        public boolean hasNext() {
+            buildMapConditionally();
+            return super.hasNext();
+        }
+
+        @Override
+        public void longTopK(DirectLongLongSortedList list, int columnIndex) {
+            buildMapConditionally();
+            ((MapRecordCursor) baseCursor).longTopK(list, getFunctions().getQuick(columnIndex));
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        private void buildMapConditionally() {
+            if (baseCursor == null) {
+                primaryCursor.buildMapConditionally();
+                if (cachedMapCursor != null) {
+                    dataMap.initCursor(cachedMapCursor);
+                } else {
+                    cachedMapCursor = dataMap.newCursor();
+                }
+                of(cachedMapCursor);
+            }
+        }
+
+        void of(Map dataMap) {
+            this.dataMap = dataMap;
+        }
     }
 
     private class GroupByRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -185,11 +275,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         ) {
             super(functions);
             try {
-                this.isOpen = true;
-                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
+                // Lazy variant: the map skeleton is constructed but the native heap and
+                // hash directory are not allocated until the first cursor's of() binds a
+                // MemoryTracker and calls reopen(). This keeps malloc/free symmetric on
+                // the per-query counter from the very first cursor.
+                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
                 this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                // Lazy variant: the allocator's chunk index is not allocated until the
+                // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
+                // per-query alloc/free accounting symmetric from the very first cursor.
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
+                this.isOpen = false;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -229,7 +326,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.managedCursor = managedCursor;
             if (!isOpen) {
                 isOpen = true;
+                final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+                dataMap.setMemoryTracker(memoryTracker);
                 dataMap.reopen();
+                allocator.setMemoryTracker(memoryTracker);
                 allocator.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
@@ -251,6 +351,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private void buildDataMap() {
             final Record baseRecord = managedCursor.getRecord();
+            // Consult the breaker before the build loop, so an empty base scan still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             while (managedCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 final MapKey key = dataMap.withKey();

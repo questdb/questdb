@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.arr.ArrayView;
@@ -418,6 +419,11 @@ public class RecordToRowCopierBenchmark {
         @Override
         public int getIndexValueBlockCapacity(int columnIndex) {
             return 0;
+        }
+
+        @Override
+        public byte getColumnIndexType(int columnIndex) {
+            return IndexType.NONE;
         }
 
         @Override

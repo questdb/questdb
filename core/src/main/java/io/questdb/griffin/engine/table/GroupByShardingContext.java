@@ -43,6 +43,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -74,6 +75,11 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final ColumnTypes keyTypes;
     private final GroupByMapStats lastOwnerStats;
     private final ObjList<GroupByMapStats> lastShardStats;
+    // Per-query native memory tracker propagated to every fragment and destination
+    // shard. Null when no per-query limit applies (the shared horizon-join path never
+    // binds one), leaving allocations on the global counter only.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private final GroupByMapFragment ownerFragment;
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByMapFragment> perWorkerFragments;
@@ -92,26 +98,34 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             PerWorkerLocks perWorkerLocks,
             int workerCount
     ) {
-        this.configuration = configuration;
-        this.keyTypes = keyTypes;
-        this.valueTypes = valueTypes;
-        this.perWorkerLocks = perWorkerLocks;
-        this.ownerFunctionUpdater = ownerFunctionUpdater;
-        this.perWorkerFunctionUpdaters = perWorkerFunctionUpdaters;
+        try {
+            this.configuration = configuration;
+            this.keyTypes = keyTypes;
+            this.valueTypes = valueTypes;
+            this.perWorkerLocks = perWorkerLocks;
+            this.ownerFunctionUpdater = ownerFunctionUpdater;
+            this.perWorkerFunctionUpdaters = perWorkerFunctionUpdaters;
 
-        lastShardStats = new ObjList<>(NUM_SHARDS);
-        for (int i = 0; i < NUM_SHARDS; i++) {
-            lastShardStats.extendAndSet(i, new GroupByMapStats());
+            lastShardStats = new ObjList<>(NUM_SHARDS);
+            for (int i = 0; i < NUM_SHARDS; i++) {
+                lastShardStats.extendAndSet(i, new GroupByMapStats());
+            }
+            lastOwnerStats = new GroupByMapStats();
+            perWorkerFragments = new ObjList<>(workerCount);
+            destShards = new ObjList<>(NUM_SHARDS);
+            destShards.setPos(NUM_SHARDS);
+
+            ownerFragment = new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, ownerFunctionUpdater, workerCount, -1);
+            for (int i = 0; i < workerCount; i++) {
+                final GroupByFunctionsUpdater workerUpdater = perWorkerFunctionUpdaters != null
+                        ? perWorkerFunctionUpdaters.getQuick(i)
+                        : ownerFunctionUpdater;
+                perWorkerFragments.extendAndSet(i, new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, workerUpdater, workerCount, i));
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-        lastOwnerStats = new GroupByMapStats();
-        ownerFragment = new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, workerCount, -1);
-        perWorkerFragments = new ObjList<>(workerCount);
-        for (int i = 0; i < workerCount; i++) {
-            perWorkerFragments.extendAndSet(i, new GroupByMapFragment(configuration, keyTypes, valueTypes, lastOwnerStats, lastShardStats, workerCount, i));
-        }
-        // Destination shards are lazily initialized by the worker threads.
-        destShards = new ObjList<>(NUM_SHARDS);
-        destShards.setPos(NUM_SHARDS);
     }
 
     @Override
@@ -124,16 +138,21 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
+        // Free the fragments and destination shards under the still-bound per-query tracker
+        // (setMemoryTracker() is never nulled here): each map free debits the same tracker
+        // that charged its (re)open, so the per-query counter balances. AsyncGroupByAtom.close()
+        // frees this context before it nulls and frees its pooled allocators, preserving that
+        // ordering.
         Misc.free(ownerFragment);
         Misc.freeObjList(perWorkerFragments);
         Misc.freeObjList(destShards);
     }
 
-    public int maybeAcquire(int workerId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1 && owner) {
+    public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
+        if (carrierId == -1 && owner) {
             return -1;
         }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+        return perWorkerLocks.acquireSlot(carrierId, circuitBreaker);
     }
 
     public void mergeShard(int slotId, int shardIndex) {
@@ -245,12 +264,17 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private Map reopenDestShard(int shardIndex) {
         Map destMap = destShards.getQuick(shardIndex);
         if (destMap == null) {
-            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            // Lazy variant: the destination shard starts closed so its backing allocates
+            // under the bound tracker on the reopen() below, matching the free at clear().
+            destMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, false, false);
             destShards.set(shardIndex, destMap);
+            destMap.setMemoryTracker(memoryTracker);
+            destMap.reopen();
         } else if (!destMap.isOpen()) {
             GroupByMapStats stats = lastShardStats.getQuick(shardIndex);
             int keyCapacity = GroupByMapFragment.targetKeyCapacity(configuration, perWorkerFragments.size(), stats, true);
             long heapSize = GroupByMapFragment.targetHeapSize(configuration, perWorkerFragments.size(), stats, true);
+            destMap.setMemoryTracker(memoryTracker);
             destMap.reopen(keyCapacity, heapSize);
         }
         return destMap;
@@ -438,6 +462,14 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         if (shardedHint) {
             // Looks like we had to shard during previous execution, so let's do it ahead of time.
             sharded = true;
+        }
+    }
+
+    void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        memoryTracker = tracker;
+        ownerFragment.setMemoryTracker(tracker);
+        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
+            perWorkerFragments.getQuick(i).setMemoryTracker(tracker);
         }
     }
 

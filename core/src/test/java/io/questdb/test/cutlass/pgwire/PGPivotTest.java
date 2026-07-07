@@ -33,6 +33,7 @@ import java.sql.SQLException;
 
 
 public class PGPivotTest extends BasePGTest {
+
     @Test
     public void testBindVariablesAreAllowedElsewhereInPivot() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -44,7 +45,7 @@ public class PGPivotTest extends BasePGTest {
                 Assert.assertFalse(ps.execute());
             }
 
-            try (PreparedStatement ps = connection.prepareStatement("foo PIVOT (sum(y) FOR x IN (SELECT DISTINCT x FROM foo ORDER BY x) GROUP BY x) LIMIT ?")) {
+            try (PreparedStatement ps = connection.prepareStatement("foo PIVOT (sum(y) FOR x IN (SELECT DISTINCT x FROM foo ORDER BY x) GROUP BY x) ORDER BY x LIMIT ?")) {
                 ps.setInt(1, 1);
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(

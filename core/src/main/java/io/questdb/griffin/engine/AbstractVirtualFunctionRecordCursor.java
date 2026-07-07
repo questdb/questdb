@@ -24,12 +24,17 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractVirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualRecord recordA;
@@ -54,7 +59,10 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     public void close() {
         baseCursor = Misc.free(baseCursor);
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).cursorClosed();
+            Function function = functions.getQuick(i);
+            if (function != null) {
+                function.cursorClosed();
+            }
         }
     }
 
@@ -107,6 +115,20 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     }
 
     @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        if (baseCursor != null) {
+            baseCursor.setParquetDecodeHint(hint);
+        }
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RecordCursor.RowIdSource source) {
+        if (baseCursor != null) {
+            baseCursor.setRecordAtRows(source);
+        }
+    }
+
+    @Override
     public long size() {
         return baseCursor != null ? baseCursor.size() : -1;
     }
@@ -117,5 +139,9 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
             baseCursor.toTop();
             GroupByUtils.toTop(functions);
         }
+    }
+
+    protected ObjList<Function> getFunctions() {
+        return functions;
     }
 }

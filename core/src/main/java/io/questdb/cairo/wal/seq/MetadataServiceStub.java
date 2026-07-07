@@ -30,13 +30,19 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface MetadataServiceStub extends MetadataService {
 
     @Override
-    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize) {
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType) {
+        throw CairoException.critical(0).put("add index does not update sequencer metadata");
+    }
+
+    @Override
+    default void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames) {
         throw CairoException.critical(0).put("add index does not update sequencer metadata");
     }
 
@@ -94,7 +100,17 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
+    default int getMetaTableFormat() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default int getPartitionBy() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default int getTtlHoursOrMonths() {
         throw new UnsupportedOperationException();
     }
 
@@ -146,6 +162,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default void setMetaO3MaxLag(long o3MaxLagUs) {
         throw CairoException.critical(0).put("change of o3MaxLag does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMetaTableFormat(int tableFormat) {
+        throw CairoException.critical(0).put("change of table format does not update sequencer metadata");
     }
 
     @Override

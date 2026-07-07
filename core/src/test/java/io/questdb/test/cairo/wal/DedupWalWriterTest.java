@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -90,20 +89,21 @@ public class DedupWalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> testSameAndShuffledInserts("varchar", "", "'123'", "'2345567'", "'22'"));
     }
 
-    private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated) throws SqlException {
+    private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated) throws Exception {
         execute("create table test (ts timestamp, x int, v " + columnType + ") timestamp(ts) partition by DAY WAL dedup upsert keys (ts, x) ");
         execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
         drainWalQueue();
 
         String value1Unquoted = unquote(value1);
         String value2Unquoted = unquote(value2);
-        assertSql(
-                "ts\tx\tv\n" +
+        assertQuery("test")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("ts\tx\tv\n" +
                         "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                         "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
-                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
-                "test"
-        );
+                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n");
 
         TableToken tt = engine.verifyTableName("test");
         String partitionsTxnFile = readTxnToString(tt, false, true, true, true);
@@ -112,39 +112,42 @@ public class DedupWalWriterTest extends AbstractCairoTest {
         execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
         drainWalQueue();
 
-        assertSql(
-                "ts\tx\tv\n" +
+        assertQuery("test")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("ts\tx\tv\n" +
                         "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                         "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
-                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
-                "test"
-        );
+                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n");
         Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
 
         // Insert same values reordered
         execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, null)");
         drainWalQueue();
 
-        assertSql(
-                "ts\tx\tv\n" +
+        assertQuery("test")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("ts\tx\tv\n" +
                         "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                         "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
-                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
-                "test"
-        );
+                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n");
         Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
 
         // Change one varchar
         execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value2 + "), ('2022-02-24', 2, " + nullValueUpdated + ")");
         drainWalQueue();
 
-        assertSql(
-                "ts\tx\tv\n" +
+        assertQuery("test")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns("ts\tx\tv\n" +
                         "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                         "2022-02-24T00:00:00.000000Z\t2\t" + unquote(nullValueUpdated) + "\n" +
-                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n",
-                "test"
-        );
+                        "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n");
     }
 
     private String unquote(String v) {

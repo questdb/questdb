@@ -59,6 +59,25 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes
     ) {
+        return createOrderedMap(configuration, keyTypes, valueTypes, true);
+    }
+
+    /**
+     * Creates a Map for SAMPLE BY, GROUP BY queries with control over initial allocation.
+     *
+     * @param openOnInit when {@code true}, the map's native backing is allocated by the constructor
+     *                   (existing eager behavior). When {@code false}, the map is constructed in a
+     *                   closed state and the first {@link Map#reopen()} call allocates the backing.
+     *                   Lazy mode is used by owning factories that need to bind a per-query
+     *                   {@code MemoryTracker} before any allocation happens, so malloc and free are
+     *                   charged symmetrically on the per-query counter from the first cursor.
+     */
+    public static Map createOrderedMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            boolean openOnInit
+    ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final long pageSize = configuration.getSqlSmallMapPageSize();
         return new OrderedMap(
@@ -67,7 +86,8 @@ public class MapFactory {
                 valueTypes,
                 keyCapacity,
                 configuration.getSqlFastMapLoadFactor(),
-                configuration.getSqlMapMaxResizes()
+                configuration.getSqlMapMaxResizes(),
+                openOnInit
         );
     }
 
@@ -82,7 +102,7 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes
     ) {
-        return createUnorderedMap(configuration, keyTypes, valueTypes, false);
+        return createUnorderedMap(configuration, keyTypes, valueTypes, false, true);
     }
 
     /**
@@ -101,9 +121,30 @@ public class MapFactory {
             @Transient @Nullable ColumnTypes valueTypes,
             boolean isDeferredKeyCopy
     ) {
+        return createUnorderedMap(configuration, keyTypes, valueTypes, isDeferredKeyCopy, true);
+    }
+
+    /**
+     * Variant of {@link #createUnorderedMap(CairoConfiguration, ColumnTypes, ColumnTypes, boolean)}
+     * with control over initial allocation.
+     *
+     * @param openOnInit when {@code true}, the map's native backing is allocated by the constructor
+     *                   (existing eager behavior). When {@code false}, the map is constructed in a
+     *                   closed state and the first {@link Map#reopen()} call allocates the backing.
+     *                   Lazy mode is used by owning factories that need to bind a per-query
+     *                   {@code MemoryTracker} before any allocation happens, so malloc and free are
+     *                   charged symmetrically on the per-query counter from the first cursor.
+     */
+    public static Map createUnorderedMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            boolean isDeferredKeyCopy,
+            boolean openOnInit
+    ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final long pageSize = configuration.getSqlSmallMapPageSize();
-        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize, isDeferredKeyCopy);
+        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize, isDeferredKeyCopy, openOnInit);
     }
 
     /**
@@ -119,7 +160,7 @@ public class MapFactory {
             int keyCapacity,
             long pageSize
     ) {
-        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize, false);
+        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize, false, true);
     }
 
     /**
@@ -136,6 +177,22 @@ public class MapFactory {
             long pageSize,
             boolean isDeferredKeyCopy
     ) {
+        return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize, isDeferredKeyCopy, true);
+    }
+
+    /**
+     * Variant of {@link #createUnorderedMap(CairoConfiguration, ColumnTypes, ColumnTypes, int, long, boolean)}
+     * with control over initial allocation. See the {@code openOnInit} parameter for details.
+     */
+    public static Map createUnorderedMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            long pageSize,
+            boolean isDeferredKeyCopy,
+            boolean openOnInit
+    ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 
         final int valueSize = ColumnTypes.sizeInBytes(valueTypes);
@@ -147,7 +204,8 @@ public class MapFactory {
                         valueTypes,
                         keyCapacity,
                         configuration.getSqlFastMapLoadFactor(),
-                        configuration.getSqlMapMaxResizes()
+                        configuration.getSqlMapMaxResizes(),
+                        openOnInit
                 );
             } else if (Unordered8Map.isSupportedKeyType(keyType) && Long.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered8Map(
@@ -155,7 +213,8 @@ public class MapFactory {
                         valueTypes,
                         keyCapacity,
                         configuration.getSqlFastMapLoadFactor(),
-                        configuration.getSqlMapMaxResizes()
+                        configuration.getSqlMapMaxResizes(),
+                        openOnInit
                 );
             } else if (keyType == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
                 return new UnorderedVarcharMap(
@@ -165,7 +224,8 @@ public class MapFactory {
                         configuration.getSqlMapMaxResizes(),
                         configuration.getGroupByAllocatorDefaultChunkSize(),
                         configuration.getGroupByAllocatorMaxChunkSize(),
-                        isDeferredKeyCopy
+                        isDeferredKeyCopy,
+                        openOnInit
                 );
             }
         }
@@ -176,7 +236,8 @@ public class MapFactory {
                 valueTypes,
                 keyCapacity,
                 configuration.getSqlFastMapLoadFactor(),
-                configuration.getSqlMapMaxResizes()
+                configuration.getSqlMapMaxResizes(),
+                openOnInit
         );
     }
 }

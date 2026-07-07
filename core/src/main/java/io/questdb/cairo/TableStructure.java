@@ -25,7 +25,9 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.std.IntList;
 import io.questdb.cairo.view.ViewDefinition;
+import org.jetbrains.annotations.NotNull;
 
 public interface TableStructure {
 
@@ -55,6 +57,15 @@ public interface TableStructure {
 
     int getSymbolCapacity(int columnIndex);
 
+    /**
+     * Returns the default storage format for new partitions.
+     * {@link TableUtils#TABLE_FORMAT_NATIVE} (default) or
+     * {@link TableUtils#TABLE_FORMAT_PARQUET}.
+     */
+    default int getTableFormat() {
+        return TableUtils.TABLE_FORMAT_NATIVE;
+    }
+
     CharSequence getTableName();
 
     int getTimestampIndex();
@@ -80,9 +91,28 @@ public interface TableStructure {
     default void init(TableToken tableToken) {
     }
 
+    /**
+     * Returns the index type for the column.
+     *
+     * @param columnIndex the column index
+     * @return the index type (see {@link IndexType})
+     */
+    byte getIndexType(int columnIndex);
+
+    default IntList getCoveringColumnIndices(int columnIndex) {
+        return null;
+    }
+
+    default boolean isCovering(int columnIndex) {
+        IntList indices = getCoveringColumnIndices(columnIndex);
+        return indices != null && indices.size() > 0;
+    }
+
     boolean isDedupKey(int columnIndex);
 
-    boolean isIndexed(int columnIndex);
+    default boolean isIndexed(int columnIndex) {
+        return IndexType.isIndexed(getIndexType(columnIndex));
+    }
 
     default boolean isMatView() {
         return false;
@@ -93,4 +123,7 @@ public interface TableStructure {
     }
 
     boolean isWalEnabled();
+
+    default void onCreated(@NotNull CairoEngine engine, @NotNull TableToken tableToken) {
+    }
 }

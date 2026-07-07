@@ -44,7 +44,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class IlpAndPgWireInsertSelectBenchmark {
     public static final int COOLDOWN_PERIOD_SECONDS = 30;
-    private static final int INSERT_BATCH_SIZE = 100;
+    private static final int INSERT_BATCH_SIZE = 1_000;
     private static final int N_INSERTERS = 1;
     private static final int N_SELECTORS = 1;
     private static final long RUNTIME_SECONDS = 10;
@@ -90,10 +90,14 @@ public class IlpAndPgWireInsertSelectBenchmark {
         long insertsPerSecond = doneInserts * nsPerSecond / tookNs;
         long selectsPerSecond = doneSelects * nsPerSecond / tookNs;
 
-        System.out.printf("\n%d %s inserters, %d selectors combined performance:\n" +
-                        "%,d inserts per second, %,d selects per second\n" +
-                        "Per-thread performance:\n" +
-                        "%,d inserts per second, %,d selects per second\n\n",
+        System.out.printf("""
+                        
+                        %d %s inserters, %d selectors combined performance:
+                        %,d inserts per second, %,d selects per second
+                        Per-thread performance:
+                        %,d inserts per second, %,d selects per second
+                        
+                        """,
                 N_INSERTERS, useIlp ? "ILP" : "JDBC", N_SELECTORS, insertsPerSecond, selectsPerSecond,
                 N_INSERTERS != 0 ? insertsPerSecond / N_INSERTERS : 0,
                 N_SELECTORS != 0 ? selectsPerSecond / N_SELECTORS : 0);
@@ -109,7 +113,7 @@ public class IlpAndPgWireInsertSelectBenchmark {
             ) {
                 ddlStatement.execute("DROP TABLE IF EXISTS tango");
                 ddlStatement.execute(
-                        "CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY HOUR TTL 1000 YEARS");
+                        "CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY");
             }
             long start = System.nanoTime();
             long deadline = start + SECONDS.toNanos(RUNTIME_SECONDS);
@@ -117,7 +121,7 @@ public class IlpAndPgWireInsertSelectBenchmark {
                 final int taskId = taskid;
                 pool.submit(() -> {
                     if (useIlp) {
-                        try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;auto_flush=off;")) {
+                        try (Sender sender = Sender.fromConfig("ws::addr=localhost:9000;")) {
                             for (long i = 1; ; i++) {
                                 sender.table("tango")
                                         .longColumn("n", 0)
@@ -127,6 +131,7 @@ public class IlpAndPgWireInsertSelectBenchmark {
                                     inserterProgress.lazySet(taskId, i);
                                 }
                                 if (System.nanoTime() > deadline) {
+                                    sender.flush();
                                     inserterProgress.set(taskId, i);
                                     break;
                                 }

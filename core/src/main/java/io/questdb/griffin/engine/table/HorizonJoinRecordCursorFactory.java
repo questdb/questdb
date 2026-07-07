@@ -39,6 +39,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -60,7 +61,6 @@ import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -81,7 +81,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     private final JoinRecordMetadata horizonJoinMetadata;
     private final ObjList<Function> keyFunctions;
     private final RecordCursorFactory masterFactory;
-    private final LongList offsets;
+    private final long[] offsets;
     private final ObjList<Function> recordFunctions;
     private final RecordCursorFactory slaveFactory;
 
@@ -92,7 +92,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull JoinRecordMetadata horizonJoinMetadata,
             @NotNull RecordCursorFactory masterFactory,
             @NotNull RecordCursorFactory slaveFactory,
-            @NotNull LongList offsets,
+            long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<Function> recordFunctions,
@@ -165,17 +165,18 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
+        TimeFrameCursor slaveCursor = null;
         try {
-            TimeFrameCursor slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
-            try {
-                cursor.of(masterCursor, slaveCursor, executionContext);
-                return cursor;
-            } catch (Throwable th) {
-                Misc.free(slaveCursor);
-                throw th;
-            }
+            slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+            cursor.of(masterCursor, slaveCursor, executionContext);
+            return cursor;
         } catch (Throwable th) {
+            Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the maps and allocator before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory stays reusable.
+            Misc.free(cursor);
             throw th;
         }
     }
@@ -188,7 +189,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Horizon Join");
-        sink.meta("offsets").val(offsets.size());
+        sink.meta("offsets").val(offsets.length);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", cursor.groupByFunctions);
@@ -204,14 +205,12 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(horizonJoinMetadata);
+        // recordFunctions includes groupByFunctions (same object references)
         Misc.freeObjList(recordFunctions);
     }
 
     private static class HorizonJoinRecordCursor implements RecordCursor {
         private final Map asOfJoinMap;
-        private final long bwdScanAbsoluteThreshold;
-        private final long bwdScanMinGap;
-        private final long bwdScanSwitchFactor;
         private final Map dataMap;
         private final GroupByAllocator groupByAllocator;
         private final ObjList<GroupByFunction> groupByFunctions;
@@ -224,7 +223,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         private final RecordSink masterAsOfJoinMapSink;
         private final int masterTimestampColumnIndex;
         private final long masterTsScale;
-        private final LongList offsets;
+        private final long[] offsets;
         private final VirtualRecord recordA;
         private final VirtualRecord recordB;
         private final ObjList<Function> recordFunctions;
@@ -246,7 +245,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 ObjList<Function> keyFunctions,
                 @Transient BytecodeAssembler asm,
                 int masterTimestampColumnIndex,
-                LongList offsets,
+                long[] offsets,
                 @Transient ArrayColumnTypes keyTypes,
                 @Transient ArrayColumnTypes valueTypes,
                 @Nullable ColumnTypes asOfJoinKeyTypes,
@@ -261,9 +260,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 long masterTsScale,
                 long slaveTsScale
         ) {
-            this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
-            this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
-            this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             this.keyFunctions = keyFunctions;
@@ -282,11 +278,11 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
             Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, groupByFunctions.size());
             this.groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, groupByFunctions);
-            this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            this.groupByAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, groupByAllocator);
 
             // Create data map for GROUP BY keys
-            this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+            this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, false, false);
             // Create group by key copier with key functions
             Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
                     configuration,
@@ -312,7 +308,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
             if (asOfJoinKeyTypes != null) {
                 SingleColumnType asOfValueTypes = new SingleColumnType(ColumnType.LONG);
-                this.asOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes);
+                this.asOfJoinMap = MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, asOfValueTypes, false, false);
             } else {
                 this.asOfJoinMap = null;
             }
@@ -323,8 +319,13 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 this.symbolTranslatingRecord = null;
             }
 
-            this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(configuration.getSqlAsOfJoinLookAhead(), slaveTsScale);
-            this.isOpen = true;
+            this.slaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
+                    configuration.getSqlAsOfJoinLookAhead(), slaveTsScale,
+                    configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold(),
+                    configuration.getSqlHorizonJoinBwdScanMinGap(),
+                    configuration.getSqlHorizonJoinBwdScanSwitchFactor()
+            );
+            this.isOpen = false;
         }
 
         @Override
@@ -406,6 +407,8 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         private void buildMap() {
+            // Consult the breaker before iterating, so an empty master still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final boolean keyedAsOfJoin = asOfJoinMap != null && masterAsOfJoinMapSink != null && slaveAsOfJoinMapSink != null;
 
             slaveTimeFrameHelper.toTop();
@@ -415,9 +418,6 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             dataMap.clear();
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
-            long prevAsOfRowId = Long.MIN_VALUE;
-            boolean isForwardScanMode = false;
-            long bwdScanRowsAtPositionStart = 0;
 
             while (horizonIterator.next()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -425,70 +425,33 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                 final long horizonTs = horizonIterator.getHorizonTimestamp();
                 final long masterRowId = horizonIterator.getMasterRowId();
                 final int offsetIdx = horizonIterator.getOffsetIndex();
-                final long offset = offsets.getQuick(offsetIdx);
+                final long offset = offsets[offsetIdx];
 
-                // Position master record at the correct row via random access
                 masterCursor.recordAt(masterCursor.getRecordB(), masterRowId);
                 Record masterRecord = masterCursor.getRecordB();
 
-                // Scale horizon timestamp for ASOF lookup
                 final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
-
-                // Find ASOF row
                 long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
-                long matchRowId = Long.MIN_VALUE;
+                long matchRowId;
                 if (keyedAsOfJoin) {
                     Record masterKeyRecord = masterRecord;
                     if (symbolTranslatingRecord != null) {
                         symbolTranslatingRecord.of(masterRecord);
                         masterKeyRecord = symbolTranslatingRecord;
                     }
-
-                    if (asOfRowId != Long.MIN_VALUE) {
-                        if (asOfRowId != prevAsOfRowId) {
-                            // ASOF position changed — decide scanning strategy
-                            if (!isForwardScanMode) {
-                                long bwdScanCost = slaveTimeFrameHelper.getBackwardScanRows() - bwdScanRowsAtPositionStart;
-                                if (prevAsOfRowId != Long.MIN_VALUE) {
-                                    long gap = asOfRowId - prevAsOfRowId;
-                                    if (HorizonJoinTimeFrameHelper.shouldSwitchToForwardScan(
-                                            bwdScanCost,
-                                            gap,
-                                            bwdScanMinGap,
-                                            bwdScanSwitchFactor,
-                                            bwdScanAbsoluteThreshold
-                                    )) {
-                                        isForwardScanMode = true;
-                                        slaveTimeFrameHelper.initForwardWatermark(prevAsOfRowId);
-                                    }
-                                }
-                                if (!isForwardScanMode) {
-                                    asOfJoinMap.clear();
-                                    slaveTimeFrameHelper.resetBackwardWatermark();
-                                    bwdScanRowsAtPositionStart = slaveTimeFrameHelper.getBackwardScanRows();
-                                }
-                            }
-                            if (isForwardScanMode) {
-                                slaveTimeFrameHelper.forwardScanToPosition(asOfRowId, slaveAsOfJoinMapSink, asOfJoinMap);
-                            }
-                            prevAsOfRowId = asOfRowId;
-                        }
-                        // Look up key in map; backward scan on miss
-                        matchRowId = slaveTimeFrameHelper.backwardScanForKeyMatch(
-                                asOfRowId,
-                                masterKeyRecord,
-                                masterAsOfJoinMapSink,
-                                slaveAsOfJoinMapSink,
-                                asOfJoinMap,
-                                symbolTranslatingRecord
-                        );
-                    }
+                    matchRowId = slaveTimeFrameHelper.findKeyedAsOfMatch(
+                            asOfRowId,
+                            masterKeyRecord,
+                            masterAsOfJoinMapSink,
+                            slaveAsOfJoinMapSink,
+                            asOfJoinMap,
+                            symbolTranslatingRecord
+                    );
                 } else {
                     matchRowId = asOfRowId;
                 }
 
-                // Aggregate the result
                 Record matchedSlaveRecord = null;
                 if (matchRowId != Long.MIN_VALUE) {
                     slaveTimeFrameHelper.recordAt(matchRowId);
@@ -521,15 +484,16 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
         void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
+                groupByAllocator.setMemoryTracker(executionContext.getMemoryTracker());
                 groupByAllocator.reopen();
+                dataMap.setMemoryTracker(executionContext.getMemoryTracker());
                 dataMap.reopen();
                 if (asOfJoinMap != null) {
+                    asOfJoinMap.setMemoryTracker(executionContext.getMemoryTracker());
                     asOfJoinMap.reopen();
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.masterCursor = masterCursor;
-            this.slaveCursor = slaveCursor;
             slaveTimeFrameHelper.of(slaveCursor);
 
             // Initialize horizon timestamp iterator with master cursor
@@ -550,6 +514,10 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                 groupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
             }
+
+            // Adopt master/slave last so an init() throw above can't double-free them via the getCursor() catch.
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
 
             isDataMapBuilt = false;
         }

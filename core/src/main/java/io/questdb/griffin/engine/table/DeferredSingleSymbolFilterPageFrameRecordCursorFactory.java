@@ -98,6 +98,12 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     }
 
     @Override
+    protected void _close() {
+        super._close();
+        Misc.free(symbolFunc);
+    }
+
+    @Override
     public String getBaseColumnName(int columnIndex) {
         return getMetadata().getColumnName(columnIndex);
     }

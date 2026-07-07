@@ -31,6 +31,7 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.str.Utf8StringSink;
@@ -58,6 +59,8 @@ public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
 
+    WorkerPoolConfiguration getExportPoolConfiguration();
+
     FactoryProvider getFactoryProvider();
 
     HttpServerConfiguration getHttpMinServerConfiguration();
@@ -70,8 +73,6 @@ public interface ServerConfiguration {
 
     WorkerPoolConfiguration getMatViewRefreshPoolConfiguration();
 
-    WorkerPoolConfiguration getExportPoolConfiguration();
-
     MemoryConfiguration getMemoryConfiguration();
 
     Metrics getMetrics();
@@ -81,6 +82,10 @@ public interface ServerConfiguration {
     PGConfiguration getPGWireConfiguration();
 
     PublicPassthroughConfiguration getPublicPassthroughConfiguration();
+
+    default QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
+        return null;
+    }
 
     default String getReleaseType() {
         return OSS;

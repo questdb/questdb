@@ -82,7 +82,16 @@ public class NetTest {
     public void testGetAddrInfoConnect() {
         NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
         final long pAddrInfo = nf.getAddrInfo("questdb.io", 443);
-        Assert.assertNotEquals(-1, pAddrInfo);
+        if (pAddrInfo == -1) {
+            try {
+                //noinspection ResultOfMethodCallIgnored
+                java.net.InetAddress.getByName("questdb.io");
+                Assert.fail("getAddrInfo failed but Java DNS resolved questdb.io");
+            } catch (java.net.UnknownHostException e) {
+                // no internet connection, skip the test
+                return;
+            }
+        }
         long fd = nf.socketTcp(true);
         try {
             Assert.assertEquals(0, nf.connectAddrInfo(fd, pAddrInfo));
@@ -374,21 +383,29 @@ public class NetTest {
         }).start();
 
         barrier.await();
-        long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
+        // A TCP socket can be connect()-ed only once. When a transient error
+        // such as ephemeral port exhaustion trips an attempt, the same fd can't
+        // be reused for a second connect(), so open a fresh socket on each retry
+        // to let the loop actually recover.
+        long clientFd = -1;
         long sockFd = -1;
         for (int i = 0; i < 2000; i++) {
+            clientFd = Net.socketTcp(true);
             Net.configureNoLinger(clientFd);
             sockFd = Net.connect(clientFd, sockAddr);
-            if (sockFd >= 0) {
+            if (sockFd == 0) {
                 break;
             }
+            Net.close(clientFd);
+            clientFd = -1;
             Os.sleep(5);
         }
         Assert.assertEquals(0, sockFd);
         Assert.assertTrue(haltLatch.await(10, TimeUnit.SECONDS));
         Net.close(clientFd);
         Net.close(fd);
+        Net.freeSockAddr(sockAddr);
 
         TestUtils.assertEquals("127.0.0.1", sink);
         Assert.assertFalse(threadFailed.get());

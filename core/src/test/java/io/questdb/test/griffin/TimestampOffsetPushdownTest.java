@@ -56,31 +56,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022'
                     """;
 
-            // Verify plan shows interval pushdown with +1 day offset applied
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // Verify correct data: rows 2, 3 (ts values in 2022)
+            // Plan shows interval pushdown with +1 day offset applied
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('d',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-02T00:00:00.000000Z","2023-01-01T23:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data: rows 2, 3 (ts values in 2022)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T12:00:00.000000Z\t150.0
                             2022-12-31T12:00:00.000000Z\t200.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -105,32 +98,25 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022'
                     """;
 
-            // Verify plan shows interval pushdown with +1h offset applied
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // Verify correct data: rows 2, 3, 4 (ts values in 2022)
+            // Plan shows interval pushdown with +1h offset applied
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('h',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data: rows 2, 3, 4 (ts values in 2022)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t150.0
                             2022-12-31T22:30:00.000000Z\t200.0
                             2022-12-31T23:30:00.000000Z\t250.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -144,13 +130,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Use Integer.MIN_VALUE as stride - negating it causes overflow
         // -(-2147483648) = 2147483648 which exceeds Integer.MAX_VALUE
         // Error position 35 is at the stride argument "-2147483648"
-        assertException(
-                "SELECT * FROM (" +
-                        "SELECT dateadd('s', -2147483648, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2022-01-01'",
-                35,
-                "timestamp offset value 2147483648 exceeds maximum allowed range for dateadd"
-        );
+        assertQuery("SELECT * FROM (" +
+                "SELECT dateadd('s', -2147483648, timestamp) as ts, price FROM trades" +
+                ") WHERE ts > '2022-01-01'")
+                .fails(35, "timestamp offset value 2147483648 exceeds maximum allowed range for dateadd");
     }
 
     @Test
@@ -165,13 +148,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
         // Use an offset of 3 billion seconds (exceeds Integer.MAX_VALUE of 2,147,483,647)
         // Error position 35 is at the stride argument "3000000000"
-        assertException(
-                "SELECT * FROM (" +
-                        "SELECT dateadd('s', 3000000000, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2100-01-01'",
-                35,
-                "timestamp offset value -3000000000 exceeds maximum allowed range for dateadd"
-        );
+        assertQuery("SELECT * FROM (" +
+                "SELECT dateadd('s', 3000000000, timestamp) as ts, price FROM trades" +
+                ") WHERE ts > '2100-01-01'")
+                .fails(35, "timestamp offset value -3000000000 exceeds maximum allowed range for dateadd");
     }
 
     @Test
@@ -187,31 +167,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts >= '2022-01-01T00:00:00' AND ts < '2022-01-01T00:30:00'
                     """;
 
-            // Verify plan shows interval pushdown with +30 minute offset
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // Row 1: ts = 2021-12-31 23:45 (NOT in range)
+            // Row 2: ts = 2022-01-01 00:15 (in range)
+            // Plan shows interval pushdown with +30 minute offset
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('m',-30,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-01T00:30:00.000000Z","2022-01-01T00:59:59.999999Z")]
-                            """
-            );
-
-            // Row 1: ts = 2021-12-31 23:45 (NOT in range)
-            // Row 2: ts = 2022-01-01 00:15 (in range)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:15:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -231,47 +204,40 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Verify plan shows interval pushdown AND filter for price
+            String expectedPlan;
             if (JitUtil.isJitSupported()) {
-                assertPlanNoLeakCheck(
-                        query,
-                        """
-                                VirtualRecord
-                                  functions: [dateadd('h',-1,timestamp),price]
-                                    Async JIT Filter workers: 1
-                                      filter: 120<price
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: trades
-                                              intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                                """
-                );
+                expectedPlan = """
+                        VirtualRecord
+                          functions: [dateadd('h',-1,timestamp),price]
+                            Async JIT Filter workers: 1
+                              filter: 120<price
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                        """;
             } else {
-                assertPlanNoLeakCheck(
-                        query,
-                        """
-                                VirtualRecord
-                                  functions: [dateadd('h',-1,timestamp),price]
-                                    Async Filter workers: 1
-                                      filter: 120<price
-                                        PageFrame
-                                            Row forward scan
-                                            Interval forward scan on: trades
-                                              intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                                """
-                );
+                expectedPlan = """
+                        VirtualRecord
+                          functions: [dateadd('h',-1,timestamp),price]
+                            Async Filter workers: 1
+                              filter: 120<price
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                        """;
             }
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan(expectedPlan)
+                    .returns("""
                             ts\tprice
                             2022-01-01T01:30:00.000000Z\t150.0
                             2022-01-01T02:30:00.000000Z\t200.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -293,32 +259,25 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022-02'
                     """;
 
-            // Verify plan shows interval pushdown with +1 month offset (calendar-aware)
+            // Should only return row 2
+            // Plan shows interval pushdown with +1 month offset (calendar-aware)
             // 2022-02-01 + 1 month = 2022-03-01
             // 2022-02-28 23:59:59 + 1 month = 2022-03-28 23:59:59
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('M',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-03-01T00:00:00.000000Z","2022-03-28T23:59:59.999999Z")]
-                            """
-            );
-
-            // Should only return row 2
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-02-15T12:00:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -337,31 +296,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022'
                     """;
 
+            // Verify data correctness
             // Plan should show interval pushdown with +1h offset applied
             // Verifies unary minus is correctly parsed as integer
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('h',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                            """
-            );
-
-            // Verify data correctness
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T01:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -382,11 +334,12 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts2 >= '2022-01-01T00:00:00' AND ts2 < '2022-01-01T02:00:00'
                     """;
 
-            // Verify plan shows combined offset: +1 day +1 hour = 25 hours
+            // Plan shows combined offset: +1 day +1 hour = 25 hours
             // Range [2022-01-01 00:00, 2022-01-01 02:00) + 1d + 1h = [2022-01-02 01:00, 2022-01-02 03:00)
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('d',-1,ts1),price]
                                 VirtualRecord
@@ -395,19 +348,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                         Row forward scan
                                         Interval forward scan on: trades
                                           intervals: [("2022-01-02T01:00:00.000000Z","2022-01-02T02:59:59.999999Z")]
-                            """
-            );
-
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts2\tprice
                             2022-01-01T01:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts2",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -428,9 +373,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // Plan should show combined offset: +1 day +1 hour
             // 2022-01-01 00:00 + 1 day + 1 hour = 2022-01-02 01:00
             // 2022-12-31 23:59:59 + 1 day + 1 hour = 2023-01-02 00:59:59
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             VirtualRecord
                               functions: [dateadd('d',-1,ts1),price]
                                 VirtualRecord
@@ -439,8 +384,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                         Row forward scan
                                         Interval forward scan on: trades
                                           intervals: [("2022-01-02T01:00:00.000000Z","2023-01-02T00:59:59.999999Z")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -455,14 +399,13 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should NOT have ts_offset since there's no dateadd transformation
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -480,17 +423,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should show filter at virtual level, NOT interval scan (no pushdown)
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: ts in [1640995200000000,1672531199999999]
                                 VirtualRecord
                                   functions: [dateadd('h',offset_val,timestamp),price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -512,11 +454,15 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022' AND total_value > 1500
                     """;
 
+            // Row 1: ts = 00:30, total_value = 1000 (NOT > 1500)
+            // Row 2: ts = 01:30, total_value = 3000 (> 1500) - INCLUDED
+            // Row 3: ts = 02:30, total_value = 1000 (NOT > 1500)
             // The timestamp predicate (ts IN '2022') should be pushed down with offset
             // The non-literal predicate (total_value > 1500) should stay at the outer level as a Filter
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             Filter filter: 1500<total_value
                                 VirtualRecord
                                   functions: [dateadd('h',-1,timestamp),price*quantity]
@@ -524,22 +470,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                         Row forward scan
                                         Interval forward scan on: trades
                                           intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                            """
-            );
-
-            // Row 1: ts = 00:30, total_value = 1000 (NOT > 1500)
-            // Row 2: ts = 01:30, total_value = 3000 (> 1500) - INCLUDED
-            // Row 3: ts = 02:30, total_value = 1000 (NOT > 1500)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\ttotal_value
                             2022-01-01T01:30:00.000000Z\t3000.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -565,35 +500,28 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts < '2022-01-01T01:00:00' OR total_value > 1500
                     """;
 
+            // Row 1: ts = 00:30 (< 01:00? YES), total_value = 1000 - INCLUDED (ts condition true)
+            // Row 2: ts = 01:30 (< 01:00? NO), total_value = 3000 (> 1500? YES) - INCLUDED (total_value condition true)
+            // Row 3: ts = 02:30 next day (< 01:00? NO), total_value = 1000 (> 1500? NO) - NOT included
             // The OR predicate cannot be split, so it should stay at outer level as a Filter
             // The timestamp offset pushdown should NOT happen because the predicate
             // references non-literal columns (total_value) that can't be resolved in nested model
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             Filter filter: (ts<2022-01-01T01:00:00.000000Z or 1500<total_value)
                                 VirtualRecord
                                   functions: [dateadd('h',-1,timestamp),price*quantity]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
-
-            // Row 1: ts = 00:30 (< 01:00? YES), total_value = 1000 - INCLUDED (ts condition true)
-            // Row 2: ts = 01:30 (< 01:00? NO), total_value = 3000 (> 1500? YES) - INCLUDED (total_value condition true)
-            // Row 3: ts = 02:30 next day (< 01:00? NO), total_value = 1000 (> 1500? NO) - NOT included
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\ttotal_value
                             2022-01-01T00:30:00.000000Z\t1000.0
                             2022-01-01T01:30:00.000000Z\t3000.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -601,10 +529,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testNullOffsetThrowsError() throws Exception {
         // Ensure a NULL stride is rejected
         assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
-        assertException("SELECT * FROM (SELECT dateadd('h', NULL, timestamp) as ts, price FROM trades) WHERE ts IN '2022'",
-                35,
-                "`null` is not a valid stride"
-        );
+        assertQuery("SELECT * FROM (SELECT dateadd('h', NULL, timestamp) as ts, price FROM trades) WHERE ts IN '2022'")
+                .fails(35, "`null` is not a valid stride");
     }
 
     @Test
@@ -624,33 +550,26 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts >= '2022-01-01T00:00:00' AND ts < '2022-01-01T01:00:00'
                     """;
 
+            // Row 1: ts = 2021-12-31 23:30 (NOT in range)
+            // Row 2: ts = 2022-01-01 00:30 (in range)
+            // Row 3: ts = 2022-01-01 01:30 (NOT in range)
             // Plan should NOT show interval pushdown - filter stays at outer level
             // because original timestamp takes precedence (no ts_offset set)
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("original_ts")
+                    .withPlan("""
                             Filter filter: (ts>=2022-01-01T00:00:00.000000Z and ts<2022-01-01T01:00:00.000000Z)
                                 VirtualRecord
                                   functions: [dateadd('h',-1,timestamp),timestamp,price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
-
-            // Row 1: ts = 2021-12-31 23:30 (NOT in range)
-            // Row 2: ts = 2022-01-01 00:30 (in range)
-            // Row 3: ts = 2022-01-01 01:30 (NOT in range)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\toriginal_ts\tprice
                             2022-01-01T00:30:00.000000Z\t2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "original_ts",  // Original timestamp is designated
-                    true,
-                    false  // Filter cursor doesn't know size
-            );
+                            """);
         });
     }
 
@@ -668,31 +587,25 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     SELECT dateadd('h', -1, timestamp) as ts, timestamp, price FROM trades
                     """;
 
+            // The result should have 'timestamp' as the designated timestamp column (index 1),
+            // not 'ts' (index 0), because the original timestamp takes precedence
             // Plan should show VirtualRecord - no ts_offset because original timestamp is present
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('h',-1,timestamp),timestamp,price]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: trades
-                            """
-            );
-
-            // The result should have 'timestamp' as the designated timestamp column (index 1),
-            // not 'ts' (index 0), because the original timestamp takes precedence
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\ttimestamp\tprice
                             2022-01-01T00:00:00.000000Z\t2022-01-01T01:00:00.000000Z\t100.0
                             2022-01-01T01:00:00.000000Z\t2022-01-01T02:00:00.000000Z\t150.0
-                            """,
-                    query,
-                    "timestamp",  // Original timestamp takes precedence
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -715,12 +628,14 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts >= '2022-01-01T00:00:00' AND ts < '2022-01-01T01:00:00'
                     """;
 
+            // Row 1: ts = 2022-01-01 00:00 (in range), original_ts = 2022-01-01 01:00
+            // Row 2: ts = 2022-01-01 01:00 (NOT in range)
             // Plan should NOT show interval pushdown because original timestamp (t.timestamp) is in projection
             // Filter should stay at outer level, not be pushed down with offset
             // Note: qualified column reference results in SelectedRecord wrapper and alias renaming
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .withPlan("""
                             Filter filter: (ts>=2022-01-01T00:00:00.000000Z and ts<2022-01-01T01:00:00.000000Z)
                                 VirtualRecord
                                   functions: [dateadd('h',-1,timestamp),original_ts,price]
@@ -728,21 +643,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
-                            """
-            );
-
-            // Row 1: ts = 2022-01-01 00:00 (in range), original_ts = 2022-01-01 01:00
-            // Row 2: ts = 2022-01-01 01:00 (NOT in range)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\toriginal_ts\tprice
                             2022-01-01T00:00:00.000000Z\t2022-01-01T01:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    null,  // Filter model doesn't propagate timestamp
-                    true,  // supports random access
-                    false  // Filter cursor doesn't know size
-            );
+                            """);
         });
     }
 
@@ -766,31 +671,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022'
                     """;
 
-            // Verify plan shows interval pushdown with -2h offset (inverse of +2)
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // Verify correct data: rows 1, 4
+            // Plan shows interval pushdown with -2h offset (inverse of +2)
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('h',2,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2021-12-31T22:00:00.000000Z","2022-12-31T21:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data: rows 1, 4
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:00:00.000000Z\t100.0
                             2022-12-31T23:00:00.000000Z\t250.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -810,31 +708,23 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022'
                     """;
 
-            // Plan should show interval pushdown - qualified trades.timestamp should be detected
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // Verify correct data and plan shows interval pushdown - qualified trades.timestamp should be detected
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('h',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t100.0
                             2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -854,31 +744,23 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) v WHERE v.ts IN '2022'
                     """;
 
-            // Plan should show interval pushdown even with qualified column name v.ts
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // Verify correct data and plan shows interval pushdown even with qualified column name v.ts
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('h',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t100.0
                             2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -901,31 +783,23 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) v WHERE v.ts IN '2022'
                     """;
 
-            // Plan should show interval pushdown - the qualified references should be handled correctly
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // Verify correct data and plan shows interval pushdown - the qualified references should be handled correctly
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('h',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t100.0
                             2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -944,31 +818,23 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE "ts" IN '2022'
                     """;
 
-            // Plan should show interval pushdown even with quoted column name
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            // Verify correct data and plan shows interval pushdown even with quoted column name
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('h',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:30:00.000000Z\t100.0
                             2022-01-01T01:30:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -987,9 +853,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // The constant part is pushed down, now() part stays as filter
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: ts<now()
                                 VirtualRecord
                                   functions: [dateadd('d',-1,timestamp),price]
@@ -997,8 +863,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                         Row forward scan
                                         Interval forward scan on: trades
                                           intervals: [("2022-01-02T00:00:00.000001Z","MAX")]
-                            """
-            );
+                            """);
         });
     }
 
@@ -1016,17 +881,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should show Filter (not Interval forward scan)
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: ts between dateadd('d',-7,now()) and now()
                                 VirtualRecord
                                   functions: [dateadd('d',-1,timestamp),price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -1048,17 +912,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should show Filter (not Interval forward scan)
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: (2025-01-01T00:00:00.000000Z<ts or ts<now())
                                 VirtualRecord
                                   functions: [dateadd('d',-1,timestamp),price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -1077,17 +940,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should show Filter (not Interval forward scan) because dateadd doesn't use timestamp
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: dateadd('d',-7,now())<ts
                                 VirtualRecord
                                   functions: [dateadd('d',-1,timestamp),price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -1105,17 +967,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should show Filter (not Interval forward scan)
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: dateadd('h',-1,sysdate())<ts
                                 VirtualRecord
                                   functions: [dateadd('d',-1,timestamp),price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -1133,17 +994,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should show Filter (not Interval forward scan) because now() is rejected
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: now()<ts
                                 VirtualRecord
                                   functions: [dateadd('d',-1,timestamp),price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -1161,17 +1021,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should show Filter (not Interval forward scan) because sysdate() is rejected
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: sysdate()<ts
                                 VirtualRecord
                                   functions: [dateadd('d',-1,timestamp),price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -1193,17 +1052,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Plan should show Filter (not Interval forward scan) because systimestamp() is rejected
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Filter filter: systimestamp()<ts
                                 VirtualRecord
                                   functions: [dateadd('d',-1,timestamp),price]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: trades
-                            """
-            );
+                            """);
         });
     }
 
@@ -1220,31 +1078,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts >= '2022-01-01T00:00:00' AND ts < '2022-01-01T00:00:30'
                     """;
 
+            // Row 1: ts = 2022-01-01 00:00:00 (in range)
+            // Row 2: ts = 2022-01-01 00:00:30 (NOT in range, >= boundary)
             // Verify plan shows interval pushdown with +30 second offset
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('s',-30,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-01T00:00:30.000000Z","2022-01-01T00:00:59.999999Z")]
-                            """
-            );
-
-            // Row 1: ts = 2022-01-01 00:00:00 (in range)
-            // Row 2: ts = 2022-01-01 00:00:30 (NOT in range, >= boundary)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T00:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1262,13 +1113,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // dateadd('y', -300000, timestamp) means the optimizer stores +300000 as the inverse offset.
         // When pushing down ts > '2022-01-01', it needs to apply +300000 years to 2022-01-01,
         // resulting in year 302022 which overflows the microsecond timestamp range (~year 294247).
-        assertException(
-                "SELECT * FROM (" +
-                        "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
-                        ") WHERE ts > '2022-01-01'",
-                0,
-                "timestamp overflow"
-        );
+        assertQuery("SELECT * FROM (" +
+                "SELECT dateadd('y', -300000, timestamp) as ts, price FROM trades" +
+                ") WHERE ts > '2022-01-01'")
+                .fails(0, "timestamp overflow");
     }
 
     @Test
@@ -1286,31 +1134,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             String query = "SELECT * FROM trades_offset WHERE ts IN '2022-01-01'";
 
-            // Verify plan shows interval pushdown with +1 day offset applied through the view
+            // Verify correct data: only the row where ts = 2022-01-01 (original timestamp = 2022-01-02)
+            // Plan shows interval pushdown with +1 day offset applied through the view
             // ts IN '2022-01-01' means original timestamp must be in '2022-01-02'
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('d',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-02T00:00:00.000000Z","2022-01-02T23:59:59.999999Z")]
-                            """
-            );
-
-            // Verify correct data: only the row where ts = 2022-01-01 (original timestamp = 2022-01-02)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T12:00:00.000000Z\t150.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1327,31 +1168,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts >= '2022-01-01' AND ts < '2022-01-08'
                     """;
 
+            // Row 1: ts = 2022-01-01 12:00 (in range)
+            // Row 2: ts = 2022-01-08 12:00 (NOT in range, >= boundary)
             // Verify plan shows interval pushdown with +1 week offset
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('w',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2022-01-08T00:00:00.000000Z","2022-01-14T23:59:59.999999Z")]
-                            """
-            );
-
-            // Row 1: ts = 2022-01-01 12:00 (in range)
-            // Row 2: ts = 2022-01-08 12:00 (NOT in range, >= boundary)
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-01-01T12:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -1370,18 +1204,17 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Verify data is correct and ordered
             // Window functions don't support random access but may know size
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             timestamp\tprice\trn
                             2022-01-01T00:00:00.000000Z\t100.0\t1
                             2022-01-01T01:00:00.000000Z\t150.0\t2
                             2022-01-01T02:00:00.000000Z\t200.0\t3
-                            """,
-                    query,
-                    "timestamp",
-                    false,  // Window functions don't support random access
-                    true    // but they may know their size
-            );
+                            """);
         });
     }
 
@@ -1420,8 +1253,18 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
 
             // Window functions don't support random access but may know size
-            assertQueryNoLeakCheck(expectedNoShift, queryNoShift, "timestamp", false, true);
-            assertQueryNoLeakCheck(expectedWithShift, queryWithShift, "ts", false, true);
+            assertQuery(queryNoShift)
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedNoShift);
+            assertQuery(queryWithShift)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedWithShift);
         });
     }
 
@@ -1443,18 +1286,17 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
             // Verify data is correct - dateadd shifts timestamps by -1 hour
             // Window functions don't support random access but may know size
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             ts\tprice\trn
                             2022-01-01T00:00:00.000000Z\t100.0\t1
                             2022-01-01T01:00:00.000000Z\t150.0\t2
                             2022-01-01T02:00:00.000000Z\t200.0\t3
-                            """,
-                    query,
-                    "ts",
-                    false,  // Window functions don't support random access
-                    true    // but they may know their size
-            );
+                            """);
         });
     }
 
@@ -1484,18 +1326,16 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             // Verify window function computes row numbers BEFORE filter is applied
             // All 4 rows get numbered, then we filter to 2022-01-01
             // Window functions don't support random access
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
                             ts\tprice\trn
                             2022-01-01T00:00:00.000000Z\t100.0\t1
                             2022-01-01T01:00:00.000000Z\t150.0\t2
                             2022-01-01T02:00:00.000000Z\t200.0\t3
-                            """,
-                    query,
-                    "ts",
-                    false,  // Window functions don't support random access
-                    false
-            );
+                            """);
         });
     }
 
@@ -1517,32 +1357,25 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     ) WHERE ts IN '2022'
                     """;
 
-            // Verify plan shows interval pushdown with +1 year offset (calendar-aware)
+            // Should only return row 1
+            // Plan shows interval pushdown with +1 year offset (calendar-aware)
             // 2022-01-01 + 1 year = 2023-01-01
             // 2022-12-31 23:59:59 + 1 year = 2023-12-31 23:59:59
-            assertPlanNoLeakCheck(
-                    query,
-                    """
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlan("""
                             VirtualRecord
                               functions: [dateadd('y',-1,timestamp),price]
                                 PageFrame
                                     Row forward scan
                                     Interval forward scan on: trades
                                       intervals: [("2023-01-01T00:00:00.000000Z","2023-12-31T23:59:59.999999Z")]
-                            """
-            );
-
-            // Should only return row 1
-            assertQueryNoLeakCheck(
-                    """
+                            """)
+                    .returns("""
                             ts\tprice
                             2022-06-15T12:00:00.000000Z\t100.0
-                            """,
-                    query,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 }

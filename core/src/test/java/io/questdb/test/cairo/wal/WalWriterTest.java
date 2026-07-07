@@ -28,8 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -48,14 +50,18 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalDataRecord;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -107,6 +113,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -120,10 +127,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
+import static io.questdb.cairo.sql.SymbolTable.VALUE_NOT_FOUND;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractCairoTest {
+    private static final long BITMAP_INDEX_MAX_VALUE_OFFSET = 37L;
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
@@ -155,12 +164,14 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSqlCursors("sm", "select * from sm order by id");
-            assertSql(
-                    """
+            assertQuery("select count(*), min(ts), max(ts) from sm")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
                             count\tmin\tmax
                             2\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:00.000000Z
-                            """, "select count(*), min(ts), max(ts) from sm"
-            );
+                            """);
         });
     }
 
@@ -331,6 +342,9 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnsRollLargeSegment() throws Exception {
+        // The bug this guards is a Java int overflow (platform-independent); writing >2GB is
+        // very slow on the hosted Mac and Windows runners, so run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
         assertMemoryLeak(() -> {
             // This test reproduces a bug where rolling a large segment file sized over 2GB
             // resulted in int overflow and commit exception.
@@ -926,12 +940,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\ti2
                             0\t\t2022-02-24T00:00:00.000000Z\t2
-                            """, tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -945,12 +961,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\ti2
                             0\t\t2022-02-24T00:00:00.000000Z\t2
-                            """, tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -969,12 +987,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\tsym2\ti2
                             0\t\t2022-02-24T00:00:00.000000Z\t\t2
-                            """, tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -995,12 +1015,14 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
 
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts\tc
                             1\t\t1970-01-01T00:00:00.000000Z\tnull
-                            """, tableToken.getTableName()
-            );
+                            """);
         });
     }
 
@@ -1077,6 +1099,33 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyMakesProgressWithZeroTimeQuota() throws Exception {
+        // With the apply time quota set to zero, every WAL apply pass enters with a
+        // deadline at "now": the lookahead's do-while exits after a single small batch,
+        // and the apply loop's main while-condition fails after the firstRun txn. Despite
+        // both budgets being immediately exhausted, the firstRun guard plus repeated
+        // job invocations must still drain the entire backlog correctly.
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1);
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 20; i++) {
+                execute("INSERT INTO " + tableName + " VALUES (" + i +
+                        ", '2024-01-01T00:00:" + String.format("%02d", i) + ".000000Z')");
+            }
+            drainWalQueue();
+            assertQuery("SELECT count(*) FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n20\n");
+        });
+    }
+
+    @Test
     public void testApplyManySmallCommits2Writers() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -1133,16 +1182,175 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     drainWalQueue();
                     Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-                    assertSql(
-                            "count\tmin\tmax\n" +
-                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm"
-                    );
+                    assertQuery("select count(*), min(ts), max(ts) from sm")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\tmin\tmax\n" +
+                                    (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsIncrement) + "\n");
                     assertSqlCursors("sm", "select * from sm order by id");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
-                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+                    assertQuery("select * from sm WHERE id <> cast(s as int)")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("id\tts\ty\ts\tv\tm\n");
+                    assertQuery("select * from sm WHERE id <> cast(v as int)")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("id\tts\ty\ts\tv\tm\n");
+                    assertQuery("select * from sm WHERE id % " + symbolCount + " <> cast(m as int)")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("id\tts\ty\ts\tv\tm\n");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testBitmapIndexExtendOnNonLastPartitionWal() throws Exception {
+        // End-to-end WAL test: inserts batches of rows with unique symbols into
+        // a non-last partition, verifying the bitmap index .k file extends in
+        // page-sized chunks rather than per-putLong.
+        // Scaled down from the customer scenario (19 × 1M) to run in seconds.
+        int batchSize = 10_000;
+        int batches = 5;
+
+        AtomicInteger allocateCount = new AtomicInteger();
+        LongList allocateSizes = new LongList();
+        ConcurrentHashMap<Long, Boolean> indexKeyFds = new ConcurrentHashMap<>();
+        AtomicBoolean tracking = new AtomicBoolean();
+
+        FilesFacade testFf = new TestFilesFacadeImpl() {
+            @Override
+            public boolean allocate(long fd, long size) {
+                if (tracking.get() && indexKeyFds.containsKey(fd)) {
+                    allocateCount.incrementAndGet();
+                    synchronized (allocateSizes) {
+                        allocateSizes.add(size);
+                    }
+                }
+                return super.allocate(fd, size);
+            }
+
+            @Override
+            public boolean close(long fd) {
+                indexKeyFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                long fd = super.openRW(name, opts);
+                if (fd > 0 && Utf8s.containsAscii(name, "2022-01-01") && Utf8s.endsWithAscii(name, ".k")) {
+                    indexKeyFds.put(fd, Boolean.TRUE);
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(testFf, () -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (" +
+                    "sym SYMBOL NOCACHE INDEX CAPACITY 4," +
+                    "val INT," +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Seed: insert initial batch into day1 + 1 row for day2
+            execute("INSERT INTO " + tableName +
+                    " SELECT 'sym_' || x, x::INT, '2022-01-01T00:00:00.000000Z'" +
+                    " FROM long_sequence(" + batchSize + ")");
+            execute("INSERT INTO " + tableName +
+                    " VALUES ('sym_day2', 0, '2022-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Insert batches into the non-last partition (day1).
+            // Each batch goes through O3 OPEN_MID_PARTITION_FOR_APPEND.
+            int totalAllocates = 0;
+            for (int batch = 1; batch < batches; batch++) {
+                long offset = (long) batch * batchSize;
+
+                allocateCount.set(0);
+                synchronized (allocateSizes) {
+                    allocateSizes.clear();
+                }
+                tracking.set(true);
+
+                execute("INSERT INTO " + tableName +
+                        " SELECT 'sym_' || (x + " + offset + "), (x + " + offset + ")::INT," +
+                        " '2022-01-01T00:00:00.000000Z'" +
+                        " FROM long_sequence(" + batchSize + ")");
+                drainWalQueue();
+
+                tracking.set(false);
+
+                int count = allocateCount.get();
+                totalAllocates += count;
+                long firstSize = 0;
+                long lastSize = 0;
+                synchronized (allocateSizes) {
+                    if (allocateSizes.size() > 0) {
+                        firstSize = allocateSizes.get(0);
+                        lastSize = allocateSizes.get(allocateSizes.size() - 1);
+                    }
+                }
+                LOG.info()
+                        .$("batch ").$(batch)
+                        .$(": allocate() calls=").$(count)
+                        .$(", firstSize=").$(firstSize)
+                        .$(", lastSize=").$(lastSize)
+                        .I$();
+            }
+
+            // Verify total row count
+            long expectedRows = (long) batches * batchSize + 1;
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n" + expectedRows + "\n");
+
+            // With the fix, each batch should need very few allocate calls
+            // (page-sized extends). Without the fix, each batch would produce
+            // ~40K allocate calls (one per putLong on new key entries).
+            LOG.info()
+                    .$("total allocate() calls across all batches: ").$(totalAllocates)
+                    .I$();
+            assertTrue(
+                    "expected fewer than 100 total allocate() calls but got " + totalAllocates,
+                    totalAllocates < 100
+            );
+        });
+    }
+
+    @Test
+    public void testBitmapIndexMaxRowIsInclusiveAfterWalO3AppendToNonLastPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (" +
+                    "sym SYMBOL NOCACHE INDEX CAPACITY 4," +
+                    "val INT," +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName +
+                    " SELECT 'sym_' || x, x::INT, '2022-01-01T00:00:00.000000Z'" +
+                    " FROM long_sequence(10)");
+            execute("INSERT INTO " + tableName +
+                    " VALUES ('sym_day2', 0, '2022-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            execute("INSERT INTO " + tableName +
+                    " SELECT 'sym_' || (x + 10), (x + 10)::INT, '2022-01-01T00:00:00.000000Z'" +
+                    " FROM long_sequence(10)");
+            drainWalQueue();
+
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n21\n");
+            assertBitmapIndexMaxValue(tableName);
         });
     }
 
@@ -1375,7 +1583,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     boolean countedDown = false;
                     try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                         walId = walWriter.getWalId();
-                        final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
+                        final AtomicInteger counter = counters.computeIfAbsent(walId, _ -> new AtomicInteger());
                         counter.incrementAndGet();
 
                         addColumn(walWriter, colName, ColumnType.LONG);
@@ -1526,7 +1734,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     int walId = -1;
                     try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                         walId = walWriter.getWalId();
-                        final AtomicInteger counter = counters.computeIfAbsent(walId, name -> new AtomicInteger());
+                        final AtomicInteger counter = counters.computeIfAbsent(walId, _ -> new AtomicInteger());
                         assertEquals(counter.get() > 0 ? maxRowCount : 0, walWriter.getSegmentRowCount());
                         counter.incrementAndGet();
                         for (int n = 0; n < numOfRows; n++) {
@@ -1656,6 +1864,8 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testDropIndex() throws Exception {
         assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             final String tableName = testName.getMethodName();
             TableToken tableToken = createTable(testName.getMethodName());
             execute("ALTER TABLE " + tableName + " ADD COLUMN sym SYMBOL INDEX");
@@ -1678,9 +1888,11 @@ public class WalWriterTest extends AbstractCairoTest {
             public long getPageSize() {
                 RuntimeException e = new RuntimeException("Test failure");
                 e.fillInStackTrace();
-                final StackTraceElement[] stackTrace = e.getStackTrace();
-                if (stackTrace[4].getClassName().endsWith("TableSequencerImpl")) {
-                    throw e;
+                for (StackTraceElement frame : e.getStackTrace()) {
+                    if ("io.questdb.cairo.wal.seq.SequencerMetadata".equals(frame.getClassName())
+                            && "openTableSequencerMetadata".equals(frame.getMethodName())) {
+                        throw e;
+                    }
                 }
                 return Files.PAGE_SIZE;
             }
@@ -1713,7 +1925,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
                     final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerDir")) {
+                    if (stackTrace[1].getClassName().endsWith("TableSequencerImpl") && stackTrace[1].getMethodName().equals("createSequencerFiles")) {
                         return 1;
                     }
                 }
@@ -1760,7 +1972,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(expected, "select a,b from " + tableName);
+            assertQuery("select a,b from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
 
             // mix with new format
             final String tableName1 = "testExtractNewWalEvents";
@@ -1771,7 +1986,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken1));
-            assertSql(expected, "select a,b from " + tableName1);
+            assertQuery("select a,b from " + tableName1)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 
@@ -1793,6 +2011,93 @@ public class WalWriterTest extends AbstractCairoTest {
                 Assert.assertFalse(e.isTableDropped());
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
             }
+        });
+    }
+
+    @Test
+    public void testFormatParquetBornParquetPartitionKeepsColumnTopValues() throws Exception {
+        // On a FORMAT PARQUET table, an earlier partition created by a single batched
+        // WAL apply is born parquet in one commit. Columns added after table creation
+        // must keep their values; the bug read them back as NULL once decoded to
+        // native. The split-apply variant below is the control.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, s SYMBOL, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName + " (x, s, ts) SELECT x, rnd_symbol('a','b'), " +
+                    "timestamp_sequence('2022-02-25T05:00:00.000000Z', 1_000_000L) FROM long_sequence(1000)");
+            drainWalQueue();
+
+            // new_i/new_s get a columnTop on the existing 2022-02-25 partition.
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_i INT");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_s SYMBOL");
+
+            execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            // No drain between the inserts so they apply as one block: the earlier
+            // 2022-02-24 partition is born parquet in a single commit.
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 100+x, 'b', x::int, 'z2', " +
+                    "timestamp_sequence('2022-02-24T17:54:46.000000Z', 1_000_000L) FROM long_sequence(523)");
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) VALUES " +
+                    "(1, 'a', -607368144, 'z1', '2022-02-24T16:58:10.458430Z')");
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 1000+x, 'a', x::int, 'z3', " +
+                    "timestamp_sequence('2022-02-24T18:30:00.000000Z', 1_000_000L) FROM long_sequence(500)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n");
+        });
+    }
+
+    @Test
+    public void testFormatParquetSplitApplyKeepsColumnTopValues() throws Exception {
+        // Same as testFormatParquetBornParquetPartitionKeepsColumnTopValues, but the
+        // inserts are drained one at a time, so 2022-02-24 is created then O3-merged
+        // rather than born parquet in one block. This path was always correct;
+        // it isolates the trigger to the batched apply.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, s SYMBOL, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            execute("INSERT INTO " + tableName + " (x, s, ts) SELECT x, rnd_symbol('a','b'), " +
+                    "timestamp_sequence('2022-02-25T05:00:00.000000Z', 1_000_000L) FROM long_sequence(1000)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_i INT");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN new_s SYMBOL");
+
+            execute("ALTER TABLE " + tableName + " SET FORMAT PARQUET");
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts >= '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 100+x, 'b', x::int, 'z2', " +
+                    "timestamp_sequence('2022-02-24T17:54:46.000000Z', 1_000_000L) FROM long_sequence(523)");
+            drainWalQueue();
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) VALUES " +
+                    "(1, 'a', -607368144, 'z1', '2022-02-24T16:58:10.458430Z')");
+            drainWalQueue();
+            execute("INSERT INTO " + tableName + " (x, s, new_i, new_s, ts) SELECT 1000+x, 'a', x::int, 'z3', " +
+                    "timestamp_sequence('2022-02-24T18:30:00.000000Z', 1_000_000L) FROM long_sequence(500)");
+            drainWalQueue();
+
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO NATIVE WHERE ts < '2022-02-25T00:00:00.000000Z'");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM " + tableName + " WHERE ts = '2022-02-24T16:58:10.458430Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("x\ts\tts\tnew_i\tnew_s\n" +
+                            "1\ta\t2022-02-24T16:58:10.458430Z\t-607368144\tz1\n");
         });
     }
 
@@ -1860,7 +2165,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 ff.mkdir(path.$(), configuration.getMkDirMode());
 
                 TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
-                v1.create(path.of(root).concat("v1_drop"), 65897);
+                v1.create(path.of(root).concat("v1_drop"), 65_897);
                 v1.open(path);
 
                 assertIsDropped(v1, path, "v1_drop");
@@ -1880,7 +2185,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 ff.mkdir(path.$(), configuration.getMkDirMode());
 
                 TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, 128, DefaultWalDirectoryPolicy.INSTANCE);
-                v2.create(path.of(root).concat("v2_drop"), 65897);
+                v2.create(path.of(root).concat("v2_drop"), 65_897);
                 v2.open(path);
 
                 assertIsDropped(v2, path, "v2_drop");
@@ -1905,7 +2210,7 @@ public class WalWriterTest extends AbstractCairoTest {
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                 final RowInserter ins = new RowInserter() {
                     private long count;
-                    private long ts = 1000000000L;
+                    private long ts = 1_000_000_000L;
 
                     @Override
                     public long getCount() {
@@ -2027,13 +2332,14 @@ public class WalWriterTest extends AbstractCairoTest {
             execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T23:00:00.000000Z')");
             tickWalQueue(1);
 
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             0\t\t2023-08-04T23:00:00.000000Z
-                            """,
-                    tableToken.getTableName()
-            );
+                            """);
 
             execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T22:00:00.000000Z')");
             execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T21:00:00.000000Z')");
@@ -2049,28 +2355,116 @@ public class WalWriterTest extends AbstractCairoTest {
             tickWalQueue(2);
 
             // We expect all, but the last row to be visible.
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             0\t\t2023-08-04T21:00:00.000000Z
                             0\t\t2023-08-04T22:00:00.000000Z
                             0\t\t2023-08-04T23:00:00.000000Z
-                            """,
-                    tableToken.getTableName()
-            );
+                            """);
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery(tableToken.getTableName())
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             0\t\t2023-08-04T20:00:00.000000Z
                             0\t\t2023-08-04T21:00:00.000000Z
                             0\t\t2023-08-04T22:00:00.000000Z
                             0\t\t2023-08-04T23:00:00.000000Z
-                            """,
-                    tableToken.getTableName()
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testMultipleSymbolColumnsOnRollover() throws Exception {
+        // Test that multiple symbol columns with different states are handled correctly:
+        // - Column 1: Has symbols, needs count update
+        // - Column 2: Empty initially, but symbols added externally, needs upgrade from EmptySymbolMapReader
+        // - Column 3: Empty and stays empty
+        assertMemoryLeak(() -> {
+            final String tableName = "testMultiSym";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s1", ColumnType.SYMBOL)
+                    .col("s2", ColumnType.SYMBOL)
+                    .col("s3", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            // Add symbols only to s1 via first WAL writer
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "s1_" + i);  // s1 gets values
+                    // s2 and s3 get nulls
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Verify initial state - s1 has symbols, s2 and s3 are empty
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertEquals(3, reader.getSymbolMapReader(0).getSymbolCount());
+                Assert.assertEquals(0, reader.getSymbolMapReader(1).getSymbolCount());
+                Assert.assertEquals(0, reader.getSymbolMapReader(2).getSymbolCount());
+            }
+
+            // Add more symbols to s1 and add symbols to s2 via another WAL writer
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 2; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "s1_extra_" + i);  // More s1 values
+                    row.putSym(1, "s2_" + i);        // s2 gets values now
+                    // s3 still gets nulls
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Now open a new WAL writer - it will have stale state for all columns
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Check initial state (stale)
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));  // Stale for s1
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(1));  // Stale for s2
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(2));  // Correct for s3 (still 0)
+
+                // s1 has EmptySymbolMapReader (opens empty, needs upgrade)
+                Assert.assertTrue("s1 should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                // s2 has EmptySymbolMapReader (opens empty, needs upgrade)
+                Assert.assertTrue("s2 should start empty", walWriter.getSymbolMapReader(1) instanceof EmptySymbolMapReader);
+                // s3 has EmptySymbolMapReader (stays empty)
+                Assert.assertTrue("s3 should start empty", walWriter.getSymbolMapReader(2) instanceof EmptySymbolMapReader);
+
+                // Trigger rollover - should refresh all symbol watermarks
+                walWriter.rollSegment();
+
+                // After rollover:
+                // - s1 should be upgraded to real reader with 5 symbols (3 + 2 extra)
+                Assert.assertEquals(5, walWriter.getSymbolCountWatermark(0));
+                Assert.assertFalse("s1 should be upgraded", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("s1_0"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("s1_extra_0"));
+
+                // - s2 should be upgraded to real reader with 2 symbols
+                Assert.assertEquals(2, walWriter.getSymbolCountWatermark(1));
+                Assert.assertFalse("s2 should be upgraded", walWriter.getSymbolMapReader(1) instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(1).keyOf("s2_0"));
+
+                // - s3 should stay empty
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(2));
+                Assert.assertTrue("s3 should stay empty", walWriter.getSymbolMapReader(2) instanceof EmptySymbolMapReader);
+            }
         });
     }
 
@@ -2162,7 +2556,7 @@ public class WalWriterTest extends AbstractCairoTest {
                             assertExceptionNoLeakCheck("Exception expected");
                         } catch (Exception e) {
                             // this exception will be handled in ILP/PG/HTTP
-                            assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=0]", e.getMessage());
+                            assertEquals("[0] expected to read table structure changes but there is none saved in the sequencer [structureVersionLo=0]", e.getMessage());
                         }
                     }
                 }
@@ -2371,7 +2765,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         record.getLong256(20, stringSink);
                         assertEquals(testSink.toString(), stringSink.toString());
 
-                        assertEquals(1654852426000000L + (i + 1) * (long) (Math.pow(10, 5 - (int) Math.log10(i + 1))), record.getTimestamp(21));
+                        assertEquals(1_654_852_426_000_000L + (i + 1) * (long) (Math.pow(10, 5 - (int) Math.log10(i + 1))), record.getTimestamp(21));
 
                         TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getStrA(22));
                         TestUtils.assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStrA(23));
@@ -2530,6 +2924,52 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testReadMatViewStateV2() throws Exception {
         assertMemoryLeak(() -> testReadMatViewState(2));
+    }
+
+    @Test
+    public void testReadWalTxnDetailsBoundedByDeadline() throws Exception {
+        // The lookahead pre-read in WalTxnDetails.readObservableTxnMeta normally tries
+        // to fill the row budget by re-iterating loadTransactionDetails until it reaches
+        // maxLookaheadRows or runs out of sequencer transactions. For tables with very
+        // small commits this can spin for a long time on a large backlog, holding up
+        // the apply worker before any commit happens. The deadline parameter caps how
+        // much wall-clock time the lookahead loop is allowed to spend.
+        final int batchSize = 3;
+        final int totalTxns = 20;
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, batchSize);
+
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            for (int i = 0; i < totalTxns; i++) {
+                execute("INSERT INTO " + tableName + " VALUES (" + i +
+                        ", '2024-01-01T00:00:" + String.format("%02d", i) + ".000000Z')");
+            }
+
+            // Freeze the test clock so the deadline check is fully deterministic.
+            setCurrentMicros(1_000_000L);
+            try (TableWriter writer = getWriter(tableToken)) {
+                long applied = writer.getAppliedSeqTxn();
+
+                // Deadline already at "now" so the do-while runs exactly one iteration of
+                // size CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT and then bails out.
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, applied)) {
+                    writer.readWalTxnDetails(cursor, currentMicros);
+                }
+                Assert.assertEquals(applied + batchSize, writer.getWalTnxDetails().getLastSeqTxn());
+
+                // No deadline. The remaining txns load on top of the already-loaded prefix.
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, applied)) {
+                    writer.readWalTxnDetails(cursor, Long.MAX_VALUE);
+                }
+                Assert.assertEquals(applied + totalTxns, writer.getWalTnxDetails().getLastSeqTxn());
+            }
+        });
     }
 
     @Test
@@ -3292,7 +3732,7 @@ public class WalWriterTest extends AbstractCairoTest {
                                 - (eventsBytesPerTxn * txnCount)
                 ) / bytesPerRow;
 
-                long timestamp = 1694590000000000L;
+                long timestamp = 1_694_590_000_000_000L;
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     // Insert the one less than the maximum number of rows to cause a roll-over at the next row.
@@ -3703,13 +4143,383 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("count\n10\n", "select count() from " + tableName);
+            assertQuery("select count() from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
             ff.close(fd);
 
             Assert.assertEquals(1, fdOpenCount.get());
             Assert.assertTrue(fdOpenNoCacheCount.get() > 0);
         });
 
+    }
+
+    @Test
+    public void testSymbolCapacityRebuildOnRollover() throws Exception {
+        // Test that WAL writer correctly reopens symbol files when symbolTableNameTxn changes
+        // due to a capacity rebuild on the main table. The key verification is that after
+        // capacity rebuild, symbols can still be resolved (files were re-hardlinked correctly).
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymCapRebuild";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL).symbolCapacity(4)  // Small initial capacity
+                    .timestamp("ts")
+                    .wal();
+            TableToken tableToken = createTable(model);
+
+            // Add symbols via first WAL writer to populate the table
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putSym(0, "sym" + i);
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Open WAL writer - it starts with EmptySymbolMapReader (stale state)
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // WAL writers always open with EmptySymbolMapReader, watermark is stale
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+
+                // First rollover - upgrades to real reader
+                walWriter.rollSegment();
+
+                Assert.assertFalse("Should be upgraded", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(3, walWriter.getSymbolCountWatermark(0));
+
+                // Verify symbols work before capacity change
+                Assert.assertNotEquals(VALUE_NOT_FOUND, walWriter.getSymbolMapReader(0).keyOf("sym0"));
+
+                // Now change capacity on the main table (while WAL writer is open with real reader)
+                // This creates new symbol files with different txn in _cv
+                try (TableWriter tableWriter = getWriter(tableToken)) {
+                    tableWriter.changeSymbolCapacity("s", 64, AllowAllSecurityContext.INSTANCE);
+                }
+
+                // Second rollover - should detect new symbolTableNameTxn and re-hardlink files
+                walWriter.rollSegment();
+
+                // After second rollover, the reader should still be valid (re-hardlinked with new files)
+                SymbolMapReader readerAfter = walWriter.getSymbolMapReader(0);
+                Assert.assertFalse("Should still have real reader", readerAfter instanceof EmptySymbolMapReader);
+                Assert.assertEquals(3, walWriter.getSymbolCountWatermark(0));
+
+                // Verify symbols can still be resolved - this confirms files were re-hardlinked correctly
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym0"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym1"));
+                Assert.assertNotEquals(VALUE_NOT_FOUND, readerAfter.keyOf("sym2"));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolNullFlagResetOnRollover() throws Exception {
+        // Test that symbolMapNullFlags is correctly reset on rollover when symbol column
+        // stays empty. This prevents stale null flags from leaking into the WAL event stream.
+        //
+        // Real scenario: WAL writer has EmptySymbolMapReader but writes NULL to it,
+        // which sets symbolMapNullFlags to true. On rollover, the flag should be reset
+        // to false because the main table still has no symbols (EmptySymbolMapReader).
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymNullFlag";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Initially EmptySymbolMapReader - main table has no symbols
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+
+                // Write NULL to symbol column - this sets symbolMapNullFlags to true
+                // even though the reader is EmptySymbolMapReader
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, null);
+                row.append();
+
+                row = walWriter.newRow(1);
+                row.putSym(0, "foo");
+                row.append();
+
+                walWriter.commit();
+
+                // Note: NOT draining WAL queue - main table still has no symbols
+
+                // Verify main table still has no symbols
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertEquals(0, reader.getSymbolMapReader(0).getSymbolCount());
+                    Assert.assertFalse("Main table should have no NULLs yet", reader.getSymbolMapReader(0).containsNullValue());
+                }
+
+                // Roll segment - should reset symbolMapNullFlags to false
+                // because main table still has EmptySymbolMapReader
+                walWriter.rollSegment();
+
+                // After rollover - but before WAL apply - the wal reader should have EmptySymbolMapReader
+                // and null flag should be reset to false (not stale true)
+                Assert.assertTrue("Should still be empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertFalse("Null flag should be reset", walWriter.getSymbolMapReader(0).containsNullValue());
+
+
+                // after WAL apply the table reader should see the symbols: both null and non-null
+                drainWalQueue();
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertEquals(1, reader.getSymbolMapReader(0).getSymbolCount());
+                    Assert.assertTrue("Main table should have no NULLs yet", reader.getSymbolMapReader(0).containsNullValue());
+                }
+
+                // the WAL writer should STILL not see the applied symbols - they will become visible only after a rollover
+                Assert.assertTrue("Should still be empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertFalse("Null flag should be reset", walWriter.getSymbolMapReader(0).containsNullValue());
+
+
+                // now do a rollover -> after which the WAL writer should see committed and applied symbols
+                // and null flag should be reset to false (not stale true)
+                walWriter.rollSegment();
+                Assert.assertFalse("Should NOT be empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertTrue("Null flag should be reloaded", walWriter.getSymbolMapReader(0).containsNullValue());
+                Assert.assertEquals(1, walWriter.getSymbolMapReader(0).getSymbolCount());
+                Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolNullValueOnRollover() throws Exception {
+        // Test that null value flag is correctly refreshed on rollover
+        // When symbols including null are added to the main table, the WAL writer should
+        // see containsNullValue=true after rollover.
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymNullVal";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            // Add symbols including explicit NULL via WAL writer
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Add regular symbol
+                TableWriter.Row row1 = walWriter.newRow(0);
+                row1.putSym(0, "sym1");
+                row1.append();
+
+                // Add NULL symbol - this sets the null flag in the symbol map
+                TableWriter.Row row2 = walWriter.newRow(0);
+                row2.putSym(0, null);
+                row2.append();
+
+                walWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Open a new WAL writer - should pick up null flag on rollover
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Initial state - EmptySymbolMapReader which reports containsNullValue=false
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertFalse("Empty reader reports no null", walWriter.getSymbolMapReader(0).containsNullValue());
+
+                // Trigger rollover
+                walWriter.rollSegment();
+
+                // After rollover - should have real reader with correct null flag
+                SymbolMapReader reader = walWriter.getSymbolMapReader(0);
+                Assert.assertFalse("Should be upgraded", reader instanceof EmptySymbolMapReader);
+                Assert.assertTrue("Should detect null value", reader.containsNullValue());
+                Assert.assertEquals(1, walWriter.getSymbolCountWatermark(0));  // Only "sym1", null doesn't count
+            }
+        });
+    }
+
+    /**
+     * Tests symbol table behavior when same symbol is reused after cancel.
+     * <p>
+     * Current behavior: the symbol is cached in symbolMaps, so reusing it
+     * returns the same key. Only one symbol entry is created.
+     */
+    @Test
+    public void testSymbolReusedAfterCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymbolReuse";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Row 1: Add symbol, then CANCEL
+                TableWriter.Row row1 = walWriter.newRow(1_000_000L);
+                row1.putSym(0, "reused_symbol");
+                row1.putInt(1, 100);
+                row1.cancel();
+
+                // Row 2: Use SAME symbol, then COMMIT
+                // This should find it in symbolMaps cache and reuse the key
+                TableWriter.Row row2 = walWriter.newRow(2_000_000L);
+                row2.putSym(0, "reused_symbol");  // Should get same key from cache
+                row2.putInt(1, 200);
+                row2.append();
+
+                walWriter.commit();
+            }
+
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify data
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tvalue\tts
+                            reused_symbol\t200\t1970-01-01T00:00:02.000000Z
+                            """);
+
+            // Check symbol table - only one symbol should exist (reused from cache)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                // Current behavior: symbol is cached, so reuse doesn't create duplicates
+                assertEquals("Reused symbol should only appear once", 1, symbolMapReader.getSymbolCount());
+                assertEquals("reused_symbol", symbolMapReader.valueOf(0).toString());
+            }
+        });
+    }
+
+    /**
+     * Tests symbol table behavior with multiple cancelled rows.
+     * <p>
+     * Current behavior: all symbols (cancelled + committed) remain in the symbol table.
+     * This is consistent with append-only symbol table design.
+     */
+    @Test
+    public void testSymbolTableBehaviorMultipleCancels() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymbolMultiCancel";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Cancel 10 rows with unique symbols
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = walWriter.newRow((i + 1) * 1_000_000L);
+                    row.putSym(0, "cancelled_" + i);  // Each increments localSymbolIds
+                    row.putInt(1, i);
+                    row.cancel();  // localSymbolIds keeps incrementing!
+                }
+
+                // Now add one real row
+                TableWriter.Row realRow = walWriter.newRow(100_000_000L);
+                realRow.putSym(0, "real_symbol");  // Gets key 10 (keys 0-9 "wasted")
+                realRow.putInt(1, 999);
+                realRow.append();
+
+                walWriter.commit();
+            }
+
+            // Apply WAL
+            drainWalQueue();
+
+            // Verify data
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tvalue\tts
+                            real_symbol\t999\t1970-01-01T00:01:40.000000Z
+                            """);
+
+            // Check symbol table - all 11 symbols should exist (10 cancelled + 1 committed)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                int symbolCount = symbolMapReader.getSymbolCount();
+
+                // Current behavior: all symbols remain in the table
+                // This is consistent with append-only symbol table design
+                assertEquals("All symbols (cancelled + committed) should exist", 11, symbolCount);
+
+                // The committed symbol should be at key 10
+                assertEquals("real_symbol", symbolMapReader.valueOf(10).toString());
+            }
+        });
+    }
+
+    /**
+     * Tests symbol table behavior when a row is cancelled after adding a new symbol.
+     * <p>
+     * Current behavior: cancelled symbols remain in the symbol table. This is consistent
+     * with how QuestDB handles symbols in other scenarios (e.g., dropping partitions).
+     * <p>
+     * Scenario:
+     * 1. Start row, add new symbol "sym_cancelled"
+     * 2. Cancel row
+     * 3. Start new row, add new symbol "sym_committed"
+     * 4. Commit and apply WAL
+     * 5. Verify both symbols exist in symbol table (even though only one has data)
+     */
+    @Test
+    public void testSymbolTableBehaviorOnRowCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymbolCancel";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .col("value", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Row 1: Add symbol, then CANCEL
+                TableWriter.Row row1 = walWriter.newRow(1_000_000L);
+                row1.putSym(0, "sym_cancelled");  // This increments localSymbolIds
+                row1.putInt(1, 100);
+                row1.cancel();  // Data rolled back, but localSymbolIds NOT reset!
+
+                // Row 2: Add different symbol, then COMMIT
+                TableWriter.Row row2 = walWriter.newRow(2_000_000L);
+                row2.putSym(0, "sym_committed");  // Gets key 1 (key 0 was "used" by cancelled row)
+                row2.putInt(1, 200);
+                row2.append();
+
+                walWriter.commit();
+            }
+
+            // Apply WAL to main table
+            drainWalQueue();
+
+            // Query the data - what do we get?
+            assertQuery("select * from " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tvalue\tts
+                            sym_committed\t200\t1970-01-01T00:00:02.000000Z
+                            """);
+
+            // Check symbol table - both symbols should exist (cancelled + committed)
+            try (TableReader reader = getReader(tableName)) {
+                SymbolMapReader symbolMapReader = reader.getSymbolMapReader(0);
+                int symbolCount = symbolMapReader.getSymbolCount();
+
+                // Current behavior: both symbols are in the table
+                // This is consistent with partition drop behavior
+                assertEquals("Both symbols should exist in symbol table", 2, symbolCount);
+            }
+        });
     }
 
     @Test
@@ -3870,6 +4680,90 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolWatermarkFallbackOnStructureVersionMismatch() throws Exception {
+        // Test that on structure version mismatch we fall back to stale reader counts.
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymFallback";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                Assert.assertTrue("Should start empty", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+
+                // Add symbols via another WAL writer and apply to table.
+                try (WalWriter writer2 = getWalWriter(tableName)) {
+                    TableWriter.Row row = writer2.newRow(0);
+                    row.putSym(0, "sym1");
+                    row.append();
+                    writer2.commit();
+                }
+                drainWalQueue();
+
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertEquals(1, reader.getSymbolMapReader(0).getSymbolCount());
+                }
+
+                // Create structure version mismatch: add a column but do not apply WAL.
+                walWriter.addColumn("x", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
+                    Assert.assertTrue("WAL metadata should be ahead of table", walWriter.getMetadataVersion() > reader.getMetadataVersion());
+                }
+
+                // Rollover should skip refresh and keep stale reader/watermark.
+                walWriter.rollSegment();
+                Assert.assertTrue("Fallback should keep empty reader", walWriter.getSymbolMapReader(0) instanceof EmptySymbolMapReader);
+                Assert.assertEquals(0, walWriter.getSymbolCountWatermark(0));
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolWatermarkOnRollover() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testSymTable";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("s", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            createTable(model);
+
+            int symbolCount = 5;
+            try (WalWriter tableWriter = getWalWriter(tableName)) {
+                for (int i = 0; i < symbolCount; i++) {
+                    TableWriter.Row row = tableWriter.newRow(0);
+                    row.putSym(0, "s" + i);
+                    row.append();
+                }
+                tableWriter.commit();
+            }
+
+            drainWalQueue();
+
+            // Test that symbol watermarks are refreshed on segment rollover
+            try (WalWriter walWriter = getWalWriter(tableName)) {
+                // Before rollover, watermark is stale (pool reuse case)
+                int watermarkBeforeRollover = walWriter.getSymbolCountWatermark(0);
+                Assert.assertEquals(0, watermarkBeforeRollover);
+
+                // Trigger segment rollover - this should refresh symbol watermarks
+                walWriter.rollSegment();
+
+                // After rollover, watermark should be updated
+                int watermarkAfterRollover = walWriter.getSymbolCountWatermark(0);
+                SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(0);
+
+                Assert.assertEquals(symbolCount, watermarkAfterRollover);
+                Assert.assertFalse(symbolMapReader instanceof EmptySymbolMapReader);
+                Assert.assertNotEquals(VALUE_NOT_FOUND, symbolMapReader.keyOf("s0"));
+            }
+        });
+    }
+
+    @Test
     public void testTableDropExceptionThrownIfSequencerCannotBeOpenTableIsDropped() throws Exception {
         assertMemoryLeak(() -> {
             createTable(testName.getMethodName());
@@ -3902,6 +4796,89 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateFollowedByTwoInserts() throws Exception {
+        // Reproduces a block-sizing bug: after TRUNCATE, two INSERT WAL transactions
+        // are visible to the applier, but the second INSERT gets LAST_ROW_COMMIT
+        // (mapped to FORCE_FULL_COMMIT) because it's the last loaded transaction.
+        // calculateInsertTransactionBlock() breaks before including the second INSERT,
+        // so the first INSERT is processed alone with block size 1.
+        // With few rows and an empty table (post-TRUNCATE), processWalCommit() sends
+        // the data to LAG instead of committing fully, creating an artificial 0-row
+        // partition that can race with backup.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (val INT, ts TIMESTAMP)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            // Insert initial data and apply so the table has committed data.
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // Now add TRUNCATE + 2 INSERTs without draining.
+            // This ensures all 3 sequencer txns are visible when the applier loads them.
+            execute("TRUNCATE TABLE " + tableName);
+            execute("INSERT INTO " + tableName + " VALUES " +
+                    "(2, '2022-02-26T20:00:00.000000Z')," +
+                    "(3, '2022-02-26T21:00:00.000000Z')");
+            execute("INSERT INTO " + tableName + " VALUES " +
+                    "(4, '2022-02-27T06:00:00.000000Z')," +
+                    "(5, '2022-02-27T07:00:00.000000Z')");
+
+            // Load WalTxnDetails and check block calculation directly.
+            try (TableWriter writer = getWriter(tableToken)) {
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(
+                        tableToken, writer.getAppliedSeqTxn())) {
+                    writer.readWalTxnDetails(cursor);
+                }
+
+                WalTxnDetails walTxnDetails = writer.getWalTnxDetails();
+                long startTxn = writer.getAppliedSeqTxn();
+                // seqTxn layout (startTxn = last applied seqTxn):
+                //   startTxn+1 = TRUNCATE   → FORCE_FULL_COMMIT
+                //   startTxn+2 = INSERT_A   → commitToTimestamp = minTs(INSERT_B)
+                //   startTxn+3 = INSERT_B   → LAST_ROW_COMMIT → mapped to FORCE_FULL_COMMIT
+
+                // TRUNCATE must have FORCE_FULL_COMMIT
+                assertEquals(WalTxnDetails.FORCE_FULL_COMMIT, walTxnDetails.getCommitToTimestamp(startTxn + 1));
+
+                // INSERT_A should have a real timestamp (minTs of INSERT_B), NOT FORCE_FULL_COMMIT
+                long insertACommitTo = walTxnDetails.getCommitToTimestamp(startTxn + 2);
+                Assert.assertNotEquals(WalTxnDetails.FORCE_FULL_COMMIT, insertACommitTo);
+
+                // INSERT_B is the last loaded transaction → LAST_ROW_COMMIT → mapped to FORCE_FULL_COMMIT
+                assertEquals(WalTxnDetails.FORCE_FULL_COMMIT, walTxnDetails.getCommitToTimestamp(startTxn + 3));
+
+                // INSERT_A and INSERT_B should form a block of 2.
+                // Previously, INSERT_B's LAST_ROW_COMMIT (mapped to FORCE_FULL_COMMIT)
+                // caused a break before including it, leaving INSERT_A alone (block=1).
+                int blockSize = walTxnDetails.calculateInsertTransactionBlock(
+                        startTxn + 2,
+                        TableWriterPressureControl.EMPTY,
+                        Long.MAX_VALUE,
+                        Long.MIN_VALUE
+                );
+
+                assertEquals(2, blockSize);
+            }
+
+            // Drain and verify data correctness.
+            drainWalQueue();
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            val\tts
+                            2\t2022-02-26T20:00:00.000000Z
+                            3\t2022-02-26T21:00:00.000000Z
+                            4\t2022-02-27T06:00:00.000000Z
+                            5\t2022-02-27T07:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testTruncateWithoutKeepingSymbolTablesThrows() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
@@ -3912,6 +4889,613 @@ public class WalWriterTest extends AbstractCairoTest {
             } catch (UnsupportedOperationException ex) {
                 TestUtils.assertContains(ex.getMessage(), "cannot truncate symbol tables on WAL table");
             }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendDeniesSequencerCommit() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("t");
+            // Acquire the writer first, then suspend: the commit must be denied at the sequencer.
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                execute("alter table t suspend wal");
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putInt(1, 1);
+                row.append();
+                try {
+                    walWriter.commit();
+                    Assert.fail("expected the commit to be denied");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isTableSuspended());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendDeniesWrites() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // A suspended table denies WAL writes, like a dropped table but with a distinct error.
+            execute("alter table t suspend wal");
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+                Assert.assertFalse(e.isTableDropped());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "table is suspended"));
+            }
+
+            // RESUME re-allows writes.
+            execute("alter table t resume wal");
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendExcludesPendingTxnFromApply() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            // Pending WAL exists before suspension; it must not be applied while suspended.
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("alter table t suspend wal");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                walApplyJob.drain(0);
+            }
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+            // RESUME lets the pending transaction apply.
+            execute("alter table t resume wal");
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                walApplyJob.drain(0);
+            }
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalTableKeepsDataResetsSequencerAndStaysWritable() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+            final int oldTableId = oldToken.getTableId();
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            final TableToken newToken = engine.verifyTableName("t");
+            // New identity (dir + id), old dir dropped.
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNotEquals(oldTableId, newToken.getTableId());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+
+            // Applied data is preserved (hard-linked), counter is reset to a fresh sequencer.
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(newToken).getSeqTxn() <= 2);
+
+            // The rebased table is live and writable.
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalComplexTablePreservesDataAndIndexes() throws Exception {
+        // REBASE clones the applied table via hard-links. This exercises the clone over a table with
+        // column tops, several column-version ALTERs, multiple partitions (mixed native + parquet),
+        // symbol columns and all symbol index types, then verifies the rebased table returns the
+        // identical data and is still queryable by every index.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            // Designated ts, a default-indexed symbol plus one symbol per index type, a plain symbol
+            // (to add+drop an index), and varied scalar types including UUID.
+            execute("""
+                    create table t (
+                      ts timestamp,
+                      sym_def symbol index,
+                      sym_bmp symbol index type bitmap,
+                      sym_post symbol index type posting,
+                      sym_postd symbol index type posting delta,
+                      sym_poste symbol index type posting ef,
+                      sym_plain symbol,
+                      i int, l long, d double, str string, vch varchar, b boolean, ts2 timestamp, u uuid
+                    ) timestamp(ts) partition by day wal""");
+
+            // Day 1 + day 2, before the column top is added.
+            execute("""
+                    insert into t values
+                     ('2024-01-01T00:00:00.000000Z','A','A','A','A','A','P', 1, 10, 1.5, 's1', 'v1', true,  '2020-01-01T00:00:00.000000Z', '11111111-1111-1111-1111-111111111111'),
+                     ('2024-01-02T00:00:00.000000Z','B','B','B','B','B','P', 2, 20, 2.5, 's2', 'v2', false, '2020-01-02T00:00:00.000000Z', '22222222-2222-2222-2222-222222222222')""");
+            // Apply so day1/day2 exist and ADD COLUMN turns them into a genuine column top.
+            drainWalQueue();
+
+            // Column top: day1/day2 have no topcol; day3/day4 do.
+            execute("alter table t add column topcol int");
+            execute("""
+                    insert into t values
+                     ('2024-01-03T00:00:00.000000Z','A','C','A','C','A','P', 3, 30, 3.5, 's3', 'v3', true,  '2020-01-03T00:00:00.000000Z', '33333333-3333-3333-3333-333333333333', 300),
+                     ('2024-01-04T00:00:00.000000Z','B','C','B','C','B','P', 4, 40, 4.5, 's4', 'v4', false, '2020-01-04T00:00:00.000000Z', '44444444-4444-4444-4444-444444444444', 400)""");
+
+            // Column-version ALTERs: add+drop an index, change a symbol capacity (BITMAP only),
+            // rename a column, and drop a column.
+            execute("alter table t alter column sym_plain add index");
+            execute("alter table t alter column sym_plain drop index");
+            execute("alter table t alter column sym_bmp symbol capacity 2048");
+            execute("alter table t rename column str to str_renamed");
+            execute("alter table t drop column l");
+
+            // Convert the two earliest (historic) partitions to parquet; day3/day4 stay native.
+            execute("alter table t convert partition to parquet where ts < '2024-01-03'");
+
+            // Apply everything BEFORE suspend: REBASE discards any pending (unapplied) WAL txns.
+            drainWalQueue();
+
+            // The conversion really happened: day1/day2 are parquet, day3/day4 are still native.
+            assertQuery("select count() from table_partitions('t') where isParquet = true").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            // Capture the full dataset and the indexed-query results to diff against the rebased table.
+            final StringSink fullExpected = new StringSink();
+            printSql("select * from t order by ts", fullExpected);
+            final StringSink defExpected = new StringSink();
+            printSql("select ts, sym_def from t where sym_def = 'A' order by ts", defExpected);
+            final StringSink postExpected = new StringSink();
+            printSql("select ts, sym_post from t where sym_post = 'A' order by ts", postExpected);
+
+            final TableToken oldToken = engine.verifyTableName("t");
+            final int oldTableId = oldToken.getTableId();
+
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // New identity: different dir + table id, old dir dropped, fresh sequencer (empty seed).
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNotEquals(oldTableId, newToken.getTableId());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(newToken).getSeqTxn() <= 2);
+
+            // Identical full dataset: all columns, all rows, the column-top NULLs (day1/day2 topcol),
+            // and both parquet partitions reproduced exactly.
+            assertQuery("select * from t order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(fullExpected);
+
+            // Indexed queries return the same rows AND still use an index scan after the rebase.
+            assertQuery("select ts, sym_def from t where sym_def = 'A' order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(defExpected);
+            assertQuery("select ts, sym_post from t where sym_post = 'A' order by ts").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns(postExpected);
+            assertIndexScan("select * from t where sym_def = 'A'", "sym_def");
+            assertIndexScan("select * from t where sym_bmp = 'C'", "sym_bmp");
+            assertIndexScan("select * from t where sym_post = 'A'", "sym_post");
+            assertIndexScan("select * from t where sym_postd = 'C'", "sym_postd");
+            assertIndexScan("select * from t where sym_poste = 'A'", "sym_poste");
+
+            // The clone preserved the parquet partitions: still 2 parquet after the rebase.
+            assertQuery("select count() from table_partitions('t') where isParquet = true").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            // The rebased table is still writable.
+            execute("""
+                    insert into t values
+                     ('2024-01-05T00:00:00.000000Z','A','C','A','C','A','P', 5, 5.5, 's5', 'v5', true, '2020-01-05T00:00:00.000000Z', '55555555-5555-5555-5555-555555555555', 500)""");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n5\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalDiscardsPendingStructuralChange() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Queue pending WAL transactions that never get applied: a data row and a STRUCTURAL change.
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("alter table t add column c int");
+            // Suspend before draining, so the two pending txns above stay unapplied.
+            execute("alter table t suspend wal");
+
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // Only the applied row survives; the pending insert AND the structural add-column are discarded.
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            assertQuery("select count() from table_columns('t')").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalReclaimsOldTableDirAfterPurge() throws Exception {
+        // Regression test for M1 [OSS]: REBASE WAL must NOT leak the old table dir. The teardown leaves the
+        // old dir's reverse-map entry in the dropped state rebaseSwap set (it does not purgeToken it), so
+        // WalPurgeJob - which enumerates tables solely via forAllWalTables (the reverse map) - still visits
+        // the dir and reclaims it like any dropped table. Before the fix the teardown called
+        // removeTableToken, which erased the entry, so the purge job never visited the dir and it leaked
+        // forever (txn_seq, _rebase_source marker, symbol maps) - exactly the oversized log the operator
+        // rebased to shed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            // The rebase swapped to a fresh dir; the old dir's entry is kept but marked dropped (so it no
+            // longer resolves by dir name, yet WalPurgeJob can still enumerate it via includeDropped).
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            Assert.assertNull(engine.getTableTokenByDirName(oldToken.getDirName()));
+            Assert.assertTrue("old dir entry must be kept as dropped, not purged", engine.isTableDropped(oldToken));
+
+            // Close inactive readers/writers/sequencers, drain the WAL queue, then run WalPurgeJob to
+            // completion - the reclamation path that deletes dropped table dirs.
+            engine.releaseInactive();
+            drainWalQueue();
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    configuration.getFilesFacade(),
+                    configuration.getMicrosecondClock())
+            ) {
+                //noinspection StatementWithEmptyBody
+                while (job.run()) {
+                }
+            }
+
+            // The old table dir (with its _rebase_source marker and txn_seq log) is gone, and the purge job
+            // removed the reverse-map entry too - no permanent leak.
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path p = new Path()) {
+                Assert.assertFalse(
+                        "M1: the old table dir must be reclaimed by WalPurgeJob",
+                        ff.exists(p.of(configuration.getDbRoot()).concat(oldToken.getDirName()).$())
+                );
+            }
+            Assert.assertFalse("old dir entry must be fully removed after purge", engine.isTableDropped(oldToken));
+
+            // The rebased table is unaffected: still queryable and writable.
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedForNonWalTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day bypass wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "is not a WAL table");
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedWhenNotSuspended() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "requires the table to be suspended first");
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalRejectedWhenWriteNotDenied() throws Exception {
+        // write-denial defaults to false; rebase requires it so suspension actually blocks writes.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("alter table t suspend wal");
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected rejection");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cairo.wal.apply.suspended.write.denied=true");
+            }
+        });
+    }
+
+    @Test
+    public void testRebaseWalSucceedsWhenConfigSuspendsSameName() throws Exception {
+        // Regression: a cairo.wal.apply.suspended.tables entry that shares the table's logical name
+        // must not block REBASE WAL. The config list is matched by dir name, and the rebased table
+        // gets a fresh dir, so its seed commit (getWalWriter on the new dir) is not denied. Before the
+        // fix the config was matched by logical name, which the new dir shared, so the seed threw
+        // "table is suspended" and the rebase rolled back.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        // Logical name in the list; with dir-name matching this no longer suspends the table by itself.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, "t");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Hard-suspend to block writes (the rebase precondition), then rebase.
+            execute("alter table t suspend wal");
+            execute("alter table t rebase wal");
+            drainWalQueue();
+
+            final TableToken newToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+            // The fresh dir is not in the config list, so the rebased table is live and writable.
+            Assert.assertFalse(engine.isWalApplySuspended(newToken));
+
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalSeedFailureCommitsNewDirUnseeded() throws Exception {
+        // REBASE WAL commits the registry swap (drop old, register new) and only then seeds the new
+        // sequencer with empty transactions - the seed must follow the swap so the WAL apply job it wakes
+        // sees the table live under its new dir. That seed (getWalWriter on the new dir plus
+        // commitRebaseSeed) does real I/O and can fail on a full disk or a transient FS error. The swap is
+        // intentionally NOT rolled back on a seed failure: the table stays committed on the new dir, intact
+        // but unseeded - acceptable for this rare admin op. Crucially there is no data loss (the new dir
+        // hard-links the partitions), and a name-registry reload (what a restart does) still finds the table
+        // on the new dir. The failure is injected by refusing to open the new segment's _event file, which
+        // is the only _event file opened during a rebase and only after the swap has committed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+
+        final AtomicBoolean failSeed = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failSeed.get() && Utf8s.endsWithAscii(name, EVENT_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values" +
+                    " ('2024-01-01T00:00:00.000000Z', 1)," +
+                    " ('2024-01-02T00:00:00.000000Z', 2)," +
+                    " ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            final TableToken oldToken = engine.verifyTableName("t");
+
+            // Rebase requires the table to be hard-suspended first.
+            execute("alter table t suspend wal");
+
+            // Arm the seed failure, then rebase: the swap commits, the empty-seed commit then throws.
+            failSeed.set(true);
+            try {
+                execute("alter table t rebase wal");
+                Assert.fail("expected the seed I/O failure to abort the rebase");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), EVENT_FILE_NAME);
+            } finally {
+                failSeed.set(false);
+            }
+
+            // The swap committed before the seed failed, so the name now resolves to the NEW dir (a fresh
+            // tableId), not the old one. The data survives via the new dir's hard-linked partitions.
+            final TableToken afterToken = engine.verifyTableName("t");
+            Assert.assertNotEquals(oldToken.getDirName(), afterToken.getDirName());
+            Assert.assertNotEquals(oldToken.getTableId(), afterToken.getTableId());
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            // A name-registry reload (what a restart does) still finds the table on the new dir: registerName
+            // durably logged ADD(new) and dropTable logged DROP(old) to tables.d.
+            engine.releaseInactive();
+            engine.reloadTableNames();
+            engine.reconcileTableNameRegistryState();
+            final TableToken afterReload = engine.verifyTableName("t");
+            Assert.assertEquals(afterToken.getDirName(), afterReload.getDirName());
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n3\n");
+
+            // The rebased table is functional (not suspended - the rebase installed a fresh sequencer): keep
+            // ingesting on the new dir.
+            execute("insert into t values ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n4\n");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            // Every non-structural change must force-apply on a hard-suspended table (no tableSuspended).
+            final String[] nonStructural = {
+                    "alter table %s drop partition list '2024-01-01'",
+                    "alter table %s force drop partition list '2024-01-01'",
+                    "alter table %s detach partition list '2024-01-01'",
+                    "alter table %s squash partitions",
+                    "alter table %s alter column sym drop index",
+                    "alter table %s alter column sym2 add index",
+                    "alter table %s alter column sym nocache",
+                    "alter table %s alter column sym2 cache",
+                    "alter table %s alter column sym2 symbol capacity 1024",
+                    "alter table %s set param maxUncommittedRows = 1000",
+                    "alter table %s set param o3MaxLag = 10s",
+                    "alter table %s set ttl 4 weeks",
+                    "alter table %s convert partition to parquet list '2024-01-01'",
+            };
+            int n = 0;
+            for (String alter : nonStructural) {
+                final String table = "tns_" + (n++);
+                createSuspendableTable(table);
+                execute("alter table " + table + " suspend wal");
+                execute(String.format(alter, table)); // force-applied; must not throw
+            }
+
+            // CONVERT ... TO NATIVE needs a parquet partition first (done before suspending).
+            createSuspendableTable("tns_native");
+            execute("alter table tns_native convert partition to parquet list '2024-01-01'");
+            drainWalQueue();
+            execute("alter table tns_native suspend wal");
+            execute("alter table tns_native convert partition to native list '2024-01-01'"); // must not throw
+
+            // Every structural change stays denied on a hard-suspended table.
+            final String[] structural = {
+                    "alter table %s add column y int",
+                    "alter table %s drop column x",
+                    "alter table %s rename column x to z",
+                    "alter table %s alter column x type long",
+                    "alter table %s dedup enable upsert keys(ts)",
+            };
+            int s = 0;
+            for (String alter : structural) {
+                final String table = "ts_" + (s++);
+                createSuspendableTable(table);
+                execute("alter table " + table + " suspend wal");
+                try {
+                    execute(String.format(alter, table));
+                    Assert.fail("expected the structural change to be denied: " + alter);
+                } catch (CairoException e) {
+                    Assert.assertTrue(alter + " -> " + e.getMessage(), e.isTableSuspended());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendForcesNonStructuralAlter() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, sym symbol index, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 'A', 1)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertTrue(reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("sym")));
+            }
+
+            execute("alter table t suspend wal");
+
+            // Non-structural change is force-applied directly to the suspended table (WAL bypass),
+            // even though WAL writes are denied.
+            execute("alter table t alter column sym drop index");
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertFalse(reader.getMetadata().isColumnIndexed(reader.getMetadata().getColumnIndex("sym")));
+            }
+
+            // A structural change is not forced; it stays denied on the hard-suspended table.
+            try {
+                execute("alter table t add column y int");
+                Assert.fail("expected the structural change to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendViaConfigDeniesWrites() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // The reloadable config list suspends the table and denies writes.
+            final String dirName = engine.verifyTableName("t").getDirName();
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName);
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+
+            // Removing it from the config (a reload) re-allows writes.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            Assert.assertFalse(engine.isWalApplySuspended(engine.verifyTableName("t")));
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testWalApplySuspendWriteDeniedFlagIsReloadable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("alter table t suspend wal");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+
+            // Flag off (default): a suspended table still accepts writes (buffered for later apply).
+            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+
+            // Turn the flag on at runtime (reload): writes are now denied.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+            Assert.assertTrue(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            try {
+                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+
+            // Turn it back off (reload): writes are accepted again.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "false");
+            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
+
+            // Resume and apply: the two accepted rows materialize, the denied one was never written.
+            execute("alter table t resume wal");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
         });
     }
 
@@ -3986,12 +5570,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
                     drainWalQueue();
 
-                    assertSql(
-                            """
+                    assertQuery(tableName)
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
                                     a\tb\tts
                                     1\t\t1970-01-01T00:00:00.000000Z
-                                    """, tableName
-                    );
+                                    """);
                 }
         );
     }
@@ -4024,7 +5610,7 @@ public class WalWriterTest extends AbstractCairoTest {
             walWriter.close();
             engine.releaseInactive();
 
-            final int newMaxTxn = 200000;
+            final int newMaxTxn = 200_000;
             try (
                     final Path walePath = new Path()
                             .of(configuration.getDbRoot())
@@ -4085,12 +5671,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             a\tb\tts
                             1\t\t1970-01-01T00:00:00.000000Z
-                            """, tableName
-            );
+                            """);
         });
     }
 
@@ -4408,6 +5996,32 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
+    private void assertBitmapIndexMaxValue(String tableName) {
+        try (
+                Path path = new Path().of(configuration.getDbRoot())
+                        .concat(engine.verifyTableName(tableName))
+                        .concat("2022-01-01");
+                MemoryCMR keyMem = Vm.getCMRInstance()
+        ) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final LPSZ keyPath = path.concat("sym").put(".k").$();
+            keyMem.of(
+                    ff,
+                    keyPath,
+                    ff.getMapPageSize(),
+                    ff.length(keyPath),
+                    MemoryTag.MMAP_DEFAULT,
+                    CairoConfiguration.O_NONE,
+                    -1
+            );
+            assertEquals(
+                    "bitmap index max row must be inclusive",
+                    19,
+                    keyMem.getLong(BITMAP_INDEX_MAX_VALUE_OFFSET)
+            );
+        }
+    }
+
     private void assertColumnMetadata(TableModel expected, WalReader reader) {
         final int columnCount = expected.getColumnCount();
         assertEquals(columnCount, reader.getRealColumnCount());
@@ -4429,6 +6043,13 @@ public class WalWriterTest extends AbstractCairoTest {
         assertEquals(0, symbolMapDiff.getRecordCount());
         assertNotNull(symbolMapDiff);
         assertNull(symbolMapDiff.nextEntry());
+    }
+
+    // Asserts that the EXPLAIN plan for `sql` chooses an index scan on `column`. The "Index forward scan
+    // on: <col>" text is the stable contract across both BITMAP and POSTING index types and over both
+    // native and parquet partitions; the exact plan also embeds the integer symbol key, which is brittle.
+    private void assertIndexScan(String sql, String column) throws Exception {
+        assertQuery(sql).noLeakCheck().assertsPlanContaining("Index forward scan on: " + column);
     }
 
     private void assertIsDropped(TableTransactionLogFile log, Path path, String dir) {
@@ -4495,6 +6116,15 @@ public class WalWriterTest extends AbstractCairoTest {
             }
         }
         return tableToken;
+    }
+
+    private void createSuspendableTable(String table) throws Exception {
+        execute("create table " + table + " (ts timestamp, sym symbol index, sym2 symbol nocache, x int) timestamp(ts) partition by day wal");
+        execute("insert into " + table + " values" +
+                " ('2024-01-01T00:00:00.000000Z', 'A', 'a', 1)," +
+                " ('2024-01-02T00:00:00.000000Z', 'B', 'b', 2)," +
+                " ('2024-01-03T00:00:00.000000Z', 'C', 'c', 3)");
+        drainWalQueue();
     }
 
     private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {
@@ -4589,14 +6219,25 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    "count\tmin\tmax\n" +
-                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
-            );
+            assertQuery("select count(*), min(ts), max(ts) from sm")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tmin\tmax\n" +
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Micros.toUSecString(ts - tsStep) + "\n");
             assertSqlCursors("sm", "select * from sm order by id");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
-            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+            assertQuery("select * from sm WHERE id <> cast(s as int)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\ty\ts\tv\tm\n");
+            assertQuery("select * from sm WHERE id <> cast(v as int)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\ty\ts\tv\tm\n");
+            assertQuery("select * from sm WHERE id % " + symbolCount + " <> cast(m as int)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("id\tts\ty\ts\tv\tm\n");
 
             Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl().getMaxBlockRowCount() > 1000);
 
@@ -4701,9 +6342,17 @@ public class WalWriterTest extends AbstractCairoTest {
 
     static void prepareBinPayload(long pointer, int limit) {
         for (int offset = 0; offset < limit; offset++) {
-            Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
+            Unsafe.putByte(pointer + offset, (byte) limit);
         }
     }
+
+    // NOTE: These tests validate CURRENT behavior, not prescribe it. They document how
+    // symbol tables behave when rows are cancelled. This behavior is consistent with
+    // other QuestDB scenarios like dropping partitions - symbols remain in the symbol
+    // table even when the data referencing them is removed.
+    //
+    // Symbol tables are append-only by design and never shrink. This is not a bug.
+    // These tests can be removed or modified if the behavior changes in the future.
 
     static void removeColumn(TableWriterAPI writer, String columnName) {
         AlterOperationBuilder removeColumnBuilder = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
@@ -4720,7 +6369,6 @@ public class WalWriterTest extends AbstractCairoTest {
         alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
         writer.apply(alterOp, true);
     }
-
 
     interface RowInserter {
         long getCount();

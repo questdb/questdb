@@ -115,7 +115,7 @@ public class WarningsProcessor implements HttpRequestProcessor, HttpRequestHandl
             if (tag.isEmpty()) {
                 sink.putAscii("[]");
             } else {
-                if (current.length() == 0) {
+                if (current.isEmpty()) {
                     sink.putAscii('[');
                 } else {
                     sink.put(current.subSequence(0, current.length() - 1));

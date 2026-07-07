@@ -43,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -50,9 +51,11 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -63,12 +66,17 @@ import java.io.Closeable;
 
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+    private final int batchSize;
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
+    private final DirectLongList ownerBatchList;
+    private final FlyweightPackedMapValue ownerBatchMapValue;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final ObjList<DirectLongList> perWorkerBatchLists;
+    private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeyFunctions;
     private final PerWorkerLocks perWorkerLocks;
@@ -76,6 +84,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final GroupByShardingContext shardingCtx;
+    // Per-query native memory tracker captured from SqlExecutionContext on init.
+    // Null when no per-query limit applies. Workers and operator code feed it to
+    // tracker-aware Unsafe overloads to charge allocations to the active workload.
+    private MemoryTracker memoryTracker;
     // Initialized lazily.
     private DirectLongLongSortedList ownerLongTopKList;
 
@@ -118,8 +130,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                     perWorkerFilters,
                     workerCount,
                     workerCount,
-                    1,
-                    1
+                    0L,
+                    0L
             );
 
             final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
@@ -188,13 +200,15 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 );
             }
 
-            ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Lazy variant (openOnInit=false): the chunk index is global-counter bookkeeping;
+            // only the data chunks it hands out are charged to the per-query tracker.
+            ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             // Make sure to set worker-local allocator for the group by functions.
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
                 perWorkerAllocators = new ObjList<>(workerCount);
                 for (int i = 0; i < workerCount; i++) {
-                    final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    final GroupByAllocator workerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                     perWorkerAllocators.extendAndSet(i, workerAllocator);
                     GroupByUtils.setAllocator(perWorkerGroupByFunctions.getQuick(i), workerAllocator);
                 }
@@ -204,6 +218,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
             perWorkerLongTopKLists = new ObjList<>(workerCount);
             perWorkerLongTopKLists.setAll(workerCount, null);
+
+            // Per-slot batch scratch buffers and flyweights for batched dispatch.
+            // The owner uses slotId -1; worker slots 0..N-1 index directly into the per-worker lists.
+            batchSize = configuration.getGroupByBatchSize();
+            ownerBatchList = new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true);
+            ownerBatchMapValue = new FlyweightPackedMapValue(valueTypes);
+            perWorkerBatchLists = new ObjList<>(workerCount);
+            perWorkerBatchMapValues = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                perWorkerBatchLists.extendAndSet(i, new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true));
+                perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -223,13 +249,30 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.clearObjList(perWorkerAllocators);
         Misc.clear(ownerLongTopKList);
         Misc.clearObjList(perWorkerLongTopKLists);
+        Misc.free(ownerBatchList);
+        Misc.freeObjListAndKeepObjects(perWorkerBatchLists);
         filterCtx.clear();
+        memoryTracker = null;
     }
 
     @Override
     public void close() {
         Misc.free(shardingCtx);
         Misc.freeObjList(ownerKeyFunctions);
+        // clear() already freed the data chunks under the bound tracker (the index is on the
+        // global counter), so close() has nothing tracked to free. Nulling is defensive: any
+        // stray free hits the global counter and cannot underflow an already-recycled block.
+        if (ownerAllocator != null) {
+            ownerAllocator.setMemoryTracker(null);
+        }
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                final GroupByAllocator allocator = perWorkerAllocators.getQuick(i);
+                if (allocator != null) {
+                    allocator.setMemoryTracker(null);
+                }
+            }
+        }
         Misc.free(ownerAllocator);
         Misc.freeObjList(perWorkerAllocators);
         Misc.free(ownerLongTopKList);
@@ -244,7 +287,27 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+        Misc.free(ownerBatchList);
+        Misc.freeObjList(perWorkerBatchLists);
         Misc.free(filterCtx);
+    }
+
+    public DirectLongList getBatchList(int slotId) {
+        if (slotId == -1) {
+            return ownerBatchList;
+        }
+        return perWorkerBatchLists.getQuick(slotId);
+    }
+
+    public FlyweightPackedMapValue getBatchMapValue(int slotId) {
+        if (slotId == -1) {
+            return ownerBatchMapValue;
+        }
+        return perWorkerBatchMapValues.getQuick(slotId);
+    }
+
+    public int getBatchSize() {
+        return batchSize;
     }
 
     public ObjList<Map> getDestShards() {
@@ -261,6 +324,13 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
         return shardingCtx.getFunctionUpdater(slotId);
+    }
+
+    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
+        if (slotId == -1 || perWorkerGroupByFunctions == null) {
+            return ownerGroupByFunctions;
+        }
+        return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
     public DirectLongLongSortedList getLongTopKList(int slotId, int order, int limit) {
@@ -290,9 +360,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerMapSinks.getQuick(slotId);
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     // thread-unsafe
     public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
         return ownerGroupByFunctions;
+    }
+
+    // thread-unsafe
+    public ObjList<Function> getOwnerKeyFunctions() {
+        return ownerKeyFunctions;
     }
 
     // thread-unsafe
@@ -311,6 +390,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        memoryTracker = executionContext.getMemoryTracker();
         filterCtx.initFilters(symbolTableSource, executionContext);
 
         if (ownerKeyFunctions != null) {
@@ -348,12 +428,19 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void reopen() {
+        // init() runs before reopen() (frameSequence.of() -> atom.init(), then cursor.of()
+        // -> atom.reopen()), so memoryTracker is available here to bind on the fragments
+        // and allocators before any backing is allocated. The maps are opened lazily by
+        // worker threads via reopenMap()/reopenShards(); the allocators are reopened here.
+        shardingCtx.setMemoryTracker(memoryTracker);
         shardingCtx.reopen();
-        // The maps will be open lazily by worker threads, but we need to reopen the allocators.
+        ownerAllocator.setMemoryTracker(memoryTracker);
         ownerAllocator.reopen();
         if (perWorkerAllocators != null) {
             for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
-                perWorkerAllocators.getQuick(i).reopen();
+                final GroupByAllocator allocator = perWorkerAllocators.getQuick(i);
+                allocator.setMemoryTracker(memoryTracker);
+                allocator.reopen();
             }
         }
     }
@@ -376,13 +463,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
             }
         }
-    }
-
-    private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
-        if (slotId == -1 || perWorkerGroupByFunctions == null) {
-            return ownerGroupByFunctions;
-        }
-        return perWorkerGroupByFunctions.getQuick(slotId);
     }
 
     private long getTotalFunctionCardinality(int slotId) {

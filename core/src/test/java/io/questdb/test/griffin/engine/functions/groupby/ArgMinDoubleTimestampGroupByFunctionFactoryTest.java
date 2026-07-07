@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -36,20 +35,29 @@ import org.junit.Test;
 public class ArgMinDoubleTimestampGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testArgMinAllNull() throws SqlException {
+    public void testArgMinAllNull() throws Exception {
         execute("create table tab (value double, key timestamp)");
         execute("insert into tab values (null, null)");
         execute("insert into tab values (null, null)");
-        assertSql("arg_min\nnull\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\nnull\n");
     }
 
     @Test
     public void testArgMinParallelAllNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_double() value, cast(null as timestamp) key from long_sequence(100000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
-                TestUtils.assertSql(engine, sqlExecutionContext, sql, sink, "sym\targ_min\nA\tnull\nB\tnull\nC\tnull\nD\tnull\nE\tnull\n");
+                assertQuery(sql)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("sym\targ_min\nA\tnull\nB\tnull\nC\tnull\nD\tnull\nE\tnull\n");
             }, configuration, LOG);
         }
     }
@@ -58,7 +66,7 @@ public class ArgMinDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
     public void testArgMinParallelChunky() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_double() value, timestamp_sequence(0, 1000) key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -69,7 +77,7 @@ public class ArgMinDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
     public void testArgMinParallelMergeNullDestValidSrc() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_double() value, case when x <= 1000000 then cast(null as timestamp) else timestamp_sequence(0, 1000) end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -80,7 +88,7 @@ public class ArgMinDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
     public void testArgMinParallelWithNullKeys() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_double() value, case when x % 2 = 0 then cast(null as timestamp) else timestamp_sequence(0, 1000) end key from long_sequence(2000000))");
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, arg_min(value, key) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
@@ -88,38 +96,53 @@ public class ArgMinDoubleTimestampGroupByFunctionFactoryTest extends AbstractCai
     }
 
     @Test
-    public void testArgMinSimple() throws SqlException {
+    public void testArgMinSimple() throws Exception {
         execute("create table tab (value double, key timestamp)");
         execute("insert into tab values (10.5, '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values (20.5, '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values (30.5, '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_min\n10.5\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n10.5\n");
     }
 
     @Test
-    public void testArgMinWithGroupBy() throws SqlException {
+    public void testArgMinWithGroupBy() throws Exception {
         execute("create table tab (sym symbol, value double, key timestamp)");
         execute("insert into tab values ('A', 10.5, '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values ('A', 20.5, '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values ('B', 100.5, '2023-01-05T00:00:00.000000Z')");
         execute("insert into tab values ('B', 200.5, '2023-01-04T00:00:00.000000Z')");
-        assertSql("sym\targ_min\nA\t10.5\nB\t200.5\n", "select sym, arg_min(value, key) from tab order by sym");
+        assertQuery("select sym, arg_min(value, key) from tab order by sym")
+                .noLeakCheck()
+                .expectSize()
+                .returns("sym\targ_min\nA\t10.5\nB\t200.5\n");
     }
 
     @Test
-    public void testArgMinWithNullKey() throws SqlException {
+    public void testArgMinWithNullKey() throws Exception {
         execute("create table tab (value double, key timestamp)");
         execute("insert into tab values (10.5, null)");
         execute("insert into tab values (20.5, '2023-01-03T00:00:00.000000Z')");
         execute("insert into tab values (30.5, '2023-01-02T00:00:00.000000Z')");
-        assertSql("arg_min\n30.5\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\n30.5\n");
     }
 
     @Test
-    public void testArgMinWithNullValue() throws SqlException {
+    public void testArgMinWithNullValue() throws Exception {
         execute("create table tab (value double, key timestamp)");
         execute("insert into tab values (null, '2023-01-01T00:00:00.000000Z')");
         execute("insert into tab values (20.5, '2023-01-03T00:00:00.000000Z')");
-        assertSql("arg_min\nnull\n", "select arg_min(value, key) from tab");
+        assertQuery("select arg_min(value, key) from tab")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("arg_min\nnull\n");
     }
 }

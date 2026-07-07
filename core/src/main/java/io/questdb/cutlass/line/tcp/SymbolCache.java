@@ -181,7 +181,7 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
             if (offsetReloadOk) {
                 int count = txReader.unsafeReadSymbolTransientCount(symbolIndexInTxFile);
                 long txColumnVersion = txReader.unsafeReadColumnVersion();
-                Unsafe.getUnsafe().loadFence();
+                Unsafe.loadFence();
 
                 if (txReader.unsafeReadVersion() == txReader.getVersion()) {
                     // Check if _cv file has to be reloaded

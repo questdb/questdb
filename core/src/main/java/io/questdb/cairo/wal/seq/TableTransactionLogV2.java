@@ -35,6 +35,7 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -74,7 +75,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long RESERVED_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
     public static final long RECORD_SIZE = RESERVED_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
-    private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
@@ -138,7 +139,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnPartMem.putLong(txnRowCount);
         txnPartMem.putLong(0L);
 
-        Unsafe.getUnsafe().storeFence();
+        Unsafe.storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
         sync0();
@@ -380,7 +381,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public long getCommitTimestamp() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+            return Unsafe.getLong(address + txnOffset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
         }
 
         @Override
@@ -396,19 +397,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public int getSegmentId() {
             assert address != 0;
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
 
         @Override
         public int getSegmentTxn() {
             assert address != 0;
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_SEGMENT_TXN_OFFSET);
         }
 
         @Override
         public long getStructureVersion() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
+            return Unsafe.getLong(address + txnOffset + TX_LOG_STRUCTURE_VERSION_OFFSET);
         }
 
         @Override
@@ -419,19 +420,19 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public long getTxnMaxTimestamp() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + MAX_TIMESTAMP_OFFSET);
+            return Unsafe.getLong(address + txnOffset + MAX_TIMESTAMP_OFFSET);
         }
 
         @Override
         public long getTxnMinTimestamp() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + MIN_TIMESTAMP_OFFSET);
+            return Unsafe.getLong(address + txnOffset + MIN_TIMESTAMP_OFFSET);
         }
 
         @Override
         public long getTxnRowCount() {
             assert address != 0;
-            return Unsafe.getUnsafe().getLong(address + txnOffset + ROW_COUNT_OFFSET);
+            return Unsafe.getLong(address + txnOffset + ROW_COUNT_OFFSET);
         }
 
         @Override
@@ -442,7 +443,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public int getWalId() {
             assert address != 0;
-            return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
+            return Unsafe.getInt(address + txnOffset + TX_LOG_WAL_ID_OFFSET);
         }
 
         @Override

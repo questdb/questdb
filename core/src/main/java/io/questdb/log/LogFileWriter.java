@@ -71,6 +71,14 @@ public class LogFileWriter extends SynchronizedJob implements Closeable, LogWrit
         }
         this.buf = _wptr = Unsafe.malloc(bufSize, MemoryTag.NATIVE_LOGGER);
         this.lim = buf + bufSize;
+        int pidTokenIndex = location.indexOf("%p");
+        if (pidTokenIndex > -1) {
+            // The %p token expands to the JVM pid so concurrent or respawned processes
+            // (e.g. a surefire replacement fork after a fork death) never collide on the
+            // same log file; on Windows the dead process lazily holds its handle and a
+            // same-path reopen fails with ERROR_SHARING_VIOLATION.
+            location = location.substring(0, pidTokenIndex) + Os.getPid() + location.substring(pidTokenIndex + 2);
+        }
         try (Path path = new Path()) {
             path.of(location);
             if (truncate != null && Chars.equalsLowerCaseAscii(truncate, "true")) {

@@ -65,16 +65,16 @@ public class DirectUtf8SinkTest extends AbstractTest {
             try (NativeByteSink directSink = sink.borrowDirectByteSink()) {
                 final long impl = directSink.ptr();
                 Assert.assertNotEquals(ptr, impl);
-                final long implPtr = Unsafe.getUnsafe().getLong(impl);
-                Unsafe.getUnsafe().putByte(implPtr, (byte) 'd');
-                Unsafe.getUnsafe().putLong(impl, implPtr + 1);
+                final long implPtr = Unsafe.getLong(impl);
+                Unsafe.putByte(implPtr, (byte) 'd');
+                Unsafe.putLong(impl, implPtr + 1);
                 Assert.assertEquals(4, sink.size());
                 Assert.assertEquals(32, sink.capacity());
                 final long newImplPtr = DirectByteSink.implBook(impl, 400);
-                Assert.assertEquals(newImplPtr, Unsafe.getUnsafe().getLong(impl));
+                Assert.assertEquals(newImplPtr, Unsafe.getLong(impl));
                 Assert.assertEquals(512, sink.capacity());
-                final long implLo = Unsafe.getUnsafe().getLong(impl + 8);
-                final long implHi = Unsafe.getUnsafe().getLong(impl + 16);
+                final long implLo = Unsafe.getLong(impl + 8);
+                final long implHi = Unsafe.getLong(impl + 16);
                 Assert.assertEquals(512, implHi - implLo);
             }
 
@@ -139,36 +139,38 @@ public class DirectUtf8SinkTest extends AbstractTest {
 
     @Test
     public void testResize() {
-        final String expected = "a\n" +
-                "b\n" +
-                "c\n" +
-                "d\n" +
-                "e\n" +
-                "f\n" +
-                "g\n" +
-                "h\n" +
-                "i\n" +
-                "j\n" +
-                "k\n" +
-                "l\n" +
-                "m\n" +
-                "n\n" +
-                "o\n" +
-                "p\n" +
-                "q\n" +
-                "r\n" +
-                "s\n" +
-                "t\n" +
-                "u\n" +
-                "v\n" +
-                "w\n" +
-                "x\n" +
-                "y\n" +
-                "z\n" +
-                "{\n" +
-                "|\n" +
-                "}\n" +
-                "~\n";
+        final String expected = """
+                a
+                b
+                c
+                d
+                e
+                f
+                g
+                h
+                i
+                j
+                k
+                l
+                m
+                n
+                o
+                p
+                q
+                r
+                s
+                t
+                u
+                v
+                w
+                x
+                y
+                z
+                {
+                |
+                }
+                ~
+                """;
 
         final int initialCapacity = 4;
         try (DirectUtf8Sink sink = new DirectUtf8Sink(initialCapacity)) {
@@ -222,7 +224,7 @@ public class DirectUtf8SinkTest extends AbstractTest {
         int len = sink.size();
         byte[] bytes = new byte[len];
         for (int i = 0; i < len; i++) {
-            bytes[i] = Unsafe.getUnsafe().getByte(ptr + i);
+            bytes[i] = Unsafe.getByte(ptr + i);
         }
 
         TestUtils.assertEquals(s, new String(bytes, StandardCharsets.UTF_8));

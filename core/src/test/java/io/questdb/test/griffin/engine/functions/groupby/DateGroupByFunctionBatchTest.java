@@ -358,7 +358,7 @@ public class DateGroupByFunctionBatchTest {
         lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
         long addr = lastAllocated;
         for (long value : values) {
-            Unsafe.getUnsafe().putLong(addr, value);
+            Unsafe.putLong(addr, value);
             addr += Long.BYTES;
         }
         return lastAllocated;

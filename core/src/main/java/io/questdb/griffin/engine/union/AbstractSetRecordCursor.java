@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public abstract class AbstractSetRecordCursor implements RecordCursor {
@@ -41,9 +43,19 @@ public abstract class AbstractSetRecordCursor implements RecordCursor {
         this.circuitBreaker = null;
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        if (cursorA != null) {
+            cursorA.setParquetDecodeHint(hint);
+        }
+        if (cursorB != null) {
+            cursorB.setParquetDecodeHint(hint);
+        }
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
         this.cursorA = cursorA;
         this.cursorB = cursorB;
-        this.circuitBreaker = circuitBreaker;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
     }
 }

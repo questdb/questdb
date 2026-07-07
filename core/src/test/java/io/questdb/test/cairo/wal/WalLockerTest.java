@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.WalLocker;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -110,7 +111,7 @@ public class WalLockerTest {
             Assert.assertTrue("Iteration " + i + " timed out", done.await(5, TimeUnit.SECONDS));
 
             if (error.get() != null) {
-                error.get().printStackTrace();
+                error.get().printStackTrace(System.err);
                 Assert.fail("Iteration " + i + " failed: " + error.get().getMessage());
             }
 
@@ -261,9 +262,9 @@ public class WalLockerTest {
         });
         writerThread.start();
 
-        // Wait for writer thread to start
+        // Wait for writer thread to start and enter the native blocking call
         Assert.assertTrue(writerStarted.await(1, TimeUnit.SECONDS));
-        Thread.sleep(100); // Give writer time to block
+        awaitThreadBlocked(writerThread);
 
         // Writer should still be blocked
         Assert.assertFalse(writerAcquired.get());
@@ -286,17 +287,20 @@ public class WalLockerTest {
         // Purge locks first (exclusive)
         locker.lockPurge(table1, 1);
 
+        CountDownLatch writerStarted = new CountDownLatch(1);
         CountDownLatch writerAcquired = new CountDownLatch(1);
         AtomicInteger writerMinSegment = new AtomicInteger(-1);
 
         // Writer tries to lock, will block
         Thread writerThread = new Thread(() -> {
+            writerStarted.countDown();
             locker.lockWriter(table1, 1, 7);
             writerMinSegment.set(7);
             writerAcquired.countDown();
         });
         writerThread.start();
-        Thread.sleep(100);
+        Assert.assertTrue(writerStarted.await(1, TimeUnit.SECONDS));
+        awaitThreadBlocked(writerThread);
 
         Assert.assertEquals(-1, writerMinSegment.get());
 
@@ -492,10 +496,12 @@ public class WalLockerTest {
         // This tests the WRITER_ACQUIRING -> ACTIVE_WRITER transition
         locker.lockPurge(table1, 1);
 
+        CountDownLatch writerStarted = new CountDownLatch(1);
         CountDownLatch writerAcquired = new CountDownLatch(1);
         AtomicBoolean segmentCorrect = new AtomicBoolean(false);
 
         Thread writerThread = new Thread(() -> {
+            writerStarted.countDown();
             locker.lockWriter(table1, 1, 42);
             // After acquiring, verify segment is correctly set
             segmentCorrect.set(locker.isSegmentLocked(table1, 1, 42));
@@ -503,7 +509,8 @@ public class WalLockerTest {
         });
         writerThread.start();
 
-        Thread.sleep(50);
+        Assert.assertTrue(writerStarted.await(1, TimeUnit.SECONDS));
+        awaitThreadBlocked(writerThread);
         locker.unlockPurge(table1, 1);
 
         Assert.assertTrue(writerAcquired.await(1, TimeUnit.SECONDS));
@@ -512,5 +519,29 @@ public class WalLockerTest {
 
         locker.unlockWriter(table1, 1);
         writerThread.join(1000);
+    }
+
+    /**
+     * Waits for a thread to reach a blocked state. For threads that block via
+     * LockSupport.park or Object.wait (WAITING/TIMED_WAITING), returns as soon
+     * as the state is detected. For threads blocked in native code via JNI,
+     * where Thread.getState() reports RUNNABLE, falls back to a bounded spin
+     * to let the thread enter the native blocking call.
+     */
+    private static void awaitThreadBlocked(Thread thread) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200);
+        while (System.nanoTime() < deadline) {
+            Thread.State state = thread.getState();
+            if (state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING || state == Thread.State.BLOCKED) {
+                return;
+            }
+            if (state == Thread.State.TERMINATED) {
+                Assert.fail("Thread terminated unexpectedly");
+            }
+            Os.pause();
+        }
+        // For native blocking (JNI), Thread.getState() remains RUNNABLE.
+        // The started latch guarantees the blocking call is the immediate next
+        // instruction, so a 200ms spin is sufficient for the thread to enter it.
     }
 }

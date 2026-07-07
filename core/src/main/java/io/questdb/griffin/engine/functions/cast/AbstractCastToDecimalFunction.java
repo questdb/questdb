@@ -34,21 +34,9 @@ import io.questdb.griffin.engine.functions.decimal.ToDecimalFunction;
  * Abstract base class for functions that cast values to decimal.
  */
 public abstract class AbstractCastToDecimalFunction extends ToDecimalFunction implements CastFunction {
-    /**
-     * The function argument to cast.
-     */
     protected final Function arg;
-    /**
-     * The position in the SQL statement.
-     */
     protected final int position;
-    /**
-     * The target decimal precision.
-     */
     protected final int precision;
-    /**
-     * The target decimal scale.
-     */
     protected final int scale;
 
     /**

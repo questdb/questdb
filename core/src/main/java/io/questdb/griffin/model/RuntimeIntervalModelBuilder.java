@@ -30,6 +30,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -64,10 +65,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private boolean betweenNegated;
     private CairoConfiguration configuration;
     private boolean intervalApplied = false;
+    private boolean isOwnershipTransferred;
     private int partitionBy;
     private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
+        isOwnershipTransferred = true;
         return new RuntimeIntervalModel(
                 timestampDriver,
                 partitionBy,
@@ -78,8 +81,31 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     @Override
     public void clear() {
+        if (isOwnershipTransferred) {
+            // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them
+            isOwnershipTransferred = false;
+            staticIntervals.clear();
+            dynamicRangeList.clear();
+            intervalApplied = false;
+            clearBetweenParsing();
+        } else {
+            // no build(): the accumulated functions are orphaned, free them here
+            freeAndClear();
+        }
+    }
+
+    /**
+     * Frees Functions accumulated in dynamicRangeList before clearing. Use only on rollback paths
+     * where ownership has not been transferred to a RuntimeIntervalModel via {@link #build()};
+     * otherwise this double-frees Functions still owned by the built model.
+     */
+    public void freeAndClear() {
+        isOwnershipTransferred = false;
+        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
+            betweenBoundaryFunc.close();
+        }
+        Misc.freeObjListAndClear(dynamicRangeList);
         staticIntervals.clear();
-        dynamicRangeList.clear();
         intervalApplied = false;
         clearBetweenParsing();
     }
@@ -132,7 +158,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectEmpty() {
-        clear();
+        // free the runtime functions gathered so far; ownership has not been transferred via build()
+        freeAndClear();
         intervalApplied = true;
     }
 
@@ -166,6 +193,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 dynamicRangeList.add(null);
             }
         }
+        intervalApplied = true;
+    }
+
+    public void intersectMonotonicTimestamp(TimestampMonotonicInverter inverter) {
+        if (isEmptySet()) {
+            Misc.free(inverter);
+            return;
+        }
+
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(inverter);
         intervalApplied = true;
     }
 

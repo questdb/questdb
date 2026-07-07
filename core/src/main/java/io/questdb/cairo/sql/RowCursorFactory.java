@@ -28,8 +28,9 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 
-public interface RowCursorFactory extends Plannable {
+public interface RowCursorFactory extends Plannable, QuietCloseable {
 
     static void init(
             ObjList<? extends RowCursorFactory> factories,
@@ -47,6 +48,10 @@ public interface RowCursorFactory extends Plannable {
         }
     }
 
+    @Override
+    default void close() {
+    }
+
     RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory);
 
     default void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -54,6 +59,19 @@ public interface RowCursorFactory extends Plannable {
     }
 
     boolean isEntity();
+
+    /**
+     * Indicates whether the returned RowCursor yields frame rows in ascending
+     * row-index order. The parquet decode clamp in
+     * {@code PageFrameRecordCursorImpl.skipRows} treats {@code isEntity() &&
+     * isForwardScan()} as permission to decode only the leading rows of a frame,
+     * so a factory whose cursor visits rows in any other order MUST override
+     * this to return false: with the unsafe default it would read undecoded
+     * memory under a clamped LIMIT scan.
+     */
+    default boolean isForwardScan() {
+        return true;
+    }
 
     /**
      * Indicates if the factory uses index

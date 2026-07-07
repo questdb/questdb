@@ -84,8 +84,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
-                    assertEquals("tab2", tableName);
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
+                    assertEquals("tab2", tableToken.getTableName());
                     callbackCounters[3]++;
                 }
 
@@ -149,8 +149,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
-                    droppedNames.add(tableName);
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
+                    droppedNames.add(tableToken.getTableName());
                     callbackCounters[3]++;
                 }
 
@@ -231,8 +231,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
-                    droppedNames.add(tableName);
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
+                    droppedNames.add(tableToken.getTableName());
                     callbackCounters[3]++;
                 }
 
@@ -336,7 +336,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
                     throw new RuntimeException("onTableOrViewOrMatViewDropped");
                 }
 
@@ -466,8 +466,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
-                    assertEquals("tab2", tableName);
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
+                    assertEquals("tab2", tableToken.getTableName());
                     callbackCounters[3]++;
                 }
 
@@ -527,8 +527,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
-                    assertEquals("mv", tableName);
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
+                    assertEquals("mv", tableToken.getTableName());
                     callbackCounters[3]++;
                 }
 
@@ -594,8 +594,8 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
-                    assertEquals("v", tableName);
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
+                    assertEquals("v", tableToken.getTableName());
                     callbackCounters[3]++;
                 }
 
@@ -658,7 +658,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
                     callbackCounters[3]++;
                 }
 
@@ -715,7 +715,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
                     callbackCounters[3]++;
                 }
 
@@ -786,7 +786,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
                     callbackCounters[3]++;
                 }
 
@@ -848,7 +848,7 @@ public class DdlListenerTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
                     callbackCounters[3]++;
                 }
 
@@ -908,9 +908,9 @@ public class DdlListenerTest extends AbstractCairoTest {
 
             engine.setDdlListener(new DefaultDdlListener() {
                 @Override
-                public void onTableOrViewOrMatViewDropped(String tableName) {
-                    droppedNames.add(tableName);
-                    throw new RuntimeException("listener error on " + tableName);
+                public void onTableOrViewOrMatViewDropped(TableToken tableToken) {
+                    droppedNames.add(tableToken.getTableName());
+                    throw new RuntimeException("listener error on " + tableToken);
                 }
             });
 
@@ -924,9 +924,9 @@ public class DdlListenerTest extends AbstractCairoTest {
             } catch (Exception e) {
                 // DROP ALL collects listener failures and reports them
                 assertContains(e.getMessage(), "Failures while dropping tables, views and materialized views [");
-                assertContains(e.getMessage(), "'tab1': listener error on tab1");
-                assertContains(e.getMessage(), "'tab2': listener error on tab2");
-                assertContains(e.getMessage(), "'tab3': listener error on tab3");
+                assertContains(e.getMessage(), "'tab1': listener error");
+                assertContains(e.getMessage(), "'tab2': listener error");
+                assertContains(e.getMessage(), "'tab3': listener error");
             }
 
             // All 3 tables must have been dropped despite the listener throwing on each one

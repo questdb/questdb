@@ -30,8 +30,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
@@ -39,12 +39,13 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -84,7 +85,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new AttributeCatalogueCursorFactory()) {
+        return new CursorFunction(new AttributeCatalogueCursorFactory(configuration)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -94,20 +95,23 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
         private final AttributeClassCatalogueCursor cursor;
-        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjMap<CairoTable> tableCache;
         private long tableCacheVersion = -1;
 
-        public AttributeCatalogueCursorFactory() {
+        public AttributeCatalogueCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
+            tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
             this.cursor = new AttributeClassCatalogueCursor(tableCache);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
-            }
+            // Reconciles against the table registry before snapshotting, so the
+            // catalogue is complete even mid startup hydration.
+            tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
 
             cursor.toTop();
             return cursor;
@@ -126,13 +130,14 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final PgAttributeRecord record = new PgAttributeRecord();
-        private final CharSequenceObjHashMap<CairoTable> tableCache;
+        private final CharSequenceObjMap<CairoTable> tableCache;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int columnIdx = -1;
         private int iteratorIdx = -1;
         private CairoTable table;
         private int tableId;
 
-        public AttributeClassCatalogueCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+        public AttributeClassCatalogueCursor(CharSequenceObjMap<CairoTable> tableCache) {
             super();
             this.tableCache = tableCache;
         }
@@ -148,6 +153,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (table == null) {
                 if (!nextTable()) {
                     return false;

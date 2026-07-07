@@ -45,7 +45,8 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
     private final char delimiter;
     private final int setInitialCapacity;
     private final double setLoadFactor;
-    private final ObjList<Utf8SequenceHashSet> sets = new ObjList<>();
+    private boolean isShared;
+    private ObjList<Utf8SequenceHashSet> sets = new ObjList<>();
     private final DirectUtf8Sink sinkA;
     private final DirectUtf8Sink sinkB;
     private int setIndex = 0;
@@ -67,6 +68,7 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
 
     @Override
     public void clear() {
+        if (isShared) return;
         sets.clear();
         sinkA.resetCapacity();
         sinkB.resetCapacity();
@@ -123,6 +125,13 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
         return getVarchar(rec, sinkB);
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.sets = ((StringDistinctAggVarcharGroupByFunction) primary).sets;
+        this.isShared = true;
     }
 
     @Override

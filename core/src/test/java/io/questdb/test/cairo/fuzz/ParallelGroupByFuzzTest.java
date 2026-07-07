@@ -28,12 +28,15 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -45,8 +48,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -70,13 +75,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
+    private final int parallelGroupByBatchSize;
     private final Rnd rnd;
 
     public ParallelGroupByFuzzTest() {
         this.rnd = TestUtils.generateRandom(LOG);
-        this.enableParallelGroupBy = rnd.nextBoolean();
-        this.enableJitCompiler = rnd.nextBoolean();
-        this.convertToParquet = rnd.nextBoolean();
+        // Bias these to true so the parallel / JIT / parquet paths, which carry most of the risk,
+        // are exercised far more often than their fallbacks.
+        this.enableParallelGroupBy = rnd.nextInt(5) != 0; // 80%
+        this.enableJitCompiler = rnd.nextInt(5) != 0;     // 80%
+        this.convertToParquet = rnd.nextInt(3) != 0;      // 66%
+        // Pick a batch size from buckets that span the boundaries of the batched non-sharded
+        // reducer relative to the page frame size (~MIN_PAGE_FRAME_MAX_ROWS rows):
+        // 1 row (degenerate), well below a frame, around a frame boundary, and larger than
+        // a frame so the whole frame fits in a single sub-batch.
+        switch (rnd.nextInt(4)) {
+            case 0:
+                this.parallelGroupByBatchSize = 1;
+                break;
+            case 1:
+                this.parallelGroupByBatchSize = 1 + rnd.nextInt(MIN_PAGE_FRAME_MAX_ROWS / 4);
+                break;
+            case 2:
+                this.parallelGroupByBatchSize = MIN_PAGE_FRAME_MAX_ROWS / 2 + rnd.nextInt(MIN_PAGE_FRAME_MAX_ROWS);
+                break;
+            default:
+                this.parallelGroupByBatchSize = 4 * MIN_PAGE_FRAME_MAX_ROWS + rnd.nextInt(4 * MIN_PAGE_FRAME_MAX_ROWS);
+                break;
+        }
     }
 
     @Override
@@ -95,6 +121,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_TOP_K_THRESHOLD, rnd.nextBoolean() ? 4 : Integer.MAX_VALUE);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1 + rnd.nextInt(16));
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, parallelGroupByBatchSize);
         super.setUp();
     }
 
@@ -119,19 +146,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 execute("alter table t convert partition to parquet where created >= 0");
             }
 
-            assertQuery(
-                    """
+            assertQuery("""
+                    SELECT count(1)
+                    FROM t as T1 JOIN t as T2 ON T1.created = T2.created
+                    WHERE T1.event = 1.0""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             2
-                            """,
-                    """
-                            SELECT count(1)
-                            FROM t as T1 JOIN t as T2 ON T1.created = T2.created
-                            WHERE T1.event = 1.0""",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -159,20 +184,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 execute("alter table t convert partition to parquet where created >= 0");
             }
 
-            assertQuery(
-                    """
+            assertQuery("""
+                    SELECT count()
+                    FROM t
+                    WHERE origin = 'c'
+                    LATEST ON created PARTITION BY event""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             count
                             2
-                            """,
-                    """
-                            SELECT count()
-                            FROM t
-                            WHERE origin = 'c'
-                            LATEST ON created PARTITION BY event""",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -209,18 +232,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 execute("alter table t2 convert partition to parquet where created >= 0");
             }
 
-            assertQuery(
-                    """
+            assertQuery("SELECT event, count()\n" +
+                    "FROM (t1 UNION t2) WHERE origin = 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             event\tcount
                             1\t1
                             3\t1
-                            """,
-                    "SELECT event, count()\n" +
-                            "FROM (t1 UNION t2) WHERE origin = 1",
-                    null,
-                    true,
-                    true
-            );
+                            """);
         });
     }
 
@@ -253,6 +273,207 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    @Test
+    public void testParallelApproxCountDistinctOverCastToSymbol() throws Exception {
+        // approx_count_distinct((int_expr)::SYMBOL) routes through the Int variant and ::SYMBOL is thread-unsafe.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute("CREATE TABLE tab (ts TIMESTAMP, v INT) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        // 40 partitions, each holding rows with a single distinct value
+                        // ((x - 1) / rows_per_partition). Workers picking up disjoint
+                        // partitions will see disjoint value sets, which is what the
+                        // parallel HLL merge needs to mis-count.
+                        final int rowsPerPartition = MIN_PAGE_FRAME_MAX_ROWS;
+                        final int partitions = 40;
+                        engine.execute(
+                                "INSERT INTO tab SELECT" +
+                                        " ((x - 1) / " + rowsPerPartition + " * 86400000000 + x)::timestamp," +
+                                        " ((x - 1) / " + rowsPerPartition + ")::int" +
+                                        " FROM long_sequence(" + (rowsPerPartition * partitions) + ")",
+                                sqlExecutionContext
+                        );
+                        assertQuery("SELECT approx_count_distinct((v)::SYMBOL) FROM tab")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("approx_count_distinct\n" + partitions + "\n");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelApproxPercentileFuzz() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final double percentile = rnd.nextDouble();
+            final int precision = rnd.nextInt(6);
+            final int rowCount = rnd.nextInt(ROW_COUNT) + 1;
+            final int groupCount = rnd.nextInt(10) + 1;
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS ("
+                                        + "SELECT CASE WHEN rnd_int() % 10 = 0 THEN NULL ELSE abs(rnd_long()) % 10_000_000 END AS x, rnd_int() % " + groupCount + " AS g "
+                                        + "FROM long_sequence(" + rowCount + "))",
+                                sqlExecutionContext);
+
+                        final String query = "SELECT g, approx_percentile(x, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink parallelSink = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    parallelSink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG);
+        });
+    }
+
+    @Test
+    public void testParallelAvgDecimal128RescaleOverflowFactoryReuse() throws Exception {
+        // Regression: AvgDecimal128Rescale256GroupByFunction.merge's "both
+        // shards overflowed into 256 bits" branch must add the running
+        // sums by raw bytes (uncheckedAdd), not via the scale-aware add.
+        // The map only persists raw bytes, so on a second cursor open the
+        // loaded scratches carry the stale scale that the prior cursor's
+        // calc() left behind via setScale + divide. With the rescale
+        // variant the target scale differs from arg's scale, so the
+        // scale-aware add would rescale by 10^delta and corrupt the sum;
+        // raw-byte add ignores the scale field and is correct because
+        // both buffers represent the running sum at the same logical
+        // scale by construction.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k INT, v DECIMAL(38, 0)) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        // Each row holds DECIMAL128 max value, so per-shard sums
+                        // overflow into the 256-bit accumulator within the first
+                        // two rows; merge then hits the "both overflowed" branch
+                        // when shard pairs are combined.
+                        engine.execute(
+                                "INSERT INTO tab SELECT" +
+                                        " (x * 864000000)::timestamp," +
+                                        " (x % 4)::int," +
+                                        " 99999999999999999999999999999999999999::DECIMAL(38, 0)" +
+                                        " FROM long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        // Target scale 1 differs from arg scale 0, so calc()'s
+                        // setScale(arg-scale) + divide(target-scale) leaves
+                        // decimal256A.scale at 1 between cursor opens. A second
+                        // open re-runs merge with that stale scale on A and
+                        // scale 0 (default) on B.
+                        final String sql = "SELECT k, avg(v, 1) avg FROM tab GROUP BY k ORDER BY k";
+                        final String expected = """
+                                k\tavg
+                                0\t99999999999999999999999999999999999999.0
+                                1\t99999999999999999999999999999999999999.0
+                                2\t99999999999999999999999999999999999999.0
+                                3\t99999999999999999999999999999999999999.0
+                                """;
+                        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                            for (int i = 0; i < 2; i++) {
+                                sink.clear();
+                                CursorPrinter.println(factory.getMetadata(), sink);
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    final Record rec = cursor.getRecord();
+                                    while (cursor.hasNext()) {
+                                        TestUtils.println(rec, factory.getMetadata(), sink);
+                                    }
+                                }
+                                TestUtils.assertEquals("iteration " + i, expected, sink);
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelAvgMergeFuzz() throws Exception {
+        // Verifies AvgIntGroupByFunction and AvgLongGroupByFunction merge() correctness
+        // by comparing single-threaded and parallel results across partitions of varying sizes.
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_int(0, 1_000_000, 2) anint," +
+                        "    rnd_long(0, 1_000_000_000, 2) along," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_int(0, 1_000_000, 2), rnd_long(0, 1_000_000_000, 2)",
+                "SELECT round(avg(anint), 6) avg_int, round(avg(along), 6) avg_long FROM tab"
+        );
+    }
+
+    @Test
+    public void testParallelBitwiseAggregates() throws Exception {
+        // Exercises the new computeKeyedBatch overrides for bit_and / bit_or / bit_xor
+        // across byte / short / int / long. The 'k0'..'k4' SYMBOL key routes through
+        // Unordered4Map, hitting the probeBatchUnsafe direct-column fast path.
+        testParallelGroupByAllTypes(
+                "SELECT asymbol, " +
+                        "bit_and(abyte) baba, bit_or(abyte) babo, bit_xor(abyte) babx, " +
+                        "bit_and(ashort) basa, bit_or(ashort) baso, bit_xor(ashort) basx, " +
+                        "bit_and(anint) baia, bit_or(anint) baio, bit_xor(anint) baix, " +
+                        "bit_and(along) bala, bit_or(along) balo, bit_xor(along) balx " +
+                        "FROM tab " +
+                        "ORDER BY asymbol",
+                """
+                        asymbol\tbaba\tbabo\tbabx\tbasa\tbaso\tbasx\tbaia\tbaio\tbaix\tbala\tbalo\tbalx
+                        \t0\t63\t43\t0\t2047\t1317\t0\t-1\t779688368\t0\t-1\t-3908818082212709664
+                        CPSW\t0\t63\t48\t0\t2047\t1465\t0\t-1\t-765938645\t0\t-1\t-7622703881723338141
+                        HYRX\t0\t63\t12\t0\t1023\t60\t0\t-1\t1609404520\t0\t-1\t-4439569899991393375
+                        PEHN\t0\t63\t37\t0\t1023\t364\t0\t-1\t-1040733386\t0\t-1\t7773742656006461436
+                        VTJW\t0\t63\t35\t0\t1023\t640\t0\t-1\t-1283576033\t0\t-1\t-6229748796184769953
+                        """
+        );
     }
 
     @Test
@@ -298,6 +519,37 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         k4\t2036.5
                         """
         );
+    }
+
+    @Test
+    public void testParallelConstArrayKeyWithCountDistinctDoesNotLeak() throws Exception {
+        // A thread-safe constant ARRAY group key alongside a non-thread-safe aggregate
+        // (count_distinct) makes the async GROUP BY create per-worker copies. Each worker's
+        // copy of the thread-safe ArrayConstant key must be extracted and freed; otherwise it
+        // leaks NATIVE_ND_ARRAY native memory, scaling with worker count.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute("CREATE TABLE tab (ts TIMESTAMP, sym SYMBOL) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+                        final int rowsPerPartition = MIN_PAGE_FRAME_MAX_ROWS;
+                        final int partitions = 40;
+                        engine.execute(
+                                "INSERT INTO tab SELECT" +
+                                        " ((x - 1) / " + rowsPerPartition + " * 86400000000 + x)::timestamp," +
+                                        " ('s' || ((x - 1) % 5))::symbol" +
+                                        " FROM long_sequence(" + (rowsPerPartition * partitions) + ")",
+                                sqlExecutionContext
+                        );
+                        TestUtils.printSql(engine, sqlExecutionContext, "SELECT ARRAY[0.5] k, count_distinct(sym) c FROM tab", sink);
+                        TestUtils.assertEquals("k\tc\n[0.5]\t5\n", sink);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -466,6 +718,100 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelDecimal128MinMax() throws Exception {
+        // MinMaxDecimal128Func keeps two Decimal128 mutable fields, so it's thread-unsafe.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k INT, v DECIMAL(20, 2)) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 864000000)::timestamp, (x % 4)::int, (x * 0.01)::DECIMAL(20, 2)" +
+                                        " FROM long_sequence(" + (10 * ROW_COUNT) + ")",
+                                sqlExecutionContext
+                        );
+                        assertQuery("SELECT k, min(v), max(v) FROM tab GROUP BY k ORDER BY k")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        k\tmin\tmax
+                                        0\t0.04\t400.00
+                                        1\t0.01\t399.97
+                                        2\t0.02\t399.98
+                                        3\t0.03\t399.99
+                                        """);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelDecimal128MinMaxOverCast() throws Exception {
+        // Regression: min/max over a cast that sets scale on its sink (e.g.
+        // FLOAT -> DECIMAL128 via ofString) must produce the true min/max
+        // rather than an order-dependent value. The map storage only persists
+        // the 16 raw bytes, so the running aggregate is loaded back with a
+        // stale scale of 0; without explicit realignment compareTo treats the
+        // running value as ~10^scale times its true magnitude and the
+        // aggregator replaces (or never replaces) on every row, producing the
+        // last-seen (or first-seen) value across whichever frames a worker
+        // happened to scan first.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k INT, v FLOAT) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 864000000)::timestamp, (x % 4)::int, x::float" +
+                                        " FROM long_sequence(" + (10 * ROW_COUNT) + ")",
+                                sqlExecutionContext
+                        );
+                        // Keyed form exercises computeFirst/computeNext within each
+                        // worker and merge across workers (sharded GROUP BY).
+                        assertQuery("SELECT k, min(v::DECIMAL(38,3)) min, max(v::DECIMAL(38,3)) max FROM tab GROUP BY k ORDER BY k")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        k\tmin\tmax
+                                        0\t4.000\t40000.000
+                                        1\t1.000\t39997.000
+                                        2\t2.000\t39998.000
+                                        3\t3.000\t39999.000
+                                        """);
+                        // Non-keyed form covers AsyncGroupByNotKeyed, which also
+                        // merges per-worker partial states.
+                        assertQuery("SELECT min(v::DECIMAL(38,3)) min, max(v::DECIMAL(38,3)) max FROM tab")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("""
+                                        min\tmax
+                                        1.000\t40000.000
+                                        """);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelDecimal256KeyGroupBy() throws Exception {
         testParallelDecimalKeyGroupBy(
                 "SELECT d256, avg(d64) FROM tab ORDER BY d256 LIMIT 5",
@@ -478,6 +824,53 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         4.000000\t13.75
                         """
         );
+    }
+
+    @Test
+    public void testParallelDecimal256MinMaxOverCast() throws Exception {
+        // See testParallelDecimal128MinMaxOverCast for the rationale; this
+        // mirrors it through the wider DECIMAL256 aggregator.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (ts TIMESTAMP, k INT, v FLOAT) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT (x * 864000000)::timestamp, (x % 4)::int, x::float" +
+                                        " FROM long_sequence(" + (10 * ROW_COUNT) + ")",
+                                sqlExecutionContext
+                        );
+                        assertQuery("SELECT k, min(v::DECIMAL(76,5)) min, max(v::DECIMAL(76,5)) max FROM tab GROUP BY k ORDER BY k")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        k\tmin\tmax
+                                        0\t4.00000\t40000.00000
+                                        1\t1.00000\t39997.00000
+                                        2\t2.00000\t39998.00000
+                                        3\t3.00000\t39999.00000
+                                        """);
+                        assertQuery("SELECT min(v::DECIMAL(76,5)) min, max(v::DECIMAL(76,5)) max FROM tab")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("""
+                                        min\tmax
+                                        1.00000\t40000.00000
+                                        """);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -875,6 +1268,32 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByAggregatesOverNonParallelArg() throws Exception {
+        // Regression test: twap / mode(BOOLEAN) / sparkline / last(ARRAY) must derive
+        // supportsParallelism() from their argument. Wrapping the arg through ::SYMBOL
+        // (non-parallel, per-instance cache) must drop the plan from Async Group By to
+        // serial GroupBy while keeping the same result - the ::SYMBOL round-trip is
+        // identity for these integer inputs.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (_, compiler, ctx) -> {
+                        execute(compiler, "CREATE TABLE x (ts TIMESTAMP, i INT, v DOUBLE) timestamp(ts) PARTITION BY DAY", ctx);
+                        execute(compiler, "INSERT INTO x SELECT x::timestamp, x::int, x::double FROM long_sequence(" + ROW_COUNT + ")", ctx);
+                        assertNonParallelArgForcesSerial(compiler, ctx, "twap(v, ts)", "twap((v)::SYMBOL::DOUBLE, ts)");
+                        assertNonParallelArgForcesSerial(compiler, ctx, "mode(i >= 0)", "mode(((i)::SYMBOL::INT) >= 0)");
+                        assertNonParallelArgForcesSerial(compiler, ctx, "sparkline(v)", "sparkline((v)::SYMBOL::DOUBLE)");
+                        assertNonParallelArgForcesSerial(compiler, ctx, "last(ARRAY[v])", "last(ARRAY[(v)::SYMBOL::DOUBLE])");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByArray() throws Exception {
         Assume.assumeFalse(convertToParquet);
         testParallelGroupByArray(
@@ -888,6 +1307,59 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         [[null,null],[0.12503042190293423,null]]\t[[null,0.6489095881388134],[0.280119654942501,null],[0.5379723582047159,null]]\t[[null,null],[0.12503042190293423,null]]\t[[null,0.6489095881388134],[0.280119654942501,null],[0.5379723582047159,null]]\tk4
                         """
         );
+    }
+
+    @Test
+    public void testParallelGroupByArrayAccessConstantIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(compiler,
+                                "CREATE TABLE tango (ts TIMESTAMP, arr1d DOUBLE[], arr2d DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext);
+                        execute(compiler,
+                                """
+                                        INSERT INTO tango VALUES
+                                        ('2025-06-26', ARRAY[10.0, 20], ARRAY[[1.0, 2], [3.0, 4]]),
+                                        ('2025-06-26', null, null),
+                                        ('2025-06-27', ARRAY[30.0, 40], ARRAY[[5.0, 6], [7.0, 8]]),
+                                        ('2025-06-27', ARRAY[50.0, 60], ARRAY[[9.0, 10], [11.0, 12]]),
+                                        ('2025-06-28', ARRAY[], ARRAY[]),
+                                        ('2025-06-28', ARRAY[70.0, 80], ARRAY[[13.0, 14], [15.0, 16]])
+                                        """,
+                                sqlExecutionContext);
+
+                        assertQueries(engine, sqlExecutionContext,
+                                "SELECT sum(arr1d[1]) FROM tango",
+                                """
+                                        sum
+                                        160.0
+                                        """,
+                                "SELECT sum(arr1d[2]) FROM tango",
+                                """
+                                        sum
+                                        200.0
+                                        """,
+                                "SELECT sum(arr2d[1, 1]) FROM tango",
+                                """
+                                        sum
+                                        28.0
+                                        """,
+                                "SELECT sum(arr2d[2, 1]) FROM tango",
+                                """
+                                        sum
+                                        36.0
+                                        """
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -925,6 +1397,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [max(array_position(arr, a))]
                                               filter: null
                                                 PageFrame
@@ -950,6 +1423,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [max(array_position(arr, a))]
                                               filter: null
                                                 PageFrame
@@ -975,6 +1449,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [min(insertion_point(arr,a))]
                                               filter: null
                                                 PageFrame
@@ -1000,6 +1475,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_count(arr))]
                                               filter: null
                                                 PageFrame
@@ -1025,6 +1501,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_avg(arr))]
                                               filter: null
                                                 PageFrame
@@ -1050,6 +1527,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts, array_sum]
                                             Async Group By workers: 4
                                               keys: [ts,array_sum]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts),array_sum(array_cum_sum(arr))]
                                               values: [sum(a)]
                                               filter: null
                                                 PageFrame
@@ -1080,6 +1558,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts,dot_product]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts),dot_product(arr,2)]
                                               values: [first(a)]
                                               filter: null
                                                 PageFrame
@@ -1110,6 +1589,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_sum(arr*5+3-1/2))]
                                               filter: null
                                                 PageFrame
@@ -1135,6 +1615,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                           keys: [ts]
                                             Async Group By workers: 4
                                               keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1d',ts)]
                                               values: [sum(array_sum(arr[a::int:a::int+2]))]
                                               filter: null
                                                 PageFrame
@@ -1200,11 +1681,44 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByCastDoubleToDecimal64() throws Exception {
+        // Cast-to-decimal64 functions reuse a per-instance Decimal64, so they're thread-unsafe.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        execute(
+                                compiler,
+                                "CREATE TABLE x (ts TIMESTAMP, v DOUBLE) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        // Each row gets a distinct DOUBLE that maps to a distinct
+                        // DECIMAL(18, 3); the GROUP BY on the cast must produce
+                        // ROW_COUNT distinct groups, each with count=1.
+                        execute(
+                                compiler,
+                                "INSERT INTO x SELECT x::timestamp, x::double / 1000 FROM long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT max(c), min(c), count(*) FROM (" +
+                                        "  SELECT (v)::DECIMAL(18, 3) AS v_dec, count() AS c FROM x" +
+                                        ")",
+                                "max\tmin\tcount\n1\t1\t" + ROW_COUNT + "\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByCastToSymbol() throws Exception {
-        // The table is non-partitioned.
-        Assume.assumeFalse(convertToParquet);
-        // This query shouldn't be executed in parallel,
-        // so this test verifies that nothing breaks.
+        // This query shouldn't be executed in parallel, so this test verifies that nothing breaks.
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
@@ -1258,6 +1772,50 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByCorrelationOverNonParallelArg() throws Exception {
+        // Audit-driven regression for the supportsParallelism-delegation fix that
+        // covered corr / covar_samp / covar_pop / regr_slope / regr_intercept /
+        // twap / last(ARRAY) / mode(BOOLEAN) / sparkline. Each of these aggregates
+        // used to return supportsParallelism()=true unconditionally and would
+        // share a single Function instance across workers when the planner picked
+        // the parallel path. The fix delegates to BinaryFunction.super (AND of
+        // left and right) so a non-parallel argument forces the serial path.
+        // (a)::SYMBOL::DOUBLE has supportsParallelism=false on the SYMBOL leg
+        // (SymbolFunction's per-instance cache); the AND with b's true collapses
+        // to false and the GROUP BY runs serially.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        execute(
+                                compiler,
+                                "CREATE TABLE x (ts TIMESTAMP, a DOUBLE, b DOUBLE) timestamp(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        execute(
+                                compiler,
+                                "INSERT INTO x SELECT x::timestamp, x::double, (" + ROW_COUNT + " - x)::double FROM long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        // a and b are perfectly anti-correlated, so corr is -1.0 regardless
+                        // of which path the planner takes; what matters is that the planner
+                        // picks the serial path (no race on the per-instance cache) and
+                        // returns a deterministic result run after run.
+                        assertQueries(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT round(corr((a)::SYMBOL::DOUBLE, b), 14) FROM x",
+                                "round\n-1.0\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testParallelGroupByCovariance() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes(
@@ -1273,12 +1831,79 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByKurtosis() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT round(kurtosis_samp(adouble), 12) FROM tab", """
+                        round
+                        -1.173939788697
+                        """,
+                "SELECT round(kurtosis(adouble), 12) FROM tab", """
+                        round
+                        -1.173939788697
+                        """,
+                "SELECT round(kurtosis_pop(adouble), 12) FROM tab", """
+                        round
+                        -1.173979070703
+                        """,
+                "SELECT key, round(kurtosis_pop(adouble), 12) kp, round(kurtosis_samp(adouble), 12) ks FROM tab ORDER BY key", """
+                        key\tkp\tks
+                        k0\t-1.177368704151\t-1.177195920397
+                        k1\t-1.213464478728\t-1.2135590444339999
+                        k2\t-1.156658901168\t-1.156322164928
+                        k3\t-1.1266060077039999\t-1.126049103395
+                        k4\t-1.172914311098\t-1.172699075325
+                        """
+        );
+    }
+
+    @Test
     public void testParallelGroupByRegrIntercept() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes("SELECT round(regr_intercept(adouble, along), 14) FROM tab", """
                 round
                 0.50356769718027
                 """);
+    }
+
+    @Test
+    public void testParallelGroupByRegrR2() throws Exception {
+        // Anchors the parallel-merge result for regr_r2. regr_r2 is the only
+        // aggregate that reads the Syy state slot, so without this test the
+        // mergedSumY branch in AbstractRegressionGroupByFunction.merge() has
+        // no end-to-end coverage on a multi-worker path. Expected value
+        // captured from a single stable run; refresh if the rnd_*() seeds
+        // change.
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(regr_r2(adouble, along), 14) FROM tab", """
+                round
+                2.2694313961E-4
+                """);
+    }
+
+    @Test
+    public void testParallelGroupBySkewness() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT round(skewness_samp(adouble), 12) FROM tab", """
+                        round
+                        0.006214510929
+                        """,
+                "SELECT round(skewness(adouble), 12) FROM tab", """
+                        round
+                        0.006214510929
+                        """,
+                "SELECT round(skewness_pop(adouble), 12) FROM tab", """
+                        round
+                        0.006211714609
+                        """,
+                "SELECT key, round(skewness_pop(adouble), 12) sp, round(skewness_samp(adouble), 12) ss FROM tab ORDER BY key", """
+                        key\tsp\tss
+                        k0\t0.092682517801\t0.092887845278
+                        k1\t-0.03876828558\t-0.038854299301999996
+                        k2\t-0.046932723408999996\t-0.047040025485999996
+                        k3\t-0.039550117182\t-0.039639049387
+                        k4\t0.064287112494\t0.06443590616099999
+                        """
+        );
     }
 
     @Test
@@ -1335,22 +1960,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 400 * 1024);
                         try {
                             // vwap() routes through the unordered path (AsyncGroupByRecordCursorFactory).
-                            TestUtils.assertSql(compiler, sqlExecutionContext,
-                                    "select key, vwap(price, quantity) from tab order by key",
-                                    sink, "");
-                            Assert.fail();
-                        } catch (CairoException ex) {
-                            Assert.assertTrue(ex.isOutOfMemory());
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "global RSS memory limit exceeded");
+                            assertQuery("select key, vwap(price, quantity) from tab order by key")
+                                    .withCompiler(compiler)
+                                    .withContext(sqlExecutionContext)
+                                    .noLeakCheck()
+                                    .failsWith("global RSS memory limit exceeded");
                         } finally {
                             Unsafe.setRssMemLimit(0);
                         }
 
                         // Verify the query succeeds after limit removed (error state doesn't leak).
                         try {
-                            TestUtils.assertSql(compiler, sqlExecutionContext,
-                                    "select count() from (select key, vwap(price, quantity) from tab group by key)",
-                                    sink, """
+                            assertQuery("select count() from (select key, vwap(price, quantity) from tab group by key)")
+                                    .withEngine(engine)
+                                    .withContext(sqlExecutionContext)
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("""
                                             count
                                             100000
                                             """);
@@ -1462,6 +2089,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         k1\t350.17\t350.17
                         k0\t327.49\t327.49
                         """
+        );
+    }
+
+    @Test
+    public void testParallelKSumNSumMergeFuzz() throws Exception {
+        // Verifies KSumDoubleGroupByFunction and NSumDoubleGroupByFunction merge() correctness
+        // by comparing single-threaded and parallel results across partitions of varying sizes.
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_double(2) adouble," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_double(2)",
+                "SELECT round(ksum(adouble), 6) ksum_d, round(nsum(adouble), 6) nsum_d FROM tab"
         );
     }
 
@@ -1610,6 +2253,45 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT varchar_key::long k, sum(value) FROM tab ORDER BY k DESC LIMIT 3",
                 expected,
                 "Long Top K lo: 3"
+        );
+    }
+
+    @Test
+    public void testParallelMinMaxShortMergeFuzz() throws Exception {
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_short(-30000, 30000) ashort," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_short(-30000, 30000)",
+                "SELECT min(ashort) min_short, max(ashort) max_short FROM tab"
+        );
+    }
+
+    @Test
+    public void testParallelMixedAggregates() throws Exception {
+        // Mixes overridden computeKeyedBatch implementations (sum, bit_and) with
+        // unoverridden ones (vwap, count_distinct) so the per-function dispatch
+        // loop in aggregateNonShardedBatched interleaves both kinds.
+        testParallelGroupByAllTypes(
+                "SELECT asymbol, " +
+                        "  count(*) c, " +
+                        "  sum(along) s, " +
+                        "  bit_and(anint) ba, " +
+                        "  count_distinct(asymbol) cd, " +
+                        "  round(vwap(adouble, along), 8) v " +
+                        "FROM tab " +
+                        "ORDER BY asymbol",
+                """
+                        asymbol\tc\ts\tba\tcd\tv
+                        \t1313\t8533052294725352078\t0\t0\t0.48971622000000004
+                        CPSW\t656\t-3339393259942281199\t0\t1\t0.48453257
+                        HYRX\t672\t-1695211113209059335\t0\t1\t0.50913075
+                        PEHN\t700\t-4539869934149012034\t0\t1\t0.50871338
+                        VTJW\t659\t-7044062940833324693\t0\t1\t0.52406265
+                        """
         );
     }
 
@@ -1915,6 +2597,62 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedApproxPercentileFuzz() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final double percentile = rnd.nextDouble();
+            final int precision = rnd.nextInt(6);
+            final int rowCount = rnd.nextInt(ROW_COUNT) + 1;
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS ("
+                                        + "SELECT CASE WHEN rnd_int() % 10 = 0 THEN NULL ELSE abs(rnd_long()) % 10_000_000 END AS x "
+                                        + "FROM long_sequence(" + rowCount + "))",
+                                sqlExecutionContext);
+
+                        final String query = "SELECT approx_percentile(x, " + percentile + ", " + precision + ") FROM tab";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink parallelSink = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    parallelSink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG);
+        });
+    }
+
+    @Test
     public void testParallelNonKeyedGroupBy() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab",
@@ -1967,16 +2705,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     for (int i = 0; i < numOfThreads; i++) {
                         final int threadId = i;
                         new Thread(() -> {
-                            final StringSink sink = new StringSink();
-                            TestUtils.await(barrier);
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context. Sharing
+                            // one context across threads cross-wires the supervisor slot and
+                            // leaks readers, which pollutes later tests in the shared engine.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                TestUtils.await(barrier);
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
+                                    assertQueries(engine, threadCtx, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -2252,6 +2996,80 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         1.0\t4050.0\tnull\t4050.0\t51.0\t4050.0
                         """
         );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithColumnTopsAndNewAggregates() throws Exception {
+        // Exercises the row-by-row column-top fallback inside AsyncGroupByNotKeyedRecordCursorFactory's
+        // aggregateVect reducer for aggregates whose computeBatch was added or whose parallelism flag
+        // was flipped: avg(int), avg(long), ksum(double), nsum(double), sum(long256). Frames covering
+        // pre-ALTER rows hit hasColumnTops() and must fall back to computeFirst/computeNext.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "create table tab (ts timestamp, anchor int) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        // First half: only the original columns exist. After ALTER, the rows below
+                        // present a column top for every new column.
+                        execute(
+                                compiler,
+                                "insert into tab select (x * 100000)::timestamp, x::int from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        execute(compiler, "alter table tab add column anint int", sqlExecutionContext);
+                        execute(compiler, "alter table tab add column along long", sqlExecutionContext);
+                        execute(compiler, "alter table tab add column adouble double", sqlExecutionContext);
+                        execute(compiler, "alter table tab add column along256 long256", sqlExecutionContext);
+                        execute(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((" + ROW_COUNT + " + x) * 100000)::timestamp, x::int, " +
+                                        "rnd_int(0, 1_000_000, 2), rnd_long(0, 1_000_000_000, 2), rnd_double(2), rnd_long256() " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+
+                        final String query = "SELECT " +
+                                "round(avg(anint), 6) avg_int, " +
+                                "round(avg(along), 6) avg_long, " +
+                                "round(ksum(adouble), 6) ksum_d, " +
+                                "round(nsum(adouble), 6) nsum_d, " +
+                                "sum(along256) sum_long256 " +
+                                "FROM tab";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink sinkB = new StringSink();
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sinkB);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -2590,18 +3408,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "create table tbl1 as (select rnd_double() x, rnd_double() y, rnd_symbol('a', 'b', 'c') sym from long_sequence(100000))",
                                 sqlExecutionContext
                         );
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "select round(regr_slope(x, y), 5), sym from tbl1 WHERE x > 0.5 ORDER BY sym",
-                                sink,
-                                """
+                        assertQuery("select round(regr_slope(x, y), 5), sym from tbl1 WHERE x > 0.5 ORDER BY sym")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
                                         round\tsym
                                         -0.00317\ta
                                         -0.00402\tb
                                         0.00476\tc
-                                        """
-                        );
+                                        """);
                     },
                     configuration,
                     LOG
@@ -3012,16 +3829,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     for (int i = 0; i < numOfThreads; i++) {
                         final int threadId = i;
                         new Thread(() -> {
-                            final StringSink sink = new StringSink();
-                            TestUtils.await(barrier);
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread compiles and runs against its own context. Sharing
+                            // one context across threads cross-wires the supervisor slot and
+                            // leaks readers, which pollutes later tests in the shared engine.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                TestUtils.await(barrier);
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertQueries(engine, sqlExecutionContext, sink, query, expected);
+                                    assertQueries(engine, threadCtx, query, expected);
                                 }
                             } catch (Throwable th) {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -3076,11 +3899,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     for (int i = 0; i < numOfThreads; i++) {
                         final int threadId = i;
                         new Thread(() -> {
-                            TestUtils.await(barrier);
-                            // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker)
-                            try {
+                            // SqlExecutionContext is not thread-safe (it carries a single
+                            // reader-pool supervisor slot, among other per-query state), so
+                            // every thread runs against its own context.
+                            try (SqlExecutionContext threadCtx =
+                                         TestUtils.createSqlExecutionCtx(engine, sqlExecutionContext.getSharedQueryWorkerCount())) {
+                                TestUtils.await(barrier);
+                                // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker)
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertCairoException(engine, sqlExecutionContext);
+                                    assertCairoException(engine, threadCtx);
                                 }
                             } catch (NullPointerException npe) {
                                 // NPE is expected
@@ -3088,6 +3915,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 th.printStackTrace(System.out);
                                 errors.put(threadId, th);
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -3272,6 +4100,62 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         k2\t1024.5\t419800.0
                         k3\t1025.5\t420200.0
                         k4\t1026.5\t420600.0
+                        """
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithMinCharFunction() throws Exception {
+        // Regression: MinCharGroupByFunction.merge() used to call putInt on a 2-byte CHAR
+        // value slot, overrunning the 2 trailing zero bytes into the next OrderedMap heap
+        // entry's keySize prefix. The crash surfaces as a SIGSEGV in
+        // OrderedMapVarSizeCursor.hasNext() on roughly a quarter of runs of the buggy code;
+        // the rest are silent.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        engine.execute(
+                                "CREATE TABLE tab AS (SELECT" +
+                                        " rnd_byte()::string key," +
+                                        " length(rnd_str(3, 8, 0))::char achar," +
+                                        " timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) ts" +
+                                        " FROM long_sequence(91)) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "ALTER TABLE tab CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        // ORDER BY ... LIMIT -1 forces the cursor to walk the full post-merge
+                        // heap to find the last row - the corrupted keySize crashes the
+                        // cursor on a fraction of the buggy runs.
+                        assertQuery("SELECT key, min(achar) FROM tab ORDER BY key LIMIT -1")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .expectSize()
+                                .noLeakCheck()
+                                .returns("key\tmin\n99\t\n");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithMinMaxCharFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, min(achar), max(achar) FROM tab ORDER BY key",
+                """
+                        key\tmin\tmax
+                        k0\tB\tZ
+                        k1\tB\tZ
+                        k2\tB\tZ
+                        k3\tB\tZ
+                        k4\tB\tZ
                         """
         );
     }
@@ -3616,6 +4500,36 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelSumLong256MergeFuzz() throws Exception {
+        // Verifies SumLong256GroupByFunction merge() correctness by comparing single-threaded
+        // and parallel results across partitions of varying sizes.
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_long256() along256," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_long256()",
+                "SELECT sum(along256) sum_long256 FROM tab"
+        );
+    }
+
+    @Test
+    public void testParallelSumShortMergeFuzz() throws Exception {
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_short(-30_000, 30_000) ashort," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_short(-30_000, 30_000)",
+                "SELECT sum(ashort) sum_short FROM tab"
+        );
+    }
+
+    @Test
     public void testParallelSymbolKeyGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
@@ -3834,6 +4748,31 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelTimestampKeyGroupBy() throws Exception {
+        // Single-column TIMESTAMP key — Unordered8Map probeBatchUnsafe direct-column path.
+        testParallelTimestampAndDateKeyGroupBy(
+                "SELECT ts_key, count() c, sum(value) s FROM tab ORDER BY ts_key",
+                """
+                        ts_key\tc\ts
+                        1970-01-01T00:00:00.000000Z\t800\t1602000
+                        1970-01-01T00:00:01.000000Z\t800\t1598800
+                        1970-01-01T00:00:02.000000Z\t800\t1599600
+                        1970-01-01T00:00:03.000000Z\t800\t1600400
+                        1970-01-01T00:00:04.000000Z\t800\t1601200
+                        """,
+                "SELECT date_key, count() c, sum(value) s FROM tab ORDER BY date_key",
+                """
+                        date_key\tc\ts
+                        1970-01-01T00:00:00.000Z\t800\t1602000
+                        1970-01-01T00:00:01.000Z\t800\t1598800
+                        1970-01-01T00:00:02.000Z\t800\t1599600
+                        1970-01-01T00:00:03.000Z\t800\t1600400
+                        1970-01-01T00:00:04.000Z\t800\t1601200
+                        """
+        );
+    }
+
+    @Test
     public void testParallelToStrFunctionKeyGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT to_str(ts, 'yyyy-MM-dd') ts, max(price) FROM tab ORDER BY ts LIMIT 5",
@@ -4011,7 +4950,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
                         engine.execute(
@@ -4230,10 +5169,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             );
                             context.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 
-                            TestUtils.assertSql(compiler, context, query, sink, "");
-                            Assert.fail();
-                        } catch (CairoException ex) {
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+                            assertQuery(query)
+                                    .withCompiler(compiler)
+                                    .withContext(context)
+                                    .noLeakCheck()
+                                    .failsWith("timeout, query aborted");
                         } finally {
                             Misc.free(circuitBreaker);
                         }
@@ -4313,7 +5253,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
                         engine.execute(
@@ -4416,6 +5356,70 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private void testParallelNonKeyedMergeFuzz(
+            String createTableSql,
+            String insertExprs,
+            String query
+    ) throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(compiler, createTableSql, sqlExecutionContext);
+
+                        // Vary partition row counts to cover branches of the batched non-sharded reducer:
+                        // single-row, sub-frame, exactly one frame, and one row past the frame boundary.
+                        long timestamp = 86400000000L;
+                        for (int i = 0; i < 50; i++) {
+                            final int prob = rnd.nextInt(100);
+                            final String row = insertExprs + ", " + timestamp + "::timestamp";
+                            if (prob < 25) {
+                                execute(compiler, "insert into tab values(" + row + ")", sqlExecutionContext);
+                            } else if (prob < 50) {
+                                final int rows = rnd.nextInt(100) + 1;
+                                execute(compiler, "insert into tab select " + row + " from long_sequence(" + rows + ")", sqlExecutionContext);
+                            } else if (prob < 75) {
+                                execute(compiler, "insert into tab select " + row + " from long_sequence(" + MIN_PAGE_FRAME_MAX_ROWS + ")", sqlExecutionContext);
+                            } else {
+                                execute(compiler, "insert into tab select " + row + " from long_sequence(" + (MIN_PAGE_FRAME_MAX_ROWS + 1) + ")", sqlExecutionContext);
+                            }
+                            timestamp += 86400000000L;
+                        }
+
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+
+                        // Run single-threaded reference.
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        // Run with parallel GROUP BY.
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink sinkB = new StringSink();
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sinkB);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
     private void testParallelRostiGroupBy(String query, String expected) throws Exception {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -4449,13 +5453,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
 
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                query,
-                                sink,
-                                expected
-                        );
+                        assertQuery(query)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns(expected);
 
                         if (enableParallelGroupBy) {
                             // Make sure that we're testing Rosti here.
@@ -4584,48 +5587,86 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
-    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
-        assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
+    private void testParallelTimestampAndDateKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        engine.execute(
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  ts_key TIMESTAMP," +
+                                        "  date_key DATE," +
+                                        "  value LONG" +
+                                        ") TIMESTAMP (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "insert into tab select " +
+                                        "(x * 864000000)::timestamp, " +
+                                        "((x % 5) * 1000000)::timestamp, " +
+                                        "((x % 5) * 1000)::date, " +
+                                        "x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
-    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, StringSink sink, String... queriesAndExpectedResults) throws SqlException {
+    static void assertNonParallelArgForcesSerial(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String plainAgg,
+            String castAgg
+    ) throws SqlException {
+        final String plainSql = "SELECT " + plainAgg + " FROM x";
+        final String castSql = "SELECT " + castAgg + " FROM x";
+        final StringSink plan = new StringSink();
+        TestUtils.printSql(compiler, sqlExecutionContext, "EXPLAIN " + plainSql, plan);
+        Assert.assertTrue("plain form must run via Async Group By: " + plainAgg + "\n" + plan,
+                plan.toString().contains("Async Group By"));
+        plan.clear();
+        TestUtils.printSql(compiler, sqlExecutionContext, "EXPLAIN " + castSql, plan);
+        Assert.assertFalse("non-parallel arg must force serial group by: " + castAgg + "\n" + plan,
+                plan.toString().contains("Async Group By"));
+        // The forced-serial result must equal the parallel reference.
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, plainSql, castSql, LOG);
+    }
+
+    static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws Exception {
         for (int i = 0, n = queriesAndExpectedResults.length; i < n; i += 2) {
             final String query = queriesAndExpectedResults[i];
             final String expected = queriesAndExpectedResults[i + 1];
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    query,
-                    sink,
-                    expected
-            );
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, query)
+                    .noLeakCheck()
+                    .returnsOnce(expected);
         }
     }
 
-    static void assertQueriesAndPlans(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesExpectedResultsAndPlans) throws SqlException {
+    static void assertQueriesAndPlans(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesExpectedResultsAndPlans) throws Exception {
         for (int i = 0, n = queriesExpectedResultsAndPlans.length; i < n; i += 3) {
             final String query = queriesExpectedResultsAndPlans[i];
             final String expected = queriesExpectedResultsAndPlans[i + 1];
-            sink.clear();
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    query,
-                    sink,
-                    expected
-            );
-
-            // verify the plan, optionally
-            final String expectedPlanFragment = queriesExpectedResultsAndPlans[i + 2];
-            if (expectedPlanFragment != null) {
-                TestUtils.printSql(
-                        engine,
-                        sqlExecutionContext,
-                        "EXPLAIN " + query,
-                        sink
-                );
-                TestUtils.assertContains(sink, expectedPlanFragment);
-            }
+            new QueryAssertion(engine, sqlExecutionContext, () -> {
+            }, query)
+                    .noLeakCheck()
+                    .withPlanContaining(queriesExpectedResultsAndPlans[i + 2])
+                    .sizeMayVary()
+                    .inferRandomAccess()
+                    .inferTimestamp()
+                    .returns(expected);
         }
     }
 

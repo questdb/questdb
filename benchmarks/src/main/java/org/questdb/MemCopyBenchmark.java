@@ -79,18 +79,18 @@ public class MemCopyBenchmark {
 
     @Benchmark
     public void testJavaCopyMemory() {
-        Unsafe.getUnsafe().copyMemory(mem1, mem2, len);
+        Unsafe.copyMemory(mem1, mem2, len);
     }
 
     @Benchmark
     public void testJavaSetMemory() {
-        Unsafe.getUnsafe().setMemory(mem1, len, (byte) 0);
+        Unsafe.setMemory(mem1, len, (byte) 0);
     }
 
     @Benchmark
     public void testVanillaLoop() {
         for (long i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(mem2 + i, Unsafe.getUnsafe().getByte(mem1 + i));
+            Unsafe.putByte(mem2 + i, Unsafe.getByte(mem1 + i));
         }
     }
 }

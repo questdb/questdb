@@ -44,13 +44,13 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.inVolumeToSink;
-import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
 
 public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
@@ -67,6 +67,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -135,6 +136,11 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             this.tableToken = tableToken;
             this.executionContext = executionContext;
 
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this materialized view on demand
+            // (matviews have a _meta file and are cached) so we do not report it as
+            // non-existent during the startup hydration window.
+            executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (table == null) {
@@ -241,11 +247,11 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 sink.putAscii(')');
             }
-            sink.putAscii(" AS (\n")
-                    .put(viewDefinition.getMatViewSql())
-                    .putAscii('\n');
+            sink.putAscii(" AS (\n");
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getMatViewSql());
+            sink.putAscii('\n');
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
-            ttlToSink(table.getTtlHoursOrMonths(), sink);
+            ttlToSink(sink);
             inVolumeToSink(configuration, table, sink);
             putAdditional();
             sink.putAscii(';');
@@ -253,6 +259,11 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
 
         // placeholder for ent, do not remove!
         protected void putAdditional() {
+        }
+
+        // overridden in ent, do not remove!
+        protected void ttlToSink(CharSink<?> sink) {
+            ShowCreateTableRecordCursorFactory.ttlToSink(table.getTtlHoursOrMonths(), sink);
         }
 
         public class ShowCreateMatViewRecord implements Record {

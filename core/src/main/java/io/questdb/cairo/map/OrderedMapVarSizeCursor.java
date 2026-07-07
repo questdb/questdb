@@ -74,7 +74,7 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     public boolean hasNext() {
         if (remaining > 0) {
             recordA.of(heapAddr);
-            final int keySize = Unsafe.getUnsafe().getInt(heapAddr);
+            final int keySize = Unsafe.getInt(heapAddr);
             heapAddr = Bytes.align8b(heapAddr + OrderedMap.VAR_KEY_HEADER_SIZE + keySize + valueSize);
             remaining--;
             return true;
@@ -83,11 +83,9 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
     }
 
     @Override
-    public OrderedMapVarSizeCursor init(long heapStart, long heapLimit, int size) {
+    public OrderedMapVarSizeCursor init(long heapStart, int size) {
         this.heapAddr = this.heapStart = heapStart;
         this.remaining = this.size = size;
-        recordA.setLimit(heapLimit);
-        recordB.setLimit(heapLimit);
         return this;
     }
 

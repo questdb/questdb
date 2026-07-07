@@ -72,7 +72,7 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
                 }
                 // copy each string to the memory
                 int len = s.length();
-                Unsafe.getUnsafe().putInt(p, len);
+                Unsafe.putInt(p, len);
                 Utf8s.strCpyAscii(s, len, p + 4);
                 p += 4 + len;
             }
@@ -166,7 +166,7 @@ public class LowerCaseUtf8SequenceObjHashMapTest {
             assert utf8Bytes.length == 2;
             for (int i = 0; i < N; i++) {
                 for (int j = 0; j < 2; j++) {
-                    Unsafe.getUnsafe().putByte(mem + (long) 2 * i + j, utf8Bytes[j]);
+                    Unsafe.putByte(mem + (long) 2 * i + j, utf8Bytes[j]);
                 }
             }
 

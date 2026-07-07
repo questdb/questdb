@@ -336,6 +336,14 @@ public class NanosFormatUtils {
         throw NumericException.INSTANCE;
     }
 
+    public static long parseOptionalNanosGreedy(CharSequence sequence, final int p, int lim) throws NumericException {
+        if (isOptionalFractionStart(sequence, p, lim)) {
+            final long parsed = Nanos.parseNanosAsMicrosGreedy(sequence, p + 1, lim);
+            return Numbers.encodeLowHighInts(Numbers.decodeLowInt(parsed), Numbers.decodeHighInt(parsed) + 1);
+        }
+        return Numbers.encodeLowHighInts(0, 0);
+    }
+
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {
         long l = Numbers.parseIntSafely(in, pos, hi);
         int len = Numbers.decodeHighInt(l);

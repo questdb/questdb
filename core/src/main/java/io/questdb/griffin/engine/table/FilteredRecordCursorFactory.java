@@ -27,11 +27,14 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Misc;
 
 public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -41,7 +44,17 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
         super(base.getMetadata());
-        assert !(base instanceof FilteredRecordCursorFactory);
+        // Some optimiser paths split a single WHERE into multiple model
+        // filters (e.g. a predicate that does not reference any inner-model
+        // column gets pushed past an aggregate while a predicate on the
+        // aggregate stays at the outer level), and codegen then wraps each
+        // model's filter independently. Collapse those into one factory
+        // here so we evaluate the combined boolean once per row instead of
+        // chaining two RecordCursor wrappers.
+        if (base instanceof FilteredRecordCursorFactory existing) {
+            filter = new ChainedAndFilter(existing.filter, filter);
+            base = existing.base;
+        }
         this.base = base;
         this.cursor = new FilteredRecordCursor(filter);
         this.filter = filter;
@@ -110,5 +123,49 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     protected void _close() {
         base.close();
         filter.close();
+    }
+
+    /**
+     * Boolean AND of two filter functions. Used when a
+     * {@link FilteredRecordCursorFactory} is constructed over another
+     * {@code FilteredRecordCursorFactory} so the two row-time predicates
+     * collapse into a single short-circuit conjunction. Mirrors the
+     * private AndBooleanFunction in
+     * {@link io.questdb.griffin.engine.functions.bool.AndFunctionFactory}
+     * but stays local here to avoid widening that factory's public API
+     * surface for one consumer.
+     */
+    private static final class ChainedAndFilter extends BooleanFunction implements BinaryFunction {
+        private final Function left;
+        private final Function right;
+
+        ChainedAndFilter(Function left, Function right) {
+            this.left = left;
+            this.right = right;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return left.getBool(rec) && right.getBool(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val('(');
+            sink.val(left);
+            sink.val(" and ");
+            sink.val(right);
+            sink.val(')');
+        }
     }
 }

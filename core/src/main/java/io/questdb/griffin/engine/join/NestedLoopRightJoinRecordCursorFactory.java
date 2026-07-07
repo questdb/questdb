@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -69,6 +70,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
+            masterCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             slaveCursor = slaveFactory.getCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;

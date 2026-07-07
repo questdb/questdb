@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -46,8 +47,11 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
@@ -64,7 +68,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
  */
 public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Closeable {
-
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
     private final T atom;
@@ -81,15 +84,23 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
     private final WorkStealingStrategy workStealingStrategy;
+    private int errno = CairoException.NON_CRITICAL;
+    private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
     private int frameCount;
     private PageFrameCursor frameCursor;
     private long id;
     private boolean isCancelled;
+    private boolean isInterrupted;
     private boolean isOutOfMemory;
     private boolean isReadyToDispatch;
     private boolean isUninterruptible;
     private PageFrameMemoryRecord localRecord;
+    // Per-query native memory tracker captured from the owning SqlExecutionContext
+    // at workload start. Null when no per-query limit is configured. Workers read
+    // this off the task via task.getFrameSequence().getMemoryTracker() to charge
+    // their allocations to the active workload.
+    private MemoryTracker memoryTracker;
     private int queuedCount;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
@@ -132,6 +143,28 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
             Os.pause();
         }
+    }
+
+    /**
+     * Builds the typed exception to throw from {@link #dispatchAndAwait()} based on
+     * the kind captured by {@link #setError(Throwable)}. Mirrors
+     * {@link PageFrameReduceTask#buildError()} for the filter/top-K paths.
+     */
+    public RuntimeException buildError() {
+        return switch (errorKind) {
+            case AsyncQueryErrorKind.KIND_IMPLICIT_CAST ->
+                    ImplicitCastException.instance().position(errorMessagePosition).put(errorMsg);
+            case AsyncQueryErrorKind.KIND_NUMERIC ->
+                    NumericException.instance().position(errorMessagePosition).put(errorMsg);
+            // critical(errno) preserves the worker's errno and, with it, isCritical();
+            // errno == NON_CRITICAL reduces to the previous nonCritical() behaviour.
+            default -> CairoException.critical(errno)
+                    .position(errorMessagePosition)
+                    .put(errorMsg)
+                    .setCancellation(isCancelled)
+                    .setInterruption(isInterrupted)
+                    .setOutOfMemory(isOutOfMemory);
+        };
     }
 
     public void cancel(int reason) {
@@ -225,9 +258,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             if (isCancelled) {
                 throw CairoException.queryCancelled();
             }
-            CairoException ex = CairoException.nonCritical().put(errorMsg);
-            ex.position(errorMessagePosition);
-            throw ex;
+            throw buildError();
         }
 
         if (!isActive()) {
@@ -265,6 +296,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
 
     public long getId() {
         return id;
+    }
+
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     public PageFrameAddressCache getPageFrameAddressCache() {
@@ -305,6 +340,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             int order
     ) throws SqlException {
         sqlExecutionContext = executionContext;
+        memoryTracker = executionContext.getMemoryTracker();
         startTime = clock.getTicks();
         isUninterruptible = executionContext.isUninterruptible();
 
@@ -315,7 +351,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         try {
             assert frameCursor == null;
             frameCursor = base.getPageFrameCursor(executionContext, order);
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             id = ID_SEQ.incrementAndGet();
             isValid.set(true);
@@ -325,7 +361,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             workStealingStrategy.of(reduceStartedCounter);
             errorMsg.clear();
             errorMessagePosition = 0;
+            errno = CairoException.NON_CRITICAL;
+            errorKind = AsyncQueryErrorKind.KIND_NONE;
             isCancelled = false;
+            isInterrupted = false;
             isOutOfMemory = false;
 
             atom.init(frameCursor, executionContext);
@@ -354,8 +393,19 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         frameCount = 0;
         queuedCount = 0;
         isReadyToDispatch = false;
+        // Drop the borrowed tracker reference; the provider owns the native block.
+        memoryTracker = null;
         frameRowCounts.clear();
         atom.clear();
+        // Unfreeze the covered posting readers frozen in buildAddressCache() BEFORE the
+        // address cache (which holds them) and the frame cursor (which owns them) are
+        // torn down. reset() runs after the sequence has been awaited, so every worker
+        // cursor has finished and the unfreeze is race-free. A reader left frozen would
+        // make its reloadConditionally() a permanent no-op and break the next query
+        // against the same partition.
+        if (frameAddressCache != null) {
+            frameAddressCache.unfreezeCoveredReaders();
+        }
         Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
     }
@@ -368,12 +418,22 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         if (!errorMsg.isEmpty()) {
             return;
         }
+        errorKind = AsyncQueryErrorKind.of(th);
         if (th instanceof CairoException e) {
             errorMsg.put(e.getFlyweightMessage());
             errorMessagePosition = e.getPosition();
+            errno = e.getErrno();
             isCancelled = e.isCancellation();
+            isInterrupted = e.isInterruption();
             isOutOfMemory = e.isOutOfMemory();
             cancel(e.getInterruptionReason());
+        } else if (th instanceof FlyweightMessageContainer fmc) {
+            // ImplicitCastException / NumericException: a legitimate user-facing error.
+            // Preserve the message and position verbatim so the collector can re-throw
+            // the same class via buildError().
+            errorMsg.put(fmc.getFlyweightMessage());
+            errorMessagePosition = fmc.getPosition();
+            cancel(SqlExecutionCircuitBreaker.STATE_OK);
         } else {
             errorMsg.put("unexpected reduce error");
             if (th.getMessage() != null) {
@@ -389,6 +449,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
+
+        // Mirror PageFrameSequence.buildAddressCache(): covered frames decode their
+        // columns on the async workers by iterating detached cursors over the shared
+        // per-partition posting readers, which is only race-free if those readers are
+        // positioned at the query txn, cache-warm, and FROZEN before any worker decodes.
+        // The eager production iteration above already positioned + warmed each reader,
+        // so freeze them now, before dispatch. unfreezeCoveredReaders() in reset()
+        // reverses it once the sequence has been awaited.
+        frameAddressCache.freezeCoveredReaders();
     }
 
     private boolean hasError() {
@@ -413,9 +482,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             if (th instanceof CairoException e) {
                 interruptReason = e.getInterruptionReason();
             }
+            // Record the error on the sequence and let dispatchAndAwait surface it
+            // via buildError(). Re-throwing here would propagate through the owner
+            // thread and bypass the kind-aware rebuild, losing the original class.
             setError(th);
             cancel(interruptReason);
-            throw th;
         }
     }
 

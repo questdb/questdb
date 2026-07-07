@@ -31,27 +31,23 @@ public class PgGetSIExprFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgGetSIExprFunc() throws Exception {
-        assertQuery(
-                "pg_get_expr\n" +
-                        "\n",
-                "select pg_get_expr('abc', 42);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_get_expr('abc', 42);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        pg_get_expr
+                        
+                        """);
     }
 
     @Test
     public void testPrefixedPgGetSIExprFunc() throws Exception {
-        assertQuery(
-                "pg_get_expr\n" +
-                        "\n",
-                "select pg_catalog.pg_get_expr('abc', 42);",
-                null,
-                null,
-                true,
-                true
-        );
+        assertQuery("select pg_catalog.pg_get_expr('abc', 42);")
+                .ddl(null)
+                .expectSize()
+                .returns("""
+                        pg_get_expr
+                        
+                        """);
     }
 }

@@ -74,11 +74,13 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
             cursorB = factoryB.getCursor(executionContext);
             Function.initNc(castFunctionsA, cursorA, executionContext, null);
             Function.initNc(castFunctionsB, cursorB, executionContext, null);
-            cursor.of(cursorA, cursorB, executionContext.getCircuitBreaker());
+            cursor.of(cursorA, cursorB, executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(cursorA);
             Misc.free(cursorB);
+            // of() may breach after reopening tracker-charged maps; close() frees them and resets isOpen for reuse
+            Misc.free(cursor);
             throw ex;
         }
     }

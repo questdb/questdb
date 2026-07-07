@@ -41,34 +41,34 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_2(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             execute(
-                    "INSERT INTO trades_2\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_2
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             drainWalQueue();
             engine.releaseAllWriters();
             final CharSequence size1 = Long.toString(getDirSize("trades_1"));
             final CharSequence size2 = Long.toString(getDirSize("trades_2"));
-            assertQueryNoLeakCheck(
-                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+            assertQuery("select * from table_storage()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
                             "trades_2\tfalse\tHOUR\t4\t4\t" + size1 + "\n" +
-                            "trades_1\tfalse\tHOUR\t4\t4\t" + size2 + "\n",
-                    "select * from table_storage()",
-                    null,
-                    false,
-                    true
-            );
+                            "trades_1\tfalse\tHOUR\t4\t4\t" + size2 + "\n");
         });
     }
 
@@ -80,34 +80,34 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_2(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             execute(
-                    "INSERT INTO trades_2\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_2
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             drainWalQueue();
             engine.releaseAllWriters();
             final CharSequence size1 = Long.toString(getDirSize("trades_1"));
             final CharSequence size2 = Long.toString(getDirSize("trades_2"));
-            assertQueryNoLeakCheck(
-                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+            assertQuery("select * from table_storage()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
                             "trades_2\tfalse\tNONE\t1\t4\t" + size1 + "\n" +
-                            "trades_1\tfalse\tNONE\t1\t4\t" + size2 + "\n",
-                    "select * from table_storage()",
-                    null,
-                    false,
-                    true
-            );
+                            "trades_1\tfalse\tNONE\t1\t4\t" + size2 + "\n");
         });
     }
 
@@ -117,25 +117,25 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);\n"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);
+                            """
             );
             drainWalQueue();
             engine.releaseAllWriters();
             engine.releaseAllWriters();
             final CharSequence size = Long.toString(getDirSize("trades_1"));
-            assertQueryNoLeakCheck(
-                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_1\tfalse\tHOUR\t4\t4\t" + size + "\n",
-                    "select * from table_storage()",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select * from table_storage()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+                            "trades_1\tfalse\tHOUR\t4\t4\t" + size + "\n");
         });
     }
 
@@ -145,24 +145,23 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);"""
             );
             drainWalQueue();
             engine.releaseAllWriters();
             final CharSequence size = Long.toString(getDirSize("trades_1"));
-            assertQueryNoLeakCheck(
-                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_1\tfalse\tNONE\t1\t4\t" + size + "\n",
-                    "select * from table_storage()",
-                    null,
-                    false,
-                    true
-            );
+            assertQuery("select * from table_storage()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+                            "trades_1\tfalse\tNONE\t1\t4\t" + size + "\n");
         });
     }
 
@@ -172,20 +171,19 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             execute(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);\n"
+                    """
+                            INSERT INTO trades_1
+                            VALUES
+                                ('2021-10-05T11:31:35.878Z', 's1', 245),
+                                ('2021-10-05T12:31:35.878Z', 's2', 245),
+                                ('2021-10-05T13:31:35.878Z', 's3', 250),
+                                ('2021-10-05T14:31:35.878Z', 's4', 250);
+                            """
             );
             drainWalQueue();
             engine.releaseAllWriters();
-            assertException(
-                    "select *, size_pretty(hello) from table_storage()",
-                    22,
-                    "Invalid column: hello"
-            );
+            assertQuery("select *, size_pretty(hello) from table_storage()")
+                    .fails(22, "Invalid column: hello");
         });
     }
 

@@ -48,9 +48,7 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
             this.utf8Value = null;
             this.index = SymbolTable.VALUE_IS_NULL;
         } else {
-            if (Chars.startsWith(value, '\'')
-                    && Chars.endsWith(value, '\'')
-                    && value.length() > 1) {
+            if (Chars.startsWith(value, '\'') && Chars.endsWith(value, '\'') && value.length() > 1) {
                 this.value = Chars.toString(value, 1, value.length() - 1);
             } else {
                 this.value = Chars.toString(value);
@@ -129,11 +127,12 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
 
     @Override
     public CharSequence valueBOf(int key) {
-        return value;
+        // Aggregates store VALUE_IS_NULL on setEmpty and read it back through arg.
+        return key != SymbolTable.VALUE_IS_NULL ? value : null;
     }
 
     @Override
     public CharSequence valueOf(int symbolKey) {
-        return value;
+        return symbolKey != SymbolTable.VALUE_IS_NULL ? value : null;
     }
 }

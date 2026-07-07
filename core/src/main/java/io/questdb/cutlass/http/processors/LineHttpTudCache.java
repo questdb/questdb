@@ -95,6 +95,7 @@ public class LineHttpTudCache implements QuietCloseable {
         }
         if (distressed) {
             tableUpdateDetails.clear();
+            distressed = false;
         }
     }
 

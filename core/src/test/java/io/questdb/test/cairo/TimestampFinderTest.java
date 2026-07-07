@@ -32,7 +32,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -133,7 +133,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
             try (
                     TableReader oracleReader = newOffPoolReader(configuration, "oracle");
                     TableReader reader = newOffPoolReader(configuration, "x");
-                    PartitionDecoder partitionDecoder = new PartitionDecoder();
+                    ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder();
                     ParquetTimestampFinder finder = new ParquetTimestampFinder(partitionDecoder)
             ) {
                 Assert.assertEquals(2, oracleReader.getPartitionCount());

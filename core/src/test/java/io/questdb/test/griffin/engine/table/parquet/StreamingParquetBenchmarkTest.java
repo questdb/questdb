@@ -220,7 +220,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
 
                 // Pre-allocate 4KB buffer for memcpy
                 final int BUFFER_SIZE = 4096;
-                long buffer = Unsafe.getUnsafe().allocateMemory(BUFFER_SIZE);
+                long buffer = Unsafe.allocateMemory(BUFFER_SIZE);
 
                 LOG.info().$("Starting pure read benchmark (no Parquet, no Rust)...").$();
 
@@ -241,10 +241,10 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                                 // Copy in 4KB chunks
                                 for (long offset = 0; offset < pageSize; offset += BUFFER_SIZE) {
                                     long chunkSize = Math.min(BUFFER_SIZE, pageSize - offset);
-                                    Unsafe.getUnsafe().copyMemory(pageAddress + offset, buffer, chunkSize);
+                                    Unsafe.copyMemory(pageAddress + offset, buffer, chunkSize);
                                 }
                                 // Read one value to prevent optimization
-                                totalSum += Unsafe.getUnsafe().getLong(buffer);
+                                totalSum += Unsafe.getLong(buffer);
                                 totalBytesRead += pageSize;
                             }
 
@@ -254,9 +254,9 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             if (auxPageAddress > 0 && auxPageSize > 0) {
                                 for (long offset = 0; offset < auxPageSize; offset += BUFFER_SIZE) {
                                     long chunkSize = Math.min(BUFFER_SIZE, auxPageSize - offset);
-                                    Unsafe.getUnsafe().copyMemory(auxPageAddress + offset, buffer, chunkSize);
+                                    Unsafe.copyMemory(auxPageAddress + offset, buffer, chunkSize);
                                 }
-                                totalSum += Unsafe.getUnsafe().getLong(buffer);
+                                totalSum += Unsafe.getLong(buffer);
                                 totalBytesRead += auxPageSize;
                             }
                         }
@@ -265,7 +265,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                         frameCount++;
                     }
                 } finally {
-                    Unsafe.getUnsafe().freeMemory(buffer);
+                    Unsafe.freeMemory(buffer);
                 }
 
                 long elapsedNs = System.nanoTime() - startTime;
@@ -384,8 +384,14 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
 
                             for (int i = 0, n = frame.getColumnCount(); i < n; i++) {
-                                long localColTop = frame.getPageAddress(i) > 0 ? 0 : frameRowCount;
                                 int columnType = metadata.getColumnType(i);
+                                long pageAddress = frame.getPageAddress(i);
+                                long localColTop;
+                                if (ColumnType.isVarSize(columnType)) {
+                                    localColTop = frame.getAuxPageAddress(i) > 0 ? 0 : frameRowCount;
+                                } else {
+                                    localColTop = pageAddress > 0 ? 0 : frameRowCount;
+                                }
 
                                 if (ColumnType.isSymbol(columnType)) {
                                     SymbolMapReader symbolMapReader = (SymbolMapReader) pageFrameCursor.getSymbolTable(i);
@@ -413,7 +419,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                             // Write chunk - returns buffer when row group is complete
                             long buffer = writeStreamingParquetChunk(streamWriter, columnData.getAddress(), frameRowCount);
                             while (buffer != 0) {
-                                long dataSize = Unsafe.getUnsafe().getLong(buffer);
+                                long dataSize = Unsafe.getLong(buffer);
                                 totalBytesWritten += dataSize;
                                 rowGroupCount++;
 
@@ -429,7 +435,7 @@ public class StreamingParquetBenchmarkTest extends AbstractCairoTest {
                     // Finish writing (flush remaining data)
                     long buffer = finishStreamingParquetWrite(streamWriter);
                     while (buffer != 0) {
-                        long dataSize = Unsafe.getUnsafe().getLong(buffer);
+                        long dataSize = Unsafe.getLong(buffer);
                         totalBytesWritten += dataSize;
                         rowGroupCount++;
                         buffer = writeStreamingParquetChunk(streamWriter, 0, 0);

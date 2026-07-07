@@ -137,7 +137,7 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
                         new TableColumnMetadata(
                                 Chars.toString(name),
                                 type,
-                                metadata.isColumnIndexed(i),
+                                metadata.getColumnIndexType(i),
                                 metadata.getIndexValueBlockCapacity(i),
                                 true,
                                 null,

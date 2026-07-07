@@ -144,15 +144,18 @@ public final class Nanos {
             return nanos;
         }
 
-        // Use the nano version of getYear
         int y = getYear(nanos);
-        int m;
         boolean leap1 = isLeapYear(y);
         boolean leap2 = isLeapYear(y + years);
-
+        int m = getMonthOfYear(nanos, y, leap1);
+        int d = getDayOfMonth(nanos, y, m, leap1);
+        int maxDay = CommonUtils.getDaysPerMonth(m, leap2);
+        if (d > maxDay) {
+            d = maxDay;
+        }
         return yearNanos(y + years, leap2)
-                + monthOfYearNanos(m = getMonthOfYear(nanos, y, leap1), leap2)
-                + (getDayOfMonth(nanos, y, m, leap1) - 1) * DAY_NANOS
+                + monthOfYearNanos(m, leap2)
+                + (d - 1) * DAY_NANOS
                 + getTimeNanos(nanos);
     }
 
@@ -675,19 +678,19 @@ public final class Nanos {
         int i = (int) (((nanos - yearNanos(year, leap)) / MILLI_NANOS) >> 10);
         return leap
                 ? ((i < 182 * 84375)
-                ? ((i < 91 * 84375)
-                ? ((i < 31 * 84375) ? 1 : (i < 60 * 84375) ? 2 : 3)
-                : ((i < 121 * 84375) ? 4 : (i < 152 * 84375) ? 5 : 6))
-                : ((i < 274 * 84375)
-                ? ((i < 213 * 84375) ? 7 : (i < 244 * 84375) ? 8 : 9)
-                : ((i < 305 * 84375) ? 10 : (i < 335 * 84375) ? 11 : 12)))
+                   ? ((i < 91 * 84375)
+                      ? ((i < 31 * 84375) ? 1 : (i < 60 * 84375) ? 2 : 3)
+                      : ((i < 121 * 84375) ? 4 : (i < 152 * 84375) ? 5 : 6))
+                   : ((i < 274 * 84375)
+                      ? ((i < 213 * 84375) ? 7 : (i < 244 * 84375) ? 8 : 9)
+                      : ((i < 305 * 84375) ? 10 : (i < 335 * 84375) ? 11 : 12)))
                 : ((i < 181 * 84375)
-                ? ((i < 90 * 84375)
-                ? ((i < 31 * 84375) ? 1 : (i < 59 * 84375) ? 2 : 3)
-                : ((i < 120 * 84375) ? 4 : (i < 151 * 84375) ? 5 : 6))
-                : ((i < 273 * 84375)
-                ? ((i < 212 * 84375) ? 7 : (i < 243 * 84375) ? 8 : 9)
-                : ((i < 304 * 84375) ? 10 : (i < 334 * 84375) ? 11 : 12)));
+                   ? ((i < 90 * 84375)
+                      ? ((i < 31 * 84375) ? 1 : (i < 59 * 84375) ? 2 : 3)
+                      : ((i < 120 * 84375) ? 4 : (i < 151 * 84375) ? 5 : 6))
+                   : ((i < 273 * 84375)
+                      ? ((i < 212 * 84375) ? 7 : (i < 243 * 84375) ? 8 : 9)
+                      : ((i < 304 * 84375) ? 10 : (i < 334 * 84375) ? 11 : 12)));
     }
 
     public static long getMonthsBetween(long nanosA, long nanosB) {

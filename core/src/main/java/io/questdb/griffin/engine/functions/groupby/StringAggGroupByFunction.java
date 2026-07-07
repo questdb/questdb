@@ -46,7 +46,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     private final char delimiter;
     private final int functionPosition;
     private final int maxBytes;
-    private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
+    private ObjList<DirectUtf16Sink> sinks = new ObjList<>();
+    private boolean isShared;
     private int sinkIndex = 0;
     private int touchedMemorySize;
     private int valueIndex;
@@ -60,6 +61,9 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public void clear() {
+        if (isShared) {
+            return;
+        }
         // Free extra sinks.
         touchedMemorySize = 0;
         if (sinks.size() > LIST_CLEAR_THRESHOLD) {
@@ -152,6 +156,13 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.sinks = ((StringAggGroupByFunction) primary).sinks;
+        this.isShared = true;
     }
 
     @Override

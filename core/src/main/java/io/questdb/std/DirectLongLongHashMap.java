@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
+import org.jetbrains.annotations.Nullable;
 
 
 public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenable {
@@ -38,10 +39,19 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
     private int capacity;
     private int free;
     private long mask;
+    // Per-query native memory tracker bound by the owning component before the
+    // backing directory is (re)allocated. Null when no per-query limit applies;
+    // all Unsafe.{malloc,realloc,free} calls degrade to the global-only overloads.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private long ptr;
     private int size;
 
     public DirectLongLongHashMap(int initialCapacity, double loadFactor, long noEntryKey, long noEntryValue, int memoryTag) {
+        this(initialCapacity, loadFactor, noEntryKey, noEntryValue, memoryTag, true);
+    }
+
+    public DirectLongLongHashMap(int initialCapacity, double loadFactor, long noEntryKey, long noEntryValue, int memoryTag, boolean openOnInit) {
         if (loadFactor <= 0d || loadFactor >= 1d) {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
@@ -53,8 +63,12 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         this.size = 0;
         this.free = (int) (capacity * loadFactor);
         this.mask = capacity - 1;
-        this.ptr = Unsafe.malloc(16L * capacity, memoryTag);
-        zero();
+        if (openOnInit) {
+            this.ptr = Unsafe.malloc(16L * capacity, memoryTag, memoryTracker);
+            zero();
+        }
+        // else: ptr stays 0; the first reopen() allocates the directory under
+        // whatever MemoryTracker is bound at that time.
     }
 
     public int capacity() {
@@ -71,7 +85,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
     @Override
     public void close() {
         if (ptr != 0) {
-            ptr = Unsafe.free(ptr, 16L * capacity, memoryTag);
+            ptr = Unsafe.free(ptr, 16L * capacity, memoryTag, memoryTracker);
             capacity = 0;
             free = 0;
             size = 0;
@@ -86,12 +100,16 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         return valueAt(keyIndex(key));
     }
 
+    public boolean isOpen() {
+        return ptr != 0;
+    }
+
     public long keyAtRaw(long index) {
-        return Unsafe.getUnsafe().getLong(ptr + 16 * index);
+        return Unsafe.getLong(ptr + 16 * index);
     }
 
     public long keyIndex(long key) {
-        long hashCode = Hash.fastHashLong64(key);
+        long hashCode = Hash.hashLong64(key);
         long index = hashCode & mask;
         long k = keyAtRaw(index);
         if (k == noEntryKey) {
@@ -109,12 +127,17 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
 
     public void putAt(long index, long key, long value) {
         if (index < 0) {
-            Unsafe.getUnsafe().putLong(ptr + 16 * (-index - 1) + 8, value);
+            Unsafe.putLong(ptr + 16 * (-index - 1) + 8, value);
         } else {
             putAt0(index, key, value);
             size++;
             if (--free == 0) {
-                rehash(capacity() << 1);
+                try {
+                    rehash(capacity() << 1);
+                } catch (CairoException e) {
+                    free = 1;
+                    throw e;
+                }
             }
         }
     }
@@ -145,7 +168,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
                     key != noEntryKey;
                     from = (from + 1) & mask, key = keyAtRaw(from)
             ) {
-                long hashCode = Hash.fastHashLong64(key);
+                long hashCode = Hash.hashLong64(key);
                 long idealHit = hashCode & mask;
                 if (idealHit != from) {
                     long to;
@@ -173,16 +196,22 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
     public void restoreInitialCapacity() {
         if (ptr == 0 || capacity != initialCapacity) {
             final long oldCapacity = capacity;
+            long newPtr;
+            if (ptr == 0) {
+                newPtr = Unsafe.malloc(16L * initialCapacity, memoryTag, memoryTracker);
+            } else {
+                newPtr = Unsafe.realloc(ptr, 16L * oldCapacity, 16L * initialCapacity, memoryTag, memoryTracker);
+            }
+            ptr = newPtr;
             capacity = initialCapacity;
             mask = capacity - 1;
-            if (ptr == 0) {
-                ptr = Unsafe.malloc(16L * capacity, memoryTag);
-            } else {
-                ptr = Unsafe.realloc(ptr, 16L * oldCapacity, 16L * capacity, memoryTag);
-            }
         }
 
         clear();
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     public int size() {
@@ -190,22 +219,22 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
     }
 
     public long valueAt(long index) {
-        return index < 0 ? Unsafe.getUnsafe().getLong(ptr + 16 * (-index - 1) + 8) : noEntryValue;
+        return index < 0 ? Unsafe.getLong(ptr + 16 * (-index - 1) + 8) : noEntryValue;
     }
 
     public long valueAtRaw(long index) {
-        return Unsafe.getUnsafe().getLong(ptr + 16 * index + 8);
+        return Unsafe.getLong(ptr + 16 * index + 8);
     }
 
     private void erase(long index) {
-        Unsafe.getUnsafe().putLong(ptr + 16 * index, noEntryKey);
+        Unsafe.putLong(ptr + 16 * index, noEntryKey);
     }
 
     private void move(long from, long to) {
         final long fromPtr = ptr + 16 * from;
         final long toPtr = ptr + 16 * to;
-        Unsafe.getUnsafe().putLong(toPtr, Unsafe.getUnsafe().getLong(fromPtr));
-        Unsafe.getUnsafe().putLong(toPtr + 8, Unsafe.getUnsafe().getLong(fromPtr + 8));
+        Unsafe.putLong(toPtr, Unsafe.getLong(fromPtr));
+        Unsafe.putLong(toPtr + 8, Unsafe.getLong(fromPtr + 8));
         erase(from);
     }
 
@@ -227,8 +256,8 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
 
     private void putAt0(long index, long key, long value) {
         final long p = ptr + 16 * index;
-        Unsafe.getUnsafe().putLong(p, key);
-        Unsafe.getUnsafe().putLong(p + 8, value);
+        Unsafe.putLong(p, key);
+        Unsafe.putLong(p + 8, value);
     }
 
     private void rehash(int newCapacity) {
@@ -237,29 +266,30 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         }
 
         final int oldCapacity = capacity;
+        long newPtr = Unsafe.malloc(16L * newCapacity, memoryTag, memoryTracker);
 
+        long oldPtr = ptr;
+        ptr = newPtr;
         capacity = newCapacity;
         mask = newCapacity - 1;
         free += (int) ((newCapacity - oldCapacity) * loadFactor);
-        long oldPtr = ptr;
-        ptr = Unsafe.malloc(16L * newCapacity, memoryTag);
         zero();
 
         for (long p = oldPtr, lim = oldPtr + 16L * oldCapacity; p < lim; p += 16L) {
-            long key = Unsafe.getUnsafe().getLong(p);
+            long key = Unsafe.getLong(p);
             if (key != noEntryKey) {
-                long hashCode = Hash.fastHashLong64(key);
+                long hashCode = Hash.hashLong64(key);
                 long index = hashCode & mask;
                 while (keyAtRaw(index) != noEntryKey) {
                     index = (index + 1) & mask;
                 }
 
-                long value = Unsafe.getUnsafe().getLong(p + 8);
+                long value = Unsafe.getLong(p + 8);
                 putAt0(index, key, value);
             }
         }
 
-        Unsafe.free(oldPtr, 16L * oldCapacity, memoryTag);
+        Unsafe.free(oldPtr, 16L * oldCapacity, memoryTag, memoryTracker);
     }
 
     private void zero() {
@@ -269,7 +299,7 @@ public class DirectLongLongHashMap implements Mutable, QuietCloseable, Reopenabl
         } else {
             // Otherwise, clean up only keys.
             for (long p = ptr, lim = ptr + 16L * capacity; p < lim; p += 16L) {
-                Unsafe.getUnsafe().putLong(p, noEntryKey);
+                Unsafe.putLong(p, noEntryKey);
             }
         }
     }

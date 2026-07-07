@@ -37,10 +37,10 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
 
-import java.lang.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<Long256ConstDecoder> DECODER = ThreadLocal.withInitial(Long256ConstDecoder::new);
+    private static final CarrierLocal<Long256ConstDecoder> DECODER = CarrierLocal.withInitial(Long256ConstDecoder::new);
 
     @Override
     public String getSignature() {

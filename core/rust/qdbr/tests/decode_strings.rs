@@ -164,5 +164,7 @@ fn test_string_delta_length_byte_array() {
     run_string_test("String", Encoding::DeltaLengthByteArray);
 }
 
-// Note: String type only supports Plain and DeltaLengthByteArray encodings in the reader.
-// RleDictionary writer support exists but QuestDB's reader does not yet decode it.
+#[test]
+fn test_string_rle_dictionary() {
+    run_string_test("String", Encoding::RleDictionary);
+}

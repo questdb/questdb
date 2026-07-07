@@ -71,12 +71,26 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         return putAt(keyIndex(key), key, value);
     }
 
+    public boolean put(CharSequence key, int value, int lo, int hi) {
+        return putAt(keyIndex(key, lo, hi), key, value, lo, hi);
+    }
+
     public boolean putAt(int index, CharSequence key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
         }
         final String keyString = Chars.toString(key);
+        putAt0(index, keyString, value);
+        return true;
+    }
+
+    public boolean putAt(int index, CharSequence key, int value, int lo, int hi) {
+        if (index < 0) {
+            values[-index - 1] = value;
+            return false;
+        }
+        final String keyString = Chars.toString(key, lo, hi);
         putAt0(index, keyString, value);
         return true;
     }

@@ -74,6 +74,26 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     int SCAN_DIRECTION_OTHER = 0;
 
     /**
+     * Returns true if this factory may be peeled by the parallel top-K gate, so the
+     * page-frame leaf below it can be wrapped by {@code AsyncTopKRecordCursorFactory}
+     * and this factory rebuilt over that top-K.
+     * <p>
+     * Implementations that return {@code true} must also override
+     * {@link #translateOrderByColumnToBase(int)} to map ORDER BY indices into the
+     * base metadata, and {@link #rewrapOverTopK(RecordCursorFactory, RecordMetadata)}
+     * to reconstruct the wrapper over the new top-K factory. The default returns
+     * {@code false}, which keeps non-projecting factories and projecting factories
+     * that cannot safely splice a top-K below themselves (e.g.
+     * {@code ExtraNullColumnCursorFactory}, whose null-column splice has no base
+     * counterpart) on the generic Sort light path.
+     *
+     * @return true if the factory participates in parallel top-K peeling
+     */
+    default boolean canPeelForTopK() {
+        return false;
+    }
+
+    /**
      * Changes the page frame sizes for this factory.
      *
      * @param minRows minimum rows per page frame
@@ -205,6 +225,18 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns an independent cursor for the given consumer ID. Idempotent —
+     * same sharedId always returns the same cursor instance.
+     *
+     * @param executionContext SQL execution context
+     * @param sharedId         unique consumer identifier (0-based)
+     * @return cursor for the given consumer
+     */
+    default RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Returns the original filter expression that can be stolen by parent factories.
      * When {@link #supportsFilterStealing()} returns true, this method should return
      * the original expression of the stolen filter.
@@ -269,6 +301,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns true if this factory may read a Parquet-format partition storing a column whose
+     * type was later changed by {@code ALTER COLUMN TYPE} (decoded in its source type and
+     * converted lazily, so raw-address readers would misread it). Delegates to the base
+     * factory so wrapping factories report their underlying scan.
+     */
+    default boolean hasParquetConvertedColumns(SqlExecutionContext executionContext) {
+        final RecordCursorFactory base = getBaseFactory();
+        return base != null && base.hasParquetConvertedColumns(executionContext);
+    }
+
     default boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
         return false;
     }
@@ -308,6 +351,23 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
+    /**
+     * Re-wraps a freshly-built top-K factory so this factory's output shape is preserved.
+     * Default is a pass-through — factories that do not project simply return the top-K.
+     * Projection wrappers override to re-create themselves over the new base.
+     * <p>
+     * Ownership: after this call the caller must not close the original wrapper; its
+     * state has either transferred to the returned factory or been dropped on the floor,
+     * matching the AsOf/LatestBy peel precedent.
+     *
+     * @param topK            newly-built top-K factory over the page-frame leaf
+     * @param orderedMetadata projected output metadata for the re-wrapped factory
+     * @return re-wrapped factory, or {@code topK} unchanged for non-projecting factories
+     */
+    default RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
+        return topK;
+    }
+
     default void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
     }
 
@@ -327,6 +387,16 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * @return true if page frame cursor is supported
      */
     default boolean supportsPageFrameCursor() {
+        return false;
+    }
+
+    /**
+     * Returns true if this factory supports multiple independent cursors
+     * over the same materialized data. When true,
+     * {@link #getSharedCursor(SqlExecutionContext, int)} can be called with
+     * different consumer IDs to obtain independent cursors.
+     */
+    default boolean supportsSharedCursors() {
         return false;
     }
 
@@ -361,6 +431,22 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     default void toSink(@NotNull CharSink<?> sink) {
         throw new UnsupportedOperationException("Unsupported for: " + getClass());
+    }
+
+    /**
+     * Translates an ORDER BY column index expressed in this factory's output metadata
+     * to the corresponding column index in the base (page-frame) metadata.
+     * <p>
+     * Returns the input unchanged for factories that do not re-arrange or hide base
+     * columns. Returns a negative value if the projected column cannot be resolved
+     * to a base column (for example, a computed {@code VirtualRecord} column); the
+     * caller must fall back to the generic sort path in that case.
+     *
+     * @param projectedIndex column index in this factory's output metadata
+     * @return column index in the base metadata, or a negative value if unresolvable
+     */
+    default int translateOrderByColumnToBase(int projectedIndex) {
+        return projectedIndex;
     }
 
     /**

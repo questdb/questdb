@@ -1,5 +1,5 @@
 jobs:
-  - job: linux_arm64_jdk17
+  - job: linux_arm64_jdk25
     workspace:
       clean: all
     displayName: "on linux-arm64"
@@ -16,14 +16,15 @@ jobs:
       testset: "all"
       javadoc_step: ""
       javadoc_profile: ""
-      jdk: "1.17"
-      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-arm64"
-      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-arm64"
+      jdk: "1.25"
+      JAVA_HOME_25_X64: "/usr/lib/jvm/java-25-openjdk-arm64"
+      JAVA_HOME: "/usr/lib/jvm/java-25-openjdk-arm64"
       os: Linux
+      poolName: "hetzner-incus-arm"
     steps:
       - template: steps.yml
 
-  - job: linux_x64_zfs_jdk17
+  - job: linux_x64_zfs_jdk25
     workspace:
       clean: all
     displayName: "on linux-x64-zfs"
@@ -40,10 +41,11 @@ jobs:
       testset: "all"
       javadoc_step: ""
       javadoc_profile: ""
-      jdk: "1.17"
+      jdk: "1.25"
       os: Linux
-      JAVA_HOME_17_X64: "/usr/lib/jvm/java-17-openjdk-amd64"
-      JAVA_HOME: "/usr/lib/jvm/java-17-openjdk-amd64"
+      JAVA_HOME_25_X64: "/usr/lib/jvm/java-25-openjdk-amd64"
+      JAVA_HOME: "/usr/lib/jvm/java-25-openjdk-amd64"
+      poolName: "hetzner-incus-zfs"
     steps:
       - template: steps.yml
 
@@ -64,9 +66,10 @@ jobs:
       testset: "all"
       javadoc_step: ""
       javadoc_profile: ""
-      jdk: "1.17"
-      JAVA_HOME_17_X64: "/opt/graalvm"
-      JAVA_HOME: "/opt/graalvm"
+      jdk: "1.25"
       os: Linux
+      JAVA_HOME_25_X64: "/opt/graalvm-25"
+      JAVA_HOME: "/opt/graalvm-25"
+      poolName: "hetzner-incus"
     steps:
       - template: steps.yml

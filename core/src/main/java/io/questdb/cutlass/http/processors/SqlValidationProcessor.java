@@ -276,6 +276,13 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_QUERY_VALIDATE);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
             state.setQueryType(cc.getType());
+            // Only SELECT hands the record cursor factory to executeNewSelect/state.of, which
+            // closes it. Every other statement type just confirms its kind and ignores the
+            // factory, so free any factory now to avoid leaking pseudo-select (COPY, BACKUP
+            // DATABASE, CREATE TOKEN, ...), EXPLAIN, or EMPTY factories during validation.
+            if (cc.getType() != CompiledQuery.SELECT) {
+                Misc.free(cc.getRecordCursorFactory());
+            }
             try {
                 switch (state.getQueryType()) {
                     case CompiledQuery.SELECT -> executeNewSelect(state, cc);
@@ -336,12 +343,18 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "CREATE VIEW");
                     case CompiledQuery.ALTER_VIEW ->
                             sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER VIEW");
+                    case CompiledQuery.ALTER_STORAGE_POLICY ->
+                            sendConfirmation(state, configuration.getKeepAliveHeader(), "ALTER STORAGE POLICY");
                     default -> sendConfirmation(state, configuration.getKeepAliveHeader(), "UNKNOWN");
                 }
             } catch (TableReferenceOutOfDateException e) {
                 throw SqlException.$(0, e.getFlyweightMessage());
             }
         } finally {
+            // validationOnly switches the whole security context to a no-op view that bypasses
+            // authorization, so make sure it never outlives this request even though the next
+            // with() call would also reset it.
+            sqlExecutionContext.setValidationOnly(false);
             state.setContainsSecret(sqlExecutionContext.containsSecret());
         }
     }

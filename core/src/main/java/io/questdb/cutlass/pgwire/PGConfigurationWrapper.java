@@ -330,16 +330,6 @@ public class PGConfigurationWrapper implements PGConfiguration {
     }
 
     @Override
-    public int getUpdateCacheBlockCount() {
-        return getDelegate().getUpdateCacheBlockCount();
-    }
-
-    @Override
-    public int getUpdateCacheRowCount() {
-        return getDelegate().getUpdateCacheRowCount();
-    }
-
-    @Override
     public int[] getWorkerAffinity() {
         return getDelegate().getWorkerAffinity();
     }
@@ -382,11 +372,6 @@ public class PGConfigurationWrapper implements PGConfiguration {
     @Override
     public boolean isSelectCacheEnabled() {
         return getDelegate().isSelectCacheEnabled();
-    }
-
-    @Override
-    public boolean isUpdateCacheEnabled() {
-        return getDelegate().isUpdateCacheEnabled();
     }
 
     @Override

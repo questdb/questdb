@@ -93,7 +93,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             if (respectNull) {
                 buffer.putDouble((long) loIdx * Double.BYTES, d);
             }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNull;
         }
     }
@@ -129,7 +129,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             if (respectNulls) {
                 memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
             }
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNulls;
         }
     }

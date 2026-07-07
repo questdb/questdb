@@ -177,7 +177,7 @@ public class DirectLongListTest {
 
             Assert.assertEquals(0, list.size());
             long addr = list.getAddress();
-            Unsafe.getUnsafe().putLong(addr, 42);
+            Unsafe.putLong(addr, 42);
             Assert.assertEquals(42, list.get(0));
             for (long i = 0; i < list.getCapacity(); i++) {
                 list.add(i);

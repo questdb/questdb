@@ -38,14 +38,12 @@ public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAg
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final VectorAggregateEntry entry = queue.get(cursor).entry;
         try {
-            entry.run(workerId, subSeq, cursor);
+            entry.run(workerContext.carrierId(), subSeq, cursor);
         } catch (Throwable th) {
-            LOG.error().$("vectorized reduce error [workerId=").$(workerId)
-                    .$(", ex=").$(th)
-                    .I$();
+            LOG.error().$("vectorized reduce error [ex=").$(th).I$();
         }
         return true;
     }

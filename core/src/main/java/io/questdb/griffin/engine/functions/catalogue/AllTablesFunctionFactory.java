@@ -29,21 +29,22 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLocalCacheSnapshotFactory;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceObjMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -68,7 +69,7 @@ public class AllTablesFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new AllTablesCursorFactory()) {
+        return new CursorFunction(new AllTablesCursorFactory(configuration)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -79,21 +80,22 @@ public class AllTablesFunctionFactory implements FunctionFactory {
     public static class AllTablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(AllTablesCursorFactory.class);
         private final AllTablesRecordCursor cursor;
-        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private final CharSequenceObjMap<CairoTable> tableCache;
         private long tableCacheVersion = -1;
 
-        public AllTablesCursorFactory() {
+        public AllTablesCursorFactory(CairoConfiguration configuration) {
             super(METADATA);
+            tableCache = DefaultLocalCacheSnapshotFactory.INSTANCE.newInstance(configuration);
             cursor = new AllTablesRecordCursor(tableCache);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
-            }
-            cursor.toTop();
+            // Reconciles against the table registry before snapshotting, so the
+            // catalogue is complete even mid startup hydration.
+            tableCacheVersion = engine.getMetadataCache().snapshot(tableCache, tableCacheVersion);
+            cursor.of(executionContext.getCircuitBreaker());
             return cursor;
         }
 
@@ -114,11 +116,17 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
         private static class AllTablesRecordCursor implements NoRandomAccessRecordCursor {
             private final AllTablesRecord record = new AllTablesRecord();
-            private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private final CharSequenceObjMap<CairoTable> tableCache;
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int iteratorIdx = -1;
 
-            public AllTablesRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+            public AllTablesRecordCursor(CharSequenceObjMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
+            }
+
+            public void of(SqlExecutionCircuitBreaker circuitBreaker) {
+                this.circuitBreaker = circuitBreaker;
+                toTop();
             }
 
             @Override
@@ -132,6 +140,7 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (iteratorIdx < tableCache.size() - 1) {
                     record.of(tableCache.getAt(++iteratorIdx));
                     return true;

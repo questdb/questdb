@@ -30,8 +30,9 @@ open module io.questdb.test {
     requires static java.sql;
     requires static org.postgresql.jdbc;
     requires static java.management;
-    requires static io.questdb.client;
+    requires io.questdb.client;
     requires jdk.management;
+    requires java.net.http;
     requires org.checkerframework.checker.qual;
 
     uses io.questdb.griffin.FunctionFactory;
@@ -39,4 +40,6 @@ open module io.questdb.test {
     exports io.questdb.test;
     exports io.questdb.test.cairo;
     exports io.questdb.test.cairo.parquet;
+    exports io.questdb.test.lifecycle;
+    exports io.questdb.test.lifecycle.fakes;
 }

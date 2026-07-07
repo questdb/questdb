@@ -41,7 +41,7 @@ public interface TableWriterAPI extends Closeable {
      * already have data this function will create ".top" file in addition to column files. ".top" file contains
      * size of partition at the moment of column creation. It must be used to accurately position inside new
      * column when either appending or reading.
-     *
+     * <p>
      * <b>Failures</b>
      * Adding new column can fail in many situations. None of the failures affect integrity of data that is already in
      * the table but can leave instance of TableWriter in inconsistent state. When this happens function will throw CairoError.
@@ -50,7 +50,7 @@ public interface TableWriterAPI extends Closeable {
      * <p>
      * Whenever function throws CairoException application code can continue using TableWriter instance and may attempt to
      * add columns again.
-     *
+     * <p>
      * <b>Transactions</b>
      * <p>
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
@@ -62,7 +62,7 @@ public interface TableWriterAPI extends Closeable {
      *                                It should be equal to number of unique symbol values stored in the table and getting this
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
-     * @param isIndexed               configures column to be indexed or not
+     * @param indexType               column index type, see {@link IndexType}
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            unused, should be false
      * @param securityContext         security context of the caller
@@ -72,7 +72,7 @@ public interface TableWriterAPI extends Closeable {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean isSequential,
             @Nullable SecurityContext securityContext);
@@ -85,6 +85,23 @@ public interface TableWriterAPI extends Closeable {
     void close();
 
     void commit();
+
+    /**
+     * Returns the sequencer txn assigned to the most recent commit on this writer,
+     * or -1 if no commit has happened yet or the writer does not participate in a
+     * sequencer (non-WAL writers).
+     */
+    default long getLastSeqTxn() {
+        return -1L;
+    }
+
+    default int getSegmentId() {
+        return -1;
+    }
+
+    default int getWalId() {
+        return -1;
+    }
 
     TableRecordMetadata getMetadata();
 
@@ -130,12 +147,10 @@ public interface TableWriterAPI extends Closeable {
 
     TableWriter.Row newRow(long timestamp);
 
-    TableWriter.Row newRowDeferTimestamp();
-
     void rollback();
 
     /**
-     * Declares type of behaviour of the implementing class.
+     * Declares type of behavior of the implementing class.
      *
      * @return true when multiple writers of this type can be used simultaneously against the same table, false otherwise.
      */

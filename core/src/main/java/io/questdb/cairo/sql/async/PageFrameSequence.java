@@ -47,6 +47,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -58,7 +59,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
-
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
@@ -85,6 +85,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private PageFrameMemoryRecord localRecord;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
+    // Per-query native memory tracker captured from the owning SqlExecutionContext
+    // at workload start. Null when no per-query limit is configured. Workers read
+    // this off the task via task.getFrameSequence().getMemoryTracker() to charge
+    // their allocations to the active workload.
+    private MemoryTracker memoryTracker;
     private boolean readyToDispatch;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private int shard;
@@ -245,6 +250,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return id;
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public PageFrameAddressCache getPageFrameAddressCache() {
         return frameAddressCache;
     }
@@ -348,7 +357,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     // We haven't dispatched anything, and we have collected everything
                     // that was dispatched previously in this loop iteration. Use the
                     // local task to avoid being blocked in case of full reduce queue.
-                    workLocally(countOnly);
+                    reduceLocally(countOnly);
                     return LOCAL_TASK_CURSOR;
                 }
                 return -1;
@@ -365,6 +374,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             int order
     ) throws SqlException {
         sqlExecutionContext = executionContext;
+        memoryTracker = executionContext.getMemoryTracker();
         startTime = clock.getTicks();
         uninterruptible = executionContext.isUninterruptible();
 
@@ -380,7 +390,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
@@ -428,8 +438,20 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
         readyToDispatch = false;
+        // Drop the borrowed tracker reference; the provider owns the native block.
+        memoryTracker = null;
         frameRowCounts.clear();
         atom.clear();
+        // Unfreeze the covered posting readers frozen at dispatch BEFORE the
+        // address cache (which holds them) and the frame cursor (which owns them)
+        // are torn down. reset() runs after the sequence has been awaited (see the
+        // close() paths of the async cursors, which call await() then reset()), so
+        // every worker cursor has finished and the unfreeze is race-free. A reader
+        // left frozen would make its reloadConditionally() a permanent no-op and
+        // break the next query against the same partition.
+        if (frameAddressCache != null) {
+            frameAddressCache.unfreezeCoveredReaders();
+        }
         Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
         // collect sequence may not be set here when
@@ -477,6 +499,17 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
+
+        // Covered frames decode their columns on the async workers (in
+        // PageFrameMemoryPool.navigateTo) by iterating detached cursors over the
+        // shared per-partition posting readers. That is only race-free if the
+        // readers are positioned at the query txn, cache-warm, and FROZEN before
+        // any worker decodes. The eager production decode above (driven through
+        // frameAddressCache.add -> the covering page-frame cursor) already
+        // positioned + warmed each reader as a side effect of its full iteration,
+        // so freeze them now, before dispatch. unfreezeCoveredReaders() in reset()
+        // reverses it once the sequence has been awaited.
+        frameAddressCache.freezeCoveredReaders();
 
         // dispatch tasks only if there is anything to dispatch
         if (frameCount > 0) {
@@ -586,20 +619,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return dispatched;
     }
 
-    private boolean stealWork(
-            RingQueue<PageFrameReduceTask> queue,
-            MCSequence reduceSubSeq,
-            PageFrameMemoryRecord record,
-            SqlExecutionCircuitBreakerWrapper circuitBreaker
-    ) {
-        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this)) {
-            Os.pause();
-            return false;
-        }
-        return true;
-    }
-
-    private void workLocally(boolean countOnly) {
+    private void reduceLocally(boolean countOnly) {
         assert dispatchStartFrameIndex < frameCount;
 
         if (localTask == null) {
@@ -633,10 +653,27 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             if (th instanceof CairoException e) {
                 interruptReason = e.getInterruptionReason();
             }
+            // Route the error through the local task so the collector sees it via
+            // task.hasError() and can re-throw the original class via task.buildError().
+            // Re-throwing here would let the outer catch in the collector wrap the
+            // typed exception into a generic CairoException, losing the original class.
+            localTask.setErrorMsg(th);
             cancel(interruptReason);
-            throw th;
         } finally {
             reduceFinishedCounter.incrementAndGet();
         }
+    }
+
+    private boolean stealWork(
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence reduceSubSeq,
+            PageFrameMemoryRecord record,
+            SqlExecutionCircuitBreakerWrapper circuitBreaker
+    ) {
+        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this)) {
+            Os.pause();
+            return false;
+        }
+        return true;
     }
 }

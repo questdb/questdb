@@ -39,7 +39,10 @@ public enum AttachDetachStatus {
     ATTACH_ERR_COPY,
     ATTACH_ERR_MISSING_PARTITION(false),
     ATTACH_ERR_DIR_EXISTS(false),
-    ATTACH_ERR_EMPTY_PARTITION(false);
+    ATTACH_ERR_EMPTY_PARTITION(false),
+    ATTACH_ERR_READ_PARTITION,
+    ATTACH_ERR_CREATE_PM_FILE,
+    ATTACH_ERR_GENERATE_PM_FILE;
 
     private final boolean isCritical;
 

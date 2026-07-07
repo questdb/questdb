@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -38,11 +39,13 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Transient;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,11 +54,16 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     public static final int N_TYPE_COL = N_NAME_COL + 1;
     private static final int N_INDEXED_COL = N_TYPE_COL + 1;
     private static final int N_INDEX_BLOCK_CAPACITY_COL = N_INDEXED_COL + 1;
+    // Ordinals 0..8 match the pre-posting-index layout. The two posting
+    // columns (indexType, indexInclude) are appended at the end so JDBC
+    // clients reading by column index do not break on upgrade.
     private static final int N_SYMBOL_CACHED_COL = N_INDEX_BLOCK_CAPACITY_COL + 1;
     private static final int N_SYMBOL_CAPACITY_COL = N_SYMBOL_CACHED_COL + 1;
     private static final int N_SYMBOL_TABLE_SIZE_COL = N_SYMBOL_CAPACITY_COL + 1;
     private static final int N_DESIGNATED_COL = N_SYMBOL_TABLE_SIZE_COL + 1;
     private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
+    private static final int N_INDEX_TYPE_COL = N_UPSERT_KEY_COL + 1;
+    private static final int N_INDEX_INCLUDE_COL = N_INDEX_TYPE_COL + 1;
     private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
@@ -69,6 +77,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -84,10 +93,13 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     private static class ShowColumnsCursor implements NoRandomAccessRecordCursor {
+        private final StringSink includeSink = new StringSink();
+        private final StringSink includeSinkB = new StringSink();
         private final ShowColumnsRecord record = new ShowColumnsRecord();
         private final IntList staticSymbolTableSizes = new IntList();
         private CairoColumn cairoColumn = new CairoColumn();
         private CairoTable cairoTable;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int columnIndex;
 
         @Override
@@ -103,6 +115,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (columnIndex < cairoTable.getColumnCount() - 1) {
                 cairoColumn = cairoTable.getColumnQuiet(++columnIndex);
                 return true;
@@ -135,7 +148,14 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             final CairoEngine engine = executionContext.getCairoEngine();
+            // The token is resolved from the synchronously loaded registry, but the
+            // metadata cache is hydrated lazily; hydrate this table on demand so we do
+            // not report a registered-but-not-yet-cached table as non-existent during
+            // the startup hydration window (or before any catalogue query has warmed an
+            // embedded engine).
+            engine.getMetadataCache().hydrateTableOnDemand(tableToken);
             try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 final CairoTable cairoTable = metadataRO.getTable(tableToken);
                 if (cairoTable != null) {
@@ -212,11 +232,63 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 if (col == N_TYPE_COL) {
                     return ColumnType.nameOf(cairoColumn.getType());
                 }
+                if (col == N_INDEX_TYPE_COL) {
+                    return cairoColumn.isIndexed() ? IndexType.nameOf(cairoColumn.getIndexType()) : "";
+                }
+                if (col == N_INDEX_INCLUDE_COL) {
+                    IntList coveringCols = cairoColumn.getCoveringColumnIndices();
+                    if (coveringCols == null || coveringCols.size() == 0) {
+                        return "";
+                    }
+                    includeSink.clear();
+                    int emitted = 0;
+                    for (int i = 0, n = coveringCols.size(); i < n; i++) {
+                        // Skip tombstoned entries (dense -1 left after
+                        // DROP COLUMN). getColumnQuiet treats -1 as out
+                        // of bounds and would throw.
+                        int denseIdx = coveringCols.getQuick(i);
+                        if (denseIdx < 0) {
+                            continue;
+                        }
+                        CairoColumn covCol = cairoTable.getColumnQuiet(denseIdx);
+                        if (covCol != null) {
+                            if (emitted > 0) {
+                                includeSink.putAscii(',');
+                            }
+                            includeSink.put(covCol.getName());
+                            emitted++;
+                        }
+                    }
+                    return includeSink;
+                }
                 throw new UnsupportedOperationException();
             }
 
             @Override
             public CharSequence getStrB(int col) {
+                if (col == N_INDEX_INCLUDE_COL) {
+                    IntList coveringCols = cairoColumn.getCoveringColumnIndices();
+                    if (coveringCols == null || coveringCols.size() == 0) {
+                        return "";
+                    }
+                    includeSinkB.clear();
+                    int emitted = 0;
+                    for (int i = 0, n = coveringCols.size(); i < n; i++) {
+                        int denseIdx = coveringCols.getQuick(i);
+                        if (denseIdx < 0) {
+                            continue;
+                        }
+                        CairoColumn covCol = cairoTable.getColumnQuiet(denseIdx);
+                        if (covCol != null) {
+                            if (emitted > 0) {
+                                includeSinkB.putAscii(',');
+                            }
+                            includeSinkB.put(covCol.getName());
+                            emitted++;
+                        }
+                    }
+                    return includeSinkB;
+                }
                 return getStrA(col);
             }
 
@@ -238,6 +310,10 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         metadata.add(new TableColumnMetadata("symbolTableSize", ColumnType.INT));
         metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("upsertKey", ColumnType.BOOLEAN));
+        // Posting-index columns appended at the end — keep JDBC ordinals
+        // 0..8 stable with pre-posting-index builds.
+        metadata.add(new TableColumnMetadata("indexType", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("indexInclude", ColumnType.STRING));
         METADATA = metadata;
     }
 }

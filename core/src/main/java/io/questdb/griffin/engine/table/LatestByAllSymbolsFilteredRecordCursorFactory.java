@@ -56,7 +56,9 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
-            Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
+            // openOnInit=false: the cursor binds the per-query tracker and reopens the map in of(),
+            // so the first allocation is charged to the per-query counter.
+            Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes, null, false);
             this.cursor = new LatestByAllSymbolsFilteredRecordCursor(
                     configuration,
                     metadata,

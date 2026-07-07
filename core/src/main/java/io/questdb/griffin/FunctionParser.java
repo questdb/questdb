@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
@@ -376,6 +377,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             mutableArgs.setPos(argCount);
             mutableArgPositions.clear();
             mutableArgPositions.setPos(argCount);
+            // The function about to be created is runtime constant iff every arg is constant or
+            // runtime constant and at least one is runtime constant (mirrors the function base
+            // classes). Used below to fold runtime-constant subtrees at boundaries only.
+            boolean allConstOrRuntimeConst = true;
+            boolean anyRuntimeConst = false;
             for (int n = 0; n < argCount; n++) {
                 Function arg = functionStack.poll();
                 final int pos = positionStack.pop();
@@ -397,10 +403,39 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     Misc.freeObjList(mutableArgs);
                     throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
                 }
+
+                final boolean argRuntimeConst = arg != null && arg.isRuntimeConstant();
+                if (arg == null || (!argRuntimeConst && !arg.isConstant())) {
+                    allConstOrRuntimeConst = false;
+                } else if (argRuntimeConst) {
+                    // a function is never both constant and runtime constant (see Function.isRuntimeConstant)
+                    anyRuntimeConst = true;
+                }
+            }
+            // At a boundary (the new function is not runtime constant), each runtime-constant arg is
+            // a maximal runtime-constant subtree: wrap it so it evaluates once per cursor, not per
+            // row. Skipped when the parent is runtime constant, so only the topmost node is wrapped.
+            if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
+                for (int n = 0; n < argCount; n++) {
+                    final Function arg = mutableArgs.getQuick(n);
+                    if (RuntimeConstFunction.isFoldable(arg)) {
+                        mutableArgs.setQuick(n, RuntimeConstFunction.newInstance(arg));
+                    }
+                }
             }
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
+    }
+
+    private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {
+        int count = 0;
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            if (overload.getQuick(i).getFactory().isWindow()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static void handleExpectedAndActual(@Transient IntList argPositions, SqlException ex, int i, int expectedType, int actualType) {
@@ -542,6 +577,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private static SqlException invalidFunction(ExpressionNode node, ObjList<Function> args) {
+        if (isUnnestKeyword(node.token)) {
+            Misc.freeObjList(args);
+            return SqlException.position(node.position)
+                    .put("UNNEST cannot be used as an expression; use it in the FROM clause");
+        }
         SqlException ex = SqlException.position(node.position);
         ex.put("unknown function name");
         ex.put(": ");
@@ -1073,6 +1113,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                 if (isWindowContext != factory.isWindow()) {
                     match = MATCH_FUZZY_MATCH;
+                    sigArgTypeScore += 20;
                 } else if (factory.isWindow()) { // make windowFunction high priority when isWindowContext
                     sigArgTypeScore -= 20;
                 }
@@ -1113,11 +1154,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         if (candidate == null) {
-            // no signature match
+            // no signature match — find the best descriptor for a helpful error message
             if (overload.size() == 1) {
-                // there is only one possible signature, lets help the user out
-                // with a useful error message
                 candidateDescriptor = overload.getQuick(0);
+            } else {
+                // multiple overloads: filter by context (window vs group-by) to find the relevant one
+                FunctionFactoryDescriptor contextMatch = null;
+                int contextMatchCount = 0;
+                for (int i = 0, n = overload.size(); i < n; i++) {
+                    FunctionFactoryDescriptor d = overload.getQuick(i);
+                    if (isWindowContext == d.getFactory().isWindow()) {
+                        contextMatch = d;
+                        contextMatchCount++;
+                    }
+                }
+                if (contextMatchCount == 1) {
+                    candidateDescriptor = contextMatch;
+                }
             }
             throw invalidArgument(node, args, argPositions, candidateDescriptor);
         }
@@ -1182,6 +1235,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.IPv4 && sigArgTypeTag == ColumnType.STRING) {
+                args.setQuick(k, new CastIPv4ToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
             } else if (argTypeTag == ColumnType.INT && sigArgTypeTag == ColumnType.DECIMAL) {
@@ -1193,6 +1248,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if (argTypeTag == ColumnType.BYTE && sigArgTypeTag == ColumnType.DECIMAL) {
                 args.setQuick(k, CastByteToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
             }
+        }
+        // An untyped NULL literal as the value argument of a polymorphic window function (lead, min,
+        // sum, nth_value, ...) is ambiguous: it ties across every typed variant (NULL to any type has
+        // zero overload distance), so the winner - and the resulting behaviour - depends on classpath
+        // scan order. Different winners give different observable behaviour: a clean rejection on one
+        // platform, a "not yet implemented for NULL" factory error on another, or even silent acceptance
+        // returning NULLs. Reject it deterministically here, before any factory runs, so the user gets
+        // the same clear "cast it" error everywhere. Window functions with a single overload (e.g. ntile,
+        // whose argument is a bucket count rather than a value) resolve deterministically and keep their
+        // own argument validation.
+        if (isWindowContext && candidate.isWindow() && argCount > 0
+                && ColumnType.tagOf(args.getQuick(0).getType()) == ColumnType.NULL
+                && countWindowOverloads(overload) > 1) {
+            Misc.freeObjList(args);
+            throw SqlException.$(node.position, "window function ").put(node.token).put(" does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double");
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
     }
@@ -1597,7 +1667,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private int mergeWithExactMatch(int match) {
         return match == MATCH_NO_MATCH ? MATCH_EXACT_MATCH
                 : match == MATCH_FUZZY_MATCH ? MATCH_PARTIAL_MATCH
-                : match;
+                  : match;
     }
 
     private Function parseIndexedParameter(int position, CharSequence name) throws SqlException {

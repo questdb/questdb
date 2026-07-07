@@ -6,8 +6,8 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.StringSink;
 
 public class PreferencesMap {
@@ -28,12 +28,12 @@ public class PreferencesMap {
         csPool.clear();
     }
 
-    ObjList<CharSequence> keys() {
+    ReadOnlyObjList<CharSequence> keys() {
         return map.keys();
     }
 
     void put(CharSequence key, CharSequence value) {
-        final ObjList<CharSequence> keys = map.keys();
+        final ReadOnlyObjList<CharSequence> keys = map.keys();
         final int keyIndex = keys.indexOf(key);
         final StringSink keySink;
         if (keyIndex > -1) {
@@ -52,7 +52,7 @@ public class PreferencesMap {
     }
 
     void putAll(CharSequenceObjHashMap<CharSequence> map) {
-        final ObjList<CharSequence> keys = map.keys();
+        final ReadOnlyObjList<CharSequence> keys = map.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
             final CharSequence value = map.get(key);
@@ -98,7 +98,7 @@ public class PreferencesMap {
     void writeToBlock(AppendableBlock block, long version) {
         block.putLong(version);
         block.putInt(map.size());
-        final ObjList<CharSequence> keys = map.keys();
+        final ReadOnlyObjList<CharSequence> keys = map.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
             final CharSequence value = map.get(key);
