@@ -156,10 +156,14 @@ public class SymbolPatternIndexBenchmark {
     }
 
     @Benchmark
-    public long fast(ScenarioState s) throws SqlException { return drain(s.fastFactory); }
+    public long fast(ScenarioState s) throws SqlException {
+        return drain(s.fastFactory);
+    }
 
     @Benchmark
-    public long baseline(ScenarioState s) throws SqlException { return drain(s.baselineFactory); }
+    public long baseline(ScenarioState s) throws SqlException {
+        return drain(s.baselineFactory);
+    }
 
     public static void main(String[] args) throws Exception {
         System.setProperty("questdb.log.level", "E");

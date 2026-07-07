@@ -455,7 +455,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 // Use %s as a placeholder for the hint (or empty string), then escape any real % in pred.
                 String base = "select %s sym, v, ts from t where " + p.replace("%", "%%") + " order by ts, v";
                 String expected = select(String.format(base, "/*+ no_symbol_pattern_index(t) */ "));
-                String actual   = select(String.format(base, ""));
+                String actual = select(String.format(base, ""));
                 io.questdb.test.tools.TestUtils.assertEquals("pred=[" + p + "]", expected, actual);
             }
         });
@@ -548,7 +548,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 // Insert a new matching symbol AFTER the factory was compiled
                 execute("insert into t values ('AC', 999, 100000000::timestamp)");
                 // Execute the cached plan now — must see the new 'AC' row
-                String actual   = printFactory(factory);
+                String actual = printFactory(factory);
                 String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v from t where sym like 'A%' order by v");
                 io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             }
