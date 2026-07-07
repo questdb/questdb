@@ -79,6 +79,26 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
     private static final String FIRST_OCCURRENCE = "x <= " + KEY_COUNT;
     // first_not_null: non-null at each key's last (highest-rowId) occurrence.
     private static final String LAST_OCCURRENCE = "x > " + (ROW_COUNT - KEY_COUNT);
+    // {label, value expression} for every value type. valueExpr produces the single non-null value
+    // of that type; the label identifies the type in a failure message. All types run in one shared
+    // WorkerPool/engine per function (see assertEveryTypeKeepsNonNull) so the expensive per-test
+    // fixture (fresh engine + worker pool + memory-leak scaffolding) is paid twice, not 28 times.
+    private static final String[][] TYPES = {
+            {"Char", "'a'::char"},
+            {"Date", "100000::date"},
+            {"Decimal", "1.5::decimal(18,3)"},
+            {"Double", "1.5::double"},
+            {"Float", "1.5::float"},
+            {"GeoHash", "#u"},
+            {"IPv4", "ipv4 '10.0.0.1'"},
+            {"Int", "42::int"},
+            {"Long", "42::long"},
+            {"Str", "'abc'"},
+            {"Symbol", "'abc'::symbol"},
+            {"Timestamp", "100000::timestamp"},
+            {"Uuid", "'00000000-0000-0000-0000-000000000001'::uuid"},
+            {"Varchar", "'abc'::varchar"},
+    };
 
     @Override
     @Before
@@ -94,168 +114,49 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFirstNotNullChar() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "'a'::char");
+    public void testFirstNotNullAllTypes() throws Exception {
+        assertEveryTypeKeepsNonNull("first_not_null", LAST_OCCURRENCE);
     }
 
     @Test
-    public void testFirstNotNullDate() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "100000::date");
+    public void testLastNotNullAllTypes() throws Exception {
+        assertEveryTypeKeepsNonNull("last_not_null", FIRST_OCCURRENCE);
     }
 
-    @Test
-    public void testFirstNotNullDecimal() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "1.5::decimal(18,3)");
-    }
-
-    @Test
-    public void testFirstNotNullDouble() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "1.5::double");
-    }
-
-    @Test
-    public void testFirstNotNullFloat() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "1.5::float");
-    }
-
-    @Test
-    public void testFirstNotNullGeoHash() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "#u");
-    }
-
-    @Test
-    public void testFirstNotNullIPv4() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "ipv4 '10.0.0.1'");
-    }
-
-    @Test
-    public void testFirstNotNullInt() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "42::int");
-    }
-
-    @Test
-    public void testFirstNotNullLong() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "42::long");
-    }
-
-    @Test
-    public void testFirstNotNullStr() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "'abc'");
-    }
-
-    @Test
-    public void testFirstNotNullSymbol() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "'abc'::symbol");
-    }
-
-    @Test
-    public void testFirstNotNullTimestamp() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "100000::timestamp");
-    }
-
-    @Test
-    public void testFirstNotNullUuid() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "'00000000-0000-0000-0000-000000000001'::uuid");
-    }
-
-    @Test
-    public void testFirstNotNullVarchar() throws Exception {
-        assertEveryKeyKeepsNonNull("first_not_null", LAST_OCCURRENCE, "'abc'::varchar");
-    }
-
-    @Test
-    public void testLastNotNullChar() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "'a'::char");
-    }
-
-    @Test
-    public void testLastNotNullDate() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "100000::date");
-    }
-
-    @Test
-    public void testLastNotNullDecimal() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "1.5::decimal(18,3)");
-    }
-
-    @Test
-    public void testLastNotNullDouble() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "1.5::double");
-    }
-
-    @Test
-    public void testLastNotNullFloat() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "1.5::float");
-    }
-
-    @Test
-    public void testLastNotNullGeoHash() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "#u");
-    }
-
-    @Test
-    public void testLastNotNullIPv4() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "ipv4 '10.0.0.1'");
-    }
-
-    @Test
-    public void testLastNotNullInt() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "42::int");
-    }
-
-    @Test
-    public void testLastNotNullLong() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "42::long");
-    }
-
-    @Test
-    public void testLastNotNullStr() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "'abc'");
-    }
-
-    @Test
-    public void testLastNotNullSymbol() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "'abc'::symbol");
-    }
-
-    @Test
-    public void testLastNotNullTimestamp() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "100000::timestamp");
-    }
-
-    @Test
-    public void testLastNotNullUuid() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "'00000000-0000-0000-0000-000000000001'::uuid");
-    }
-
-    @Test
-    public void testLastNotNullVarchar() throws Exception {
-        assertEveryKeyKeepsNonNull("last_not_null", FIRST_OCCURRENCE, "'abc'::varchar");
-    }
-
-    // valueExpr produces the single non-null value, placed where nonNullCondition holds; the CASE
-    // has no ELSE, so every other row of the key is NULL of the same type.
-    private void assertEveryKeyKeepsNonNull(String func, String nonNullCondition, String valueExpr) throws Exception {
-        final String createSql = "CREATE TABLE tab AS (" +
-                "  SELECT (x % " + KEY_COUNT + ")::int AS g," +
-                "         CASE WHEN " + nonNullCondition + " THEN " + valueExpr + " END AS v" +
-                "  FROM long_sequence(" + ROW_COUNT + ")" +
-                ")";
-        final String query = "SELECT count(*) FROM (SELECT g, " + func + "(v) lv FROM tab) WHERE lv IS NOT NULL";
+    // Runs the merge invariant for every value type against a single shared engine and worker pool.
+    // Each type builds its own table (single non-null value per key, placed where nonNullCondition
+    // holds; the CASE has no ELSE, so every other row of the key is NULL of the same type) and runs
+    // the aggregate ITERATIONS times, since the buggy merge direction is hit only on some runs.
+    private void assertEveryTypeKeepsNonNull(String func, String nonNullCondition) throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
-                    execute(compiler, createSql, ctx);
-                    // Every key has exactly one non-null value, so a correct aggregate is non-null
-                    // for all KEY_COUNT keys. A guardless merge drops some on most runs.
-                    for (int i = 0; i < ITERATIONS; i++) {
-                        assertQuery(query)
-                                .noLeakCheck()
-                                .withCompiler(compiler)
-                                .withContext(ctx)
-                                .noRandomAccess()
-                                .expectSize()
-                                .returns("count\n" + KEY_COUNT + "\n");
+                    for (String[] type : TYPES) {
+                        final String label = type[0];
+                        final String valueExpr = type[1];
+                        final String createSql = "CREATE TABLE tab AS (" +
+                                "  SELECT (x % " + KEY_COUNT + ")::int AS g," +
+                                "         CASE WHEN " + nonNullCondition + " THEN " + valueExpr + " END AS v" +
+                                "  FROM long_sequence(" + ROW_COUNT + ")" +
+                                ")";
+                        final String query = "SELECT count(*) FROM (SELECT g, " + func + "(v) lv FROM tab) WHERE lv IS NOT NULL";
+                        try {
+                            execute(compiler, "DROP TABLE IF EXISTS tab", ctx);
+                            execute(compiler, createSql, ctx);
+                            // Every key has exactly one non-null value, so a correct aggregate is
+                            // non-null for all KEY_COUNT keys. A guardless merge drops some on most runs.
+                            for (int i = 0; i < ITERATIONS; i++) {
+                                assertQuery(query)
+                                        .noLeakCheck()
+                                        .withCompiler(compiler)
+                                        .withContext(ctx)
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .returns("count\n" + KEY_COUNT + "\n");
+                            }
+                        } catch (AssertionError e) {
+                            throw new AssertionError("type=" + label + " func=" + func + ": " + e.getMessage(), e);
+                        }
                     }
                 }, configuration, LOG);
             }
