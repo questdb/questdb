@@ -592,7 +592,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             columnMapping.clear();
             for (int i = 0, n = columnCrossIndex.size(); i < n; i++) {
                 final int basePos = columnCrossIndex.getQuick(i);
-                columnMapping.addColumn(baseMapping.getColumnIndex(basePos), baseMapping.getWriterIndex(basePos));
+                columnMapping.addColumn(
+                        baseMapping.getColumnIndex(basePos),
+                        baseMapping.getWriterIndex(basePos),
+                        baseMapping.getOriginalWriterIndex(basePos)
+                );
             }
             return this;
         }
