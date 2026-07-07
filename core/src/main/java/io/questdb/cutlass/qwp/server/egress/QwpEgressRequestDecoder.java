@@ -384,7 +384,12 @@ public class QwpEgressRequestDecoder {
                         throw QwpParseException.instance(QwpParseException.ErrorCode.INSUFFICIENT_DATA).put("bind: truncated VARCHAR bytes");
                     // Reuse varcharBindView -- StrBindVariable.setValue(Utf8Sequence) copies into
                     // its own utf8Sink, so the view can be re-pointed for the next bind.
-                    bindVars.setVarchar(index, varcharBindView.of(p, p + strLen));
+                    // Compute the ASCII flag (like PGWire does) instead of leaving it cleared:
+                    // the 2-arg of() hardcodes ascii=false, which would flag an empty bind value
+                    // as non-ASCII and break the empty => ASCII invariant relied on by the varchar
+                    // hash map (UnorderedVarcharMap) when the bind variable is used as a join key.
+                    final boolean ascii = Utf8s.isAscii(p, strLen);
+                    bindVars.setVarchar(index, varcharBindView.of(p, p + strLen, ascii));
                     p += strLen;
                 }
             }

@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.GeoHashes;
+import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
@@ -1786,7 +1787,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testErrorPropagation_asyncMultipleBatchesInFlight_drainBufferedTailAfterBlockedError() throws Exception {
+    public void testErrorPropagation_asyncMultipleBatchesInFlight_fragmentedTransport() throws Exception {
         runInContext(this::assertErrorPropagationAsyncMultipleBatchesInFlight, 65_536, 471, 71);
     }
 
@@ -1802,16 +1803,30 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
 
         // Fresh async sender: autoFlushRows=1 so each row is enqueued
         // immediately, window=8. The sender doesn't know the server-side
-        // schema of "ws_async_multi_err", so it cannot detect the type mismatch.
-        // Server type-mismatch is SCHEMA_MISMATCH / DROP_AND_CONTINUE so flush()
-        // does not throw — the rejection arrives asynchronously through the
-        // error handler.
-        CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-        try (QwpWebSocketSender sender = connectWs(port,
+        // schema of "ws_async_multi_err", so it cannot detect the type
+        // mismatch. NACK policy v2: the server-side type mismatch is
+        // SCHEMA_MISMATCH -- deterministic under byte-identical replay, so
+        // the client latches a TERMINAL on the NACK instead of dropping the
+        // frame. Rows flushed before the bad row land; rows queued after it
+        // are head-of-line blocked behind the latched terminal (whether an
+        // already-in-flight successor was applied is timing-dependent), so
+        // only the pre-error prefix is asserted dense. The rejection arrives
+        // asynchronously through the error handler and the latched terminal
+        // surfaces loudly on close unless the handler already owns it.
+        CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
+        CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+        QwpWebSocketSender sender = connectWs(port,
                 1,
                 Integer.MAX_VALUE,
                 TimeUnit.HOURS.toNanos(1),
-                errorFut::complete)) {
+                err -> {
+                    if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                        terminalFut.complete(err);
+                    }
+                    firstErrFut.complete(err);
+                });
+        SenderError.Category expectedTerminalCategory = null;
+        try {
             // Good rows to a separate table — auto-flushed, no ACK wait
             for (int i = 1; i <= 3; i++) {
                 sender.table("ws_async_multi_ok")
@@ -1819,33 +1834,50 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                         .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
             }
 
-            // Bad row to the pre-existing table — STRING into LONG.
-            // Client doesn't know the server-side schema, so this passes client-side
-            // validation. The I/O thread sends it; the server rejects it.
-            sender.table("ws_async_multi_err")
-                    .stringColumn("value", "not a number")
-                    .at(1_000_000_000_001L, ChronoUnit.MICROS);
+            try {
+                // Bad row to the pre-existing table — STRING into LONG.
+                // Client doesn't know the server-side schema, so this passes
+                // client-side validation. The I/O thread sends it; the server
+                // rejects it.
+                sender.table("ws_async_multi_err")
+                        .stringColumn("value", "not a number")
+                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
-            // More good rows — user thread doesn't know about the error yet
-            for (int i = 4; i <= 6; i++) {
-                sender.table("ws_async_multi_ok")
-                        .longColumn("v", i)
-                        .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                // More good rows racing the NACK — they may ship before the
+                // terminal latches or stay head-of-line blocked behind it;
+                // either way they must not disturb the settled prefix or
+                // resurrect the rejected frame.
+                for (int i = 4; i <= 6; i++) {
+                    sender.table("ws_async_multi_ok")
+                            .longColumn("v", i)
+                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
+                }
+
+                sender.flush();
+            } catch (LineSenderServerException ignored) {
+                // the I/O thread can latch the terminal while the tail is
+                // still being published -- any producer call may throw it
             }
 
-            sender.flush();
-
-            SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+            SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
             Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+            Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
+            expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+        } finally {
+            assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory);
         }
         drainWalQueue();
-        assertQuery("SELECT v FROM ws_async_multi_ok ORDER BY v")
+        // Dense prefix: every row flushed before the bad one landed.
+        assertQuery("SELECT v FROM ws_async_multi_ok WHERE v <= 3 ORDER BY v")
                 .noLeakCheck()
-                .returnsOnce("v\n1\n2\n3\n4\n5\n6\n");
-        // The initial setup row (value=0) must be present
-        assertQuery("SELECT value FROM ws_async_multi_err WHERE value = 0")
+                .returns("v\n1\n2\n3\n");
+        // Frame-drop atomicity: the rejected row never landed — the err
+        // table still holds only the initial setup row.
+        assertQuery("SELECT count() FROM ws_async_multi_err")
                 .noLeakCheck()
-                .returnsOnce("value\n0\n");
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n1\n");
     }
 
     @Test
@@ -2317,8 +2349,10 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      * async modes.
      * <p>
      * Creates a table with a LONG column, then sends a STRING into it via a
-     * fresh connection. flush() must throw in both modes because it always
-     * waits for all pending ACKs before returning.
+     * fresh connection. The server NACKs SCHEMA_MISMATCH; under NACK policy
+     * v2 the client latches a TERMINAL that reaches the error handler and
+     * surfaces loudly on close (or from flush() when its error poll wins the
+     * race against the handler dispatch).
      */
     @Test
     public void testImmediateErrorPropagation_typeMismatchOnFlush() throws Exception {
@@ -2334,23 +2368,39 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             drainWalQueue();
 
             // Second sender: fresh connection, no client-side column cache.
-            // Server-side string-to-numeric mismatch is classified as
-            // SCHEMA_MISMATCH which defaults to DROP_AND_CONTINUE, so
-            // flush() does not throw — the rejection arrives asynchronously
-            // through the error handler. Block on a CompletableFuture for
-            // deterministic delivery.
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port,
+            // NACK policy v2: the server-side string-to-numeric mismatch is
+            // classified as SCHEMA_MISMATCH -- deterministic under
+            // byte-identical replay, so the client latches a TERMINAL on the
+            // first NACK (no drop, no replay). The rejection arrives
+            // asynchronously through the error handler; the latched terminal
+            // surfaces loudly on close unless the handler already owns it.
+            CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
+            CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            QwpWebSocketSender sender = connectWs(port,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
                     QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                    errorFut::complete)) {
+                    err -> {
+                        if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                            terminalFut.complete(err);
+                        }
+                        firstErrFut.complete(err);
+                    });
+            SenderError.Category expectedTerminalCategory = null;
+            try {
                 sender.table("ws_error_propagation_test")
                         .stringColumn("value", "not a number")
                         .at(1_000_000_000_001L, ChronoUnit.MICROS);
-                sender.flush();
+                try {
+                    sender.flush();
+                } catch (LineSenderServerException ignored) {
+                    // the I/O thread latched the terminal before flush()'s
+                    // own error poll ran
+                }
 
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
+                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
                 String msg = err.getServerMessage();
                 Assert.assertTrue("Error message should indicate server error: " + msg,
                         msg != null && (msg.contains("WRITE_ERROR")
@@ -2359,6 +2409,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                                 || msg.contains("inconvertible")
                                 || msg.contains("not a number")
                                 || msg.contains("cannot")));
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory);
             }
         });
     }
@@ -3165,24 +3218,44 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .returnsOnce("walEnabled\nfalse\n");
 
-            // Try to write to the non-WAL table via QWP - server rejects with
-            // WRITE_ERROR which defaults to DROP_AND_CONTINUE, so flush() does
-            // not throw. Block on the async error handler for deterministic
-            // delivery of the rejection.
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_ROWS,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
-                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS,
-                    errorFut::complete)) {
+            // Try to write to the non-WAL table via QWP. NACK policy v2:
+            // the server rejects with WRITE_ERROR, which is RETRIABLE -- the
+            // client dispatches the strike to the error handler
+            // informationally and replays the frame; the rejection is
+            // deterministic under byte-identical replay, so the poison-frame
+            // detector escalates it to a latched TERMINAL PROTOCOL_VIOLATION
+            // (max_frame_rejections=1 makes the escalation immediate). Block
+            // on the async error handler for deterministic delivery of the
+            // rejection, then expect the latched terminal to surface loudly
+            // on close.
+            CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
+            CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            QwpWebSocketSender sender = connectWs(port, err -> {
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+                firstErrFut.complete(err);
+            }, 1);
+            SenderError.Category expectedTerminalCategory = null;
+            try {
                 sender.table("non_wal_table")
                         .symbol("tag", "test")
                         .longColumn("value", 42)
                         .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                sender.flush();
+                try {
+                    sender.flush();
+                } catch (LineSenderServerException ignored) {
+                    // the I/O thread latched the terminal before flush()'s
+                    // own error poll ran
+                }
 
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
                 Assert.assertEquals(SenderError.Category.WRITE_ERROR, err.getCategory());
+                Assert.assertSame(SenderError.Policy.RETRIABLE, err.getAppliedPolicy());
+                expectedTerminalCategory = SenderError.Category.PROTOCOL_VIOLATION;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory,
+                        "cannot insert into non-WAL table", "non_wal_table");
             }
         });
     }

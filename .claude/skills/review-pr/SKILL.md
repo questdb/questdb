@@ -146,7 +146,7 @@ Every agent receives:
 
 Launch the following agents in parallel.
 
-**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite.
+**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite. When the diff touches the QWP ingress / role-gating path, an in-place switch or failover, a `java-questdb-client` submodule bump, or store-and-forward test suites, also verify the "Store-and-forward & pool startup invariants" checklist — a change that lets a running SF drainer surface transport errors to the producer, imposes a reconnect time budget on it, or hard-fails it on a transient outage is a Critical (data-loss) finding.
 
 **Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures. Use the implicit contract list (lock order, thread-affinity) and check every callsite from 2.5b for violations of the new contract.
 
@@ -371,6 +371,82 @@ For each new or changed allocation site, verify:
 - **Same tracker for malloc and its matching free.** A site that allocates with a tracker but frees with `null` (or vice versa) desyncs the counter and trips the live `recordPerQueryMemAlloc` balance assert. Trace every free / close path — error paths and `toTop()` / `clear()` / cursor-close reuse included — and confirm the identical tracker is used on both ends.
 - **Nested SQL inherits the outer tracker.** Subqueries, the mat-view refresh inner SELECT, and WAL apply inner SQL must inherit the tracker already bound on the context, not acquire their own. A new acquisition site that acquires unconditionally (instead of only when no outer tracker is present) double-counts — flag it.
 - **Coverage has a test.** A newly wired allocator needs a `*MemoryTrackerTest` proving (a) a breach throws the per-query out-of-memory message, (b) an under-limit run succeeds, and (c) a `getCursor()`-to-close leak loop stays balanced. Missing tracker tests for a newly wired site is a high-priority finding; so is a factory-class routing guard that no longer pins the test to the intended plan.
+
+### Store-and-forward & pool startup invariants (QWP client contract)
+Apply this whenever the diff touches the QWP ingress path (upgrade/role
+gating, in-place demote / lifecycle switch, connection handling on role
+change), replication failover, a `java-questdb-client` submodule bump, or
+tests that drive a producer through a failover/switch window. These are the
+CLIENT's store-and-forward guarantees (the client code lives in the
+`java-questdb-client` submodule); server-side changes and tests in this repo
+must be reviewed against them. A violation here is a **Critical** finding:
+the whole point of store-and-forward is that a running producer never loses
+data and never hard-fails on a transient outage.
+
+**Drainer (steady state — once the pool is running).**
+- Once the pool is running, an async drainer thread ships buffered SF data to
+  the server. It MUST NOT propagate server / transport errors back to the
+  client (`Sender` producer calls, `flush()`, the pooled handle). The ONLY
+  error a running drainer may surface to the caller is **SF out of space** (the
+  on-disk / backing buffer is full and can accept no more rows). Flag any other
+  failure class (connect-refused, DNS, unreachable/black-hole, TLS/cert, auth,
+  role-reject, upgrade/protocol timeout, reset) that can escape the drainer
+  onto a producer or borrow call.
+- Primary reconnect MUST be fully contained inside the drainer thread and MUST
+  have **no time limit** — no `reconnect_max_duration_millis`-style budget, no
+  deadline, no "give up and latch terminal after N ms". A budget that latches
+  the sender terminal on a long outage is a Critical violation: it drops a
+  producer that store-and-forward promised to keep alive. Flag any bounded
+  reconnect loop, `deadlineNanos` / `while (now < deadline)`, or terminal
+  `SenderError` reachable from the running drainer's reconnect path.
+- The drainer must retry with **exponential backoff** and handle every connect
+  failure class gracefully, without a hard fail — it keeps buffering and keeps
+  retrying until the wire is back. The per-attempt backoff may be capped (a max
+  delay between attempts), but the RETRY LOOP ITSELF must be unbounded. Flag a
+  capped total retry duration or an attempt-count cap on the steady-state
+  drainer.
+- **Sanctioned terminals (orphan-slot drainer only).** The orphan drainer
+  (`BackgroundDrainer`) MAY quarantine its slot (`.failed` sentinel,
+  human-in-the-loop) on conditions that are terminal by design: auth failure,
+  a non-421 upgrade reject, and a genuine cluster-wide durable-ack capability
+  gap that exhausted its documented settle budget (16 consecutive
+  capability-gap sweeps, or a wall-clock budget anchored at the FIRST
+  capability-gap error of the episode — whichever is hit first). These are
+  NOT violations of the no-budget rule above. The settle budget applies ONLY
+  to consecutive capability-gap attempts: transient classes (role reject,
+  transport error) must never increment it or burn its wall clock — a
+  transient state consuming the terminal budget (shared attempt counter,
+  entry-anchored deadline) IS a Critical violation of this checklist.
+
+**Pool startup — two modes; the mode decides who sees connectivity errors.**
+- `lazy_connect=true`: `build()` MUST succeed with **no server present**. The
+  producing `Sender` must work immediately (writes buffer via SF), and once the
+  server comes up the read side must also connect and read (reads are deferred,
+  not disabled).
+- `lazy_connect=false` (default): `build()` / the initial connect MUST expose
+  connectivity problems to the caller — DNS errors, connect-refused /
+  unreachable, TLS/cert, authentication/authorization, and connect/upgrade
+  timeouts must all surface as a thrown exception at startup, not be swallowed.
+- **In BOTH modes the boundary is the same:** connectivity errors are only
+  ever the caller's problem DURING initialization. Once the client has
+  connected and is past initialization, the running drainer reverts to the
+  steady-state contract above — it must NEVER expose transport problems, NEVER
+  impose a reconnect time budget, and NEVER hard-fail on a transient outage.
+
+**Server-side & test application (this repo).**
+- The server MUST NOT rely on producer-visible role errors: an in-place
+  demote CLOSES QWP ingress connections (no per-write SECURITY_ERROR to an SF
+  sender). A server change that reintroduces per-write role errors on the QWP
+  ingress path breaks the containment contract above.
+- Flag any test (unit, integration, or e2e) that uses QWP producer-visible
+  role errors as evidence of the REPLICA write gate — under the containment
+  contract the producer is silent by design. Write-gate evidence belongs on
+  pg-wire probes, frozen commit counts on the settled replica, and
+  post-promotion SF drain (durable-ack await barriers + dense oracles).
+- Dense/count oracles over rows produced through an SF sender must account
+  for at-least-once replay: durably ack (await) seed rows before the
+  disturbance, or use a DEDUP table — otherwise the oracle reports replay
+  duplicates as data corruption.
 
 ### SQL conventions (if tests or SQL involved)
 - Keywords in UPPERCASE
