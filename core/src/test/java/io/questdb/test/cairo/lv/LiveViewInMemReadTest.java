@@ -498,11 +498,22 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
             // Seam in the middle: disk serves the older prefix, in-mem the recent
-            // suffix. Every shape must match the disk-only path byte for byte.
-            assertModeBMatchesDiskOnly("SELECT * FROM lv");
-            assertModeBMatchesDiskOnly("SELECT * FROM lv LIMIT 3");
-            assertModeBMatchesDiskOnly("SELECT * FROM lv LIMIT -2");
-            assertModeBMatchesDiskOnly("SELECT * FROM lv WHERE x > 2");
+            // suffix. Each routing-eligible shape must both engage the tier (its
+            // inner cursor serves in-mem rows) AND match the disk-only path byte for
+            // byte. The engagement gate matters: the differential oracle alone would
+            // still pass if a fence regression silently routed a shape disk-only,
+            // because both sides would then read disk.
+            assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv");
+            assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv LIMIT 3");
+            assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv LIMIT -2");
+            assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv WHERE x > 2");
+            // ORDER BY ts DESC is the non-routing control: a backward scan is
+            // deliberately fenced disk-only (testModeBDisabledForBackwardScan), so
+            // both sides read disk here. It still must match, but the tier serves
+            // nothing - assert that so this line is not mistaken for Mode B coverage.
+            InnerRead desc = readInner("SELECT * FROM lv ORDER BY ts DESC");
+            Assert.assertFalse("backward scan must fence disk-only", desc.routingEligible);
+            Assert.assertEquals("backward scan must not serve the tier", 0, desc.inMemRowsServed);
             assertModeBMatchesDiskOnly("SELECT * FROM lv ORDER BY ts DESC");
         });
     }
@@ -2684,6 +2695,19 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
         StringSink oracle = new StringSink();
         printSql(oracleSql, oracle);
         Assert.assertEquals("disk-only read must match oracle for: " + lvSql, oracle.toString(), diskOnly.toString());
+    }
+
+    // Proves a routing-eligible shape actually engages the tier before running the
+    // differential oracle: the inner cursor must be routing-eligible and serve at
+    // least one in-mem row, otherwise a fence regression that silently routed the
+    // shape disk-only would still pass assertModeBMatchesDiskOnly (both sides read
+    // disk). The inner read walks the whole LiveView cursor, so a LIMIT / outer
+    // WHERE wrapper does not suppress the counter.
+    private static void assertModeBEngagesAndMatchesDiskOnly(String sql) throws SqlException {
+        InnerRead read = readInner(sql);
+        Assert.assertTrue("shape must stay routing-eligible: " + sql, read.routingEligible);
+        Assert.assertTrue("shape must serve in-mem rows: " + sql, read.inMemRowsServed > 0);
+        assertModeBMatchesDiskOnly(sql);
     }
 
     // Runs the SELECT with the tier on (Mode B) and then with the fence forced
