@@ -179,9 +179,17 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
+        if (closed) {
+            // close() drains the disconnect queue once and never again; enqueuing now would
+            // strand this checked-out context (e.g. a parked sleep() unwinding at shutdown),
+            // which no close() sweep can see. Free it directly instead.
+            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
+            return;
+        }
         final long cursor = bullyUntilClosed(disconnectPubSeq);
         if (cursor < 0) {
             assert closed;
+            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
             return;
         }
         disconnectQueue.get(cursor).context = context;
@@ -233,9 +241,17 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void registerChannel(C context, int operation) {
+        if (closed) {
+            // Same as disconnect(): the interest queue was swept once by close(), so
+            // re-registering would strand this checked-out context (e.g. a parked sleep()
+            // re-arming at shutdown). Disconnect it directly instead of leaking its socket.
+            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
+            return;
+        }
         final long cursor = bullyUntilClosed(interestPubSeq);
         if (cursor < 0) {
             assert closed;
+            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
             return;
         }
         IOEvent<C> evt = interestQueue.get(cursor);
@@ -278,6 +294,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     private void checkConnectionLimitAndRestartListener() {
+        if (closed) {
+            // Never re-create the listener socket during or after shutdown: doDisconnect()
+            // runs in here while freeing a context that reached disconnect()/registerChannel()
+            // after close(), and a drop below the limit would otherwise re-open serverFd.
+            return;
+        }
         final int activeConnectionLimit = configuration.getLimit();
         final int connCount = connectionCount.get();
         if (connCount < activeConnectionLimit) {
