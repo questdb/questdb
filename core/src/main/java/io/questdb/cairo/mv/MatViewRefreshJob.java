@@ -1601,8 +1601,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - a read-only deferral: left for the promote-time rebuild from disk;
         // - a deferral landing between finalize's marker read and the holder's unlock: too late for finalize
         //   to see, and every queued task is then swallowed by this guard for good -- a terminal silent
-        //   freeze, never cleared automatically (every refresh entry point bails on a pending view before
-        //   tryLock; recovery is REFRESH ... FULL / STATS or a restart). Each holder release re-runs the
+        //   freeze, never cleared automatically (every automatic refresh entry point bails on a pending
+        //   view before tryLock; REFRESH ... FULL and STATS deliberately do not, which is what makes
+        //   them -- or a restart -- the recovery). Each holder release re-runs the
         //   window, so timer-driven refreshes -- re-admitted as holders once a finalize clears the marker --
         //   raise how often it recurs; a sentinel CASed into the just-cleared marker before the re-enqueued
         //   INVALIDATE is delivered swallows that task the same way;
