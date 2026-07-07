@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
 import io.questdb.client.SenderErrorHandler;
@@ -45,8 +46,12 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -433,17 +438,37 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOraclePoisonRowsTriggerErrorHandler() throws Exception {
-        // Pin down the per-batch error contract:
-        //   1. The async SenderErrorHandler fires for every poisoned chunk.
-        //   2. Rows from clean chunks land exactly per the oracle.
-        //   3. No row from a poisoned chunk leaks into the table — the
-        //      *whole* chunk is dropped, including any well-formed rows
-        //      sitting next to the bad one. This documents the per-frame
-        //      drop granularity (Sf does not drop per row).
+    public void testOraclePoisonRowsEscalateToPoisonTerminal() throws Exception {
+        // Pin down the per-frame error contract under NACK policy v2 (there
+        // is no drop policy -- a deterministically rejected frame can never
+        // be silently skipped):
+        //   1. Frame-drop atomicity: a NACKed frame is atomically not
+        //      applied -- no row from the poisoned chunk lands, including
+        //      the well-formed rows sitting next to the bad one.
+        //   2. The rejection reaches the async SenderErrorHandler (an
+        //      informational WRITE_ERROR strike, then the poison-frame
+        //      detector's TERMINAL PROTOCOL_VIOLATION escalation --
+        //      max_frame_rejections=1 makes it immediate) and the next
+        //      producer-thread call throws the latched terminal: the stream
+        //      halts loudly, it does not drain silently.
+        //   3. Watermark purity: every row flushed before the poisoned
+        //      chunk lands exactly per the oracle -- acks never cross a
+        //      rejected frame, and the halt does not disturb settled data.
+        //   4. Retention: the NACKed frame's bytes survive in the sender's
+        //      SF slot past close -- the terminal preserves the only
+        //      replayable copy. Proven functionally by reopening the slot
+        //      and observing the byte-identical replay latch the same
+        //      deterministic terminal again.
         //
-        // No server bouncing here on purpose — failure mode must be
-        // unambiguously the per-batch rejection, not a transport blip.
+        // The poisoned chunk is each poisoned producer's LAST chunk on
+        // purpose: frames published after a rejected frame are head-of-line
+        // blocked and whether an already-in-flight successor was applied is
+        // timing-dependent, so a dense oracle over post-poison rows would
+        // flake. The clean prefix plus poisoned-frame absence are the
+        // deterministic observables.
+        //
+        // No server bouncing here on purpose -- failure mode must be
+        // unambiguously the per-frame rejection, not a transport blip.
         assertMemoryLeak(() -> {
             Rnd master = TestUtils.generateRandom(LOG);
             createTargetTable();
@@ -452,44 +477,58 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             int producerCount = 2 + master.nextInt(2);              // 2..3
             int chunksPerProducer = 30 + master.nextInt(30);        // 30..59
             int chunkSize = 5 + master.nextInt(6);                  // 5..10 rows; small enough to map to one frame
-            int poisonChunkInN = 4;                                 // ~25% chunks poisoned
             long sfMaxBytes = pickSfMaxBytes(master);
             LOG.info().$("poison test sf_max_bytes=").$(sfMaxBytes).$();
 
             long baseTsMicros = 1_700_000_000_000_000L;
             QwpTable oracle = new QwpTable(TABLE_NAME);
-            QwpRow[][][] perProducerChunks = new QwpRow[producerCount][chunksPerProducer][chunkSize];
+            QwpRow[][][] cleanChunks = new QwpRow[producerCount][chunksPerProducer][chunkSize];
+            QwpRow[][] poisonChunks = new QwpRow[producerCount][];
             StringBuilder poisonedIdInList = new StringBuilder();
-            int totalPoisonedChunks = 0;
+            int poisonedProducers = 0;
 
             long globalIdx = 0;
             for (int p = 0; p < producerCount; p++) {
                 Rnd genRnd = new Rnd(master.nextLong(), master.nextLong());
-                Rnd poisonRnd = new Rnd(master.nextLong(), master.nextLong());
                 for (int c = 0; c < chunksPerProducer; c++) {
-                    boolean poisoned = poisonRnd.nextInt(poisonChunkInN) == 0;
-                    if (poisoned) {
-                        totalPoisonedChunks++;
-                    }
                     for (int r = 0; r < chunkSize; r++) {
                         long id = globalIdx;
                         long ts = baseTsMicros + globalIdx;
                         QwpRow row = generateRow(genRnd, id, ts);
-                        if (poisoned) {
-                            // hh=1 forces the unscaled value past 2^192 ~ 6.3e57,
-                            // well past DECIMAL(50,6)'s 10^50 cap. Server returns
-                            // WRITE_ERROR with DROP_AND_CONTINUE policy.
-                            row.setDecimal256("dec256", 1L, 0L, 0L, 0L, 6);
-                            if (!poisonedIdInList.isEmpty()) {
-                                poisonedIdInList.append(',');
-                            }
-                            poisonedIdInList.append(id);
-                        } else {
-                            oracle.addRow(row);
-                        }
-                        perProducerChunks[p][c][r] = row;
+                        oracle.addRow(row);
+                        cleanChunks[p][c][r] = row;
                         globalIdx++;
                     }
+                }
+                // producer 0 is always poisoned so every run exercises the
+                // escalation and the retention proof in (e) below; producer
+                // 1 is always clean so the purge check in (d) never runs
+                // vacuous; the rest flip a coin
+                if (p == 0 || (p > 1 && master.nextBoolean())) {
+                    poisonedProducers++;
+                    QwpRow[] chunk = new QwpRow[chunkSize];
+                    int badRow = master.nextInt(chunkSize);
+                    for (int r = 0; r < chunkSize; r++) {
+                        long id = globalIdx;
+                        long ts = baseTsMicros + globalIdx;
+                        QwpRow row = generateRow(genRnd, id, ts);
+                        if (r == badRow) {
+                            // hh=1 forces the unscaled value past 2^192 ~ 6.3e57,
+                            // well past DECIMAL(50,6)'s 10^50 cap: a WRITE_ERROR
+                            // NACK deterministic under byte-identical replay.
+                            row.setDecimal256("dec256", 1L, 0L, 0L, 0L, 6);
+                        }
+                        // every id of the poisoned chunk must stay absent,
+                        // the well-formed neighbours included (frame-drop
+                        // atomicity)
+                        if (!poisonedIdInList.isEmpty()) {
+                            poisonedIdInList.append(',');
+                        }
+                        poisonedIdInList.append(id);
+                        chunk[r] = row;
+                        globalIdx++;
+                    }
+                    poisonChunks[p] = chunk;
                 }
             }
 
@@ -508,29 +547,68 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 Thread[] producers = new Thread[producerCount];
                 for (int p = 0; p < producerCount; p++) {
                     final int pp = p;
-                    final QwpRow[][] myChunks = perProducerChunks[pp];
+                    final QwpRow[][] myCleanChunks = cleanChunks[pp];
+                    final QwpRow[] myPoisonChunk = poisonChunks[pp];
                     final String mySfDir = sfDirs[pp];
                     producers[p] = new Thread(() -> {
                         try {
-                            // Generous error_inbox_capacity so a burst of
-                            // poisoned chunks can't drop notifications and
-                            // skew the count assertion.
+                            // Generous error_inbox_capacity so the strike +
+                            // terminal notifications can't be dropped;
+                            // max_frame_rejections=1 escalates the first
+                            // rejection straight to the poison terminal
+                            // instead of reconnect-replaying the frame.
                             String connect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                     + ";initial_connect_retry=true"
                                     + ";reconnect_max_duration_millis=120000"
                                     + ";close_flush_timeout_millis=120000"
                                     + ";sf_max_bytes=" + sfMaxBytes
+                                    + ";max_frame_rejections=1"
                                     + ";error_inbox_capacity=4096;";
-                            SenderErrorHandler handler = (SenderError _) -> errorHandlerCalls.incrementAndGet();
+                            CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+                            SenderErrorHandler handler = err -> {
+                                errorHandlerCalls.incrementAndGet();
+                                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                                    terminalFut.complete(err);
+                                }
+                            };
                             try (Sender sender = Sender.builder(connect).errorHandler(handler).build()) {
-                                for (int c = 0; c < myChunks.length; c++) {
-                                    for (int r = 0; r < myChunks[c].length; r++) {
-                                        myChunks[c][r].publishTo(sender, TABLE_NAME, ID_COLUMN);
+                                for (int c = 0; c < myCleanChunks.length; c++) {
+                                    for (int r = 0; r < myCleanChunks[c].length; r++) {
+                                        myCleanChunks[c][r].publishTo(sender, TABLE_NAME, ID_COLUMN);
                                     }
                                     // Explicit flush per chunk -> chunk == frame
                                     // (for these small chunk sizes), making the
-                                    // per-batch drop deterministic to model.
+                                    // per-frame rejection deterministic to model.
                                     sender.flush();
+                                }
+                                if (myPoisonChunk != null) {
+                                    for (QwpRow row : myPoisonChunk) {
+                                        row.publishTo(sender, TABLE_NAME, ID_COLUMN);
+                                    }
+                                    try {
+                                        sender.flush();
+                                    } catch (LineSenderServerException ignored) {
+                                        // the I/O thread can latch the terminal
+                                        // before flush()'s own error poll runs
+                                    }
+                                    SenderError terminal = terminalFut.get(120, TimeUnit.SECONDS);
+                                    if (terminal.getCategory() != SenderError.Category.PROTOCOL_VIOLATION) {
+                                        throw new AssertionError("expected PROTOCOL_VIOLATION poison terminal, got " + terminal);
+                                    }
+                                    String tMsg = terminal.getServerMessage();
+                                    if (tMsg == null || !tMsg.contains("overflows DECIMAL(50,6)")) {
+                                        throw new AssertionError("terminal should carry the decimal overflow rejection, got: " + tMsg);
+                                    }
+                                    // the latched terminal must halt the
+                                    // producer loudly on its next call
+                                    try {
+                                        sender.flush();
+                                        throw new AssertionError("flush() after the poison terminal latched must throw");
+                                    } catch (LineSenderServerException e) {
+                                        if (e.getServerError().getCategory() != SenderError.Category.PROTOCOL_VIOLATION) {
+                                            throw new AssertionError("expected the poison terminal from flush()", e);
+                                        }
+                                    }
                                 }
                             }
                         } catch (Throwable t) {
@@ -556,37 +634,106 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
 
-                // (a) Clean rows: every row in every clean chunk lands
-                // exactly once; oracle drives a typed cell-by-cell check.
+                // (a) Clean prefix: every row flushed before the poisoned
+                // chunk lands exactly once; oracle drives a typed
+                // cell-by-cell check over the full table snapshot.
                 assertOracle(oracle);
 
                 // (b) Poisoned rows: no id from any poisoned chunk leaked
-                // into the table. This pins the per-batch drop semantic --
-                // even good rows in a bad chunk must be absent.
+                // into the table. This pins frame-drop atomicity -- even
+                // good rows in a bad frame must be absent.
                 if (!poisonedIdInList.isEmpty()) {
                     assertQuery("SELECT count() FROM " + TABLE_NAME
                             + " WHERE id IN (" + poisonedIdInList + ")")
                             .withEngine(engine)
                             .withContext(sqlExecutionContext)
                             .noLeakCheck()
-                            .returnsOnce("count\n0\n");
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n0\n");
                 }
 
-                // (c) Async error notifications: at least one per poisoned
-                // chunk reached the handler. Inequality (>=) tolerates the
-                // possibility that a chunk gets split across more than one
-                // frame; with chunk sizes 5..10 that should be rare but
-                // we don't want a flake on the rare event.
+                // (c) Async error notifications: each poisoned producer saw
+                // the informational WRITE_ERROR strike and the poison
+                // terminal (>= 2 dispatches). Inequality tolerates extra
+                // informational strikes if a chunk splits across frames.
                 long observed = errorHandlerCalls.get();
-                if (observed < totalPoisonedChunks) {
+                if (observed < 2L * poisonedProducers) {
                     throw new AssertionError("error handler fired " + observed
-                            + " times, expected at least " + totalPoisonedChunks
-                            + " (poisoned chunks)");
+                            + " times, expected at least " + (2L * poisonedProducers)
+                            + " (strike + terminal per poisoned producer)");
                 }
-                LOG.info().$("poison test: poisoned chunks=").$(totalPoisonedChunks)
+                LOG.info().$("poison test: poisoned producers=").$(poisonedProducers)
                         .$(" handler calls=").$(observed).$();
 
-                assertSlotsPurged(sfDirs, slotCapFor(sfMaxBytes));
+                // (d) SF hygiene: clean producers' slots purge on clean
+                // close. Producer 1 is always clean, so this check never
+                // runs vacuous. Poisoned producers' slots intentionally
+                // RETAIN the rejected bytes (no silent loss -- the terminal
+                // preserves the frame on disk); retention is asserted in
+                // (e), so they are excluded here.
+                List<String> cleanDirs = new ArrayList<>();
+                for (int p = 0; p < producerCount; p++) {
+                    if (poisonChunks[p] == null) {
+                        cleanDirs.add(sfDirs[p]);
+                    }
+                }
+                assertSlotsPurged(cleanDirs.toArray(new String[0]), slotCapFor(sfMaxBytes));
+
+                // (e) Retention proof: the poisoned frame must still be on
+                // disk in producer 0's slot. Byte counting cannot
+                // distinguish a retained frame (a few KB) from clean-close
+                // residue under the generous purge cap, so retention is
+                // proven functionally: a fresh sender on the same slot must
+                // recover the frame, replay it byte-identically, and latch
+                // the same deterministic poison terminal again. A client
+                // bug that purges the NACKed frame's slot leaves nothing to
+                // replay and times out below. Producer 0 is always
+                // poisoned, so this check fires in every run. Client-side
+                // reopen only -- no server bounce, in keeping with the
+                // no-transport-blip design of this test.
+                CompletableFuture<SenderError> replayTerminalFut = new CompletableFuture<>();
+                SenderErrorHandler replayHandler = err -> {
+                    if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                        replayTerminalFut.complete(err);
+                    }
+                };
+                String replayConnect = "ws::addr=localhost:" + port + ";sf_dir=" + sfDirs[0]
+                        + ";initial_connect_retry=true"
+                        + ";reconnect_max_duration_millis=120000"
+                        + ";close_flush_timeout_millis=120000"
+                        + ";sf_max_bytes=" + sfMaxBytes
+                        + ";max_frame_rejections=1"
+                        + ";error_inbox_capacity=4096;";
+                try (Sender ignore = Sender.builder(replayConnect).errorHandler(replayHandler).build()) {
+                    SenderError replayTerminal;
+                    try {
+                        replayTerminal = replayTerminalFut.get(120, TimeUnit.SECONDS);
+                    } catch (TimeoutException e) {
+                        throw new AssertionError("retained poison frame did not replay from " + sfDirs[0]
+                                + ": the SF slot no longer holds the rejected frame -- the terminal must"
+                                + " preserve the only replayable copy on disk", e);
+                    }
+                    if (replayTerminal.getCategory() != SenderError.Category.PROTOCOL_VIOLATION) {
+                        throw new AssertionError("replayed poison frame: expected PROTOCOL_VIOLATION terminal, got " + replayTerminal);
+                    }
+                    String rMsg = replayTerminal.getServerMessage();
+                    if (rMsg == null || !rMsg.contains("overflows DECIMAL(50,6)")) {
+                        throw new AssertionError("replayed terminal should carry the decimal overflow rejection, got: " + rMsg);
+                    }
+                }
+
+                // the replayed frame must be rejected wholesale again --
+                // frame-drop atomicity holds across SF recovery too
+                drainWalQueue();
+                assertQuery("SELECT count() FROM " + TABLE_NAME
+                        + " WHERE id IN (" + poisonedIdInList + ")")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n0\n");
             }
         });
     }
@@ -1117,8 +1264,9 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         //                                           full 64-bit lo
         //   DECIMAL(50,6) (max ~10^50, ~167 bits) -> hh=0, hl up to ~10^10
         //                                            plus full 64-bit lh, ll
-        // The server rejects out-of-range values per binary frame with
-        // DROP_AND_CONTINUE; the poison test pins that contract.
+        // The server rejects out-of-range values per binary frame with a
+        // WRITE_ERROR NACK; testOraclePoisonRowsEscalateToPoisonTerminal
+        // pins the client-side escalation contract.
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) {
             setSignedDecimal64(row, "dec64", id * 10_000_007L + 13L, 3, rnd.nextBoolean());
         }

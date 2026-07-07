@@ -597,13 +597,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 state.onResumeAckComplete();
                 LOG.debug().$("Resumed ACK sent before fatal close [fd=").$(context.getFd())
                         .$(", upTo=").$(state.getLastAckedSequence()).I$();
-                sendDeferredFatalClose(context, state);
+                finishDeferredFatalClose(context, state);
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE -> {
                 context.resumeResponseSend();
                 state.onResumeDurableAckComplete();
                 LOG.debug().$("Resumed durable ACK sent before fatal close [fd=").$(context.getFd()).I$();
-                sendDeferredFatalClose(context, state);
+                finishDeferredFatalClose(context, state);
+            }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DRAIN_THEN_CLOSE -> {
+                context.resumeResponseSend();
+                state.onResumeDrainComplete();
+                LOG.debug().$("Resumed parked response drained before fatal close [fd=").$(context.getFd()).I$();
+                finishDeferredFatalClose(context, state);
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> {
                 context.resumeResponseSend();
@@ -747,6 +753,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE,
                  QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE,
+                 QwpIngressProcessorState.SEND_STATE_RESUME_DRAIN_THEN_CLOSE,
                  QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> // The peer is voluntarily closing, but we have a fatal CLOSE
                 // queued. The pending response will be torn down anyway, so
                 // there is no value in attempting to flush the deferred CLOSE
@@ -763,6 +770,39 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 throw PeerDisconnectedException.INSTANCE;
             }
         }
+    }
+
+    /**
+     * Resume-path completion of a deferred fatal CLOSE: flushes pending
+     * cumulative/durable ack progress first, then emits the CLOSE frame — the
+     * same ordering {@link #sendFatalClose} guarantees on the happy path.
+     * <p>
+     * This ordering carries the role-change close deferral's invariant
+     * ({@link #roleChangeCloseWithUploadGrace}): the final durable ack must
+     * precede the CLOSE frame, because a durable-ack store-and-forward client
+     * advances its replay/trim watermark only on STATUS_DURABLE_ACK frames.
+     * Emitting the CLOSE without it leaves the watermark stale, and on
+     * reconnect the client replays batches this server (or the promoted
+     * replica, via replication) already owns — duplicates on tables without
+     * DEDUP UPSERT KEYS, precisely under send backpressure at demote time.
+     * The pre-fix resume branches called {@link #sendDeferredFatalClose}
+     * directly, so any CLOSE that was ever deferred behind a blocked send
+     * skipped the final durable ack entirely.
+     * <p>
+     * If the flush blocks again, the CLOSE is re-parked behind the newly
+     * blocked ack frame and the dispatcher resumes us; every resume drains
+     * one parked frame, so the sequence terminates.
+     */
+    private void finishDeferredFatalClose(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        try {
+            flushPendingAck(context, state);
+        } catch (PeerIsSlowToReadException e) {
+            state.reArmDeferredFatalClose();
+            LOG.debug().$("Pre-close ack flush blocked, re-deferring fatal CLOSE [fd=").$(context.getFd()).I$();
+            throw e;
+        }
+        sendDeferredFatalClose(context, state);
     }
 
     private void flushPendingAck(HttpConnectionContext context, QwpIngressProcessorState state)
@@ -796,11 +836,42 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private void handleBinaryMessage(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         long seq = state.nextMessageSequence();
         LOG.debug().$("WebSocket binary message [fd=").$(context.getFd())
                 .$(", len=").$(length)
                 .$(", seq=").$(seq).I$();
+
+        // INVARIANT B enforcement: while a role-change close deferral is armed,
+        // the connection exists ONLY to deliver the final durable ack before
+        // the CLOSE frame. Data frames arriving in this window must not touch
+        // the engine: the demote can revert within the grace period (in-place
+        // re-promote), and a frame that slipped past the live read-only gate
+        // would commit and advance the cumulative-ack watermark PAST the
+        // silently refused frame that armed the deferral -- the client would
+        // trim that frame's store-and-forward slot and its rows would be lost.
+        // Treat every data frame in this window exactly like the refused frame
+        // that armed the deferral: consume its sequence (the client replays it
+        // after the reconnect-eligible close), record it as unresolved for the
+        // ack clamp, and re-poll the deferral for coverage/expiry.
+        if (state.isRoleChangeCloseDeferred()) {
+            LOG.debug().$("WebSocket data frame refused, role-change close deferral armed [fd=").$(context.getFd())
+                    .$(", seq=").$(seq).I$();
+            state.markSequenceUnresolved(seq);
+            roleChangeCloseWithUploadGrace(context, state, state.getRoleChangeCloseReason());
+            return;
+        }
+
+        // A prior error broke the ordered pipeline: committing a later pipelined
+        // frame would advance committed data past the gap the acked watermark
+        // stopped at. Consume the sequence without touching the engine; the
+        // client replays it from its acked watermark on a fresh connection.
+        if (state.hasUnresolvedSequence()) {
+            LOG.debug().$("WebSocket frame refused, connection pipeline broken by a prior error [fd=").$(context.getFd())
+                    .$(", seq=").$(seq).I$();
+            state.markSequenceUnresolved(seq);
+            return;
+        }
 
         if (!state.isOk()) {
             LOG.debug().$("WebSocket ignoring message, state is in error [fd=").$(context.getFd()).I$();
@@ -810,8 +881,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         byte responseStatus = STATUS_OK;
         String errorMessage = null;
+        boolean roleChangeClose = false;
 
         boolean deferCommit = false;
+        boolean closesDeferredGroup = false;
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
@@ -822,11 +895,34 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             state.processMessage();
 
             if (state.isOk() && !deferCommit) {
+                // Capture BEFORE commit(): a successful commitAll() clears the
+                // uncommitted-deferred-rows flag, and this frame's ack must then
+                // flush eagerly -- the group's deferred frames were never
+                // individually acked, so the client's store-and-forward slots
+                // (and, in durable-ack mode, seqTxn tracking) all hinge on the
+                // ack that covers this group-closing sequence.
+                closesDeferredGroup = state.hasUncommittedDeferredRows();
                 state.commit();
             }
             if (state.isOk() && deferCommit) {
                 state.commitIfMaxUncommittedRowsReached();
+                if (state.isOk()) {
+                    // Rows are buffered in WAL writers but NOT committed (the
+                    // force-commit above fires per-table at the
+                    // max-uncommitted-rows cap and gives no full-coverage
+                    // guarantee). Until the group-closing commit or a rollback,
+                    // the cumulative-ack watermark must not move past this
+                    // frame -- an OK ack would let the client trim rows the
+                    // server can still roll back (#7144's replay contract).
+                    state.markUncommittedDeferredRows();
+                }
             }
+            // Read AFTER the commit calls: processMessage's read-only gate AND the
+            // commit path's authorization-refusal containment (rejectCairoError)
+            // can both flag the role-change close; reading before commit() would
+            // miss the latter and send a client-visible error status instead of
+            // the graceful reconnect-eligible close.
+            roleChangeClose = state.isRoleChangeClosePending();
             // commit() swallows exceptions internally
             if (state.isOk()) {
                 if (deferCommit) {
@@ -865,14 +961,53 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
         }
 
+        // INVARIANT B: an in-place PRIMARY->REPLICA demote is TRANSIENT. Close the
+        // connection with a reconnect-eligible code instead of sending a
+        // SECURITY_ERROR that a store-and-forward client treats as a terminal HALT.
+        // For durable-ack connections the close is deferred (bounded) until the
+        // durable-upload registry covers this connection's committed work, so the
+        // final durable ack is delivered BEFORE the CLOSE frame and the client's
+        // replay window is empty -- see roleChangeCloseWithUploadGrace.
+        if (roleChangeClose) {
+            // No error response goes out for this frame -- the refusal is
+            // transient and the client replays from its acked watermark after
+            // the reconnect-eligible close. Until that close, no cumulative
+            // OK ack may cover this sequence.
+            state.markSequenceUnresolved(seq);
+            roleChangeCloseWithUploadGrace(context, state, errorMessage);
+            return;
+        }
+
         // Send response using cumulative ACK strategy
         if (responseStatus == STATUS_OK) {
-            // Success - update tracking, send ACK if batch size reached
-            state.setHighestProcessedSequence(seq);
-            if (state.shouldSendAck(ACK_BATCH_SIZE)) {
-                trySendAck(context, state);
+            if (deferCommit) {
+                // Deferred frame: rows appended but uncommitted. NO watermark
+                // advance and NO ack -- a cumulative OK ack at this sequence
+                // would let the store-and-forward client trim slots whose rows
+                // the server rolls back on any error, demote, or disconnect.
+                // Coverage for this frame arrives with the ack of the
+                // group-closing commit frame (cumulative semantics), which also
+                // carries the group's real per-table seqTxns for durable-ack
+                // tracking. Until then the frame stays replayable client-side,
+                // exactly as #7144's error-handling contract requires.
+                LOG.debug().$("WebSocket deferred frame ack withheld until group commit [fd=").$(context.getFd())
+                        .$(", seq=").$(seq).I$();
+            } else {
+                // Success - update tracking, send ACK if batch size reached.
+                // A group-closing commit flushes eagerly (hasPendingAck) instead
+                // of waiting for the batch threshold: the deferred frames it
+                // covers were never individually acked, and the client's
+                // transaction confirmation should not wait for unrelated
+                // follow-up traffic.
+                state.setHighestProcessedSequence(seq);
+                if (closesDeferredGroup ? state.hasPendingAck() : state.shouldSendAck(ACK_BATCH_SIZE)) {
+                    trySendAck(context, state);
+                }
             }
         } else {
+            // Before any flush that may defer, so a blocked error frame still
+            // clamps the watermark and refuses the pipelined tail.
+            state.markSequenceUnresolved(seq);
             // Error - first ACK all successful messages (if in READY state), then send error
             if (state.hasPendingAck()) {
                 try {
@@ -958,7 +1093,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private void handlePing(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.
@@ -968,6 +1103,21 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // that, the parked ACK bytes would sit unsent in the response sink
         // until the next unrelated write.
         flushPendingAck(context, state);
+
+        // A deferred role-change close completes here: the client's durable-ack
+        // keepalive PING is the recv-driven poll that observes upload completion
+        // (durable acks are only ever flushed on inbound events). The flush above
+        // already delivered any newly-covered durable ack; once coverage is full
+        // (or the grace budget is exhausted) the close is routed through
+        // roleChangeCloseWithUploadGrace -- the same exit the gate-refused
+        // data-frame re-entry takes -- so close behaviour and diagnostics
+        // cannot drift between the two polls (a grace-expired close observed
+        // by PING used to proceed silently, skipping the un-acked-durable-work
+        // alarm). While the deferral holds, fall through to the pong keepalive.
+        if (state.isRoleChangeCloseDeferred() && isRoleChangeCloseCompletable(state)) {
+            roleChangeCloseWithUploadGrace(context, state, state.getRoleChangeCloseReason());
+            return;
+        }
 
         // Can only send pong when the response sink is clear. If a prior ACK
         // is still draining we skip the pong rather than interleave bytes;
@@ -1008,6 +1158,88 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             LOG.debug().$("Pong send blocked, deferring to resume [fd=").$(context.getFd()).I$();
             throw e;
         }
+    }
+
+    /**
+     * Completion predicate for a deferred role-change close: the registry's
+     * durable-upload watermark covers every committed seqTxn (replay window
+     * empty), or the bounded grace budget is exhausted (availability over the
+     * duplicate guard). Single source of truth shared by the deferral's two
+     * re-entry polls -- gate-refused data frames and keepalive PINGs
+     * ({@link #handlePing}) -- so the close path and its diagnostics cannot
+     * drift between them.
+     */
+    private boolean isRoleChangeCloseCompletable(QwpIngressProcessorState state) {
+        return state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())
+                || state.isRoleChangeCloseGraceExpired();
+    }
+
+    /**
+     * INVARIANT B role-change close with an exactly-once guard for durable-ack
+     * connections.
+     * <p>
+     * The demote cascade flips the engine read-only FIRST and completes pending
+     * WAL uploads AFTERWARDS, so at the instant the read-only gate rejects a
+     * frame the durable-ack watermark can lag this connection's committed work
+     * by the in-flight upload latency. Closing inside that lag loses the final
+     * durable ack forever -- durable acks are recv-driven, so there is no
+     * delivery opportunity after the CLOSE frame -- while the demote drain
+     * still publishes those commits to the object store. A store-and-forward
+     * client (whose replay watermark advances ONLY on durable acks) would then
+     * replay a batch the promoted replica already converged to via replication,
+     * landing it twice on tables without DEDUP UPSERT KEYS.
+     * <p>
+     * So: while committed work remains un-uploaded, DEFER the close (bounded by
+     * {@link QwpIngressProcessorState#ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS})
+     * and keep flushing ack progress. Re-entry points during the deferral are
+     * further data frames (refused by the deferral gate at the top of
+     * {@code handleBinaryMessage} BEFORE they can touch the engine -- the live
+     * read-only gate alone is not sufficient, because an in-place re-promote
+     * within the grace window would let a frame commit and advance the
+     * cumulative ack past the silently refused frame that armed the deferral)
+     * and the client's durable-ack keepalive PINGs ({@link #handlePing}). Once the registry
+     * covers the connection's pending seqTxns, sendFatalClose flushes the final
+     * durable ack and only then emits NORMAL_CLOSURE: the replay window is
+     * empty and every in-flight batch lands exactly once. If uploads stall past
+     * the grace budget the close proceeds anyway -- availability over the
+     * duplicate guard, matching the pre-deferral behaviour.
+     * <p>
+     * Non-durable-ack connections close immediately: their cumulative OK ack is
+     * flushed synchronously by sendFatalClose and carries no upload lag.
+     */
+    private void roleChangeCloseWithUploadGrace(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            CharSequence reason
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        if (state.isDurableAckEnabled() && !isRoleChangeCloseCompletable(state)) {
+            boolean firstDeferral = !state.isRoleChangeCloseDeferred();
+            state.deferRoleChangeClose(reason);
+            if (firstDeferral) {
+                LOG.info().$("deferring role-change close until committed work is durably uploaded [fd=")
+                        .$(context.getFd()).I$();
+            }
+            // Push whatever cumulative/durable progress exists right now; the
+            // final durable ack goes out with the close itself once coverage
+            // is confirmed.
+            flushPendingAck(context, state);
+            return;
+        }
+        if (state.isRoleChangeCloseGraceExpired()
+                && !state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())) {
+            // Grace expired with genuinely un-acked durable work: the one
+            // close the operator must see. A slow-but-clean close -- uploads
+            // catching up after the deadline but before this re-entry --
+            // leaves an empty replay window and must not raise this alarm.
+            LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
+                    .$(context.getFd()).I$();
+        }
+        sendFatalClose(
+                context,
+                state,
+                WebSocketCloseCode.NORMAL_CLOSURE,
+                state.isRoleChangeCloseDeferred() ? state.getRoleChangeCloseReason() : reason
+        );
     }
 
     private void handleWebSocketFrame(HttpConnectionContext context, QwpIngressProcessorState state, int opcode, boolean fin, long payload, int length)
