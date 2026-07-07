@@ -481,7 +481,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 sendFatalClose(context, state,
                         WebSocketCloseCode.MESSAGE_TOO_BIG,
                         "frame payload exceeds receive buffer capacity");
-                return; // sendFatalClose throws unless it entered the close-echo wait.
+                return; // sendFatalClose throws unless the close-echo wait is in progress.
             }
 
             int remaining = recvBufferSize - recvBufferLen;
@@ -894,19 +894,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void handleBinaryMessage(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        // While the close-echo wait is armed, our CLOSE frame -- preceded by
-        // the final durable ack -- is already on the wire and the connection
-        // exists only to observe the client's echo. Discard data frames
-        // without touching the engine or the sequence counters: the client
-        // replays everything above its acked watermark after the reconnect
-        // anyway. Reading (and dropping) them here is what keeps the socket
-        // drained, so the eventual fd close cannot turn abortive (RST) and
-        // destroy the client's unread ack.
-        if (state.isAwaitingCloseEcho()) {
-            LOG.debug().$("WebSocket data frame discarded, awaiting close echo [fd=").$(context.getFd()).I$();
-            checkCloseEchoWaitExpiry(context, state);
-            return;
-        }
         long seq = state.nextMessageSequence();
         LOG.debug().$("WebSocket binary message [fd=").$(context.getFd())
                 .$(", len=").$(length)
@@ -1176,13 +1163,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void handlePing(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        // No frames may follow our CLOSE (RFC 6455): while awaiting the close
-        // echo, neither acks nor pongs go out. The PING still serves as a
-        // recv-driven poll of the echo grace budget.
-        if (state.isAwaitingCloseEcho()) {
-            checkCloseEchoWaitExpiry(context, state);
-            return;
-        }
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.
@@ -1343,6 +1323,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void handleWebSocketFrame(HttpConnectionContext context, QwpIngressProcessorState state, int opcode, boolean fin, long payload, int length)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
+        // While the close-echo wait is armed, our CLOSE frame -- preceded by
+        // the final durable ack -- is already on the wire and the connection
+        // exists only to observe the client's echo (RFC 6455: no frame may
+        // follow our CLOSE). Discard every inbound frame except the CLOSE
+        // echo itself, whatever the opcode: data frames must not touch the
+        // engine or the sequence counters (the client replays everything
+        // above its acked watermark after the reconnect anyway), PINGs get no
+        // pong, and protocol-violating frames (TEXT, fragmented) must NOT
+        // route to sendFatalClose -- that would put a second CLOSE frame on
+        // the wire. Reading and dropping them here is what keeps the socket
+        // drained, so the eventual fd close cannot turn abortive (RST) and
+        // destroy the client's unread [durable ack][CLOSE] tail. Every
+        // discarded frame doubles as the recv-driven poll of the echo grace
+        // budget.
+        if (state.isAwaitingCloseEcho() && opcode != WebSocketOpcode.CLOSE) {
+            LOG.debug().$("WebSocket frame discarded, awaiting close echo [fd=").$(context.getFd())
+                    .$(", opcode=").$(WebSocketOpcode.name(opcode)).I$();
+            checkCloseEchoWaitExpiry(context, state);
+            return;
+        }
         switch (opcode) {
             case WebSocketOpcode.BINARY -> {
                 if (!fin) {
@@ -1422,7 +1422,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         sendFatalClose(context, state,
                                 WebSocketCloseCode.MESSAGE_TOO_BIG,
                                 "frame payload exceeds maximum size");
-                        return; // sendFatalClose throws unless it entered the close-echo wait.
+                        return; // sendFatalClose throws unless the close-echo wait is in progress.
                     }
                     break;
                 }
@@ -1619,7 +1619,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * code and disconnects. Routes through the send state machine so the CLOSE
      * lands even when an ACK/durable-ACK is mid-flight:
      * <ul>
-     *   <li>State READY, send succeeds → half-close (FIN) + ServerDisconnect.</li>
+     *   <li>Awaiting close echo → a CLOSE is already on the wire and no frame
+     *       may follow it (RFC 6455); polls the echo grace budget and returns
+     *       WITHOUT emitting a second CLOSE, whatever prompted this call.</li>
+     *   <li>State READY, send succeeds → half-close (FIN) + ServerDisconnect,
+     *       or, when the CLOSE completes a deferred role-change close, enters
+     *       the close-echo wait and returns normally.</li>
      *   <li>State READY, send returns PeerIsSlow → bytes queued in framework
      *       buffer, transitions to RESUME_CLOSE, throws PeerIsSlow.</li>
      *   <li>State not READY → stores (code, reason), transitions to
@@ -1633,6 +1638,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             int closeCode,
             CharSequence reason
     ) throws PeerIsSlowToReadException, ServerDisconnectException {
+        if (state.isAwaitingCloseEcho()) {
+            // Our role-change CLOSE is already on the wire and nothing may
+            // follow it. The connection exists only to observe the client's
+            // echo; poll the grace budget and stand down. This gate is the
+            // structural guarantee that NO caller -- the per-opcode reject
+            // paths, the too-large frame paths in the recv machinery -- can
+            // emit a second CLOSE while the echo wait is in progress.
+            checkCloseEchoWaitExpiry(context, state);
+            return;
+        }
         // Give the client one more chance to learn about already-committed
         // sequences before tearing the connection down. flushPendingAck is a
         // no-op when state is not READY (ACK already in flight), so it does
