@@ -1817,7 +1817,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             final String scanSql = "SELECT sym, price FROM t_covering_multi WHERE sym IN ('k0', 'k1')";
             final String aggSql = "SELECT count() c, min(price) mn, max(price) mx FROM t_covering_multi WHERE sym IN ('k0', 'k1')";
-            assertQuery(scanSql).assertsPlanContaining("CoveringIndex on: sym");
+            assertQuery(scanSql).noLeakCheck().assertsPlanContaining("CoveringIndex on: sym");
             assertQuery(aggSql)
                     .noLeakCheck()
                     .expectSize()
@@ -1907,7 +1907,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             final String scanSql = "SELECT sym, price FROM t_covering_single WHERE sym = 'k1'";
             final String aggSql = "SELECT count() c, min(price) mn, max(price) mx FROM t_covering_single WHERE sym = 'k1'";
-            assertQuery(scanSql).assertsPlanContaining("CoveringIndex on: sym");
+            assertQuery(scanSql).noLeakCheck().assertsPlanContaining("CoveringIndex on: sym");
             assertQuery(aggSql)
                     .noLeakCheck()
                     .expectSize()
@@ -3062,7 +3062,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // serve this projection and the plain index scan takes over.
             final String scanSql = "SELECT sym, qty FROM t_plain_scan WHERE sym = 'k1'";
             final String aggSql = "SELECT count() c, min(qty) mn, max(qty) mx FROM t_plain_scan WHERE sym = 'k1'";
-            assertQuery(scanSql).assertsPlanContaining("Index forward scan on: sym");
+            assertQuery(scanSql).noLeakCheck().assertsPlanContaining("Index forward scan on: sym");
             assertQuery(aggSql)
                     .noLeakCheck()
                     .expectSize()
