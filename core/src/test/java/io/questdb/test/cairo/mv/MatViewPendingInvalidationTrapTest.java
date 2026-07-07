@@ -160,7 +160,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 state.clearPendingInvalidation(); // single-threaded between rounds; off-latch code never clears
                 final AtomicBoolean go = new AtomicBoolean();
                 final AtomicBoolean stop = new AtomicBoolean();
-                final AtomicBoolean demoted = new AtomicBoolean();
+                final AtomicBoolean hasDemoted = new AtomicBoolean();
                 final Runnable gate = () -> {
                     while (!go.get()) {
                         Thread.onSpinWait();
@@ -185,7 +185,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                         if (state.getPendingInvalidationReason() != null) {
                             hasSeenReason = true;
                         } else if (hasSeenReason) {
-                            demoted.set(true);
+                            hasDemoted.set(true);
                             return;
                         }
                         Thread.onSpinWait();
@@ -200,7 +200,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 stop.set(true);
                 reader.join();
 
-                Assert.assertFalse("the sentinel mark demoted a reason-bearing deferral to a null reason", demoted.get());
+                Assert.assertFalse("the sentinel mark demoted a reason-bearing deferral to a null reason", hasDemoted.get());
                 // A reason landed in every round; keep-strongest must leave it as the resting marker.
                 Assert.assertEquals("update operation", state.getPendingInvalidationReason());
             }
@@ -234,10 +234,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // cannot free the parked factory (the refresh holds the latch), so the holder's finalize must
             // skip the dead deferral (no re-enqueued INVALIDATE for a dropped view) and its unlock tail must
             // free the factory via tryCloseIfDropped -- assertMemoryLeak fails if it leaks.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("update operation");
                         try {
                             execute("drop materialized view price_1h");
@@ -253,7 +253,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a refresh", hasFired.get());
             Assert.assertTrue("the drop must reach the state while the refresh holds the latch", state.isDropped());
             Assert.assertTrue("finalize must leave the marker of a dropped view untouched", state.isPendingInvalidation());
             Assert.assertEquals("update operation", state.getPendingInvalidationReason());
@@ -294,10 +294,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // SQL needs, so insertAsSelect's recompile fails and refreshFailState marks the view invalid with
             // the compile error. finalize then sees the view already invalid and must return early: no
             // re-enqueued INVALIDATE may overwrite the fail reason, and the marker must survive untouched.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("update operation");
                         try {
                             execute("alter table base_price drop column price");
@@ -314,7 +314,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a refresh", hasFired.get());
             Assert.assertTrue("the failed refresh must mark the view invalid", state.isInvalid());
             Assert.assertTrue("finalize must not clear the marker on an already-invalid view", state.isPendingInvalidation());
             Assert.assertEquals("update operation", state.getPendingInvalidationReason());
@@ -370,10 +370,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // resetInvalidState cleared the marker, while fullRefresh holds the view lock. fullRefresh has no
             // success-path markAsValid after the pump, so without a finalize in its finally the marker would
             // survive and freeze the view (silently stale, reporting valid). The finally must finalize it.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("truncate operation");
                     }
                 });
@@ -383,7 +383,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a full refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a full refresh", hasFired.get());
 
             // The deferred invalidation must be finalized: the view ends invalid (not valid-with-stale),
             // carrying the deferral's reason.
@@ -427,7 +427,11 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     drainer = new Thread(() -> drainMatViewQueue(job), "losing-full-refresh-drainer");
                     drainer.start();
 
+                    final long deadlineNanos = System.nanoTime() + 30_000_000_000L;
                     while (!state.isPendingInvalidation()) {
+                        if (System.nanoTime() - deadlineNanos > 0) {
+                            Assert.fail("the losing full refresh never armed the reschedule sentinel");
+                        }
                         Thread.onSpinWait();
                     }
                     // The reschedule is a sentinel, not an invalidation: no reason, view still valid.
@@ -484,7 +488,11 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     drainer = new Thread(() -> drainMatViewQueue(job), "losing-full-refresh-drainer");
                     drainer.start();
                     // The sentinel arm proves the losing branch is live and re-arming on every spin.
+                    final long deadlineNanos = System.nanoTime() + 30_000_000_000L;
                     while (!state.isPendingInvalidation()) {
+                        if (System.nanoTime() - deadlineNanos > 0) {
+                            Assert.fail("the losing full refresh never armed the reschedule sentinel");
+                        }
                         Thread.onSpinWait();
                     }
 
@@ -553,10 +561,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // The seam fires inside invalidateView's gate-false lock-hold and marks the view pending, modelling
             // a second INVALIDATE deferring against it. invalidateView's finally must finalize that deferral so
             // the view ends invalid, not frozen-pending-and-valid.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("truncate operation");
                     }
                 });
@@ -568,7 +576,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired inside invalidateView", fired.get());
+            Assert.assertTrue("the seam must have fired inside invalidateView", hasFired.get());
 
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
@@ -649,13 +657,13 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // runs inside refreshIncremental0, once per locked view, and marks whichever view currently holds
             // its lock pending (one-shot per view), modelling an INVALIDATE deferring against each in turn.
             // Each loop iteration's finally must finalize its own deferral independently.
-            final AtomicBoolean fired1h = new AtomicBoolean();
-            final AtomicBoolean fired30m = new AtomicBoolean();
+            final AtomicBoolean hasFired1h = new AtomicBoolean();
+            final AtomicBoolean hasFired30m = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (state1h.isLocked() && fired1h.compareAndSet(false, true)) {
+                    if (state1h.isLocked() && hasFired1h.compareAndSet(false, true)) {
                         state1h.markAsPendingInvalidation("update operation");
-                    } else if (state30m.isLocked() && fired30m.compareAndSet(false, true)) {
+                    } else if (state30m.isLocked() && hasFired30m.compareAndSet(false, true)) {
                         state30m.markAsPendingInvalidation("update operation");
                     }
                 });
@@ -666,8 +674,8 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired for price_1h", fired1h.get());
-            Assert.assertTrue("the seam must have fired for price_30m", fired30m.get());
+            Assert.assertTrue("the seam must have fired for price_1h", hasFired1h.get());
+            Assert.assertTrue("the seam must have fired for price_30m", hasFired30m.get());
 
             // Both dependents finalize independently: each ends invalid, not frozen.
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
@@ -702,10 +710,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // A null-reason marker is the full-refresh reschedule (markAsPendingInvalidation() with no reason,
             // see fullRefresh), NOT a deferred invalidation. finalize must leave it untouched -- it belongs to
             // the queued FULL refresh -- and must not mint the view invalid.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation(); // no reason -> full-refresh reschedule marker
                     }
                 });
@@ -716,7 +724,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a refresh", hasFired.get());
 
             // finalize saw a null reason and returned early: the marker is left for the full refresh and the
             // view stays valid, not spuriously invalidated.
@@ -825,11 +833,11 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // range-only view. The range refresh completes (lastRefreshBaseTxn stays -1) and its finally must
             // finalize the deferral. The re-enqueued INVALIDATE re-delivers force=true and mints, so the view
             // ends cleanly invalid, not frozen-pending-and-valid.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             final AtomicLong baseTxnAtSeam = new AtomicLong(Long.MIN_VALUE);
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         baseTxnAtSeam.set(state.getLastRefreshBaseTxn());
                         state.markAsPendingInvalidation("truncate operation");
                     }
@@ -840,7 +848,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a range refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a range refresh", hasFired.get());
             // The seam fired inside rangeRefresh while the view had never been incrementally refreshed, so
             // finalize ran on the lastRefreshBaseTxn == -1 branch (rangeRefreshSuccess never advances it).
             Assert.assertEquals("seam must fire while lastRefreshBaseTxn is still -1", -1, baseTxnAtSeam.get());
@@ -888,10 +896,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // Simulate a concurrent INVALIDATE deferring mid-range-refresh: the seam fires once while
             // rangeRefresh holds the view lock and marks the view pending (the marker half of a losing
             // invalidateView's defer). The range-refresh completion must finalize the deferred invalidation.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("update operation");
                     }
                 });
@@ -904,7 +912,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a range refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a range refresh", hasFired.get());
 
             // The deferred invalidation must be finalized: the view ends invalid (not valid-with-stale),
             // carrying the deferral's reason.
@@ -951,10 +959,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // refresh holds the view lock, and marks the view pending (the marker half of a losing
             // invalidateView's defer; the paired re-enqueued task is exercised in
             // testRefreshHoldingLockFinalizesDeferredInvalidationWithQueuedTask).
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("update operation");
                     }
                 });
@@ -967,7 +975,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a refresh", hasFired.get());
             // finalizeAndUnlock passes shouldIncrementRefreshSeq=true on data-refresh paths; MatViewTimerJob
             // reads the seq to skip refreshes made redundant by the one that just ran.
             Assert.assertTrue("a data refresh must bump the refresh seq through finalizeAndUnlock",
@@ -1009,10 +1017,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // so the queued task was re-delivered against a still-pending view and the guard swallowed it for
             // good. Post-fix, the refresh's finalize clears the marker (and queues its own INVALIDATE), so the
             // re-delivered task passes the guard and mints; the second task is then swallowed by isInvalid.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("update operation");
                         engine.getMatViewStateStore().enqueueInvalidate(viewToken, "update operation");
                     }
@@ -1024,7 +1032,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a refresh", hasFired.get());
 
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
@@ -1058,10 +1066,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // A base insert routes through the base-keyed refreshDependentViewsIncremental loop. A VIEW-keyed
             // enqueueIncrementalRefresh instead drives the single-view refreshIncremental holder, whose own
             // finally must finalize a deferral too. The seam fires in the shared refreshIncremental0.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("update operation");
                     }
                 });
@@ -1071,7 +1079,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during a single-view incremental refresh", fired.get());
+            Assert.assertTrue("the seam must have fired during a single-view incremental refresh", hasFired.get());
 
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
@@ -1112,7 +1120,11 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             // REFRESH ... STATS takes the same per-view latch, synchronously on the SQL thread. It is a
             // lock-holder like any refresh: its unlock must finalize the deferral, or the view stays frozen.
+            final long refreshSeqBefore = state.getRefreshSeq();
             execute("refresh materialized view price_1h stats");
+            // Not a data refresh: the STATS holder passes shouldIncrementRefreshSeq=false, so the seq that
+            // MatViewTimerJob reads for refresh dedup must not move.
+            Assert.assertEquals(refreshSeqBefore, state.getRefreshSeq());
             drainMatViewQueue(engine);
             drainWalQueue();
 
@@ -1158,10 +1170,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // the seam fires once (updateRefreshIntervals holds the lock) and marks the view pending (the
             // marker half of a losing invalidateView's defer). The interval-update completion must finalize
             // the deferred invalidation.
-            final AtomicBoolean fired = new AtomicBoolean();
+            final AtomicBoolean hasFired = new AtomicBoolean();
             try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
                 job.setOnHoldingLockForTesting(() -> {
-                    if (fired.compareAndSet(false, true)) {
+                    if (hasFired.compareAndSet(false, true)) {
                         state.markAsPendingInvalidation("update operation");
                     }
                 });
@@ -1171,7 +1183,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            Assert.assertTrue("the seam must have fired during an interval-update task", fired.get());
+            Assert.assertTrue("the seam must have fired during an interval-update task", hasFired.get());
 
             // The deferred invalidation must be finalized: the view ends invalid (not valid-with-stale),
             // carrying the deferral's reason.
