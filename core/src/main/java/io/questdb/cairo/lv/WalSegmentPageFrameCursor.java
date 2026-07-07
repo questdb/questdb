@@ -304,7 +304,7 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             // (SQL output position i, base-table writer index walColumnIndex). The
             // mapping is stored for downstream consumers (parquet path uses it; the
             // NATIVE WAL path here resolves via pageAddresses directly).
-            columnMapping.addColumn(i, walColumnIndex);
+            columnMapping.addColumn(i, walColumnIndex, walColumnIndex);
 
             // Matches WalReader.getPrimaryColumnIndex: two slots per column, offset by 2
             // for the implicit (row-id, timestamp) sentinel pair at the start.
