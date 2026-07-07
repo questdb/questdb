@@ -9532,8 +9532,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final ExpressionNode overOrderByNode = ac.getOrderBy().getQuick(0);
                             boolean wouldDismissAfterSwap = orderHash.size() < 2
                                     || (base.followedOrderByAdvice()
-                                            && Chars.equalsIgnoreCase(overOrderByNode.token, orderHash.keys().get(0))
-                                            && orderHash.get(overOrderByNode.token) == swappedDir);
+                                    && Chars.equalsIgnoreCase(overOrderByNode.token, orderHash.keys().get(0))
+                                    && orderHash.get(overOrderByNode.token) == swappedDir);
                             if (wouldDismissAfterSwap) {
                                 CharSequence newToken = null;
                                 if (Chars.equalsIgnoreCase("lag", ast.token)) {
