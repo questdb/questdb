@@ -183,7 +183,7 @@ public class QwpWalAppender implements QuietCloseable {
     private static CairoException coercionNotSupportedException(
             byte qwpType, int columnType, QwpTableBlockCursor tableBlock, int col
     ) {
-        return CairoException.nonCritical()
+        return CairoException.schemaMismatch()
                 .put("type coercion from ")
                 .put(QwpConstants.getTypeName(qwpType))
                 .put(" to ")
@@ -196,7 +196,7 @@ public class QwpWalAppender implements QuietCloseable {
     private static CairoException geoHashPrecisionMismatchException(
             int columnType, int wireBits, QwpTableBlockCursor tableBlock, int col
     ) {
-        return CairoException.nonCritical()
+        return CairoException.schemaMismatch()
                 .put("GeoHash precision mismatch [column=")
                 .put(tableBlock.getColumnDef(col).getName())
                 .put(", columnType=")
@@ -340,7 +340,7 @@ public class QwpWalAppender implements QuietCloseable {
     private static CairoException typeMismatchException(
             byte qwpType, int columnType, QwpTableBlockCursor tableBlock, int col
     ) {
-        return CairoException.nonCritical()
+        return CairoException.schemaMismatch()
                 .put("cannot write ")
                 .put(QwpConstants.getTypeName(qwpType))
                 .put(" to column [column=")
