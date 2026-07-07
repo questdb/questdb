@@ -495,8 +495,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Completes a {@link MatViewState#tryLock()} hold: finalizes any invalidation that deferred while
-     * the caller held the latch (see {@link #finalizeDeferredInvalidation}), then unlocks. Every
+     * Completes a {@link MatViewState#tryLock()} hold: clears the marker of any invalidation that
+     * deferred while the caller held the latch (see {@link #finalizeDeferredInvalidation}), unlocks,
+     * then re-enqueues that INVALIDATE. Every
      * lock-holder must route its unlock through here -- including holders outside this class, such as
      * the {@code REFRESH ... STATS} reset in {@code SqlCompilerImpl} -- or a deferral landing during
      * its hold freezes the view valid-but-stale. The one deliberate exception is {@code invalidateView}'s
@@ -514,24 +515,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             MatViewState viewState,
             boolean shouldIncrementRefreshSeq
     ) {
+        assert viewState.isLocked() : "finalizeAndUnlock requires the caller to hold the view latch";
         // Only an OutOfMemoryError can throw out of finalizeDeferredInvalidation, but if one does, unlock()
         // must still run: a skipped unlock wedges the latch forever and leaks the parked cursorFactory at
-        // teardown (close/tryCloseIf* all need the latch). Finalize stays under the latch, in the inner try,
-        // so the finalize->unlock race window stays narrow -- narrow, not empty: finalize's own enqueue
-        // feeds the queue sibling workers are polling, so a sibling can dequeue the re-enqueued task and
-        // defer against this still-held latch before the unlock below (the self-fed variant of the
-        // lost-update window; enqueueing after the unlock would remove that variant). An OOM thrown between
-        // finalize's clear and its enqueue still drops the deferral outright (marker cleared, no task queued:
-        // the view reads healthy while stale); enqueue-before-clear would be no better -- a second worker
-        // could dequeue and swallow the task against the still-set marker -- and under OOM the process is
-        // lost anyway.
+        // teardown (close/tryCloseIf* all need the latch). The marker clear runs under the latch (inner
+        // try); the INVALIDATE enqueue runs after the unlock, so a sibling worker that dequeues the
+        // re-enqueued task can win the freed latch instead of re-deferring against this still-held one
+        // (enqueueing under the latch would re-open that self-fed lost-update variant). An OOM thrown
+        // between the clear and the enqueue still drops the deferral outright (marker cleared, no task
+        // queued: the view reads healthy while stale); enqueue-before-clear would be no better -- a second
+        // worker could dequeue and swallow the task against the still-set marker -- and under OOM the
+        // process is lost anyway.
+        String deferredInvalidationReason = null;
         try {
-            finalizeDeferredInvalidation(engine, stateStore, viewToken, viewState);
+            deferredInvalidationReason = finalizeDeferredInvalidation(engine, viewState);
         } finally {
             if (shouldIncrementRefreshSeq) {
                 viewState.incrementRefreshSeq();
             }
             unlockAndTryClose(viewState);
+        }
+        if (deferredInvalidationReason != null) {
+            stateStore.enqueueInvalidate(viewToken, deferredInvalidationReason);
         }
     }
 
@@ -539,14 +544,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         finalizeAndUnlock(engine, stateStore, viewToken, viewState, shouldIncrementRefreshSeq);
     }
 
-    private static void finalizeDeferredInvalidation(CairoEngine engine, MatViewStateStore stateStore, TableToken viewToken, MatViewState viewState) {
+    private static String finalizeDeferredInvalidation(CairoEngine engine, MatViewState viewState) {
         // A lock-holder (a refresh, invalidateView's own hold, or a REFRESH ... STATS reset) just completed
         // while holding this view's lock. If a concurrent INVALIDATE deferred in
         // that window it called markAsPendingInvalidation(reason) and re-enqueued a task that the invalidateView
         // top guard then swallowed (the guard skips a view that is already pending), so nothing else would
-        // finalize it and the view would stay valid on disk with stale rows. Clear the pending marker and
-        // re-enqueue a fresh INVALIDATE: the re-enqueue runs here under the latch, but with the marker
-        // cleared the guard no longer swallows the re-delivered task, so once this holder unlocks a later
+        // finalize it and the view would stay valid on disk with stale rows. Clear the pending marker under
+        // the latch and return the reason; finalizeAndUnlock re-enqueues a fresh INVALIDATE after the
+        // unlock. With the marker cleared the guard no longer swallows the re-delivered task, so a later
         // worker mints invalid durably through the normal path. A null reason marks a full-refresh
         // reschedule (see fullRefresh), not an invalidation, so leave it for the queued full refresh. Skip
         // while read-only: a demote rebuilds derived state from disk on promote, and re-enqueueing here
@@ -565,10 +570,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // marker that reports a null reason): either way there is no reason-bearing deferral to finalize.
         final String invalidationReason = viewState.getPendingInvalidationReason();
         if (invalidationReason == null || viewState.isInvalid() || viewState.isDropped() || engine.isReadOnlyMode()) {
-            return;
+            return null;
         }
         viewState.clearPendingInvalidation();
-        stateStore.enqueueInvalidate(viewToken, invalidationReason);
+        return invalidationReason;
     }
 
     // Shared unlock tail for every latch hold: the tryCloseIf* calls free the parked cursor factory
