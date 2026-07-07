@@ -130,7 +130,8 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("taba", 100L, 1_000_000L));
                 byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("taba", 200L, 2_000_000L));
                 byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
-                byte[] wire = concat(frame0, frame1, ping);
+                byte[] closeEcho = closeEchoFrame();
+                byte[] wire = concat(frame0, frame1, ping, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
                 long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -188,15 +189,23 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
 
                     // Phase E: the client drains its receive buffer; the
                     // dispatcher fires resumeSend. The parked ACK flushes,
-                    // then the deferred CLOSE goes out and the framework
-                    // tears the connection down.
-                    try {
-                        processor.resumeSend(context);
-                        Assert.fail("Expected ServerDisconnectException after deferred CLOSE flush");
-                    } catch (ServerDisconnectException expected) {
-                    }
+                    // then the deferred CLOSE goes out -- and the connection
+                    // enters the close-echo wait (RFC 6455 close handshake)
+                    // instead of tearing down: the final durable ack it just
+                    // delivered is only provably consumed once the client's
+                    // CLOSE echo arrives.
+                    processor.resumeSend(context);
+                    Assert.assertTrue(
+                            "connection must await the client's close echo after the deferred CLOSE",
+                            state.isAwaitingCloseEcho()
+                    );
+
+                    // Phase F: the client's CLOSE echo completes the handshake;
+                    // only then does the framework tear the connection down.
+                    completeCloseEcho(processor, context, nf, closeEcho.length);
 
                     assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -296,7 +305,8 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] ping1 = createMaskedFrame(WebSocketOpcode.PING, new byte[]{1});
                 byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabc", 200L, 2_000_000L));
                 byte[] ping2 = createMaskedFrame(WebSocketOpcode.PING, new byte[]{2});
-                byte[] wire = concat(frame0, ping1, frame1, ping2);
+                byte[] closeEcho = closeEchoFrame();
+                byte[] wire = concat(frame0, ping1, frame1, ping2, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
                 long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -344,14 +354,18 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     }
 
                     // Phase F: the client drains its receive buffer; the
-                    // dispatcher fires resumeSend to finish the close.
-                    try {
-                        processor.resumeSend(context);
-                        Assert.fail("Expected ServerDisconnectException after deferred CLOSE flush");
-                    } catch (ServerDisconnectException expected) {
-                    }
+                    // dispatcher fires resumeSend to finish the close. The
+                    // CLOSE goes out and the connection enters the close-echo
+                    // wait; the client's echo completes the handshake.
+                    processor.resumeSend(context);
+                    Assert.assertTrue(
+                            "connection must await the client's close echo after the deferred CLOSE",
+                            state.isAwaitingCloseEcho()
+                    );
+                    completeCloseEcho(processor, context, nf, closeEcho.length);
 
                     assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
                     Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                     Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -494,7 +508,8 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabe", 100L, 1_000_000L));
                 byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabe", 200L, 2_000_000L));
                 byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabe", 300L, 3_000_000L));
-                byte[] wire = concat(frame0, frame1, frame2);
+                byte[] closeEcho = closeEchoFrame();
+                byte[] wire = concat(frame0, frame1, frame2, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
                 long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -534,12 +549,15 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // proceeds with an empty replay window.
                     capture.start();
                     try {
-                        nf.release(frame2.length);
-                        try {
-                            processor.resumeRecv(context);
-                            Assert.fail("Expected ServerDisconnectException (grace-expired clean close)");
-                        } catch (ServerDisconnectException expected) {
-                        }
+                        // The clean close enters the close-echo wait (coverage
+                        // is complete, so the final durable ack is worth
+                        // confirming); the client's echo completes it.
+                        drive(processor, context, nf, frame2.length);
+                        Assert.assertTrue(
+                                "connection must await the client's close echo after the clean close",
+                                state.isAwaitingCloseEcho()
+                        );
+                        completeCloseEcho(processor, context, nf, closeEcho.length);
                         drainLogQueue(capture, "sentinel: grace-expired clean close done");
                     } finally {
                         capture.stop();
@@ -549,6 +567,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // close is clean -- final durable ack precedes the
                     // reconnect-eligible CLOSE, replay window empty.
                     assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
 
                     // RED until fixed: the grace-expired branch claims
                     // un-acked durable work without checking upload coverage.
@@ -604,7 +623,8 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabf", 100L, 1_000_000L));
                 byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabf", 200L, 2_000_000L));
                 byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabf", 300L, 3_000_000L));
-                byte[] wire = concat(frame0, frame1, frame2);
+                byte[] closeEcho = closeEchoFrame();
+                byte[] wire = concat(frame0, frame1, frame2, closeEcho);
 
                 PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
                 long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -645,12 +665,14 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // observe coverage, completing the close on the spot.
                     capture.start();
                     try {
-                        nf.release(frame2.length);
-                        try {
-                            processor.resumeRecv(context);
-                            Assert.fail("Expected ServerDisconnectException (coverage-complete close via data-frame re-entry)");
-                        } catch (ServerDisconnectException expected) {
-                        }
+                        // The coverage-complete close enters the close-echo
+                        // wait; the client's echo completes the handshake.
+                        drive(processor, context, nf, frame2.length);
+                        Assert.assertTrue(
+                                "connection must await the client's close echo after the coverage-complete close",
+                                state.isAwaitingCloseEcho()
+                        );
+                        completeCloseEcho(processor, context, nf, closeEcho.length);
                         drainLogQueue(capture, "sentinel: within-grace data-frame close done");
                     } finally {
                         capture.stop();
@@ -659,6 +681,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     // The exactly-once handshake holds on this exit: the
                     // final durable ack precedes the reconnect-eligible CLOSE.
                     assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
 
                     // A within-grace close is clean by construction: the
                     // grace-expired operator alarm must not fire.
@@ -685,6 +708,222 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    /**
+     * Pins the close-echo wait window itself: after the coverage-complete
+     * CLOSE goes out, the connection stays up but inert -- in-flight client
+     * data frames are read and DISCARDED (no engine work, or an in-place
+     * re-promote inside the window would commit them and advance the
+     * cumulative ack past the refused frame that armed the deferral), and
+     * nothing is sent after our CLOSE (no pong for a stray PING, no close
+     * response for the echo -- RFC 6455 allows no frames after CLOSE).
+     * Reading-and-dropping is the point: an unread inbound frame at fd-close
+     * time makes the close abortive (RST) and destroys the client's unread
+     * [durable ack][CLOSE] tail -- the exact loss the echo wait exists to
+     * prevent (SqlFailoverQwpDeferredCloseExactlyOnceTest failure mode:
+     * full-corpus replay, count &gt; appended on a dedup-free table).
+     */
+    @Test
+    public void testCloseEchoWaitDiscardsInboundAndCompletesOnEcho() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabg (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabg", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabg", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabg", 300L, 3_000_000L));
+                byte[] frame3 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabg", 400L, 4_000_000L));
+                byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[]{7});
+                byte[] closeEcho = closeEchoFrame();
+                byte[] wire = concat(frame0, frame1, frame2, frame3, ping, closeEcho);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the demote drain completes.
+                    durableWatermark.set(Long.MAX_VALUE);
+
+                    // Phase D: the data-frame re-entry completes the CLOSE and
+                    // enters the close-echo wait.
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "connection must await the client's close echo after the coverage-complete close",
+                            state.isAwaitingCloseEcho()
+                    );
+                    int framesAtClose = rawSocket.sentFrames.size();
+
+                    // Phase E: the client has not processed our CLOSE yet and
+                    // keeps pumping -- a data frame and a keepalive PING land.
+                    // Both must be read and discarded: the wait survives, no
+                    // engine work happens, and NOTHING goes out after CLOSE.
+                    drive(processor, context, nf, frame3.length + ping.length);
+                    Assert.assertTrue(
+                            "echo wait must survive in-flight client frames",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertEquals(
+                            "no frame may be sent after our CLOSE (RFC 6455)",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+
+                    // Phase F: the echo completes the handshake.
+                    completeCloseEcho(processor, context, nf, closeEcho.length);
+
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+
+                    // Only seq=0's row may exist: the refused frame that armed
+                    // the deferral, the re-entry frame that completed the
+                    // close, and the echo-window frame were all refused or
+                    // discarded. (The gate is engine-role-agnostic by then, so
+                    // flip the read-only flag back for the WAL apply.)
+                    readOnly.set(false);
+                    drainWalQueue(demotableEngine);
+                    try (TableReader reader = demotableEngine.getReader("tabg")) {
+                        Assert.assertEquals(
+                                "frames refused during the deferral or discarded during the echo wait must not commit",
+                                1, reader.size()
+                        );
+                    }
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * The echo wait's availability escape: a peer that never echoes (wedged
+     * client, half-open connection) must not hold the demoted node's
+     * connection forever. The bounded budget
+     * ({@link QwpIngressProcessorState#CLOSE_ECHO_WAIT_GRACE_MICROS}) is
+     * polled on inbound re-entry -- here the keepalive PING -- and on expiry
+     * the close proceeds without delivery confirmation, logging the
+     * duplicate-risk diagnostic (the same availability-over-duplicate-guard
+     * trade the upload grace makes).
+     */
+    @Test
+    public void testCloseEchoWaitExpiryTearsDownWithoutEcho() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabh (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabh", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabh", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabh", 300L, 3_000_000L));
+                byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+                byte[] wire = concat(frame0, frame1, frame2, ping);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the demote drain completes; the data-frame
+                    // re-entry completes the CLOSE and enters the echo wait.
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "connection must await the client's close echo after the coverage-complete close",
+                            state.isAwaitingCloseEcho()
+                    );
+
+                    // Phase D: the echo never arrives; the budget expires. The
+                    // next inbound event -- the keepalive PING -- polls the
+                    // deadline and the close proceeds without confirmation.
+                    nowMicros[0] += QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS;
+                    Assert.assertTrue(
+                            "test setup: echo grace budget must be exhausted",
+                            state.isCloseEchoWaitExpired()
+                    );
+                    capture.start();
+                    try {
+                        nf.release(ping.length);
+                        try {
+                            processor.resumeRecv(context);
+                            Assert.fail("Expected ServerDisconnectException (echo wait expired)");
+                        } catch (ServerDisconnectException expected) {
+                        }
+                        drainLogQueue(capture, "sentinel: echo-wait expiry close done");
+                    } finally {
+                        capture.stop();
+                    }
+
+                    // The operator-visible diagnostic: closing without
+                    // delivery confirmation exposes the client to replay
+                    // duplicates.
+                    capture.assertLogged("close echo wait expired");
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * The close-echo handshake's outbound half: after our CLOSE frame nothing
+     * else may go out -- not a pong for a stray PING, not a close response
+     * for the client's echo, not a late ack (RFC 6455: no frames after
+     * CLOSE). The CLOSE must be the last recorded outbound frame.
+     */
+    private static void assertCloseIsFinalFrame(ObjList<byte[]> frames) {
+        int closeIdx = indexOfCloseFrame(frames);
+        Assert.assertTrue("CLOSE frame must be sent", closeIdx >= 0);
+        Assert.assertEquals(
+                "no frame may follow the CLOSE frame (RFC 6455); the close-echo wait must not answer"
+                        + " pings, respond to the client's echo, or flush further acks",
+                frames.size() - 1, closeIdx
+        );
     }
 
     /**
@@ -716,6 +955,38 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     private static int closeCode(byte[] closeFrame) {
         // small unmasked server frame: 2-byte header, close code big-endian
         return ((closeFrame[2] & 0xFF) << 8) | (closeFrame[3] & 0xFF);
+    }
+
+    /**
+     * A client CLOSE echo: NORMAL_CLOSURE (1000), big-endian payload, masked
+     * like every client frame. What {@code WebSocketClient} sends on receipt
+     * of the server's CLOSE (RFC 6455 s5.5.1), before dispatching the close
+     * to its handler.
+     */
+    private static byte[] closeEchoFrame() {
+        return createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
+    }
+
+    /**
+     * Feeds the client's CLOSE echo and asserts the handshake completes: the
+     * dispatch path surfaces {@code ServerDisconnectException}, which is what
+     * makes the framework tear the connection down -- now provably after the
+     * client consumed the final durable ack that preceded our CLOSE.
+     */
+    private static void completeCloseEcho(
+            QwpIngressUpgradeProcessor processor,
+            HttpConnectionContext context,
+            PhasedNetworkFacade nf,
+            int echoLength
+    ) {
+        nf.release(echoLength);
+        try {
+            processor.resumeRecv(context);
+            Assert.fail("Expected ServerDisconnectException on the client's close echo");
+        } catch (ServerDisconnectException expected) {
+        } catch (Exception e) {
+            throw new AssertionError("unexpected exception on close echo", e);
+        }
     }
 
     private static byte[] concat(byte[]... arrays) {

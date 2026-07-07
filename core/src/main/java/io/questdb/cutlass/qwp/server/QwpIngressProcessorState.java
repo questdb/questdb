@@ -56,6 +56,24 @@ import io.questdb.std.str.Utf8s;
  */
 public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_READY = 0;
+    // Bounded grace the server waits for the client's CLOSE echo after sending
+    // a role-change CLOSE whose final durable ack must not be lost. Closing the
+    // fd immediately after the CLOSE frame races the client's receive path: an
+    // abortive close (RST, triggered by in-flight client data frames the server
+    // has not read) discards the client's unread receive buffer -- destroying
+    // the very [durable ack][CLOSE] tail the deferral existed to deliver, and
+    // forcing a full-corpus replay (duplicates on tables without dedup keys).
+    // RFC 6455 s5.5.1 close handshake instead: hold the fd open, keep reading
+    // (and discarding) inbound frames so no RST fires, until the client's CLOSE
+    // echo proves it consumed the stream up to our CLOSE -- including the final
+    // durable ack immediately before it.
+    //
+    // Like ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS below, this is NOT a wall-clock
+    // teardown bound: expiry is polled only on inbound recv re-entry. A
+    // conformant client echoes the CLOSE immediately (WebSocketClient does so
+    // before even dispatching the close to its handler), so the wait is one
+    // round trip; the budget is a stall guard against a wedged-but-chatty peer.
+    public static final long CLOSE_ECHO_WAIT_GRACE_MICROS = 5_000_000;
     // Bounded grace a role-change close may be deferred while
     // committed-but-not-yet-durably-uploaded work drains. The demote cascade
     // flips the engine read-only FIRST and completes pending WAL uploads AFTERWARDS,
@@ -139,6 +157,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // reconnect-eligible code instead of sending a SECURITY_ERROR that a
     // store-and-forward client would treat as a terminal HALT.
     private boolean roleChangeClosePending;
+    // Deadline (MicrosecondClock ticks) for the close-echo wait after a
+    // role-change CLOSE frame carrying the deferral's final durable ack has been
+    // fully sent, or -1 when no echo wait is in progress. While set, the
+    // connection exists only to observe the client's CLOSE echo (or FIN):
+    // inbound data frames are discarded without touching the engine, PINGs are
+    // not answered (no frames may follow our CLOSE), and no further acks are
+    // flushed. Survives per-message clear()/clearMessageState(); reset only on
+    // onDisconnected().
+    private long closeEchoDeadline = -1;
     // Deadline (MicrosecondClock ticks) for a deferred role-change close, or -1
     // when no deferral is in progress. Unlike roleChangeClosePending this survives
     // per-message clear()/clearMessageState(): the deferral spans multiple inbound
@@ -438,8 +465,39 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return currentStatus == Status.OK;
     }
 
+    /**
+     * True while the server has sent its role-change CLOSE frame and is holding
+     * the connection open awaiting the client's CLOSE echo (RFC 6455 close
+     * handshake) to confirm delivery of the final durable ack.
+     */
+    public boolean isAwaitingCloseEcho() {
+        return closeEchoDeadline != -1;
+    }
+
+    /**
+     * True when the close-echo wait has exhausted its grace budget and the
+     * connection must be torn down without echo confirmation (availability over
+     * the duplicate guard). Always false when no echo wait is in progress.
+     */
+    public boolean isCloseEchoWaitExpired() {
+        return closeEchoDeadline != -1
+                && configuration.getMicrosecondClock().getTicks() >= closeEchoDeadline;
+    }
+
     public boolean isRoleChangeClosePending() {
         return roleChangeClosePending;
+    }
+
+    /**
+     * Starts the bounded wait for the client's CLOSE echo after the role-change
+     * CLOSE frame (preceded by the final durable ack) has been fully sent.
+     * No-op when already waiting, so a follow-on poll cannot extend the deadline.
+     */
+    public void beginCloseEchoWait() {
+        if (closeEchoDeadline == -1) {
+            closeEchoDeadline = configuration.getMicrosecondClock().getTicks()
+                    + CLOSE_ECHO_WAIT_GRACE_MICROS;
+        }
     }
 
     /**
@@ -642,6 +700,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         sendState = SEND_STATE_READY;
         clearDeferredError();
         clearDeferredClose();
+        closeEchoDeadline = -1;
         roleChangeCloseDeferredDeadline = -1;
         roleChangeCloseReason.clear();
         firstUnresolvedSequence = -1;
