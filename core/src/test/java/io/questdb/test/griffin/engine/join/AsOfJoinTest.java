@@ -6346,7 +6346,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             // evaluated against s_f_ts: for bucket 2 (s_ts=18:00, s_f_ts=18:24) that's the
             // balances row AT-OR-BEFORE 18:24 (ts=18:24, balance=300) -- NOT the row at-or-before
             // the raw bucket boundary 18:00 (ts=17:56, balance=200).
-            String query = """
+            assertQuery("""
                     SELECT balances.ts, balances.balance, s_ts, s_f_ts
                     FROM (
                       SELECT s_ts, first(s_ts) AS s_f_ts
@@ -6362,24 +6362,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
                       SAMPLE BY 30m FILL(NONE) ALIGN TO CALENDAR
                     ) timestamp(s_f_ts) ASOF JOIN balances
                     ORDER BY balances.ts ASC
-                    """;
-
-            printSql("EXPLAIN " + query, true);
-            TestUtils.assertContains(sink, "AsOf Join");
-            TestUtils.assertContains(sink, "SelectedRecord");
-
-            printSql(query, true);
-            TestUtils.assertEquals(
-                    "ts\tbalance\ts_ts\ts_f_ts\n" +
-                            "2026-07-07T17:30:00.000000Z\t100.0\t2026-07-07T17:30:00.000000Z\t2026-07-07T17:30:00.000000Z\n" +
-                            "2026-07-07T18:24:00.000000Z\t300.0\t2026-07-07T18:00:00.000000Z\t2026-07-07T18:24:00.000000Z\n",
-                    sink
-            );
+                    """)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join", "SelectedRecord")
+                    .returns("""
+                            ts\tbalance\ts_ts\ts_f_ts
+                            2026-07-07T17:30:00.000000Z\t100.0\t2026-07-07T17:30:00.000000Z\t2026-07-07T17:30:00.000000Z
+                            2026-07-07T18:24:00.000000Z\t300.0\t2026-07-07T18:00:00.000000Z\t2026-07-07T18:24:00.000000Z
+                            """);
 
             // same master subquery, LT JOIN instead of ASOF JOIN: must match strictly before
             // s_f_ts (18:24) -- i.e. the balances row at 17:56 (balance=200) -- confirming the
             // fix isn't ASOF-JOIN-specific, since LT JOIN reads the master timestamp the same way.
-            String ltQuery = """
+            assertQuery("""
                     SELECT balances.ts, balances.balance, s_ts, s_f_ts
                     FROM (
                       SELECT s_ts, first(s_ts) AS s_f_ts
@@ -6395,14 +6392,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
                       SAMPLE BY 30m FILL(NONE) ALIGN TO CALENDAR
                     ) timestamp(s_f_ts) LT JOIN balances
                     ORDER BY s_f_ts ASC
-                    """;
-            printSql(ltQuery, true);
-            TestUtils.assertEquals(
-                    "ts\tbalance\ts_ts\ts_f_ts\n" +
-                            "\tnull\t2026-07-07T17:30:00.000000Z\t2026-07-07T17:30:00.000000Z\n" +
-                            "2026-07-07T17:56:00.000000Z\t200.0\t2026-07-07T18:00:00.000000Z\t2026-07-07T18:24:00.000000Z\n",
-                    sink
-            );
+                    """)
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("SelectedRecord")
+                    .returns("""
+                            ts\tbalance\ts_ts\ts_f_ts
+                            \tnull\t2026-07-07T17:30:00.000000Z\t2026-07-07T17:30:00.000000Z
+                            2026-07-07T17:56:00.000000Z\t200.0\t2026-07-07T18:00:00.000000Z\t2026-07-07T18:24:00.000000Z
+                            """);
         });
     }
 
@@ -6415,17 +6414,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("insert into tab values ('2024-01-01T00:00:00.000000Z', 1)");
             execute("insert into tab values ('2024-01-01T00:01:00.000000Z', 2)");
 
-            String query = "SELECT * FROM (SELECT ts, v FROM tab) timestamp(ts)";
-            printSql("EXPLAIN " + query, true);
-            TestUtils.assertNotContains(sink, "SelectedRecord");
-
-            printSql(query, true);
-            TestUtils.assertEquals(
-                    "ts\tv\n" +
-                            "2024-01-01T00:00:00.000000Z\t1\n" +
-                            "2024-01-01T00:01:00.000000Z\t2\n",
-                    sink
-            );
+            assertQuery("SELECT * FROM (SELECT ts, v FROM tab) timestamp(ts)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanNotContaining("SelectedRecord")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T00:01:00.000000Z\t2
+                            """);
         });
     }
 }
