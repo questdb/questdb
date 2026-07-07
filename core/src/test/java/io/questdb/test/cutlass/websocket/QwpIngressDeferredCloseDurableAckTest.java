@@ -1114,6 +1114,137 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * The oversized-frame paths during the echo wait: a frame whose declared
+     * payload exceeds the recv buffer can never be parsed, so the CLOSE echo
+     * behind it is unreachable and the discard gate in the frame dispatch
+     * never runs -- the too-big branch in processWebSocketFrames (header
+     * parse) and the full-buffer branch in resumeRecv are the only code that
+     * ever sees this connection again, and both route to sendFatalClose.
+     * Ungated, each inbound event emitted another MESSAGE_TOO_BIG CLOSE
+     * after our role-change CLOSE and never polled the expiry: only peer
+     * death or the idle reaper ended the cycle. Pins: both branches send
+     * nothing during the wait, the wait survives each re-entry, and the
+     * cycle stays bounded by CLOSE_ECHO_WAIT_GRACE_MICROS -- the first
+     * re-entry past the deadline tears down with the duplicate-risk
+     * diagnostic.
+     */
+    @Test
+    public void testCloseEchoWaitOversizedFrameBoundedByEchoGrace() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabk (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabk", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabk", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabk", 300L, 3_000_000L));
+                // A frame whose declared payload (2000 bytes) exceeds the
+                // recv buffer (1024): header alone trips the too-big branch
+                // at parse time; the body then fills the buffer so the
+                // full-buffer branch in resumeRecv takes over.
+                byte[] oversizedHeader = {
+                        (byte) 0x82,          // FIN | BINARY
+                        (byte) (0x80 | 126),  // MASK | 16-bit extended length
+                        0x07, (byte) 0xD0,    // payload length 2000, big-endian
+                        0x12, 0x34, 0x56, 0x78 // mask key
+                };
+                byte[] oversizedBody = new byte[RECV_BUFFER_SIZE - oversizedHeader.length];
+                byte[] wire = concat(frame0, frame1, frame2, oversizedHeader, oversizedBody);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the demote drain completes; the data-frame
+                    // re-entry completes the CLOSE and enters the echo wait.
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "connection must await the client's close echo after the coverage-complete close",
+                            state.isAwaitingCloseEcho()
+                    );
+                    int framesAtClose = rawSocket.sentFrames.size();
+
+                    // Phase D: the oversized header lands inside the echo
+                    // window -- the too-big branch fires at header parse.
+                    // No CLOSE may go out; the wait must survive.
+                    drive(processor, context, nf, oversizedHeader.length);
+                    Assert.assertTrue(
+                            "echo wait must survive the too-big frame header",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertEquals(
+                            "the too-big branch must not emit a CLOSE during the echo wait",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+
+                    // Phase E: the body fills the recv buffer; the frame can
+                    // never complete. Re-parse hits the too-big branch again;
+                    // a further readable event hits resumeRecv's full-buffer
+                    // branch. Still nothing may go out.
+                    drive(processor, context, nf, oversizedBody.length);
+                    processor.resumeRecv(context); // full-buffer branch, within grace
+                    Assert.assertTrue(
+                            "echo wait must survive the full-buffer re-entries",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertEquals(
+                            "the full-buffer branch must not emit a CLOSE during the echo wait",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+
+                    // Phase F: the cycle must be bounded by the echo grace,
+                    // not by peer death or the idle reaper: the first
+                    // re-entry past the deadline tears the connection down
+                    // with the duplicate-risk diagnostic.
+                    nowMicros[0] += QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS;
+                    capture.start();
+                    try {
+                        try {
+                            processor.resumeRecv(context);
+                            Assert.fail("Expected ServerDisconnectException (echo wait expired)");
+                        } catch (ServerDisconnectException expected) {
+                        }
+                        drainLogQueue(capture, "sentinel: echo-wait expiry via oversized frame done");
+                    } finally {
+                        capture.stop();
+                    }
+
+                    capture.assertLogged("close echo wait expired");
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * The close-echo handshake's outbound half: after our CLOSE frame nothing
      * else may go out -- not a pong for a stray PING, not a close response
      * for the client's echo, not a late ack (RFC 6455: no frames after
