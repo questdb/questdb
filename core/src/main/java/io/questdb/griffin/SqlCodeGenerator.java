@@ -7382,7 +7382,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return generateTableQuery(model, executionContext);
             }
         }
-        return generateSubQuery(model, executionContext);
+        return applyExplicitTimestamp(model, generateSubQuery(model, executionContext));
+    }
+
+    // A bare "(subquery) timestamp(col)" FROM-item adds no projection of its own, so it's
+    // generated via generateSubQuery() above, which returns the nested factory unchanged.
+    // That silently drops an explicit timestamp() redesignation whenever it names a column
+    // other than the nested factory's own designated timestamp -- e.g. redesignating a
+    // SAMPLE BY result to a first()/last() aggregate column instead of the bucket-boundary
+    // column. Every downstream consumer (joins, LATEST ON, ordering) would then keep reading
+    // the nested factory's original timestamp column instead of the one the user asked for.
+    // Relabel metadata here, the same way generateSelectChoose() already does for models
+    // that DO add a projection of their own.
+    private RecordCursorFactory applyExplicitTimestamp(
+            IQueryModel model,
+            RecordCursorFactory factory
+    ) throws SqlException {
+        if (!model.hasExplicitTimestamp()) {
+            return factory;
+        }
+        final RecordMetadata metadata = factory.getMetadata();
+        final int explicitTimestampIndex;
+        try {
+            explicitTimestampIndex = getTimestampIndex(model, metadata);
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
+        if (explicitTimestampIndex == metadata.getTimestampIndex()) {
+            return factory;
+        }
+        final GenericRecordMetadata retimestampedMetadata = GenericRecordMetadata.copyOfNew(metadata);
+        retimestampedMetadata.setTimestampIndex(explicitTimestampIndex);
+        final int columnCount = metadata.getColumnCount();
+        final IntList columnCrossIndex = new IntList(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            columnCrossIndex.add(i);
+        }
+        return new SelectedRecordCursorFactory(retimestampedMetadata, columnCrossIndex, factory);
     }
 
     private RecordCursorFactory generateOrderBy(
