@@ -117,16 +117,20 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeepLatestRejectedOnAggregatingView() throws Exception {
+    public void testKeepLatestAllowedOnAggregatingView() throws Exception {
+        // EXPIRE ROWS on an aggregating (SAMPLE BY) view is allowed but advisory: physical reclamation is
+        // best-effort (a later refresh can regenerate reclaimed rows), reads stay correct regardless.
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
-            assertCreateFails(
+            execute(
                     "create materialized view mvagg as (select k, last(v) v, ts from base sample by 1d) " +
-                            "partition by day expire rows keep latest partition by k",
-                    // Universal passthrough check (M2): the message is no longer mode-specific.
-                    "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views"
+                            "partition by day expire rows keep latest partition by k"
             );
+            drainWalAndMatViewQueues();
+            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("mvagg"))) {
+                Assert.assertNotNull(m.getExpiryPredicate());
+            }
         });
     }
 

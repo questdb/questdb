@@ -49,8 +49,9 @@ import static org.junit.Assert.assertTrue;
  * with plain tables; the filter is materialized-view-only ({@code isMatView()}), excluding plain tables
  * and plain views alike.
  * These tests confirm the grammar/threading and that querying a policied mat view hides expired rows.
- * EXPIRE ROWS is passthrough-only: an aggregating (SAMPLE BY) view is rejected at CREATE
- * ({@link #testCreateAggregatingMatViewWithExpireRejected()}).
+ * EXPIRE ROWS is allowed on an aggregating (SAMPLE BY) view too, advisory only: reads stay correct via the
+ * read filter, but physical reclamation is best-effort since a later refresh can regenerate reclaimed rows
+ * ({@link #testCreateAggregatingMatViewWithExpireAllowed()}).
  */
 public class MatViewExpireRowsTest extends AbstractCairoTest {
 
@@ -426,39 +427,37 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAggregatingMatViewWithExpireRejected() throws Exception {
-        // EXPIRE ROWS is passthrough-only, for EVERY mode (scalar WHEN included): the cleanup job physically
-        // reclaims rows, which only makes sense when the view mirrors base rows 1:1. An aggregating (SAMPLE BY)
-        // view's rows are derived, so the policy is rejected at CREATE and the view must not be left behind.
+    public void testCreateAggregatingMatViewWithExpireAllowed() throws Exception {
+        // EXPIRE ROWS on an aggregating (SAMPLE BY) view is allowed but advisory: the cleanup job's physical
+        // reclamation is best-effort since a later refresh can regenerate reclaimed rows from surviving base
+        // rows, but reads stay correct regardless (the read filter is authoritative), so CREATE succeeds.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, price double, ts timestamp) timestamp(ts) partition by day wal");
-            assertExceptionNoLeakCheck(
+            execute(
                     "create materialized view mv as (" +
                             "select sym, last(price) price, ts from base sample by 1h" +
-                            ") partition by day EXPIRE ROWS WHEN ts < dateadd('d', -1, now())",
-                    25,
-                    "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views"
+                            ") partition by day EXPIRE ROWS WHEN ts < dateadd('d', -1, now())"
             );
-            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                org.junit.Assert.assertNotNull(metadata.getExpiryPredicate());
+            }
         });
     }
 
     @Test
-    public void testAlterAggregatingMatViewSetExpireRejected() throws Exception {
-        // The passthrough-only rule also applies to ALTER ... SET EXPIRE: an existing aggregating (SAMPLE BY)
-        // view cannot have a policy attached after the fact.
+    public void testAlterAggregatingMatViewSetExpireAllowed() throws Exception {
+        // The same advisory-not-rejected rule applies to ALTER ... SET EXPIRE: an existing aggregating
+        // (SAMPLE BY) view may have a policy attached after the fact.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, price double, ts timestamp) timestamp(ts) partition by day wal");
             execute("create materialized view agg as (select sym, last(price) price, ts from base sample by 1h) partition by day");
             drainWalAndMatViewQueues();
-            assertExceptionNoLeakCheck(
-                    "alter materialized view agg set expire rows when ts < dateadd('d', -1, now())",
-                    24,
-                    "EXPIRE ROWS is only supported on passthrough (non-aggregating) materialized views"
-            );
-            // The view must be left without a policy.
+            execute("alter materialized view agg set expire rows when ts < dateadd('d', -1, now())");
+            drainWalAndMatViewQueues();
+            // The view must be left with the policy attached.
             try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("agg"))) {
-                org.junit.Assert.assertNull(metadata.getExpiryPredicate());
+                org.junit.Assert.assertNotNull(metadata.getExpiryPredicate());
             }
         });
     }

@@ -339,14 +339,19 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectedOnAggregatingView() throws Exception {
+    public void testAllowedOnAggregatingView() throws Exception {
+        // EXPIRE ROWS on an aggregating (SAMPLE BY) view is allowed but advisory: physical reclamation is
+        // best-effort (a later refresh can regenerate reclaimed rows), reads stay correct regardless.
         assertMemoryLeak(() -> {
             createBase();
-            assertCreateFails(
+            execute(
                     "create materialized view mvagg as (select k, last(v) v, ts from base sample by 1d) " +
-                            "partition by day expire rows keep highest v partition by k",
-                    "passthrough (non-aggregating) materialized views"
+                            "partition by day expire rows keep highest v partition by k"
             );
+            drainWalAndMatViewQueues();
+            try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("mvagg"))) {
+                Assert.assertNotNull(m.getExpiryPredicate());
+            }
         });
     }
 
