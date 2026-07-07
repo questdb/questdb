@@ -24,8 +24,10 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
+import io.questdb.client.SenderErrorHandler;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
@@ -474,18 +476,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             String table = "test_qwp_no_auto_col";
             execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
-                sender.table(table)
-                        .longColumn("v", 1L)
-                        .longColumn("extra", 2L)
-                        .at(1_000_000, ChronoUnit.MICROS);
-                sender.flush();
-
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
-                String msg = err.getServerMessage();
-                Assert.assertTrue("got: " + msg, msg != null && msg.contains("new columns not allowed"));
-            }
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).longColumn("extra", 2L).at(1_000_000, ChronoUnit.MICROS),
+                    "new columns not allowed", "column=extra");
         });
     }
 
@@ -616,15 +609,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table(table)
-                        .binaryColumn("v", payload)
-                        .at(1_000_000, ChronoUnit.MICROS);
-                try {
-                    sender.flush();
-                } catch (LineSenderException ignored) {
-                }
-            }
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
+                    "type coercion from BINARY to CHAR is not supported", "[column=v]");
 
             drainWalQueue();
             assertQuery("SELECT count() FROM " + table)
@@ -645,15 +632,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table(table)
-                        .binaryColumn("v", payload)
-                        .at(1_000_000, ChronoUnit.MICROS);
-                try {
-                    sender.flush();
-                } catch (LineSenderException ignored) {
-                }
-            }
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
+                    "type coercion from BINARY to STRING is not supported", "[column=v]");
 
             drainWalQueue();
             assertQuery("SELECT count() FROM " + table)
@@ -674,15 +655,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table(table)
-                        .binaryColumn("v", payload)
-                        .at(1_000_000, ChronoUnit.MICROS);
-                try {
-                    sender.flush();
-                } catch (LineSenderException ignored) {
-                }
-            }
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
+                    "type coercion from BINARY to SYMBOL is not supported", "[column=v]");
 
             drainWalQueue();
             assertQuery("SELECT count() FROM " + table)
@@ -715,19 +690,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // they break the UTF-8 invariant the rest of QuestDB assumes.
             byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
 
-            try (QwpWebSocketSender sender = connectWs(port)) {
-                sender.table(table)
-                        .binaryColumn("v", payload)
-                        .at(1_000_000, ChronoUnit.MICROS);
-                try {
-                    sender.flush();
-                } catch (LineSenderException ignored) {
-                    // After the fix the server may surface the coercion
-                    // failure synchronously; before the fix it silently
-                    // accepts the row. Either way the count check below
-                    // is the definitive assertion.
-                }
-            }
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).binaryColumn("v", payload).at(1_000_000, ChronoUnit.MICROS),
+                    "type coercion from BINARY to VARCHAR is not supported", "[column=v]");
 
             drainWalQueue();
             assertQuery("SELECT count() FROM " + table)
@@ -2713,17 +2678,103 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
 
-            // Table may not even exist, or if auto-created it should have 0 committed rows
+            // Table may not even exist, or if auto-created it should have 0 committed rows.
+            // Both are correct rollback outcomes: since the client stopped waiting for
+            // acks of uncommitted deferred frames on close (they are withheld by the
+            // server on purpose), close() may return before the frames were ever
+            // transmitted -- in which case the table is never auto-created and the
+            // query throws SqlException instead of failing the row-count assert.
             try {
                 assertQuery("SELECT count() FROM defer_drop")
                         .noLeakCheck()
                         .returnsOnce("count\n0\n");
-            } catch (AssertionError e) {
+            } catch (AssertionError | io.questdb.griffin.SqlException e) {
                 // Table was never created — that's also correct
-                if (!e.getMessage().contains("defer_drop")) {
+                if (e.getMessage() == null || !e.getMessage().contains("defer_drop")) {
                     throw e;
                 }
             }
+        });
+    }
+
+    @Test
+    public void testDeferredFramesNotAckedUntilCommit() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // 20 deferred frames -- well past the server's ACK_BATCH_SIZE
+                // of 8. Before the deferred-ack fix, cumulative OK acks flowed
+                // mid-group and the store-and-forward client trimmed slots
+                // whose rows the server could still roll back.
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 20; i++) {
+                    sender.table("defer_no_ack")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                // Grace window: pre-fix an ack reliably arrived here (batch
+                // threshold crossed twice). Post-fix NOTHING may be acked --
+                // every frame is deferred and uncommitted.
+                io.questdb.std.Os.sleep(500);
+                Assert.assertEquals("no cumulative OK ack may cover uncommitted deferred frames",
+                        -1L, sender.getAckedFsn());
+
+                // The group-closing commit frame's cumulative ack covers the
+                // whole group at once.
+                sender.setDeferCommit(false);
+                sender.table("defer_no_ack")
+                        .longColumn("id", 20L)
+                        .at(1_000_000_000_000L + 20 * 1000L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // 21 frames published as FSNs 0..20; the commit frame is FSN 20
+                // and its cumulative ack covers the whole group.
+                Assert.assertTrue("group commit ack must cover the whole deferred group",
+                        sender.awaitAckedFsn(20L, 10_000));
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM defer_no_ack")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n21\n");
+        });
+    }
+
+    @Test
+    public void testGroupCommitAckFlushesEagerly() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // 3 deferred frames + 1 commit frame = 4 sequences, BELOW the
+                // server's ACK_BATCH_SIZE of 8. The ack for the group-closing
+                // commit must flush eagerly (hasPendingAck) instead of waiting
+                // for the batch cadence -- otherwise the client's transaction
+                // confirmation would stall behind unrelated future traffic.
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 3; i++) {
+                    sender.table("defer_eager_ack")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                sender.setDeferCommit(false);
+                sender.table("defer_eager_ack")
+                        .longColumn("id", 3L)
+                        .at(1_000_000_000_000L + 3 * 1000L, ChronoUnit.MICROS);
+                sender.flush();
+
+                Assert.assertTrue("group commit ack must flush eagerly below the batch threshold",
+                        sender.awaitAckedFsn(3L, 10_000));
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM defer_eager_ack")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n4\n");
         });
     }
 
@@ -3495,17 +3546,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             String table = "test_qwp_long_arr";
 
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
-                sender.table(table)
-                        .longArray("arr", new long[]{1L, 2L, 3L})
-                        .at(1_000_000, ChronoUnit.MICROS);
-                sender.flush();
-
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
-                String msg = err.getServerMessage();
-                Assert.assertTrue("got: " + msg, msg != null && msg.contains("long arrays are not supported"));
-            }
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).longArray("arr", new long[]{1L, 2L, 3L}).at(1_000_000, ChronoUnit.MICROS),
+                    "long arrays are not supported", "only double arrays");
         });
     }
 
@@ -4433,18 +4476,35 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             }
             drainWalQueue();
 
-            // SCHEMA_MISMATCH defaults to DROP_AND_CONTINUE, so flush() does
-            // not throw — the rejection arrives asynchronously through the
-            // error handler.
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
-                sender.table(table)
+            // NACK policy v2: the server-side parse failure is
+            // SCHEMA_MISMATCH -- deterministic under byte-identical replay,
+            // so the client latches a TERMINAL on the first NACK (no drop,
+            // no replay). The rejection arrives asynchronously through the
+            // error handler; the latched terminal surfaces loudly on close
+            // unless the handler already owns it.
+            CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
+            CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            QwpWebSocketSender errSender = connectWs(port, err -> {
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+                firstErrFut.complete(err);
+            });
+            SenderError.Category expectedTerminalCategory = null;
+            try {
+                errSender.table(table)
                         .stringColumn("px", "not-a-double")
                         .at(2_000_000, ChronoUnit.MICROS);
-                sender.flush();
+                try {
+                    errSender.flush();
+                } catch (LineSenderServerException ignored) {
+                    // the I/O thread latched the terminal before flush()'s
+                    // own error poll ran
+                }
 
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
                 Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
                 String msg = err.getServerMessage();
                 Assert.assertNotNull("server message must not be null", msg);
                 Assert.assertTrue(
@@ -4453,6 +4513,10 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                                 && msg.contains("not-a-double")
                                 && msg.contains("column=px]")
                 );
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(errSender, terminalFut, expectedTerminalCategory,
+                        "cannot parse DOUBLE from string", "not-a-double");
             }
 
             try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
@@ -4570,18 +4634,9 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             // Send a micros timestamp that overflows when converted to nanos.
             // The threshold is Long.MAX_VALUE / 1000 = 9_223_372_036_854_775.
             long overflowMicros = Long.MAX_VALUE / 1000 + 1;
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
-                sender.table(table)
-                        .longColumn("v", 1L)
-                        .at(overflowMicros, ChronoUnit.MICROS);
-                sender.flush();
-
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
-                String msg = err.getServerMessage();
-                Assert.assertTrue("got: " + msg,
-                        msg != null && msg.contains("timestamp overflow converting micros to nanos"));
-            }
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).at(overflowMicros, ChronoUnit.MICROS),
+                    "timestamp overflow converting micros to nanos", "9223372036854776");
         });
     }
 
@@ -4769,29 +4824,74 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
             String expectedMsgPart1, String expectedMsgPart2
     ) {
-        // Server-side rejections default to DROP_AND_CONTINUE for both
-        // SCHEMA_MISMATCH and WRITE_ERROR, so flush() does not throw — the
-        // rejection arrives asynchronously through the error handler. We block
-        // on a CompletableFuture populated from the dispatcher thread to make
-        // the assertion deterministic.
-        CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-        try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
+        // NACK policy v2 (java-questdb-client): there is no drop policy.
+        // Server-side rejections end in a latched terminal instead of a
+        // silently discarded batch:
+        //   - WRITE_ERROR is RETRIABLE -- the client dispatches each strike
+        //     to the error handler informationally and replays the frame; a
+        //     rejection that is deterministic under byte-identical replay
+        //     escalates to a TERMINAL PROTOCOL_VIOLATION through the
+        //     poison-frame detector after max_frame_rejections consecutive
+        //     strikes on the same head frame with no ack progress. We pin
+        //     max_frame_rejections=1 so the escalation is immediate.
+        //   - SCHEMA_MISMATCH is deterministic by definition and latches
+        //     TERMINAL on the first strike, no replay.
+        // Either way we assert both observables: the first handler dispatch
+        // carries the server's rejection message, and the latched terminal
+        // surfaces loudly -- through the handler or, when the producer
+        // thread's error poll wins the race, from flush()/close() (close()
+        // suppresses the double-signal once the handler owns the terminal).
+        CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
+        CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+        SenderErrorHandler handler = err -> {
+            if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                terminalFut.complete(err);
+            }
+            firstErrFut.complete(err);
+        };
+        QwpWebSocketSender sender = connectWs(port, handler, 1);
+        SenderError.Category expectedTerminalCategory = null;
+        try {
             sendAction.accept(sender, table);
-            long publishedFsn = sender.flushAndGetSequence();
+            long publishedFsn;
+            try {
+                publishedFsn = sender.flushAndGetSequence();
+            } catch (LineSenderServerException e) {
+                // the I/O thread latched the terminal before
+                // flushAndGetSequence()'s own error poll ran
+                publishedFsn = -1;
+            }
 
             SenderError err;
             try {
-                err = errorFut.get(10, TimeUnit.SECONDS);
+                err = firstErrFut.get(10, TimeUnit.SECONDS);
             } catch (Exception e) {
                 throw new AssertionError("Did not receive a SenderError within 10s for table " + table, e);
             }
-            Assert.assertTrue("error fsn span [" + err.getFromFsn() + ',' + err.getToFsn()
-                            + "] should cover published " + publishedFsn,
-                    publishedFsn >= err.getFromFsn() && publishedFsn <= err.getToFsn());
+            SenderError.Category terminalCategory;
+            if (err.getCategory() == SenderError.Category.WRITE_ERROR) {
+                Assert.assertSame(SenderError.Policy.RETRIABLE, err.getAppliedPolicy());
+                terminalCategory = SenderError.Category.PROTOCOL_VIOLATION;
+            } else {
+                Assert.assertSame(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
+                terminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            }
+            if (publishedFsn >= 0) {
+                Assert.assertTrue("error fsn span [" + err.getFromFsn() + ',' + err.getToFsn()
+                                + "] should cover published " + publishedFsn,
+                        publishedFsn >= err.getFromFsn() && publishedFsn <= err.getToFsn());
+            }
             String msg = err.getServerMessage();
             Assert.assertTrue("Expected error containing '" + expectedMsgPart1 +
                             "' and '" + expectedMsgPart2 + "' but got: " + msg,
                     msg != null && msg.contains(expectedMsgPart1) && msg.contains(expectedMsgPart2));
+            // only arm the close-time terminal assertion once the body
+            // passed -- a body assertion propagating out of this try must
+            // not be masked by close-path signals
+            expectedTerminalCategory = terminalCategory;
+        } finally {
+            assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, expectedMsgPart1, expectedMsgPart2);
         }
     }
 

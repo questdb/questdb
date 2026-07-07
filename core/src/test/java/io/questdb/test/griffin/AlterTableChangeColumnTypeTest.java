@@ -71,8 +71,71 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotChangeDecimalToInteger() throws Exception {
+        // DECIMAL -> {BYTE, SHORT, INT, LONG} are not supported.
+        // This is a problem to fix in the future
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{
+                    "DECIMAL(2, 0)",
+                    "DECIMAL(4, 0)",
+                    "DECIMAL(9, 0)",
+                    "DECIMAL(18, 0)",
+                    "DECIMAL(38, 0)",
+                    "DECIMAL(76, 0)",
+            }) {
+                for (String target : new String[]{"BYTE", "SHORT", "INT", "LONG"}) {
+                    try {
+                        execute("CREATE TABLE x (col " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                                sqlExecutionContext);
+                        assertException(
+                                "alter table x alter column col type " + target,
+                                36,
+                                "incompatible column type change [existing=" + source.replace(" ", "")
+                                        + ", new=" + target + "]",
+                                sqlExecutionContext
+                        );
+                    } finally {
+                        execute("drop table if exists x;");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCannotConvertToSameType() throws Exception {
         assertFailure("alter table x alter column d type double", 34, "column 'd' type is already 'DOUBLE'");
+    }
+
+    @Test
+    public void testChangeDecimalNarrowingOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(5, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            // 12345 fits DECIMAL(5,0) but overflows DECIMAL(4,0) (max 9999).
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345)", sqlExecutionContext);
+            drainWalQueue();
+
+            TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(4, 0)", sqlExecutionContext);
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+        });
+    }
+
+    @Test
+    public void testChangeDecimalScaleDownRounds() throws Exception {
+        // A scale reduction rounds half away from zero (like every mainstream SQL database storing
+        // into DECIMAL(p,s)); it never NULLs on a dropped fraction. Only a magnitude overflow NULLs.
+        assertChangeDecimal("1.2m", "1", "decimal(2, 1)", "decimal(4, 0)");      // round down
+        assertChangeDecimal("1.5m", "2", "decimal(2, 1)", "decimal(4, 0)");      // tie rounds away
+        assertChangeDecimal("1.6m", "2", "decimal(2, 1)", "decimal(4, 0)");      // round up
+        assertChangeDecimal("-1.5m", "-2", "decimal(2, 1)", "decimal(4, 0)");    // negative tie away
+        assertChangeDecimal("12.34m", "12.3", "decimal(4, 2)", "decimal(4, 1)"); // round down
+        assertChangeDecimal("12.35m", "12.4", "decimal(4, 2)", "decimal(4, 1)"); // tie rounds away
+        assertChangeDecimal("12.99m", "13.0", "decimal(4, 2)", "decimal(4, 1)"); // carry into integer
     }
 
     @Test
@@ -89,7 +152,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertChangeDecimal("1.2m", "1.20", "decimal(2, 1)", "decimal(8, 2)");
         assertChangeDecimal("1.2m", "1.200", "decimal(2, 1)", "decimal(18, 3)");
         assertChangeDecimal("1.2m", "1.2000", "decimal(2, 1)", "decimal(38, 4)");
-        assertChangeDecimalFails("1.2m", "1.2", "decimal(2, 1)", ColumnType.getDecimalType(64, 0));
+        // 1.2 rounds half away from zero to scale 0 -> 1 (a dropped fraction never NULLs).
+        assertChangeDecimal("1.2m", "1", "decimal(2, 1)", "decimal(64, 0)");
         assertChangeDecimal("1.2m", "1.200000000000", "decimal(2, 1)", "decimal(64, 12)");
 
         // DECIMAL16 conversions
@@ -135,9 +199,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 "9999999999999999999999999999999999999999999999999999999999999999999999.999900",
                 "decimal(76, 4)", "decimal(76, 6)");
 
-        // Test precision reduction scenarios (should fail)
-        assertChangeDecimalFails("12345", "12345", "decimal(5, 0)", ColumnType.getDecimalType(4, 0));
-        assertChangeDecimalFails("123.45m", "123.45", "decimal(5, 2)", ColumnType.getDecimalType(4, 2));
+        // Precision reduction: a value that does not fit the narrower target becomes NULL (the
+        // conversion no longer fails or suspends the WAL table).
+        assertChangeDecimalToNull("12345", "decimal(5, 0)", "decimal(4, 0)");
+        assertChangeDecimalToNull("123.45m", "decimal(5, 2)", "decimal(4, 2)");
     }
 
     @Test
@@ -223,6 +288,54 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             2024-05-14T16:00:00.000000Z\t12345.6789
                             2024-05-14T16:00:01.000000Z\t
                             2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    /**
+     * Pre-existing bug in the native ALTER COLUMN TYPE path: VARCHAR to CHAR (and any
+     * other fixed target routed through {@code ColumnTypeConverter.convertFromVarcharToFixed})
+     * treated UTF-8 bytes as Latin-1 chars via {@code Utf8Sequence.asAsciiCharSequence()}.
+     * <p>
+     * For a CHAR destination the downstream converter reads {@code charAt(0)}, so the
+     * first raw UTF-8 byte became the CHAR value instead of the decoded code point. E.g.
+     * the value {@code 'e-acute'} (UTF-8 {@code 0xC3 0xA9}) was stored as CHAR
+     * {@code U+00C3} ('A-tilde') rather than {@code U+00E9} ('e-acute').
+     * <p>
+     * This test exercises only native partitions (no CONVERT PARTITION TO PARQUET) and
+     * asserts the stored CHAR matches the first UTF-16 code point of the source value.
+     * The peer fix lives in
+     * {@code ColumnTypeConverter.convertFromVarcharToFixed}; removing that fix reverts
+     * this test to a failure.
+     */
+    @Test
+    public void testChangeVarcharToCharPreservesNonAsciiCodepoint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 'a'),
+                    ('2024-05-14T16:00:01.000000Z', 'é'),
+                    ('2024-05-14T16:00:02.000000Z', '日')""", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE CHAR", sqlExecutionContext);
+            drainWalQueue();
+
+            // Expected: first UTF-16 code point of each stored value.
+            //   'a'  -> 'a'
+            //   'é'  -> 'é' (U+00E9)
+            //   '日' -> '日' (U+65E5)
+            // With the pre-fix code, non-ASCII rows stored the first UTF-8 byte as a char
+            // (e.g. 'é' -> 'A-tilde'), so the assertion below would fail.
+            assertQuery("x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\ta
+                            2024-05-14T16:00:01.000000Z\té
+                            2024-05-14T16:00:02.000000Z\t日
                             """);
 
             execute("DROP TABLE x");
@@ -1676,25 +1789,25 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
-    private void assertChangeDecimalFails(CharSequence initial, CharSequence expected, CharSequence fromType, int toType) throws Exception {
+    private void assertChangeDecimalToNull(CharSequence initial, CharSequence fromType, CharSequence toType) throws Exception {
         assertMemoryLeak(() -> {
             execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
             execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
             drainWalQueue();
 
-            try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("col", toType, 0, false, IndexType.NONE, 0, false, null);
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
-            }
+            // A value whose magnitude exceeds the target precision becomes NULL (a scale reduction
+            // instead rounds half away from zero, so only magnitude overflow NULLs). The conversion
+            // succeeds and the WAL table is never suspended (mirrors an out-of-range DOUBLE->FLOAT
+            // becoming NaN).
+            execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
+            drainWalQueue();
 
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
             assertQuery("x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
-                    .returns("ts\tcol\n" +
-                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+                    .returns("ts\tcol\n2024-05-14T16:00:00.000000Z\t\n");
 
             execute("drop table x");
         });
