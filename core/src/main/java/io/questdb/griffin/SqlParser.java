@@ -1726,7 +1726,7 @@ public class SqlParser {
                 // window (OVER ()).
                 if (!w.isNonDefaultFrame() && w.getPartitionBy().size() > 0) {
                     throw SqlException.$(positionOfWindow(w, null),
-                            "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported");
+                            "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported. Add an ANCHOR to bound per-partition state, e.g. ANCHOR EXPRESSION timestamp_floor('1d', ts)");
                 }
                 continue;
             }
@@ -1817,7 +1817,7 @@ public class SqlParser {
             return;
         }
         throw SqlException.$(positionOfWindow(w, fallback),
-                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported");
+                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported. Add an ANCHOR to bound per-partition state, e.g. ANCHOR EXPRESSION timestamp_floor('1d', ts)");
     }
 
     /**

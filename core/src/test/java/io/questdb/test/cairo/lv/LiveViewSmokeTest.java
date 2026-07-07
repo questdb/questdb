@@ -2307,6 +2307,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains(
                         "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported"));
+                // The reject also hints the actionable ANCHOR form.
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "ANCHOR EXPRESSION timestamp_floor('1d', ts)"));
             }
 
             // (b) inline OVER (...) shape.
@@ -2317,6 +2320,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains(
                         "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "ANCHOR EXPRESSION timestamp_floor('1d', ts)"));
             }
 
             // (c) inline OVER nested inside an arithmetic expression must still be caught.
@@ -2327,6 +2332,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains(
                         "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "ANCHOR EXPRESSION timestamp_floor('1d', ts)"));
             }
 
             // (d) bounded ROWS frame without ANCHOR is accepted.

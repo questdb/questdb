@@ -235,11 +235,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         }
                         case COLUMN_IN_MEM_ROWS -> {
                             // Rows currently held in the published (reader-visible)
-                            // slot - the live logical content of the in-mem tier. Drops
-                            // as the IN MEMORY window ages rows out (on a slow-path
-                            // swap), even while in_mem_bytes stays pinned at the peak
-                            // arena capacity. Zero before the first refresh allocates
-                            // the tier.
+                            // slot - the live logical content of the in-mem tier. Rows
+                            // age out of the IN MEMORY window on a slow-path swap, which
+                            // a refresh cycle drives - not wall-clock time. An idle view
+                            // holds its last-refreshed rows (which can exceed the IN
+                            // MEMORY window) until the next refresh trims them, so this
+                            // tracks refresh activity, not window age; in_mem_bytes
+                            // stays pinned at the peak arena capacity regardless. Zero
+                            // before the first refresh allocates the tier.
                             LiveViewInMemoryTier tier = instance.getInMemoryTier();
                             yield tier == null ? 0L : tier.publishedRowCount();
                         }
