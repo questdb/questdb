@@ -689,7 +689,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 buffers.getAuxPageAddresses(),
                 buffers.getPageSizes(),
                 buffers.getAuxPageSizes(),
-                0
+                0, // covered buffers are frame-specific, so they use a 0 column offset
+                addressCache.getColumnCount(),
+                false, // covered NATIVE frames have no parquet-style lazy type conversion
+                null,
+                null
         );
         record.setBoundPool(this, bindGeneration);
         return true;
