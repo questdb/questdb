@@ -95,8 +95,12 @@ public class AsOfJoinFastOomTest extends AbstractCairoTest {
             boolean sawOom = false;
             // Sweep the native-memory ceiling across the cursor-open allocation points.
             // Some ceiling lets the first sink reopen() succeed and trips the second; the
-            // pre-fix code then leaked the first sink's 8-byte heap.
-            for (int slack = 0; slack <= 64 * 1024; slack += 8) {
+            // pre-fix code then leaked the first sink's 8-byte heap. The 8-byte step matches
+            // the sink heaps' granularity so the sweep lands inside that transition window.
+            // 24 KiB comfortably covers the whole cursor-open allocation span (the last
+            // observed OOM sits near 21 KiB of slack); past that the query simply runs to
+            // completion, which the recovery drain below already exercises.
+            for (int slack = 0; slack <= 24 * 1024; slack += 8) {
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
                 try {
                     drain(query);

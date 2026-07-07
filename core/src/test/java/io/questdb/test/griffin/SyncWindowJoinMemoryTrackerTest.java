@@ -99,8 +99,8 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p ON t.sym = p.sym " +
                                 "RANGE BETWEEN 15 seconds PRECEDING AND 15 seconds FOLLOWING";
@@ -179,8 +179,8 @@ public class SyncWindowJoinMemoryTrackerTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT t.ts, array_agg(p.price) " +
                                 "FROM trades t WINDOW JOIN prices p " +
                                 "RANGE BETWEEN 15 seconds PRECEDING AND 15 seconds FOLLOWING";

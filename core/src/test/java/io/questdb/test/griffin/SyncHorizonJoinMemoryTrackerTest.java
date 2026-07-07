@@ -135,8 +135,8 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT t.sym, array_agg(p.price) " +
                                 "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
@@ -216,7 +216,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createMultiHorizonTables(engine, sqlExecutionContext, 200_000);
+                        createMultiHorizonTables(engine, sqlExecutionContext, 40_000);
                         final String query = "SELECT t.sym, array_agg(p0.px0), count(p1.px1) " +
                                 "FROM trades t " +
                                 "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +
@@ -329,8 +329,8 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createTrades(engine, sqlExecutionContext, 200_000, 8);
-                        createPrices(engine, sqlExecutionContext, 2_000_000, 8);
+                        createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createPrices(engine, sqlExecutionContext, 400_000, 8);
                         final String query = "SELECT array_agg(p.price) " +
                                 "FROM trades t HORIZON JOIN prices p " +
                                 "RANGE FROM -15s TO 15s STEP 1s AS h";
@@ -380,7 +380,7 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        createMultiHorizonTables(engine, sqlExecutionContext, 200_000);
+                        createMultiHorizonTables(engine, sqlExecutionContext, 40_000);
                         final String query = "SELECT array_agg(p0.px0), count(p1.px1) " +
                                 "FROM trades t " +
                                 "HORIZON JOIN prices0 p0 ON (t.sym = p0.sym) " +

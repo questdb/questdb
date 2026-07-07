@@ -72,7 +72,10 @@ public class GroupByVectorizedOomTest extends AbstractCairoTest {
             // Sweep the native-memory ceiling across the cursor-open allocation points.
             // Some ceiling lets an earlier PageFrameAddressCache list reopen() succeed
             // and trips a later one; the pre-fix code then leaked the earlier buffer.
-            for (int slack = 0; slack <= 128 * 1024; slack += 16) {
+            // 80 KiB covers the whole cursor-open allocation span (the last observed OOM
+            // sits near 68 KiB of slack); past that the query just runs to completion,
+            // which the recovery drain below already exercises.
+            for (int slack = 0; slack <= 80 * 1024; slack += 16) {
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
                 try {
                     drain(query);
@@ -115,8 +118,10 @@ public class GroupByVectorizedOomTest extends AbstractCairoTest {
             // memory pools buildRosti then freed. The recovery drain after each ceiling
             // work-steals that survivor and dereferences the freed pool (NPE pre-fix).
             // The ceiling is armed after compile (like the query fuzzer's MALLOC fault) so
-            // the trip lands in buildRosti, not in cursor open.
-            for (int slack = 0; slack <= 96 * 1024; slack += 64) {
+            // the trip lands in buildRosti, not in cursor open. 48 KiB covers the whole
+            // buildRosti allocation span (the last observed OOM sits near 34 KiB of slack);
+            // past that both drains just run to completion without exercising the survivor.
+            for (int slack = 0; slack <= 48 * 1024; slack += 64) {
                 try {
                     drainArmedAfterCompile(query, slack);
                 } catch (CairoException e) {
