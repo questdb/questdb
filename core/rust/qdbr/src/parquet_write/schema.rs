@@ -37,20 +37,20 @@ pub fn column_type_to_parquet_type(
     raw_array_encoding: bool,
 ) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
-    // Types that don't have null values in QuestDB always use Required repetition.
-    // All other types — including Symbol — use Optional so the file-level schema
-    // is stable across O3 merges. This avoids a REQUIRED→OPTIONAL transition that
-    // would break copy_row_group (raw-copied pages already have def levels encoded).
+    // BOOLEAN/BYTE/SHORT/CHAR have no in-band null sentinel in QuestDB, but they are declared
+    // Optional so that rows in the column-top region can be flagged as parquet-NULL via
+    // def-level = 0. Without this, an ALTER from one of these types to a nullable target
+    // (e.g. SHORT -> INT, BOOLEAN -> INT) cannot distinguish a real value 0/false from a
+    // column-top row, and the latter would materialise as 0 instead of the target's null
+    // sentinel -- diverging from native ALTER. Only the designated timestamp stays Required
+    // (it is never null). For BOOLEAN the bit-packed value stream stores non-null rows only;
+    // see encoders::plain::encode_boolean_nullable.
     //
     // Symbol columns are always Optional even when Column::not_null_hint is true (no
     // nulls). The `not_null_hint` flag is only a write-time hint that lets the encoder
     // emit a fast all-ones RLE run for definition levels instead of computing
     // per-row values. See encoders::symbol::encode().
-    let is_notnull_type = matches!(
-        column_type.tag(),
-        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
-    );
-    let repetition = if designated_timestamp || is_notnull_type {
+    let repetition = if designated_timestamp {
         Repetition::Required
     } else {
         Repetition::Optional
