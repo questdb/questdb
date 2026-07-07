@@ -109,11 +109,6 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     }
 
     @Override
-    public byte getColumnIndexType(int columnIndex) {
-        return getColumnMetadata(columnIndex).getIndexType();
-    }
-
-    @Override
     public boolean isColumnReplicaOnlyIndex(int columnIndex) {
         return getColumnMetadata(columnIndex).isReplicaOnlyIndex();
     }
