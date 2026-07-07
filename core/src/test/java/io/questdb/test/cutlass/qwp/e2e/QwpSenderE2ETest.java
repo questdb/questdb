@@ -1482,6 +1482,36 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testArrayBatchDimensionalityMismatchRejected() throws Exception {
+        runInContext((port) -> {
+            // Rows with differing array dimensionality in one flush hit the within-batch
+            // getArrayBatchDimensionality guard, not the single-row validateArrayColumnType
+            // guard that testArrayDimensionalityMismatchRejected covers. The guard lives at
+            // two sites; which one throws depends on whether the target table exists.
+
+            // Existing table: QwpWalAppender scans the batch during WAL append.
+            String existing = "test_qwp_arr_batch_dim_existing";
+            execute("CREATE TABLE " + existing + " (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertCoercionError(port, existing,
+                    (s, t) -> {
+                        s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS);
+                        s.table(t).doubleArray("v", new double[][]{{3.0, 4.0}}).at(2_000_000, ChronoUnit.MICROS);
+                    },
+                    "array dimensionality mismatch in QWP batch", "column=v");
+
+            // Non-existent table: QwpTudCache scans the batch while resolving the
+            // auto-created table structure.
+            String autoCreate = "test_qwp_arr_batch_dim_autocreate";
+            assertCoercionError(port, autoCreate,
+                    (s, t) -> {
+                        s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS);
+                        s.table(t).doubleArray("v", new double[][]{{3.0, 4.0}}).at(2_000_000, ChronoUnit.MICROS);
+                    },
+                    "array dimensionality mismatch in QWP batch", "column=v");
+        });
+    }
+
+    @Test
     public void testCoercionToDoubleErrors() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_coerce_double_err";

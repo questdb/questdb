@@ -106,6 +106,11 @@ public class CairoExceptionTest extends AbstractTest {
         Assert.assertTrue(ex.isOutOfMemory());
         Assert.assertTrue(ex.isSchemaMismatch());
 
+        // clearing OOM alone must leave schema-mismatch set: proves distinct bits
+        ex.setOutOfMemory(false);
+        Assert.assertFalse(ex.isOutOfMemory());
+        Assert.assertTrue(ex.isSchemaMismatch());
+
         invokeClear(ex);
         Assert.assertFalse(ex.isSchemaMismatch());
         Assert.assertFalse(ex.isOutOfMemory());
