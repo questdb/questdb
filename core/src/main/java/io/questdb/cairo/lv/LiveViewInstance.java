@@ -481,26 +481,45 @@ public class LiveViewInstance implements QuietCloseable {
      * name-only for that view.
      */
     public boolean dependsOnMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
+        return findFirstMissingOrRetypedColumn(baseMetadata) != null;
+    }
+
+    /**
+     * Returns the name of the first dependency column that is either missing from the
+     * post-change writer metadata — dropped or renamed away — or still present under the
+     * same name but with a different {@code TYPE} than the view compiled against, or
+     * {@code null} when every dependency still resolves. Backs
+     * {@link #dependsOnMissingOrRetypedColumn(RecordMetadata)} and lets the invalidation
+     * site name the offending column in {@code invalidation_reason}.
+     * <p>
+     * Returns the interned dependency name straight from the definition, so it allocates
+     * nothing on the schema-change path. An empty dependency set returns {@code null}
+     * (defensive: with no known deps we leave invalidation to the broader
+     * base-DROP/RENAME path). A version-1 definition carries no persisted types, so its
+     * type list is empty and the check degrades to name-only for that view.
+     */
+    public @Nullable String findFirstMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
         ObjList<String> deps = definition.getDependencyColumnNames();
         // unreachable in practice for a normally-created view: a real view always
         // records its referenced base columns (locked by
         // LiveViewBaseDdlTest#testDependencyColumnSetIsNonEmpty). Defensive: with no
         // known deps we leave invalidation to the broader base-DROP/RENAME path.
         if (deps.size() == 0) {
-            return false;
+            return null;
         }
         IntList depTypes = definition.getDependencyColumnTypes();
         for (int i = 0, n = deps.size(); i < n; i++) {
-            final int columnIndex = baseMetadata.getColumnIndexQuiet(deps.getQuick(i));
+            final String depName = deps.getQuick(i);
+            final int columnIndex = baseMetadata.getColumnIndexQuiet(depName);
             if (columnIndex < 0) {
-                return true;
+                return depName;
             }
             // depTypes is empty for a version-1 definition; skip the type check then.
             if (i < depTypes.size() && baseMetadata.getColumnType(columnIndex) != depTypes.getQuick(i)) {
-                return true;
+                return depName;
             }
         }
-        return false;
+        return null;
     }
 
     /**

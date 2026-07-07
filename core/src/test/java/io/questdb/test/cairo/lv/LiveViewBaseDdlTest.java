@@ -274,6 +274,19 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidationReasonNamesOffendingColumn() throws Exception {
+        // For a referenced-column DROP / RENAME / retype, invalidation_reason must
+        // name the exact dependency that broke, not just the operation, so an
+        // operator can tell from live_views() which column to look at on a wide
+        // base with several dependent views. The reason keeps the operation prefix
+        // (so existing "contains(operation)" checks still hold) and appends
+        // [column=<name>].
+        assertReferencedColumnOpNamesColumn("ALTER TABLE base DROP COLUMN price", "drop column operation", "price");
+        assertReferencedColumnOpNamesColumn("ALTER TABLE base RENAME COLUMN price TO cost", "rename column operation", "price");
+        assertReferencedColumnOpNamesColumn("ALTER TABLE base ALTER COLUMN price TYPE LONG", "change column type operation", "price");
+    }
+
+    @Test
     public void testNonStructuralAlterIsTransparentToLiveView() throws Exception {
         // Non-structural base ALTERs - SET PARAM, ADD / DROP INDEX, symbol CACHE /
         // NOCACHE, SYMBOL CAPACITY - travel the executeAlter apply path, which never
@@ -464,6 +477,37 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
                 "LV must stay valid across the unreferenced change",
                 engine.getLiveViewRegistry().getViewInstance("lv").isInvalid()
         );
+    }
+
+    private void assertReferencedColumnOpNamesColumn(String alterSql, String opReason, String columnName) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, price INT, size INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, price, row_number() OVER () AS rn FROM base WHERE price > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertFalse("LV must start valid [" + alterSql + ']', instance.isInvalid());
+
+            execute(alterSql);
+            drainWalQueue();
+
+            Assert.assertTrue(
+                    "referenced-column op must invalidate the LV [" + alterSql + ']',
+                    instance.isInvalid()
+            );
+            final CharSequence reason = instance.getInvalidationReason();
+            Assert.assertTrue(
+                    "reason must keep the operation prefix [" + alterSql + ", reason=" + reason + ']',
+                    Chars.contains(reason, opReason)
+            );
+            Assert.assertTrue(
+                    "reason must name the offending column [" + alterSql + ", reason=" + reason + ']',
+                    Chars.contains(reason, "[column=" + columnName + ']')
+            );
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
     }
 
     private void assertReferencedColumnTypeChangeInvalidates(String initialType, String newType) throws Exception {

@@ -203,6 +203,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final int MAX_EXECUTE_RETRIES = 1000;
     private static final int MAX_SLEEP_MILLIS = 250;
     private static final CarrierLocal<ObjList<LiveViewInstance>> tlInvalidateSink = new CarrierLocal<>(ObjList::new);
+    private static final CarrierLocal<StringSink> tlInvalidationReasonSink = new CarrierLocal<>(StringSink::new);
     private static final CarrierLocal<MatViewRefreshTask> tlMatViewRefreshTask = new CarrierLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
@@ -2476,6 +2477,11 @@ public class CairoEngine implements Closeable, WriterSource {
      * missing from {@code postChangeMetadata}. This narrows the broad invalidation
      * the {@link #invalidateLiveViewsForBaseTable} variant does on TRUNCATE / DROP
      * (where every dependent view is invalidated regardless of dependency set).
+     * <p>
+     * For each affected view the persisted {@code invalidation_reason} appends the
+     * offending dependency column name (e.g. {@code drop column operation
+     * [column=value]}), so an operator can tell from {@code live_views()} exactly
+     * which dependency broke without cross-reading the view's SELECT.
      */
     public void invalidateLiveViewsForBaseSchemaChange(
             TableToken baseTableToken,
@@ -2497,15 +2503,27 @@ public class CairoEngine implements Closeable, WriterSource {
         ObjList<LiveViewInstance> sink = tlInvalidateSink.get();
         sink.clear();
         liveViewRegistry.getViewsForBaseTable(baseTableToken.getTableName(), sink);
+        final StringSink reasonSink = tlInvalidationReasonSink.get();
         try (
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
                 Path path = new Path()
         ) {
             for (int i = 0, n = sink.size(); i < n; i++) {
                 LiveViewInstance instance = sink.getQuick(i);
-                if (postChangeMetadata != null && !instance.dependsOnMissingOrRetypedColumn(postChangeMetadata)) {
-                    // Schema change touches columns the LV doesn't read — leave it valid.
-                    continue;
+                CharSequence viewReason = reason;
+                if (postChangeMetadata != null) {
+                    final String brokenColumn = instance.findFirstMissingOrRetypedColumn(postChangeMetadata);
+                    if (brokenColumn == null) {
+                        // Schema change touches columns the LV doesn't read — leave it valid.
+                        continue;
+                    }
+                    // Name the offending column so live_views().invalidation_reason
+                    // points at the exact dependency that broke, not just the
+                    // operation. markInvalid / LiveViewState.append copy the reason
+                    // out, so the per-view sink is safe to reuse across iterations.
+                    reasonSink.clear();
+                    reasonSink.put(reason).put(" [column=").put(brokenColumn).put(']');
+                    viewReason = reasonSink;
                 }
                 synchronized (instance) {
                     // Queue invalidation behind any in-progress checkpoint
@@ -2513,14 +2531,14 @@ public class CairoEngine implements Closeable, WriterSource {
                     // state and the agent's _lv.s copy is not raced by this
                     // rewrite.
                     instance.waitForUnfrozen();
-                    instance.markInvalid(reason, invalidationTimestampUs);
+                    instance.markInvalid(viewReason, invalidationTimestampUs);
                     path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                     try {
                         blockFileWriter.of(path.$());
                         LiveViewState.append(instance.getStateReader(), blockFileWriter);
                     } catch (Throwable t) {
                         LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
-                                .$(", reason=").$safe(reason)
+                                .$(", reason=").$safe(viewReason)
                                 .$(", error=").$(t).I$();
                     }
                 }
