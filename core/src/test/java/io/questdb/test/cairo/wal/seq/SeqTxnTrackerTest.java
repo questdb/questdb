@@ -46,7 +46,124 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.Assert.*;
 
 public class SeqTxnTrackerTest {
+    private static final int F_APPLY = SeqTxnTracker.SUSPEND_FLAG_APPLY;
+    private static final int F_APPLY_WRITE = SeqTxnTracker.SUSPEND_FLAG_APPLY | SeqTxnTracker.SUSPEND_FLAG_WRITE;
     private static final Log LOG = LogFactory.getLog(SeqTxnTrackerTest.class);
+    private static final int P_DDL = SeqTxnTracker.SUSPEND_PRIORITY_DDL;
+    private static final int P_REC = SeqTxnTracker.SUSPEND_PRIORITY_RECONCILE;
+    // Every hard-suspend flavour + release, for looping over combos.
+    private static final int[] FLAVOURS = {F_APPLY, F_APPLY_WRITE};
+
+    // --- Hard-suspend priority lock (trySetSuspend), all combinations. ---
+
+    @Test
+    public void testSuspendAcquireReleaseOnUnlocked() {
+        // Acquire then release, for each priority x flavour, over an unlocked table.
+        for (int prio : new int[]{P_DDL, P_REC}) {
+            SeqTxnTracker t = createSeqTracker();
+            // release on an unlocked table is an allowed no-op
+            assertTrue(t.trySetSuspend(prio, 0));
+            assertSuspend(t, false, false);
+            for (int flags : FLAVOURS) {
+                assertTrue(t.trySetSuspend(prio, flags));
+                assertSuspend(t, true, flags == F_APPLY_WRITE);
+                assertTrue(t.trySetSuspend(prio, 0));
+                assertSuspend(t, false, false);
+            }
+        }
+    }
+
+    @Test
+    public void testSuspendSamePriorityUpgradeDowngrade() {
+        // A holder may freely change its own flavour (apply <-> apply+write) and release.
+        for (int prio : new int[]{P_DDL, P_REC}) {
+            SeqTxnTracker t = createSeqTracker();
+            assertTrue(t.trySetSuspend(prio, F_APPLY));
+            assertSuspend(t, true, false);
+            assertTrue(t.trySetSuspend(prio, F_APPLY_WRITE)); // upgrade
+            assertSuspend(t, true, true);
+            assertTrue(t.trySetSuspend(prio, F_APPLY)); // downgrade
+            assertSuspend(t, true, false);
+            assertTrue(t.trySetSuspend(prio, F_APPLY)); // idempotent re-acquire
+            assertSuspend(t, true, false);
+            assertTrue(t.trySetSuspend(prio, 0));
+            assertSuspend(t, false, false);
+        }
+    }
+
+    @Test
+    public void testSuspendLowerCannotChangeHigher() {
+        // Race A: while RECONCILE holds the lock, an operator (DDL priority) SUSPEND / RESUME /
+        // change is refused and leaves the state untouched.
+        for (int recFlags : FLAVOURS) {
+            SeqTxnTracker t = createSeqTracker();
+            assertTrue(t.trySetSuspend(P_REC, recFlags));
+            boolean write = recFlags == F_APPLY_WRITE;
+            assertSuspend(t, true, write);
+            assertFalse(t.trySetSuspend(P_DDL, F_APPLY));       // SUSPEND WAL APPLY
+            assertFalse(t.trySetSuspend(P_DDL, F_APPLY_WRITE)); // SUSPEND WAL APPLY AND WRITE
+            assertFalse(t.trySetSuspend(P_DDL, 0));             // RESUME WAL
+            assertSuspend(t, true, write);                      // unchanged
+            assertTrue(t.trySetSuspend(P_REC, 0));              // reconcile releases its own
+            assertSuspend(t, false, false);
+        }
+    }
+
+    @Test
+    public void testSuspendHigherPreemptsAndRestoresLower() {
+        // Race B: RECONCILE preempts an operator suspend of ANY flavour and, on release, RESTORES
+        // exactly that operator suspend (not a full resume). All 4 (ddl x rec) flavour combos.
+        for (int ddlFlags : FLAVOURS) {
+            for (int recFlags : FLAVOURS) {
+                SeqTxnTracker t = createSeqTracker();
+                assertTrue(t.trySetSuspend(P_DDL, ddlFlags));
+                assertSuspend(t, true, ddlFlags == F_APPLY_WRITE);
+                // reconcile preempts (takes over regardless of the operator's flavour)
+                assertTrue(t.trySetSuspend(P_REC, recFlags));
+                assertSuspend(t, true, recFlags == F_APPLY_WRITE);
+                // reconcile releases -> the operator's original flavour is restored exactly
+                assertTrue(t.trySetSuspend(P_REC, 0));
+                assertSuspend(t, true, ddlFlags == F_APPLY_WRITE);
+                // and the operator can now resume its own (restored) lock
+                assertTrue(t.trySetSuspend(P_DDL, 0));
+                assertSuspend(t, false, false);
+            }
+        }
+    }
+
+    @Test
+    public void testSuspendReconcileOwnModifyKeepsPreempted() {
+        // A reconcile that preempts an operator suspend and then changes its OWN flavour must keep
+        // the preempted operator lock, and still restore it on release.
+        SeqTxnTracker t = createSeqTracker();
+        assertTrue(t.trySetSuspend(P_DDL, F_APPLY));       // operator apply-suspend
+        assertTrue(t.trySetSuspend(P_REC, F_APPLY));       // reconcile preempts (saves DDL apply)
+        assertSuspend(t, true, false);
+        assertTrue(t.trySetSuspend(P_REC, F_APPLY_WRITE)); // reconcile upgrades its own lock
+        assertSuspend(t, true, true);
+        assertFalse(t.trySetSuspend(P_DDL, 0));            // operator still cannot interfere
+        assertTrue(t.trySetSuspend(P_REC, 0));             // reconcile releases -> restore DDL apply
+        assertSuspend(t, true, false);
+        assertTrue(t.trySetSuspend(P_DDL, 0));
+        assertSuspend(t, false, false);
+    }
+
+    @Test
+    public void testSuspendReconcileOverUnlockedClearsFully() {
+        // RECONCILE over an unlocked table has nothing to restore -> release clears fully.
+        for (int recFlags : FLAVOURS) {
+            SeqTxnTracker t = createSeqTracker();
+            assertTrue(t.trySetSuspend(P_REC, recFlags));
+            assertSuspend(t, true, recFlags == F_APPLY_WRITE);
+            assertTrue(t.trySetSuspend(P_REC, 0));
+            assertSuspend(t, false, false);
+        }
+    }
+
+    private static void assertSuspend(SeqTxnTracker t, boolean applySuspended, boolean writeSuspended) {
+        assertEquals("apply-suspend", applySuspended, t.isHardSuspended());
+        assertEquals("write-suspend", writeSuspended, t.isWriteSuspended());
+    }
 
     @Test
     public void testConcurrentInitTxns() throws Exception {

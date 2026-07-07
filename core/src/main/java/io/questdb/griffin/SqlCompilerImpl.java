@@ -1816,10 +1816,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
+    private void alterTableSuspend(int tableNamePosition, TableToken tableToken, boolean writeSuspended, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
         try {
             if (!executionContext.isValidationOnly()) {
-                engine.addWalApplySuspended(tableToken);
+                engine.addWalApplySuspended(tableToken, writeSuspended);
                 engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             }
@@ -5227,8 +5227,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         ErrorTag errorTag = ErrorTag.NONE;
         String errorMessage = "";
+        // Bare SUSPEND WAL takes the flavour default from cairo.wal.apply.suspended.write.denied;
+        // SUSPEND WAL APPLY overrides to apply-only, SUSPEND WAL APPLY AND WRITE to apply + write.
+        boolean writeSuspended = configuration.isWalApplySuspendedWriteDenied();
 
-        tok = SqlUtil.fetchNext(lexer); // optional WITH part
+        tok = SqlUtil.fetchNext(lexer); // optional APPLY [AND WRITE] and/or WITH <error>
+        String flavourExpected = "'apply' or 'with' expected";
+        if (tok != null && isApplyKeyword(tok)) {
+            writeSuspended = false; // SUSPEND WAL APPLY -> apply-only
+            flavourExpected = "'and' or 'with' expected";
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && isAndKeyword(tok)) {
+                tok = expectToken(lexer, "'write'");
+                if (!isWriteKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'write' expected");
+                }
+                writeSuspended = true; // SUSPEND WAL APPLY AND WRITE -> apply + write
+                flavourExpected = "'with' expected";
+                tok = SqlUtil.fetchNext(lexer);
+            }
+        }
         if (tok != null && !Chars.equals(tok, ';')) {
             if (isWithKeyword(tok)) {
                 tok = expectToken(lexer, "error code/tag");
@@ -5254,11 +5272,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
                 }
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
+                throw SqlException.$(lexer.lastTokenPosition(), flavourExpected);
             }
         }
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
-        alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+        alterTableSuspend(tableNamePosition, tableToken, writeSuspended, errorTag, errorMessage, executionContext);
     }
 
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {

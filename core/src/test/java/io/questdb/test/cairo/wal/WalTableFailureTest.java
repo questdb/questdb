@@ -1450,7 +1450,12 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspen wal", SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wall", "'wal' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal witj", "'with' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal witj", "'apply' or 'with' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal applyy", "'apply' or 'with' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal apply hoppa", "'and' or 'with' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal apply and", "'write' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal apply and writ", "'write' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal apply and write hoppa", "'with' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with", "error code/tag expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24a", "invalid value [value=24a]");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with '24a'", "invalid value [value=24a]");

@@ -195,6 +195,11 @@ public class CairoEngine implements Closeable, WriterSource {
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final RecentWriteTracker recentWriteTracker;
+    // Table dirs whose readers + metadata are locked by an in-progress RECONCILE TABLE apply.
+    // While a dir is present here, getReader / getTableMetadata throw EntryLockedException so no new
+    // reader/metadata tenant opens; the apply then spins on lockReadersAndMetadata until the already
+    // active tenants drain and the pool lock takes. Kept off the query hot path by the isEmpty guard.
+    private final ConcurrentHashMap<TableToken> reconcileReadLocked = new ConcurrentHashMap<>();
     // Fences client commits against the PRIMARY-to-REPLICA role flip. Commit/DDL paths
     // (TableUpdateDetails.commit/closeNoLock/releaseWriter, the /exec and pg-wire executor
     // commits, the ILP-UDP flush) hold the READ side while re-checking read-only mode and
@@ -413,10 +418,21 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Adds a table to the runtime hard-suspend set, excluding it from WAL apply until removed.
-     * Called by {@code ALTER TABLE ... SUSPEND WAL}.
+     * Called by {@code ALTER TABLE ... SUSPEND WAL [APPLY [AND WRITE]]}. {@code writeSuspended}
+     * selects the flavour: {@code true} also denies WAL writes ({@code SUSPEND WAL APPLY AND
+     * WRITE}), {@code false} excludes the table from WAL apply only ({@code SUSPEND WAL APPLY}).
+     * A bare {@code SUSPEND WAL} passes the {@code cairo.wal.apply.suspended.write.denied} default,
+     * resolved by the SQL layer.
      */
-    public void addWalApplySuspended(TableToken tableToken) {
-        tableSequencerAPI.setHardSuspended(tableToken, true);
+    public void addWalApplySuspended(TableToken tableToken, boolean writeSuspended) {
+        final int flags = writeSuspended
+                ? (SeqTxnTracker.SUSPEND_FLAG_APPLY | SeqTxnTracker.SUSPEND_FLAG_WRITE)
+                : SeqTxnTracker.SUSPEND_FLAG_APPLY;
+        if (!tableSequencerAPI.trySetSuspend(tableToken, SeqTxnTracker.SUSPEND_PRIORITY_DDL, flags)) {
+            throw CairoException.nonCritical()
+                    .put("cannot SUSPEND WAL: table is locked by an in-progress RECONCILE [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
     }
 
     public void applyTableRename(TableToken token, TableToken updatedTableToken) {
@@ -1080,22 +1096,26 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableReader getReader(CharSequence tableName) {
         TableToken tableToken = verifyTableNameForRead(tableName);
+        checkReconcileReadLock(tableToken);
         // Do not call getReader(TableToken tableToken), it will do unnecessary token verification
         return readerPool.get(tableToken);
     }
 
     public TableReader getReader(TableToken tableToken) {
         verifyTableToken(tableToken);
+        checkReconcileReadLock(tableToken);
         return readerPool.get(tableToken);
     }
 
     public TableReader getReader(TableToken tableToken, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
+        checkReconcileReadLock(tableToken);
         return readerPool.get(tableToken, readerPoolSupervisor);
     }
 
     public TableReader getReader(TableToken tableToken, long metadataVersion, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
+        checkReconcileReadLock(tableToken);
         return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken, readerPoolSupervisor));
     }
 
@@ -1240,6 +1260,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public TableMetadata getTableMetadata(TableToken tableToken, long desiredVersion) {
         verifyTableToken(tableToken);
+        checkReconcileReadLock(tableToken);
         if (tableToken.isView()) {
             return getViewMetadata(tableToken);
         }
@@ -1325,7 +1346,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
-        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+        if (isWalWriteSuspended(tableToken)) {
             throw CairoException.tableSuspended(tableToken);
         }
         return walWriterPool.get(tableToken);
@@ -1339,7 +1360,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
-        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+        if (isWalWriteSuspended(tableToken)) {
             throw CairoException.tableSuspended(tableToken);
         }
         return walWriterPool.get(tableToken);
@@ -1456,7 +1477,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public @NotNull WalWriter getWalWriterUnsafe(TableToken tableToken) {
         verifyTableToken(tableToken);
-        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
+        if (isWalWriteSuspended(tableToken)) {
             throw CairoException.tableSuspended(tableToken);
         }
         try {
@@ -1632,6 +1653,26 @@ public class CairoEngine implements Closeable, WriterSource {
         return configured != null && configured.contains(tableToken.getDirName());
     }
 
+    /**
+     * Whether the table is suspended in the write-denial flavour: WAL writes are rejected (like a
+     * dropped table, distinct exception), not just excluded from WAL apply. A runtime
+     * {@code ALTER TABLE ... SUSPEND WAL} carries the flavour it was suspended with (defaulting to
+     * {@code cairo.wal.apply.suspended.write.denied}); a table suspended via the
+     * {@code cairo.wal.apply.suspended.tables} config list denies writes only when that same config
+     * is on. This is the sole gate for WAL-write denial -- callers no longer combine
+     * {@code isWalApplySuspended} with the config themselves.
+     */
+    public boolean isWalWriteSuspended(TableToken tableToken) {
+        final SeqTxnTracker tracker = tableSequencerAPI.getTxnTracker(tableToken);
+        if (tracker.isHardSuspended()) {
+            return tracker.isWriteSuspended();
+        }
+        final ObjHashSet<String> configured = configuration.getWalApplySuspendedTables();
+        return configured != null
+                && configured.contains(tableToken.getDirName())
+                && configuration.isWalApplySuspendedWriteDenied();
+    }
+
     @TestOnly
     public boolean isWalPurgeJobLocked() {
         return walPurgeJobLock.isLocked();
@@ -1701,6 +1742,17 @@ public class CairoEngine implements Closeable, WriterSource {
     public boolean lockReaders(TableToken tableToken) {
         verifyTableToken(tableToken);
         return lockReadersByTableToken(tableToken);
+    }
+
+    /**
+     * Marks the table's readers + metadata as read-locked for an in-progress RECONCILE TABLE apply.
+     * From this call until {@link #unlockReconcileReads}, {@link #getReader}/{@link #getTableMetadata}
+     * throw {@link EntryLockedException} so no NEW reader/metadata tenant opens; the caller then spins
+     * on {@link #lockReadersAndMetadata} while the already active tenants drain, and the pool lock
+     * eventually takes. Idempotent per dir.
+     */
+    public void lockReconcileReads(TableToken tableToken) {
+        reconcileReadLocked.put(tableToken.getDirName(), tableToken);
     }
 
     public boolean lockReadersAndMetadata(TableToken tableToken) {
@@ -1951,9 +2003,15 @@ public class CairoEngine implements Closeable, WriterSource {
      * Removes a table from the runtime hard-suspend set. Called by
      * {@code ALTER TABLE ... RESUME WAL}. A table configured via
      * {@code cairo.wal.apply.suspended.tables} stays suspended until also removed from the config.
+     * Errors out if the table is locked by a higher-priority holder (an in-progress RECONCILE), so a
+     * stray RESUME cannot free the writer mid-reconcile.
      */
     public void removeWalApplySuspended(TableToken tableToken) {
-        tableSequencerAPI.setHardSuspended(tableToken, false);
+        if (!tableSequencerAPI.trySetSuspend(tableToken, SeqTxnTracker.SUSPEND_PRIORITY_DDL, 0)) {
+            throw CairoException.nonCritical()
+                    .put("cannot RESUME WAL: table is locked by an in-progress RECONCILE [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
     }
 
     public TableToken rename(
@@ -2215,6 +2273,14 @@ public class CairoEngine implements Closeable, WriterSource {
         tableMetadataPool.unlock(tableToken);
     }
 
+    /**
+     * Clears the read-lock set by {@link #lockReconcileReads}, re-allowing {@link #getReader} /
+     * {@link #getTableMetadata} for the table. Idempotent.
+     */
+    public void unlockReconcileReads(TableToken tableToken) {
+        reconcileReadLocked.remove(tableToken.getDirName());
+    }
+
     public void unlockTableCreate(TableToken tableToken) {
         createTableLock.remove(tableToken.getTableName(), tableToken);
     }
@@ -2347,6 +2413,14 @@ public class CairoEngine implements Closeable, WriterSource {
             throw ex;
         }
         return reader;
+    }
+
+    // Fast on the query hot path: reconcileReadLocked is empty except during a RECONCILE TABLE apply,
+    // so the isEmpty() short-circuit skips the per-dir lookup in the common case.
+    private void checkReconcileReadLock(TableToken tableToken) {
+        if (!reconcileReadLocked.isEmpty() && reconcileReadLocked.get(tableToken.getDirName()) != null) {
+            throw EntryLockedException.instance("reconcile in progress");
+        }
     }
 
     private static void insert(
@@ -2738,9 +2812,9 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.nonCritical().put("REBASE WAL requires the table to be suspended first [table=").put(oldToken.getTableName()).put(']');
         }
         // Require suspension to actually stop writes, so the table is quiescent without extra locking:
-        // with write-denial on, getWalWriter rejects ingestion for a hard-suspended table.
-        if (!configuration.isWalApplySuspendedWriteDenied()) {
-            throw CairoException.nonCritical().put("REBASE WAL requires cairo.wal.apply.suspended.write.denied=true so that suspension blocks writes [table=").put(oldToken.getTableName()).put(']');
+        // in the write-denial flavour, getWalWriter rejects ingestion for the suspended table.
+        if (!isWalWriteSuspended(oldToken)) {
+            throw CairoException.nonCritical().put("REBASE WAL requires the table to be SUSPEND WAL'd in the write-denial flavour (cairo.wal.apply.suspended.write.denied=true) so that suspension blocks writes [table=").put(oldToken.getTableName()).put(']');
         }
         // The rebase repoints the name registry (dropTable/registerName), which a read-only instance
         // (cairo.read.only=true) refuses. Fail early with a clear message instead of deep in the registry.

@@ -1473,7 +1473,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean isViewWriteSuspended(TableToken viewToken) {
-        return configuration.isWalApplySuspendedWriteDenied() && engine.isWalApplySuspended(viewToken);
+        return engine.isWalWriteSuspended(viewToken);
     }
 
     private boolean processNotifications() {

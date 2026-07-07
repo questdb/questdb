@@ -36,10 +36,22 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
+    // Hard-suspend flags (low 16 bits of a suspendState word): bit 0 = WAL apply suspended, bit 1 =
+    // WAL writing suspended. Only two combined values are used: APPLY (1) and APPLY | WRITE (3).
+    public static final int SUSPEND_FLAG_APPLY = 1;
+    public static final int SUSPEND_FLAG_WRITE = 2;
+    // Hard-suspend priorities (high 16 bits of a suspendState word). A lower priority CANNOT change a
+    // lock currently held at a higher priority (trySetSuspend returns false); a higher priority
+    // preempts a lower one and restores it on release. Operator DDL (ALTER TABLE SUSPEND/RESUME WAL)
+    // is lowest; RECONCILE TABLE outranks it so an operator RESUME cannot free the writer mid-reconcile
+    // and a reconcile restores the operator's suspend when it finishes.
+    public static final int SUSPEND_PRIORITY_DDL = 0;
+    public static final int SUSPEND_PRIORITY_RECONCILE = 8;
     public static final long UNINITIALIZED_TXN = -1;
     private static final CarrierLocal<WaiterHolder> HOLDER = CarrierLocal.withInitial(WaiterHolder::new);
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
+    private static final long SUSPEND_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendState");
     private static final long WAITER_REGISTRATION_COUNT_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "waiterRegistrationCount");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final Metrics metrics;
@@ -49,14 +61,17 @@ public class SeqTxnTracker {
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
     private volatile String errorMessage = "";
-    // Hard-suspend flag: when set, the table is excluded from WAL apply and (when
-    // cairo.wal.apply.suspended.write.denied is enabled) denied WAL writes. Set by
-    // ALTER TABLE ... SUSPEND WAL, cleared by ALTER TABLE ... RESUME WAL. The reloadable
-    // cairo.wal.apply.suspended.tables config list is an additional source checked by the engine.
-    private volatile boolean hardSuspended;
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
+    // Hard-suspend priority lock. Two packed [priority:16][flags:16] words: high 32 bits = the ACTIVE
+    // lock (flags per SUSPEND_FLAG_*, priority per SUSPEND_PRIORITY_*), low 32 bits = the lock a
+    // higher-priority holder PREEMPTED, restored when the preemptor releases. Set by
+    // ALTER TABLE SUSPEND/RESUME WAL (priority DDL) and RECONCILE TABLE (priority RECONCILE), CAS-only
+    // via trySetSuspend. Replaces the old separate hardSuspended/writeSuspended booleans; the
+    // cairo.wal.apply.suspended.tables config list is an additional apply-suspend source the engine ORs in.
+    @SuppressWarnings("FieldMayBeFinal")
+    private volatile long suspendState;
     // -1 suspended
     // 0 unknown
     // 1 not suspended
@@ -129,7 +144,7 @@ public class SeqTxnTracker {
     }
 
     public boolean isHardSuspended() {
-        return hardSuspended;
+        return (activeSuspendFlags() & SUSPEND_FLAG_APPLY) != 0;
     }
 
     public boolean isInitialised() {
@@ -142,6 +157,10 @@ public class SeqTxnTracker {
 
     public boolean isWalPurgeLocked() {
         return walPurgeLocked;
+    }
+
+    public boolean isWriteSuspended() {
+        return (activeSuspendFlags() & SUSPEND_FLAG_WRITE) != 0;
     }
 
     public boolean notifyOnCheck(long newSeqTxn) {
@@ -201,8 +220,61 @@ public class SeqTxnTracker {
         }
     }
 
-    public void setHardSuspended(boolean hardSuspended) {
-        this.hardSuspended = hardSuspended;
+    /**
+     * Atomically sets the hard-suspend state at the caller's {@code priority} (a
+     * {@code SUSPEND_PRIORITY_*}). {@code flags} is the desired lock ({@code SUSPEND_FLAG_*} OR'd,
+     * e.g. {@code SUSPEND_FLAG_APPLY | SUSPEND_FLAG_WRITE}); {@code 0} releases.
+     * <p>
+     * Priority rules (CAS loop, so it re-reads and re-checks on contention):
+     * <ul>
+     *   <li>A LOWER priority cannot change a lock currently held at a HIGHER priority — returns
+     *       {@code false} (e.g. an operator RESUME WAL cannot free a table an in-progress reconcile
+     *       locked).</li>
+     *   <li>A HIGHER priority PREEMPTS a lower-priority lock: the displaced lock is remembered and
+     *       RESTORED when the higher-priority holder releases (so a reconcile of an operator-suspended
+     *       table leaves the operator's suspend intact afterwards).</li>
+     *   <li>The current holder (same priority) may freely modify or release its own lock.</li>
+     * </ul>
+     *
+     * @return {@code true} if the state was changed, {@code false} if the caller is outranked.
+     */
+    public boolean trySetSuspend(int priority, int flags) {
+        for (; ; ) {
+            final long s = suspendState;
+            final int active = (int) (s >>> 32);
+            final int preempted = (int) s;
+            final int activePriority = (active >>> 16) & 0xFFFF;
+            final int activeFlags = active & 0xFFFF;
+            if (activeFlags != 0 && priority < activePriority) {
+                return false; // outranked: cannot change a higher-priority lock
+            }
+            final int newActive;
+            final int newPreempted;
+            if (flags != 0) {
+                newActive = (priority << 16) | (flags & 0xFFFF);
+                if (activeFlags != 0 && activePriority < priority) {
+                    newPreempted = active; // preempting a lower lock -- remember it
+                } else if (activeFlags != 0 && activePriority == priority) {
+                    newPreempted = preempted; // modifying our own lock -- keep what we displaced
+                } else {
+                    newPreempted = 0; // fresh lock over an unlocked table
+                }
+            } else if (activeFlags != 0 && activePriority == priority && preempted != 0) {
+                newActive = preempted; // release: restore the lock we preempted
+                newPreempted = 0;
+            } else {
+                newActive = 0; // release: fully clear
+                newPreempted = 0;
+            }
+            final long ns = ((long) newActive << 32) | (newPreempted & 0xFFFFFFFFL);
+            if (Unsafe.cas(this, SUSPEND_STATE_OFFSET, s, ns)) {
+                return true;
+            }
+        }
+    }
+
+    private int activeSuspendFlags() {
+        return (int) (suspendState >>> 32) & 0xFFFF;
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {

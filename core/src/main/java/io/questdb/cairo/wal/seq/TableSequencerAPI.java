@@ -456,16 +456,16 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void setHardSuspended(final TableToken tableToken, boolean hardSuspended) {
-        getSeqTxnTracker(tableToken).setHardSuspended(hardSuspended);
-    }
-
     public void setWalPurgeLocked(final TableToken tableToken, boolean walPurgeLocked) {
         getSeqTxnTracker(tableToken).setWalPurgeLocked(walPurgeLocked);
     }
 
     public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {
         getSeqTxnTracker(tableToken).setSuspended(errorTag, errorMessage);
+    }
+
+    public boolean trySetSuspend(final TableToken tableToken, int priority, int flags) {
+        return getSeqTxnTracker(tableToken).trySetSuspend(priority, flags);
     }
 
     /**

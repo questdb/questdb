@@ -5347,6 +5347,53 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalApplySuspendExplicitFlavourWinsOverConfig() throws Exception {
+        // The explicit SUSPEND WAL flavour always wins over the cairo.wal.apply.suspended.write.denied
+        // default -- in BOTH directions.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+
+            // Direction 1: config says DENY WAL writes, but SUSPEND WAL APPLY asks for apply-only.
+            // SQL wins -> WAL writing stays ALLOWED while WAL apply is suspended.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+            execute("alter table t suspend wal apply");
+            Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
+            Assert.assertFalse(engine.isWalWriteSuspended(engine.verifyTableName("t")));
+            // The write is accepted (not rejected) despite the config default...
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            // ...but apply is suspended, so draining does not materialize the buffered row.
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            // RESUME WAL lifts the apply suspend and the buffered write lands.
+            execute("alter table t resume wal");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // Direction 2: config says ALLOW WAL writes, but SUSPEND WAL APPLY AND WRITE asks to deny.
+            // SQL wins -> the write is REJECTED.
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "false");
+            execute("alter table t suspend wal apply and write");
+            Assert.assertTrue(engine.isWalWriteSuspended(engine.verifyTableName("t")));
+            try {
+                execute("insert into t values ('2024-02-02T00:00:00.000000Z', 2)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
+
+            // The explicit flavour composes with the WITH <error> clause.
+            execute("alter table t resume wal");
+            execute("alter table t suspend wal apply and write with 'DISK FULL', 'reconcile in progress'");
+            Assert.assertTrue(engine.isWalWriteSuspended(engine.verifyTableName("t")));
+
+            // Resume and apply: row 2 never entered the WAL, so only row 1 remains.
+            execute("alter table t resume wal");
+            drainWalQueue();
+            assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testWalApplySuspendForcesAllNonStructuralAlters() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
@@ -5467,32 +5514,48 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWalApplySuspendWriteDeniedFlagIsReloadable() throws Exception {
+    public void testWalApplySuspendWriteDeniedDefaultCapturedAtSuspend() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+
+            // Flag off (default) at SUSPEND time: SUSPEND WAL captures the apply-only flavour, so
+            // the table keeps accepting writes (buffered for later apply).
+            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
             execute("alter table t suspend wal");
             Assert.assertTrue(engine.isWalApplySuspended(engine.verifyTableName("t")));
-
-            // Flag off (default): a suspended table still accepts writes (buffered for later apply).
-            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            Assert.assertFalse(engine.isWalWriteSuspended(engine.verifyTableName("t")));
             execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
 
-            // Turn the flag on at runtime (reload): writes are now denied.
+            // The flavour is a per-table property captured when SUSPEND WAL ran, so flipping the
+            // config on afterwards does NOT retroactively deny writes to an already-suspended table.
             setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
-            Assert.assertTrue(engine.getConfiguration().isWalApplySuspendedWriteDenied());
+            Assert.assertFalse(engine.isWalWriteSuspended(engine.verifyTableName("t")));
+            execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+
+            // Resume, then suspend again with the config now on: SUSPEND WAL captures the
+            // write-denial flavour this time, so writes are rejected.
+            execute("alter table t resume wal");
+            execute("alter table t suspend wal");
+            Assert.assertTrue(engine.isWalWriteSuspended(engine.verifyTableName("t")));
             try {
-                execute("insert into t values ('2024-01-02T00:00:00.000000Z', 2)");
+                execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
                 Assert.fail("expected the write to be denied");
             } catch (CairoException e) {
                 Assert.assertTrue(e.isTableSuspended());
             }
 
-            // Turn it back off (reload): writes are accepted again.
+            // Flipping the config back off does NOT retroactively re-allow: the captured flavour
+            // sticks until the table is resumed and re-suspended.
             setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "false");
-            Assert.assertFalse(engine.getConfiguration().isWalApplySuspendedWriteDenied());
-            execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
+            Assert.assertTrue(engine.isWalWriteSuspended(engine.verifyTableName("t")));
+            try {
+                execute("insert into t values ('2024-01-03T00:00:00.000000Z', 3)");
+                Assert.fail("expected the write to be denied");
+            } catch (CairoException e) {
+                Assert.assertTrue(e.isTableSuspended());
+            }
 
-            // Resume and apply: the two accepted rows materialize, the denied one was never written.
+            // Resume and apply: the two accepted rows materialize, the denied ones were never written.
             execute("alter table t resume wal");
             drainWalQueue();
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
