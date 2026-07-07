@@ -141,6 +141,60 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReorderedSameTypeProjectionRoutesDiskOnly() throws Exception {
+        // C1 regression: the in-mem tier stores the LV's output row in declared
+        // column order and MergedRecord indexes the buffer by output position. A
+        // reordered projection over two same-typed columns (SELECT ts, b, a FROM
+        // lv, with a and b both INT) shares the buffer's column count and its
+        // per-position types, so the pre-fix count + type gate wrongly engaged the
+        // tier and served a where b was expected: the optimiser fuses the reorder
+        // into the page-frame scan as a reordered column mapping ([0, 2, 1, 3]),
+        // leaving no SelectedRecord wrapper to correct it. The identity
+        // column-mapping check now routes such a read disk-only (always correct),
+        // while an in-declared-order read still routes through the tier.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, a, b, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, a, b) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 10, 20), " +
+                    "('2026-05-12T00:00:00.000002Z', 11, 21)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // Positive control: the in-declared-order full-schema read routes
+            // through the tier (identity mapping) and agrees with disk-only.
+            try (
+                    RecordCursorFactory factory = select("SELECT ts, a, b, rn FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("in-declared-order read must route through the tier", cursor.isRoutingEligible());
+            }
+            assertModeBMatchesDiskOnly("SELECT ts, a, b, rn FROM lv");
+
+            // The reorder swaps two same-typed columns: pre-fix the tier engaged
+            // and served swapped values. It must now route disk-only, and the
+            // values must be correct (b then a).
+            try (
+                    RecordCursorFactory factory = select("SELECT ts, b, a, rn FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertFalse("reordered same-type projection must route disk-only", cursor.isRoutingEligible());
+            }
+            assertModeBMatchesDiskOnly("SELECT ts, b, a, rn FROM lv");
+            assertQuery("SELECT ts, b, a, rn FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tb\ta\trn\n" +
+                            "2026-05-12T00:00:00.000001Z\t20\t10\t1\n" +
+                            "2026-05-12T00:00:00.000002Z\t21\t11\t2\n");
+        });
+    }
+
+    @Test
     public void testInMemRowIdRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
