@@ -268,6 +268,11 @@ jobs:
       - checkout: none
 
       - task: CmdLine@2
+        displayName: Check that trivy is installed and present in PATH
+        inputs:
+          script: which trivy && trivy version
+
+      - task: CmdLine@2
         displayName: Download latest openshift-preflight tool
         inputs:
           script: |
@@ -296,6 +301,18 @@ jobs:
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
+        displayName: Scan nightly docker image for vulnerabilities
+        inputs:
+          script: |
+            set -eo pipefail
+            echo "Scanning image: $(IMAGE_REPO):nightly"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE_REPO):nightly
+
+            echo "Scanning image: $(IMAGE_REPO):nightly-rhel"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE_REPO):nightly-rhel
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
         displayName: Combine Release Tag manifests
         inputs:
           script: |
@@ -319,6 +336,20 @@ jobs:
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
       - task: CmdLine@2
+        displayName: Scan tagged docker image for vulnerabilities
+        inputs:
+          script: |
+            set -eo pipefail
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+
+            echo "Scanning image: $(IMAGE_REPO):${tag_name}"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${tag_name}"
+
+            echo "Scanning image: $(IMAGE_REPO):${tag_name}-rhel"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${tag_name}-rhel"
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
+
+      - task: CmdLine@2
         displayName: Combine Release Commit from Branch manifests
         inputs:
           script: |
@@ -332,6 +363,20 @@ jobs:
               $(IMAGE_REPO)@$(amd64BranchRhelDigest) \
               $(IMAGE_REPO)@$(arm64BranchRhelDigest)
             preflight check container $(IMAGE_REPO):${docker_tag_name}-rhel
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
+
+      - task: CmdLine@2
+        displayName: Scan branch docker image for vulnerabilities
+        inputs:
+          script: |
+            set -eo pipefail
+            docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
+
+            echo "Scanning image: $(IMAGE_REPO):${docker_tag_name}"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${docker_tag_name}"
+
+            echo "Scanning image: $(IMAGE_REPO):${docker_tag_name}-rhel"
+            trivy image --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${docker_tag_name}-rhel"
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
   - job: NotifyOnFailure
