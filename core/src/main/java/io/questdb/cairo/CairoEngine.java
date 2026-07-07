@@ -3865,6 +3865,16 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$safe(viewDefinition.getBaseTableName())
                             .$(", view=").$(tableToken)
                             .I$();
+                    // No persisted state means the view has never refreshed (default watermark -1). On a
+                    // role-promote rehydrate the freshly built store must still schedule the initial
+                    // incremental refresh, otherwise a view that was created but never refreshed before a
+                    // demote is rebuilt as a valid, empty, watermark -1 view that nothing ever kickstarts
+                    // -- it never converges to the base table (#310). Mirror the REFRESH_TYPE_IMMEDIATE
+                    // kickstart on the persisted-state path below; timer/period views are driven by the
+                    // timer job and need no incremental kickstart here.
+                    if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
+                        matViewStateStore.enqueueIncrementalRefresh(tableToken);
+                    }
                     return;
                 }
 
