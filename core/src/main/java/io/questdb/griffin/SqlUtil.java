@@ -437,8 +437,11 @@ public class SqlUtil {
         final int baseLen = base.length();
         final int indexOfDot = Chars.indexOfLastUnquoted(base, '.');
         final boolean prefixedLiteral = !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1;
+        // Hoisted so the non-literal path tests it once (mirrors createColumnAlias's containsDisallowed)
+        // rather than at both the quote decision and the early-exit sibling check below.
+        final boolean baseDisallowed = disallowedAliases.contains(base);
         boolean quote = nonLiteral
-                ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || disallowedAliases.contains(base))
+                ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || baseDisallowed)
                 : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, base.length());
 
         // early exit for simple cases. A bare operator-token base (in, and, ...) shares its
@@ -449,7 +452,7 @@ public class SqlUtil {
         // (in -> in_2) via bareQuotedSibling. Mirrors createColumnAlias's early-exit.
         if (!prefixedLiteral && !quote && aliasToColumnMap.excludes(base)
                 && baseLen > 0 && baseLen <= maxLength && base.charAt(baseLen - 1) != ' ') {
-            if (!disallowedAliases.contains(base)) {
+            if (!baseDisallowed) {
                 return base;
             }
             final CharacterStoreEntry siblingEntry = store.newEntry();
@@ -512,15 +515,19 @@ public class SqlUtil {
         // Cache the first unquoted dot once: as a dedup suffix shrinks the content under truncation,
         // whether a dot still falls inside the content reduces to a position compare (below), so no
         // per-candidate re-scan is needed. Mirrors Chars.indexOfLastUnquoted's double-quote handling.
+        // indexOfDot already proved whether base carries an unquoted dot at all, and a prefixedLiteral's
+        // content starts past the last one, so both cases leave firstContentDot at -1 without a scan.
         int firstContentDot = -1;
-        boolean inContentQuotes = false;
-        for (int i = start; i < baseLen; i++) {
-            final char c = base.charAt(i);
-            if (c == '"') {
-                inContentQuotes = !inContentQuotes;
-            } else if (c == '.' && !inContentQuotes) {
-                firstContentDot = i;
-                break;
+        if (indexOfDot > -1 && !prefixedLiteral) {
+            boolean inContentQuotes = false;
+            for (int i = start; i < baseLen; i++) {
+                final char c = base.charAt(i);
+                if (c == '"') {
+                    inContentQuotes = !inContentQuotes;
+                } else if (c == '.' && !inContentQuotes) {
+                    firstContentDot = i;
+                    break;
+                }
             }
         }
 
@@ -895,7 +902,13 @@ public class SqlUtil {
      */
     public static int getColumnIndexQuiet(RecordMetadata metadata, CharSequence columnName) {
         final int index = metadata.getColumnIndexQuiet(columnName);
-        if (index > -1 || !isQuoteProtectedAlias(columnName)) {
+        if (index > -1) {
+            return index;
+        }
+        // Classify the miss with a single interior scan: >= 0 dotted interior, -1 operator token,
+        // MIN_VALUE not a compiler-protected alias (stays verbatim - the ingestion/storage contract).
+        final int interiorDot = quoteProtectedInteriorDot(columnName, 0, columnName.length());
+        if (interiorDot == Integer.MIN_VALUE) {
             return index;
         }
         // Retry with the protective quotes stripped: flat projection metadata stores the clean name.
@@ -906,11 +919,10 @@ public class SqlUtil {
         // column is stored re-quoted and was already matched verbatim above, so a split match here
         // could only bind the stripped name to an unrelated column. The operator-token interior
         // ("in") carries no dot and is looked up bare, so it stays verbatim and is left to the retry.
-        final int hi = columnName.length() - 1;
-        if (metadata.splitsOnDot() && Chars.indexOfLastUnquoted(columnName, '.', 1, hi) > -1) {
+        if (interiorDot > -1 && metadata.splitsOnDot()) {
             return -1;
         }
-        return metadata.getColumnIndexQuiet(columnName, 1, hi);
+        return metadata.getColumnIndexQuiet(columnName, 1, columnName.length() - 1);
     }
 
     /**
@@ -1573,10 +1585,7 @@ public class SqlUtil {
      * {@code [lo, hi)} slice of the given sequence.
      */
     public static boolean isQuoteProtectedAlias(CharSequence alias, int lo, int hi) {
-        if (hi - lo < 3 || alias.charAt(lo) != '"' || alias.charAt(hi - 1) != '"') {
-            return false;
-        }
-        return Chars.indexOfLastUnquoted(alias, '.', lo + 1, hi - 1) > -1 || disallowedAliases.contains(alias, lo + 1, hi - 1);
+        return quoteProtectedInteriorDot(alias, lo, hi) != Integer.MIN_VALUE;
     }
 
     /**
@@ -1815,6 +1824,33 @@ public class SqlUtil {
             return entry.toImmutable();
         }
         return name;
+    }
+
+    /**
+     * Classifies the {@code [lo, hi)} slice as a compiler-protected alias and, when it is, locates
+     * the unquoted dot in its interior. This is the shared primitive behind
+     * {@link #isQuoteProtectedAlias(CharSequence, int, int)}; callers that also need to know whether
+     * the interior is dotted (the {@code splitsOnDot} strip-retry guard in
+     * {@link #getColumnIndexQuiet(RecordMetadata, CharSequence)} and
+     * {@link io.questdb.griffin.engine.join.JoinRecordMetadata#getColumnIndexQuiet(CharSequence, int, int)})
+     * use it so one scan answers both questions instead of re-deriving the dot separately. The alias
+     * is protected when the slice carries outer double quotes and its interior has an unquoted dot or
+     * collides with an operator token. Returns:
+     * <ul>
+     *     <li>{@code >= 0} - the index of the interior's last unquoted dot (protected via a dot);</li>
+     *     <li>{@code -1} - protected via an operator token, no interior dot;</li>
+     *     <li>{@link Integer#MIN_VALUE} - not protected (quotes are genuine content, or not quote-shaped).</li>
+     * </ul>
+     */
+    public static int quoteProtectedInteriorDot(CharSequence alias, int lo, int hi) {
+        if (hi - lo < 3 || alias.charAt(lo) != '"' || alias.charAt(hi - 1) != '"') {
+            return Integer.MIN_VALUE;
+        }
+        final int dot = Chars.indexOfLastUnquoted(alias, '.', lo + 1, hi - 1);
+        if (dot > -1) {
+            return dot;
+        }
+        return disallowedAliases.contains(alias, lo + 1, hi - 1) ? -1 : Integer.MIN_VALUE;
     }
 
     /**

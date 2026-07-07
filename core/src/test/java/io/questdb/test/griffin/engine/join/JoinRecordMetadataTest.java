@@ -25,7 +25,10 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.griffin.AnyRecordMetadata;
+import io.questdb.griffin.EmptyRecordMetadata;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
@@ -42,11 +45,12 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         // must keep the dot as content, not be split into table.column. add() re-quotes it, so it
         // resolves through the qualified, quote-protected reference m."a.b" and is not mis-split
         // into a spurious m.a lookup.
-        JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2);
-        metadata.add("m", "a.b", ColumnType.INT, IndexType.NONE, 0, false, null);
-        Assert.assertEquals(0, metadata.getColumnIndexQuiet("m.\"a.b\""));
-        Assert.assertEquals(-1, metadata.getColumnIndexQuiet("m.a"));
-        Assert.assertEquals(-1, metadata.getColumnIndexQuiet("a.b"));
+        try (JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2)) {
+            metadata.add("m", "a.b", ColumnType.INT, IndexType.NONE, 0, false, null);
+            Assert.assertEquals(0, metadata.getColumnIndexQuiet("m.\"a.b\""));
+            Assert.assertEquals(-1, metadata.getColumnIndexQuiet("m.a"));
+            Assert.assertEquals(-1, metadata.getColumnIndexQuiet("a.b"));
+        }
     }
 
     @Test
@@ -55,12 +59,13 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         // wildcard builds the composed reference t1."in" from the model alias; the qualified lookup
         // must strip the protective quotes off the column part and resolve against the bare stored
         // name (regression: this asserted "Invalid column" at compile time before the retry).
-        JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2);
-        metadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
-        Assert.assertEquals(0, metadata.getColumnIndexQuiet("t1.\"in\""));
-        Assert.assertEquals(0, metadata.getColumnIndexQuiet("t1.in"));
-        // a genuinely absent quoted column still misses
-        Assert.assertEquals(-1, metadata.getColumnIndexQuiet("t1.\"and\""));
+        try (JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2)) {
+            metadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
+            Assert.assertEquals(0, metadata.getColumnIndexQuiet("t1.\"in\""));
+            Assert.assertEquals(0, metadata.getColumnIndexQuiet("t1.in"));
+            // a genuinely absent quoted column still misses
+            Assert.assertEquals(-1, metadata.getColumnIndexQuiet("t1.\"and\""));
+        }
     }
 
     @Test
@@ -96,16 +101,18 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         // column a.b (side a, column b) - a real dotted join column is stored re-quoted and matched
         // verbatim first, so a miss here is correct. The operator-token form "in" carries no dot and
         // still resolves via the bare retry.
-        JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2);
-        metadata.add("a", "b", ColumnType.INT, IndexType.NONE, 0, false, null);
-        Assert.assertEquals(-1, SqlUtil.getColumnIndexQuiet(metadata, "\"a.b\""));
-        // the direct composed reference a.b (side a, column b) still resolves - the guard only affects
-        // the strip-retry, not JoinRecordMetadata's own lookup
-        Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.b"));
+        try (JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2)) {
+            metadata.add("a", "b", ColumnType.INT, IndexType.NONE, 0, false, null);
+            Assert.assertEquals(-1, SqlUtil.getColumnIndexQuiet(metadata, "\"a.b\""));
+            // the direct composed reference a.b (side a, column b) still resolves - the guard only affects
+            // the strip-retry, not JoinRecordMetadata's own lookup
+            Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.b"));
+        }
 
-        JoinRecordMetadata opMetadata = new JoinRecordMetadata(configuration, 1);
-        opMetadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
-        Assert.assertEquals(0, SqlUtil.getColumnIndexQuiet(opMetadata, "\"in\""));
+        try (JoinRecordMetadata opMetadata = new JoinRecordMetadata(configuration, 1)) {
+            opMetadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
+            Assert.assertEquals(0, SqlUtil.getColumnIndexQuiet(opMetadata, "\"in\""));
+        }
     }
 
     @Test
@@ -115,19 +122,21 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         // -over-join metadata). The guard keys on splitsOnDot(), which PriorityMetadata forwards to its
         // base, so the stripped "a.b" is not split into side a / column b and mis-bound - an
         // instanceof JoinRecordMetadata check would miss the wrapper and return a valid-but-wrong index.
-        JoinRecordMetadata join = new JoinRecordMetadata(configuration, 2);
-        join.add("a", "b", ColumnType.INT, IndexType.NONE, 0, false, null);
-        Assert.assertTrue(join.splitsOnDot());
-        PriorityMetadata pm = new PriorityMetadata(1, join);
-        Assert.assertTrue(pm.splitsOnDot());
-        Assert.assertEquals(-1, SqlUtil.getColumnIndexQuiet(pm, "\"a.b\""));
+        try (JoinRecordMetadata join = new JoinRecordMetadata(configuration, 2)) {
+            join.add("a", "b", ColumnType.INT, IndexType.NONE, 0, false, null);
+            Assert.assertTrue(join.splitsOnDot());
+            PriorityMetadata pm = new PriorityMetadata(1, join);
+            Assert.assertTrue(pm.splitsOnDot());
+            Assert.assertEquals(-1, SqlUtil.getColumnIndexQuiet(pm, "\"a.b\""));
+        }
 
         // an operator-token interior carries no dot to mis-split, so it still resolves through the
         // wrapper via the bare retry (offset by the one reserved virtual slot)
-        JoinRecordMetadata opJoin = new JoinRecordMetadata(configuration, 1);
-        opJoin.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
-        PriorityMetadata opPm = new PriorityMetadata(1, opJoin);
-        Assert.assertEquals(1, SqlUtil.getColumnIndexQuiet(opPm, "\"in\""));
+        try (JoinRecordMetadata opJoin = new JoinRecordMetadata(configuration, 1)) {
+            opJoin.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
+            PriorityMetadata opPm = new PriorityMetadata(1, opJoin);
+            Assert.assertEquals(1, SqlUtil.getColumnIndexQuiet(opPm, "\"in\""));
+        }
     }
 
     @Test
@@ -135,12 +144,13 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         // The ranged getColumnIndexQuiet(cs, lo, hi) must key the table/column split off the
         // [lo, hi) slice, not the whole string (regression: the dotted branch used 0/length and
         // ignored lo/hi, so a sliced composed reference resolved against the wrong table part).
-        JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2);
-        metadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
-        final String composed = "xxt1.in";
-        // slice "t1.in" resolves; the ignored-bounds bug would look up "xxt1.in" and miss
-        Assert.assertEquals(0, metadata.getColumnIndexQuiet(composed, 2, composed.length()));
-        Assert.assertEquals(-1, metadata.getColumnIndexQuiet(composed, 0, composed.length()));
+        try (JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2)) {
+            metadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
+            final String composed = "xxt1.in";
+            // slice "t1.in" resolves; the ignored-bounds bug would look up "xxt1.in" and miss
+            Assert.assertEquals(0, metadata.getColumnIndexQuiet(composed, 2, composed.length()));
+            Assert.assertEquals(-1, metadata.getColumnIndexQuiet(composed, 0, composed.length()));
+        }
     }
 
     @Test
@@ -205,5 +215,23 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         }
 
         TestUtils.assertEquals(expected, sink);
+    }
+
+    @Test
+    public void testSplitsOnDotContract() {
+        // SqlUtil.getColumnIndexQuiet strips a protected alias's quotes and retries the ranged lookup;
+        // that strip is safe only against metadata whose ranged lookup matches verbatim. splitsOnDot()
+        // gates it, so EVERY dot-splitting impl must return true and every verbatim impl false. Pin the
+        // whole set: a future dot-splitting impl that forgets to override would otherwise mis-split a
+        // stripped dotted alias into an unrelated table.column and bind the wrong column silently.
+        Assert.assertFalse(new GenericRecordMetadata().splitsOnDot());
+        Assert.assertFalse(EmptyRecordMetadata.INSTANCE.splitsOnDot());
+        Assert.assertFalse(AnyRecordMetadata.INSTANCE.splitsOnDot());
+        try (JoinRecordMetadata join = new JoinRecordMetadata(configuration, 1)) {
+            Assert.assertTrue(join.splitsOnDot());
+            // PriorityMetadata forwards its delegate's flag rather than reporting a fixed value
+            Assert.assertTrue(new PriorityMetadata(1, join).splitsOnDot());
+        }
+        Assert.assertFalse(new PriorityMetadata(1, new GenericRecordMetadata()).splitsOnDot());
     }
 }

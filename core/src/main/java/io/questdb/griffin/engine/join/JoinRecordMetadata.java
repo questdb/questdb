@@ -164,12 +164,12 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         if (value != null) {
             return value.getInt(0);
         }
-        // A composed "alias.column" reference whose column part carries the compiler's
-        // protective quotes (e.g. a join wildcard reference m."in") resolves against the
-        // unquoted stored name: an operator-token column is stored bare, while a dotted
-        // column is stored re-quoted and already matched verbatim above. Retry the
-        // qualified lookup with the quotes stripped off the column part.
-        if (dot > -1 && SqlUtil.isQuoteProtectedAlias(columnName, dot + 1, hi)) {
+        // A composed "alias.column" reference whose column part carries the compiler's protective
+        // quotes (e.g. a join wildcard reference m."in") resolves against the unquoted stored name.
+        // Only an OPERATOR-TOKEN column part (quoteProtectedInteriorDot == -1) is stored bare and
+        // worth the strip-retry; a dotted column part is stored re-quoted and already matched
+        // verbatim above, so stripping it would only re-probe the map for a name that cannot be there.
+        if (dot > -1 && SqlUtil.quoteProtectedInteriorDot(columnName, dot + 1, hi) == -1) {
             key = map.withKey();
             key.putStrLowerCase(columnName, lo, dot);
             key.putStrLowerCase(columnName, dot + 2, hi - 1);
