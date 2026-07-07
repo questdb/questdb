@@ -57,6 +57,23 @@ public class CairoExceptionTest extends AbstractTest {
         Assert.assertFalse("clear() must reset the sticky preferences-out-of-date flag", ex.isPreferencesOutOfDateError());
     }
 
+    // readOnlyAccess() sets BOTH the authorization flag and the read-only-refusal marker in lockstep.
+    // The QWP NACK classifier keys on isReadOnlyAccessRefusal() to route a TRANSIENT demote refusal
+    // into the reconnect-eligible role-change close instead of a terminal ACL NACK. If clear() failed
+    // to reset the marker on a recycled flyweight (e.g. LineProtocolException via ThreadLocal), the
+    // NEXT exception built on that flyweight would inherit a stale marker and a genuine ACL denial
+    // would be silently misrouted into a reconnect-eligible close. This extends the sticky-flag guard
+    // pattern to the read-only-refusal marker (and the authorization flag set alongside it).
+    @Test
+    public void testClearResetsStickyReadOnlyAccessRefusalFlag() throws Exception {
+        CairoException ex = CairoException.readOnlyAccess();
+        Assert.assertTrue(ex.isReadOnlyAccessRefusal());
+        Assert.assertTrue("readOnlyAccess() implies the authorization flag", ex.isAuthorizationError());
+        invokeClear(ex);
+        Assert.assertFalse("clear() must reset the sticky read-only-access-refusal marker", ex.isReadOnlyAccessRefusal());
+        Assert.assertFalse("clear() must reset the authorization flag set alongside it", ex.isAuthorizationError());
+    }
+
     @Test
     public void testMatViewDoesNotExistIsNotCritical() {
         Assert.assertFalse(CairoException.matViewDoesNotExist("foo").isCritical());

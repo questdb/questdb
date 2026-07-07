@@ -46,10 +46,12 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -119,6 +121,99 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 } finally {
                     Unsafe.free(ptr, 100, MemoryTag.NATIVE_HTTP_CONN);
                 }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitReleasesDeferredWatermarkClamp() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Deferred rows buffered -> clamp armed.
+                state.markUncommittedDeferredRows();
+                Assert.assertTrue(state.hasUncommittedDeferredRows());
+
+                // The group-closing commit (commitAll) releases the clamp and
+                // the watermark may then cover the whole deferred group.
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
+                state.commit();
+                Assert.assertTrue(state.isOk());
+                Assert.assertFalse(state.hasUncommittedDeferredRows());
+
+                state.setHighestProcessedSequence(7);
+                Assert.assertEquals(7, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredClampResetOnClearAndDisconnect() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // clear() rolls the deferred rows back -> clamp released (the
+                // frames were never acked; the client replays them).
+                state.markUncommittedDeferredRows();
+                state.clear();
+                Assert.assertFalse(state.hasUncommittedDeferredRows());
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals(3, state.getHighestProcessedSequence());
+
+                // clearMessageState() (between deferred frames of one group)
+                // must NOT release the clamp -- the rows are still uncommitted.
+                state.markUncommittedDeferredRows();
+                state.clearMessageState();
+                Assert.assertTrue(state.hasUncommittedDeferredRows());
+
+                // onDisconnected() resets everything.
+                state.onDisconnected();
+                Assert.assertFalse(state.hasUncommittedDeferredRows());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testWatermarkClampedWhileDeferredRowsUncommitted() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Committed traffic advances the watermark normally.
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals(2, state.getHighestProcessedSequence());
+
+                // FLAG_DEFER_COMMIT rows buffered but uncommitted: the
+                // cumulative-ack watermark must refuse to advance -- an OK ack
+                // covering these frames would let a store-and-forward client
+                // trim slots whose rows the server can still roll back (the
+                // #7144 ack hole).
+                state.markUncommittedDeferredRows();
+                Assert.assertTrue(state.hasUncommittedDeferredRows());
+                state.setHighestProcessedSequence(5);
+                Assert.assertEquals("watermark must not advance over uncommitted deferred rows",
+                        2, state.getHighestProcessedSequence());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1466,6 +1561,73 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnresolvedSequenceClampsAckWatermark() throws Exception {
+        // Defense-in-depth for the cumulative-ack leapfrog: a sequence that was
+        // consumed but neither committed nor error-responded (role-change close
+        // paths) must never be covered by the cumulative-ack watermark, even if
+        // the processor-level deferral gate regresses.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                state.setHighestProcessedSequence(0);
+                state.markSequenceUnresolved(1);
+
+                // watermark must not reach the unresolved sequence...
+                state.setHighestProcessedSequence(1);
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+                // ...nor leapfrog past it
+                state.setHighestProcessedSequence(2);
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+
+                // marking keeps the minimum: a later, higher unresolved sequence
+                // must not loosen the clamp
+                state.markSequenceUnresolved(5);
+                state.setHighestProcessedSequence(6);
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+
+                // advancing strictly below the unresolved sequence stays legal
+                // (clamp boundary is firstUnresolved - 1; here that is 0)
+                state.setHighestProcessedSequence(0);
+                Assert.assertEquals(0, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testUnresolvedSequenceResetOnDisconnect() throws Exception {
+        // The unresolved marker is per-connection: after the reconnect-eligible
+        // close the client replays from its acked watermark, so a recycled state
+        // must accept fresh sequences without clamping.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.markSequenceUnresolved(0);
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals(-1, state.getHighestProcessedSequence());
+
+                state.onDisconnected();
+
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setHighestProcessedSequence(3);
+                Assert.assertEquals(3, state.getHighestProcessedSequence());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testCommitConsumerThrowRejectsState() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
@@ -2354,6 +2516,314 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         Object map = f.get(state);
         // Both CharSequenceLongHashMap and CharSequenceObjHashMap expose size().
         return (int) map.getClass().getMethod("size").invoke(map);
+    }
+
+    @Test
+    public void testIsDurableWorkFullyUploaded() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+
+                // Nothing pending -> trivially covered.
+                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+
+                fake.queueCommit(
+                        new String[]{"t1", "t2"},
+                        new String[]{"t1~1", "t2~1"},
+                        new long[]{10L, 20L}
+                );
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                // No uploads at all.
+                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+
+                // One table lagging behind its committed seqTxn.
+                registry.set("t1~1", 10L);
+                registry.set("t2~1", 19L);
+                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+
+                // Watermarks caught up on both tables.
+                registry.set("t2~1", 20L);
+                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+
+                // Coverage survives the durable-ack prune...
+                state.collectDurableProgress(registry);
+                state.onDurableAckSent();
+                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+
+                // ...and a fresh commit re-opens the window until its upload lands.
+                fake.queueCommit(new String[]{"t1"}, new String[]{"t1~1"}, new long[]{11L});
+                state.setHighestProcessedSequence(1);
+                state.commit();
+                Assert.assertFalse(state.isDurableWorkFullyUploaded(registry));
+                registry.set("t1~1", 11L);
+                Assert.assertTrue(state.isDurableWorkFullyUploaded(registry));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testRoleChangeCloseDeferralLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0L};
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                        @Override
+                        public MicrosecondClock getMicrosecondClock() {
+                            return () -> nowMicros[0];
+                        }
+                    };
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                Assert.assertFalse(state.isRoleChangeCloseDeferred());
+                Assert.assertFalse(state.isRoleChangeCloseGraceExpired());
+
+                state.deferRoleChangeClose("replica access is read-only");
+                Assert.assertTrue(state.isRoleChangeCloseDeferred());
+                Assert.assertFalse(state.isRoleChangeCloseGraceExpired());
+                Assert.assertEquals("replica access is read-only", state.getRoleChangeCloseReason().toString());
+
+                // Follow-on gate hits must not extend the deadline or clobber the reason.
+                nowMicros[0] = QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS - 1;
+                state.deferRoleChangeClose("a different reason");
+                Assert.assertEquals("replica access is read-only", state.getRoleChangeCloseReason().toString());
+                Assert.assertFalse(state.isRoleChangeCloseGraceExpired());
+
+                // The deferral spans messages: per-message resets must not drop it.
+                state.clear();
+                state.clearMessageState();
+                Assert.assertTrue(state.isRoleChangeCloseDeferred());
+
+                // Grace budget exhausts exactly at the deadline.
+                nowMicros[0] = QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS;
+                Assert.assertTrue(state.isRoleChangeCloseGraceExpired());
+
+                // Connection recycle resets the deferral.
+                state.onDisconnected();
+                Assert.assertFalse(state.isRoleChangeCloseDeferred());
+                Assert.assertFalse(state.isRoleChangeCloseGraceExpired());
+                Assert.assertEquals(0, state.getRoleChangeCloseReason().length());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testOnFatalCloseBlockedFromResumeCloseClearsDeferredClose() throws Exception {
+        // The already-RESUME_CLOSE branch of onFatalCloseBlocked: a previous fatal close was partially
+        // flushed (onFatalCloseSendBlocked parked the CLOSE frame bytes and moved sendState to
+        // RESUME_CLOSE). A second fatal-close attempt behind it must NOT re-defer a code/reason -- the
+        // parked bytes ARE the CLOSE frame; the resume path finishes flushing them and disconnects. So
+        // the branch clears the just-stored deferred code/reason and leaves sendState at RESUME_CLOSE.
+        // Driven through the public API (no reflection) to pin the real production path.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Park a partially-flushed CLOSE frame: sendState -> RESUME_CLOSE, deferred close cleared.
+                state.onFatalCloseSendBlocked();
+                final int resumeClose = state.getSendState();
+                Assert.assertFalse("precondition: must not be READY", state.isSendReady());
+                Assert.assertEquals(-1, state.getDeferredCloseCode());
+
+                // A second fatal close arrives while the CLOSE frame is still parked.
+                state.onFatalCloseBlocked(1011, "internal error");
+
+                // The branch is idempotent: the parked CLOSE frame stands, the redundant code/reason are
+                // discarded, and the state stays RESUME_CLOSE (never re-deferred).
+                Assert.assertEquals("sendState must stay RESUME_CLOSE", resumeClose, state.getSendState());
+                Assert.assertEquals("deferred close code must be cleared", -1, state.getDeferredCloseCode());
+                Assert.assertEquals("deferred close reason must be cleared", 0, state.getDeferredCloseReason().length());
+
+                // Idempotent under repetition (a re-entered deferral must not resurrect a code/reason).
+                state.onFatalCloseBlocked(1013, "try again later");
+                Assert.assertEquals(resumeClose, state.getSendState());
+                Assert.assertEquals(-1, state.getDeferredCloseCode());
+                Assert.assertEquals(0, state.getDeferredCloseReason().length());
+
+                // Null reason path through the same branch.
+                state.onFatalCloseBlocked(1000, null);
+                Assert.assertEquals(resumeClose, state.getSendState());
+                Assert.assertEquals(-1, state.getDeferredCloseCode());
+                Assert.assertEquals(0, state.getDeferredCloseReason().length());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testOnFatalCloseBlockedTransitionTableCoversAllSendStates() throws Exception {
+        // Exhaustive transition table for onFatalCloseBlocked across every input sendState. Pins the
+        // full routing contract, including the RESUME_CLOSE idempotent branch and the ack/durable-ack
+        // collapse-to-*_THEN_CLOSE arms that keep the deferred code/reason for the resume path.
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                final int READY = sendStateConst("SEND_STATE_READY");
+                final int RESUME_ACK = sendStateConst("SEND_STATE_RESUME_ACK");
+                final int RESUME_ERROR = sendStateConst("SEND_STATE_RESUME_ERROR");
+                final int RESUME_ACK_THEN_ERROR = sendStateConst("SEND_STATE_RESUME_ACK_THEN_ERROR");
+                final int RESUME_DURABLE_ACK = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK");
+                final int RESUME_DURABLE_ACK_THEN_ERROR = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR");
+                final int RESUME_CLOSE = sendStateConst("SEND_STATE_RESUME_CLOSE");
+                final int RESUME_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_ACK_THEN_CLOSE");
+                final int RESUME_DURABLE_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE");
+                final int RESUME_PONG = sendStateConst("SEND_STATE_RESUME_PONG");
+                final int RESUME_DRAIN_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DRAIN_THEN_CLOSE");
+
+                // ACK-family inputs collapse to RESUME_ACK_THEN_CLOSE, RETAINING the deferred code/reason.
+                for (int in : new int[]{RESUME_ACK, RESUME_ACK_THEN_ERROR, RESUME_ACK_THEN_CLOSE}) {
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(1011, "boom");
+                    Assert.assertEquals("input=" + in, RESUME_ACK_THEN_CLOSE, state.getSendState());
+                    Assert.assertEquals("input=" + in, 1011, state.getDeferredCloseCode());
+                    Assert.assertEquals("input=" + in, "boom", state.getDeferredCloseReason().toString());
+                }
+
+                // DURABLE-ACK-family inputs collapse to RESUME_DURABLE_ACK_THEN_CLOSE, RETAINING code/reason.
+                for (int in : new int[]{RESUME_DURABLE_ACK, RESUME_DURABLE_ACK_THEN_ERROR, RESUME_DURABLE_ACK_THEN_CLOSE}) {
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(1012, "later");
+                    Assert.assertEquals("input=" + in, RESUME_DURABLE_ACK_THEN_CLOSE, state.getSendState());
+                    Assert.assertEquals("input=" + in, 1012, state.getDeferredCloseCode());
+                    Assert.assertEquals("input=" + in, "later", state.getDeferredCloseReason().toString());
+                }
+
+                // RESUME_CLOSE stays put and CLEARS the redundant code/reason (parked bytes ARE the CLOSE).
+                setSendState(state, RESUME_CLOSE);
+                state.onFatalCloseBlocked(1011, "boom");
+                Assert.assertEquals(RESUME_CLOSE, state.getSendState());
+                Assert.assertEquals(-1, state.getDeferredCloseCode());
+                Assert.assertEquals(0, state.getDeferredCloseReason().length());
+
+                // All other inputs park behind a non-ack response: drain-then-close, RETAINING code/reason.
+                for (int in : new int[]{READY, RESUME_ERROR, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE}) {
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(1001, "going away");
+                    Assert.assertEquals("input=" + in, RESUME_DRAIN_THEN_CLOSE, state.getSendState());
+                    Assert.assertEquals("input=" + in, 1001, state.getDeferredCloseCode());
+                    Assert.assertEquals("input=" + in, "going away", state.getDeferredCloseReason().toString());
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testOnFatalCloseBlockedFuzz() throws Exception {
+        // Property fuzz over onFatalCloseBlocked: for a random input sendState, random close code and
+        // random reason (null / empty / non-empty), the method must never throw, must always leave the
+        // connection in a terminal close-bearing state, and must obey the retain-vs-clear contract:
+        //   RESUME_CLOSE   -> stays RESUME_CLOSE, deferred code/reason CLEARED
+        //   ACK family     -> RESUME_ACK_THEN_CLOSE, code/reason RETAINED
+        //   DURABLE family -> RESUME_DURABLE_ACK_THEN_CLOSE, code/reason RETAINED
+        //   everything else-> RESUME_DRAIN_THEN_CLOSE, code/reason RETAINED
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                final int READY = sendStateConst("SEND_STATE_READY");
+                final int RESUME_ACK = sendStateConst("SEND_STATE_RESUME_ACK");
+                final int RESUME_ERROR = sendStateConst("SEND_STATE_RESUME_ERROR");
+                final int RESUME_ACK_THEN_ERROR = sendStateConst("SEND_STATE_RESUME_ACK_THEN_ERROR");
+                final int RESUME_DURABLE_ACK = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK");
+                final int RESUME_DURABLE_ACK_THEN_ERROR = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR");
+                final int RESUME_CLOSE = sendStateConst("SEND_STATE_RESUME_CLOSE");
+                final int RESUME_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_ACK_THEN_CLOSE");
+                final int RESUME_DURABLE_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE");
+                final int RESUME_PONG = sendStateConst("SEND_STATE_RESUME_PONG");
+                final int RESUME_DRAIN_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DRAIN_THEN_CLOSE");
+
+                final int[] inputs = {
+                        READY, RESUME_ACK, RESUME_ERROR, RESUME_ACK_THEN_ERROR, RESUME_DURABLE_ACK,
+                        RESUME_DURABLE_ACK_THEN_ERROR, RESUME_CLOSE, RESUME_ACK_THEN_CLOSE,
+                        RESUME_DURABLE_ACK_THEN_CLOSE, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE
+                };
+
+                final long seed = System.nanoTime();
+                final Rnd rnd = new Rnd(seed, seed ^ 0x9E3779B97F4A7C15L);
+                final String msg = "onFatalCloseBlocked fuzz seed=" + seed;
+                for (int iter = 0; iter < 50_000; iter++) {
+                    final int in = inputs[rnd.nextInt(inputs.length)];
+                    final int code = rnd.nextInt();
+                    final int reasonKind = rnd.nextInt(3);
+                    final String reason = reasonKind == 0 ? null : (reasonKind == 1 ? "" : "r" + rnd.nextInt(1000));
+
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(code, reason);
+
+                    final int out = state.getSendState();
+                    if (in == RESUME_ACK || in == RESUME_ACK_THEN_ERROR || in == RESUME_ACK_THEN_CLOSE) {
+                        Assert.assertEquals(msg, RESUME_ACK_THEN_CLOSE, out);
+                        Assert.assertEquals(msg, code, state.getDeferredCloseCode());
+                        assertReason(msg, reason, state.getDeferredCloseReason());
+                    } else if (in == RESUME_DURABLE_ACK || in == RESUME_DURABLE_ACK_THEN_ERROR || in == RESUME_DURABLE_ACK_THEN_CLOSE) {
+                        Assert.assertEquals(msg, RESUME_DURABLE_ACK_THEN_CLOSE, out);
+                        Assert.assertEquals(msg, code, state.getDeferredCloseCode());
+                        assertReason(msg, reason, state.getDeferredCloseReason());
+                    } else if (in == RESUME_CLOSE) {
+                        Assert.assertEquals(msg, RESUME_CLOSE, out);
+                        Assert.assertEquals(msg, -1, state.getDeferredCloseCode());
+                        Assert.assertEquals(msg, 0, state.getDeferredCloseReason().length());
+                    } else {
+                        Assert.assertEquals(msg, RESUME_DRAIN_THEN_CLOSE, out);
+                        Assert.assertEquals(msg, code, state.getDeferredCloseCode());
+                        assertReason(msg, reason, state.getDeferredCloseReason());
+                    }
+                }
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    private static void assertReason(String msg, String expected, CharSequence actual) {
+        if (expected == null || expected.isEmpty()) {
+            Assert.assertEquals(msg, 0, actual.length());
+        } else {
+            Assert.assertEquals(msg, expected, actual.toString());
+        }
+    }
+
+    private static int sendStateConst(String name) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField(name);
+        f.setAccessible(true);
+        return f.getInt(null);
+    }
+
+    private static void setSendState(QwpIngressProcessorState state, int value) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField("sendState");
+        f.setAccessible(true);
+        f.setInt(state, value);
     }
 
     private static FakeConsumerTudCache installFakeTudCache(

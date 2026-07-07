@@ -80,9 +80,32 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private int messagePosition;
     private boolean outOfMemory;
     private boolean preferencesOutOfDateError = false;
+    private boolean readOnlyAccessRefusal = false;
 
     public static CairoException authorization() {
         return nonCritical().setAuthorizationError();
+    }
+
+    /**
+     * A write refused BECAUSE the node is read-only -- statically
+     * ({@code readonly=true} in the server configuration) or dynamically (the
+     * role-derived read-only of an enterprise replica, including a demote in
+     * flight). Carries the authorization flag, the canonical
+     * {@link #READ_ONLY_ACCESS_MESSAGE} and the read-only-refusal marker
+     * ({@link #isReadOnlyAccessRefusal()}) in lockstep, so the refusal's CAUSE
+     * travels with the exception.
+     * <p>
+     * Protocol layers that must tell a transient role-demote refusal apart from
+     * a genuine ACL denial (e.g. the QWP NACK classification) key on the marker.
+     * They must NOT re-read live engine state at catch time -- that races with a
+     * demote revert (the drain-timeout PRIMARY restore can land between the
+     * throw and the catch; nothing fences the propagation) -- and must NOT match
+     * the message text, which is brittle. Every "node is read-only" refusal site
+     * uses this factory so the marker is correct by construction; sites must not
+     * hand-roll {@code authorization().put(READ_ONLY_ACCESS_MESSAGE)}.
+     */
+    public static CairoException readOnlyAccess() {
+        return authorization().setReadOnlyAccessRefusal().put(READ_ONLY_ACCESS_MESSAGE);
     }
 
     public static CairoException critical(int errno) {
@@ -323,6 +346,15 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return outOfMemory;
     }
 
+    /**
+     * Whether this refusal was raised BECAUSE the node is read-only (set only by
+     * {@link #readOnlyAccess()}). Implies {@link #isAuthorizationError()}. False
+     * for genuine ACL denials.
+     */
+    public boolean isReadOnlyAccessRefusal() {
+        return readOnlyAccessRefusal;
+    }
+
     public boolean isPreferencesOutOfDateError() {
         return preferencesOutOfDateError;
     }
@@ -466,6 +498,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    private CairoException setReadOnlyAccessRefusal() {
+        this.readOnlyAccessRefusal = true;
+        return this;
+    }
+
     private CairoException setPreferencesOutOfDateError() {
         this.preferencesOutOfDateError = true;
         return this;
@@ -485,6 +522,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         cancellation = false;
         preferencesOutOfDateError = false;
         authorizationError = false;
+        readOnlyAccessRefusal = false;
         messagePosition = 0;
         outOfMemory = false;
         housekeeping = false;
