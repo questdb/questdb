@@ -1461,10 +1461,10 @@ public class ParquetTest extends AbstractTest {
 
                 // column tops
 
-                Assert.assertEquals(tableReaderRecord.getBool(32), nextParquetRecord.get("a_boolean_top"));
-                Assert.assertEquals((int) tableReaderRecord.getByte(33), nextParquetRecord.get("a_byte_top"));
-                Assert.assertEquals((int) tableReaderRecord.getShort(34), nextParquetRecord.get("a_short_top"));
-                Assert.assertEquals((int) tableReaderRecord.getChar(35), nextParquetRecord.get("a_char_top"));
+                assertPrimitiveValue(tableReaderRecord.getBool(32), nextParquetRecord.get("a_boolean_top"), false);
+                assertPrimitiveValue((int) tableReaderRecord.getByte(33), nextParquetRecord.get("a_byte_top"), 0);
+                assertPrimitiveValue((int) tableReaderRecord.getShort(34), nextParquetRecord.get("a_short_top"), 0);
+                assertPrimitiveValue((int) tableReaderRecord.getChar(35), nextParquetRecord.get("a_char_top"), 0);
 
                 assertPrimitiveValue(tableReaderRecord.getInt(36), nextParquetRecord.get("an_int_top"), Integer.MIN_VALUE);
                 assertPrimitiveValue(tableReaderRecord.getLong(37), nextParquetRecord.get("a_long_top"), Long.MIN_VALUE);
@@ -1516,10 +1516,10 @@ public class ParquetTest extends AbstractTest {
             Assert.assertEquals(62, schema.getColumns().size());
 
             assertSchemaNullable(columns.get(0), "id", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNonNullable(columns.get(1), "a_boolean", PrimitiveType.PrimitiveTypeName.BOOLEAN);
-            assertSchemaNonNullable(columns.get(2), "a_byte", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNonNullable(columns.get(3), "a_short", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNonNullable(columns.get(4), "a_char", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(1), "a_boolean", PrimitiveType.PrimitiveTypeName.BOOLEAN);
+            assertSchemaNullable(columns.get(2), "a_byte", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(3), "a_short", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(4), "a_char", PrimitiveType.PrimitiveTypeName.INT32);
             assertSchemaNullable(columns.get(5), "an_int", PrimitiveType.PrimitiveTypeName.INT32);
             assertSchemaNullable(columns.get(6), "a_long", PrimitiveType.PrimitiveTypeName.INT64);
             assertSchemaNullable(columns.get(7), "a_float", PrimitiveType.PrimitiveTypeName.FLOAT);
@@ -1551,10 +1551,10 @@ public class ParquetTest extends AbstractTest {
             assertSchemaNullable(columns.get(30), "a_decimal256", "DECIMAL(76,20)", PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY);
             // designated ts is non-nullable
             assertSchemaNonNullable(columns.get(31), "designated_ts", PrimitiveType.PrimitiveTypeName.INT64);
-            assertSchemaNonNullable(columns.get(32), "a_boolean_top", PrimitiveType.PrimitiveTypeName.BOOLEAN);
-            assertSchemaNonNullable(columns.get(33), "a_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNonNullable(columns.get(34), "a_short_top", PrimitiveType.PrimitiveTypeName.INT32);
-            assertSchemaNonNullable(columns.get(35), "a_char_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(32), "a_boolean_top", PrimitiveType.PrimitiveTypeName.BOOLEAN);
+            assertSchemaNullable(columns.get(33), "a_byte_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(34), "a_short_top", PrimitiveType.PrimitiveTypeName.INT32);
+            assertSchemaNullable(columns.get(35), "a_char_top", PrimitiveType.PrimitiveTypeName.INT32);
 
             assertSchemaNullable(columns.get(36), "an_int_top", PrimitiveType.PrimitiveTypeName.INT32);
             assertSchemaNullable(columns.get(37), "a_long_top", PrimitiveType.PrimitiveTypeName.INT64);
