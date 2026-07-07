@@ -13,10 +13,12 @@ use crate::parquet_read::decode::decimal::{
 use crate::parquet_read::decoders::int128::Int128ToUuidConverter;
 use crate::parquet_read::decoders::int96::{Int96Timestamp, Int96ToTimestampConverter};
 use crate::parquet_read::decoders::{
-    int32::DayToMillisConverter, BasePrimitiveDictDecoder, BaseVarDictDecoder,
-    ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder, DeltaLAVarcharSliceDecoder,
-    FixedDictDecoder, PlainBooleanDecoder, PlainPrimitiveDecoder, RleBooleanDecoder,
+    int32::DayToMillisConverter, int32::Int32ToDoubleConverter, BasePrimitiveDictDecoder,
+    BaseVarDictDecoder, ConvertablePrimitiveDictDecoder, DeltaBinaryPackedDecoder,
+    DeltaLAVarcharSliceDecoder, FixedDictDecoder, FloatToIntRangeCheckConverter,
+    PlainBooleanDecoder, PlainPrimitiveDecoder, PrimitiveConverter, RleBooleanDecoder,
     RleDictVarcharSliceDecoder, RleDictionaryDecoder, RleLocalIsGlobalSymbolDictDecoder,
+    F32_MAX_SAFE_FOR_I32, F32_MAX_SAFE_FOR_I64, F64_MAX_SAFE_FOR_I64,
 };
 use crate::parquet_read::page::{split_buffer, DataPage, DictPage};
 use crate::parquet_read::slicer::rle::RleDictionarySlicer;
@@ -32,7 +34,7 @@ use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::page::DataPageHeader;
 use parquet2::read::levels::get_bit_width;
 use parquet2::read::{SlicedDataPage, SlicedDictPage};
-use parquet2::schema::types::PhysicalType;
+use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType};
 use qdb_core::col_type::{nulls, ColumnType, ColumnTypeTag, Long128, Long256};
 use std::cmp::min;
 use std::ptr;
@@ -53,6 +55,7 @@ impl ColumnChunkBuffers {
             aux_size: 0,
             page_buffers_size: 0,
             page_buffers: Vec::new(),
+            column_top: 0,
             page_buffers_charged: 0,
             page_buffers_counted: 0,
         }
@@ -144,6 +147,7 @@ impl ColumnChunkBuffers {
         self.page_buffers_size = 0;
         self.page_buffers.clear();
         self.page_buffers_counted = 0;
+        self.column_top = 0;
     }
 }
 
@@ -425,6 +429,8 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
     mode: DecodeModeContext<'_>,
 ) -> ParquetResult<bool> {
     let row_hi = mode.source_row_count();
+    let logical_type = page.descriptor.primitive_type.logical_type;
+    let converted_type = page.descriptor.primitive_type.converted_type;
     match (page.encoding(), dict, column_type.tag()) {
         (Encoding::Plain, _, ColumnTypeTag::Byte) => {
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
@@ -788,7 +794,11 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (Encoding::Plain, _, ColumnTypeTag::Date) => {
+        (Encoding::Plain, _, ColumnTypeTag::Date)
+            if matches!(logical_type, Some(PrimitiveLogicalType::Date))
+                || matches!(converted_type, Some(PrimitiveConvertedType::Date)) =>
+        {
+            // Parquet-native DATE column: Int32 stores days since epoch, convert to millis.
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                 page,
                 mode,
@@ -801,11 +811,21 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             )?;
             Ok(true)
         }
-        (
-            Encoding::RleDictionary | Encoding::PlainDictionary,
-            Some(dict_page),
-            ColumnTypeTag::Date,
-        ) => {
+        (Encoding::Plain, _, ColumnTypeTag::Date) => {
+            // Type conversion (e.g. INT to DATE): plain i32 to i64 widening.
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i64>::new(values_buffer, bufs, nulls::TIMESTAMP),
+            )?;
+            Ok(true)
+        }
+        (Encoding::RleDictionary | Encoding::PlainDictionary, Some(_), ColumnTypeTag::Date)
+            if matches!(logical_type, Some(PrimitiveLogicalType::Date))
+                || matches!(converted_type, Some(PrimitiveConvertedType::Date)) =>
+        {
+            let dict_page = dict.unwrap();
+            // Parquet-native DATE column with dictionary encoding.
             let dict_decoder =
                 ConvertablePrimitiveDictDecoder::try_new(dict_page, DayToMillisConverter::new())?;
             decode_page0_mode::<_, FILTERED, FILL_NULLS>(
@@ -816,6 +836,186 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     dict_decoder,
                     row_hi,
                     nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Date,
+        ) => {
+            // Type conversion with dictionary encoding: plain i32→i64 widening.
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i32, i64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::TIMESTAMP,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (encoding, dict, ColumnTypeTag::Double) => {
+            let scale = match logical_type {
+                Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
+                _ => match converted_type {
+                    Some(PrimitiveConvertedType::Decimal(_, scale)) => scale,
+                    _ => 0,
+                },
+            };
+
+            match (encoding, dict) {
+                (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
+                    let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                        dict_page,
+                        Int32ToDoubleConverter::try_new(scale)?,
+                    )?;
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut RleDictionaryDecoder::try_new(
+                            values_buffer,
+                            dict_decoder,
+                            row_hi,
+                            nulls::DOUBLE,
+                            bufs,
+                        )?,
+                    )?;
+                    Ok(true)
+                }
+                (Encoding::Plain, _) => {
+                    decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                        page,
+                        mode,
+                        &mut PlainPrimitiveDecoder::new_with(
+                            values_buffer,
+                            bufs,
+                            nulls::DOUBLE,
+                            Int32ToDoubleConverter::try_new(scale)?,
+                        ),
+                    )?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        }
+        // -- Type conversion arms: Int32 physical to wider/different QDB type --
+        (Encoding::Plain, _, ColumnTypeTag::Long | ColumnTypeTag::Timestamp) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i64>::new(values_buffer, bufs, nulls::LONG),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Long | ColumnTypeTag::Timestamp) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i64, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::LONG,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Long | ColumnTypeTag::Timestamp,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i32, i64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Float) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, f32>::new(values_buffer, bufs, nulls::FLOAT),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Float,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i32, f32, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::FLOAT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Int32 to Boolean (truncate to i8) --
+        (Encoding::Plain, _, ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i32, i8>::new(values_buffer, bufs, nulls::BYTE),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i8, i32>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Boolean,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i32, i8>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
                     bufs,
                 )?,
             )?;
@@ -955,6 +1155,185 @@ fn decode_int64_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                     dict_decoder,
                     row_hi,
                     nulls::GEOHASH_LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion arms: Int64 physical to narrower/different QDB type --
+        (Encoding::Plain, _, ColumnTypeTag::Int) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, i32>::new(values_buffer, bufs, nulls::INT),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Int) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i32, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::INT,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Int,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i32>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::INT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Short) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, i16>::new(values_buffer, bufs, nulls::SHORT),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Short) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i16, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::SHORT,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Short,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i16>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::SHORT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, i8>::new(values_buffer, bufs, nulls::BYTE),
+            )?;
+            Ok(true)
+        }
+        (Encoding::DeltaBinaryPacked, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut DeltaBinaryPackedDecoder::<i8, i64>::try_new(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
+        ) => {
+            let dict_decoder = BasePrimitiveDictDecoder::<i64, i8>::try_new(dict_page)?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Double) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, f64>::new(values_buffer, bufs, nulls::DOUBLE),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Double,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i64, f64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::DOUBLE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Int64 to Float (lossy widening) --
+        (Encoding::Plain, _, ColumnTypeTag::Float) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<i64, f32>::new(values_buffer, bufs, nulls::FLOAT),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Float,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<i64, f32, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::FLOAT,
                     bufs,
                 )?,
             )?;
@@ -1526,6 +1905,225 @@ fn decode_double_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
             decode_array_page_mode::<_, FILTERED, FILL_NULLS>(page, mode, &mut slicer, bufs)?;
             Ok(true)
         }
+        // -- Type conversion arms: Double physical → narrower QDB type --
+        (Encoding::Plain, _, ColumnTypeTag::Float) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<f64, f32>::new(values_buffer, bufs, nulls::FLOAT),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Float,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<f64, f32, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::FLOAT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::Plain,
+            _,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::LONG,
+                    FloatToIntRangeCheckConverter::<f64, i64, true>::new(
+                        nulls::LONG,
+                        F64_MAX_SAFE_FOR_I64,
+                        i64::MIN as f64,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f64, i64, true>::new(
+                    nulls::LONG,
+                    F64_MAX_SAFE_FOR_I64,
+                    i64::MIN as f64,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        (Encoding::Plain, _, ColumnTypeTag::Int) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::INT,
+                    FloatToIntRangeCheckConverter::<f64, i32, true>::new(
+                        nulls::INT,
+                        i32::MAX as f64,
+                        i32::MIN as f64,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Int,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f64, i32, true>::new(
+                    nulls::INT,
+                    i32::MAX as f64,
+                    i32::MIN as f64,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::INT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Double → Short (range-checked) --
+        (Encoding::Plain, _, ColumnTypeTag::Short) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::SHORT,
+                    FloatToIntRangeCheckConverter::<f64, i16>::new(
+                        nulls::SHORT,
+                        i16::MAX as f64,
+                        i16::MIN as f64,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Short,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f64, i16>::new(
+                    nulls::SHORT,
+                    i16::MAX as f64,
+                    i16::MIN as f64,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::SHORT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Double → Byte/Boolean (range-checked) --
+        (Encoding::Plain, _, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
+            clear_aux_buffers(bufs);
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                    FloatToIntRangeCheckConverter::<f64, i8>::new(
+                        nulls::BYTE,
+                        i8::MAX as f64,
+                        i8::MIN as f64,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
+        ) => {
+            clear_aux_buffers(bufs);
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f64, i8>::new(
+                    nulls::BYTE,
+                    i8::MAX as f64,
+                    i8::MIN as f64,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }
@@ -1583,6 +2181,223 @@ fn decode_other_fixed_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 page,
                 mode,
                 &mut RleBooleanDecoder::try_new(values_buffer, row_hi, bufs, 0)?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion arms: Float physical → wider/different QDB type --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Double) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::<f32, f64>::new(values_buffer, bufs, nulls::DOUBLE),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Double,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::<f32, f64, _>::try_new(
+                dict_page,
+                PrimitiveConverter::new(),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::DOUBLE,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Float → Int (range-checked) --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Int) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::INT,
+                    FloatToIntRangeCheckConverter::<f32, i32, true>::new(
+                        nulls::INT,
+                        F32_MAX_SAFE_FOR_I32,
+                        i32::MIN as f32,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Int,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f32, i32, true>::new(
+                    nulls::INT,
+                    F32_MAX_SAFE_FOR_I32,
+                    i32::MIN as f32,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::INT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Float → Long/Date/Timestamp (range-checked) --
+        (
+            Encoding::Plain,
+            _,
+            PhysicalType::Float,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::LONG,
+                    FloatToIntRangeCheckConverter::<f32, i64, true>::new(
+                        nulls::LONG,
+                        F32_MAX_SAFE_FOR_I64,
+                        i64::MIN as f32,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f32, i64, true>::new(
+                    nulls::LONG,
+                    F32_MAX_SAFE_FOR_I64,
+                    i64::MIN as f32,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::LONG,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Float → Short (range-checked) --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Short) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::SHORT,
+                    FloatToIntRangeCheckConverter::<f32, i16>::new(
+                        nulls::SHORT,
+                        i16::MAX as f32,
+                        i16::MIN as f32,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Short,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f32, i16>::new(
+                    nulls::SHORT,
+                    i16::MAX as f32,
+                    i16::MIN as f32,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::SHORT,
+                    bufs,
+                )?,
+            )?;
+            Ok(true)
+        }
+        // -- Type conversion: Float → Byte/Boolean (range-checked) --
+        (Encoding::Plain, _, PhysicalType::Float, ColumnTypeTag::Byte | ColumnTypeTag::Boolean) => {
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut PlainPrimitiveDecoder::new_with(
+                    values_buffer,
+                    bufs,
+                    nulls::BYTE,
+                    FloatToIntRangeCheckConverter::<f32, i8>::new(
+                        nulls::BYTE,
+                        i8::MAX as f32,
+                        i8::MIN as f32,
+                    ),
+                ),
+            )?;
+            Ok(true)
+        }
+        (
+            Encoding::RleDictionary | Encoding::PlainDictionary,
+            Some(dict_page),
+            PhysicalType::Float,
+            ColumnTypeTag::Byte | ColumnTypeTag::Boolean,
+        ) => {
+            let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
+                dict_page,
+                FloatToIntRangeCheckConverter::<f32, i8>::new(
+                    nulls::BYTE,
+                    i8::MAX as f32,
+                    i8::MIN as f32,
+                ),
+            )?;
+            decode_page0_mode::<_, FILTERED, FILL_NULLS>(
+                page,
+                mode,
+                &mut RleDictionaryDecoder::try_new(
+                    values_buffer,
+                    dict_decoder,
+                    row_hi,
+                    nulls::BYTE,
+                    bufs,
+                )?,
             )?;
             Ok(true)
         }
@@ -4147,6 +4962,124 @@ mod tests {
             "result={result:?}, expected={expected:?}"
         );
         assert_eq!(result, expected);
+    }
+
+    // No-sentinel source (SHORT) widened to a sentinel target (LONG) on the filtered decode
+    // path: column-top rows that pass the filter must materialize as the target NULL sentinel
+    // (i64::MIN), not 0. Covers FILL_NULLS=false (compacted) and true (full scan order), with a
+    // partial window (row_group_lo > 0). Regression for the M1 "leading_nulls = 0" follow-up.
+    #[test]
+    fn test_decode_row_group_filtered_short_to_long_column_top() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let column_top = 8usize;
+        let data_row_count = 20usize;
+        let total_row_count = column_top + data_row_count;
+        let row_group_size = total_row_count;
+        let data_page_size = 10;
+        let version = Version::V2;
+
+        let data_values: Vec<i16> = (0..data_row_count).map(|i| (i as i16) * 10 + 1).collect();
+
+        let column = Column::from_raw_data(
+            0,
+            "short_col",
+            ColumnTypeTag::Short.into_type().code(),
+            column_top as i64,
+            total_row_count,
+            data_values.as_ptr() as *const u8,
+            std::mem::size_of_val(data_values.as_slice()),
+            null(),
+            0,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap();
+
+        let file =
+            write_cols_to_parquet_file(row_group_size, data_page_size, version, vec![column]);
+        let file_len = file.len() as u64;
+        let mut reader = Cursor::new(&file);
+        let decoder = ParquetDecoder::read(allocator.clone(), &mut reader, file_len).unwrap();
+        let mut ctx = DecodeContext::new(file.as_ptr(), file_len);
+        // Decode the SHORT parquet column as LONG (lazy widening conversion).
+        let columns = vec![(0i32, ColumnTypeTag::Long.into_type())];
+
+        let row_group_lo = 5u32;
+        let row_group_hi = 23u32;
+        // Window-relative, ascending. abs_row = row_group_lo + entry; null iff abs_row < column_top.
+        let rows_filter: Vec<i64> = vec![0, 1, 2, 3, 5, 8, 10, 14, 17];
+
+        // FILL_NULLS=false: compacted output, one i64 per matched row.
+        let mut rgb = RowGroupBuffers::new(allocator.clone());
+        let count = decoder
+            .decode_row_group_filtered::<false>(
+                &mut ctx,
+                &mut rgb,
+                0,
+                &columns,
+                0,
+                row_group_lo,
+                row_group_hi,
+                &rows_filter,
+            )
+            .unwrap();
+        assert_eq!(count, rows_filter.len());
+        let result: Vec<i64> = rgb.column_bufs[0]
+            .data_vec
+            .chunks(std::mem::size_of::<i64>())
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i64> = rows_filter
+            .iter()
+            .map(|&row| {
+                let abs_row = row_group_lo as usize + row as usize;
+                if abs_row < column_top {
+                    i64::MIN
+                } else {
+                    data_values[abs_row - column_top] as i64
+                }
+            })
+            .collect();
+        assert_eq!(result, expected, "FILL_NULLS=false");
+
+        // FILL_NULLS=true: full scan order over [row_group_lo, row_group_hi). The late-
+        // materialization consumer reads ONLY matched positions (record.setRowIndex(rows.get(i))
+        // in AsyncWindowJoinRecordCursorFactory), so we assert just those. Unmatched positions
+        // are placeholders the consumer never reads; for a no-sentinel source they keep the
+        // source-null fill (0), which is irrelevant. Matched column-top rows must be i64::MIN.
+        let mut rgb_fill = RowGroupBuffers::new(allocator);
+        let count_fill = decoder
+            .decode_row_group_filtered::<true>(
+                &mut ctx,
+                &mut rgb_fill,
+                0,
+                &columns,
+                0,
+                row_group_lo,
+                row_group_hi,
+                &rows_filter,
+            )
+            .unwrap();
+        assert_eq!(count_fill, (row_group_hi - row_group_lo) as usize);
+        let result_fill: Vec<i64> = rgb_fill.column_bufs[0]
+            .data_vec
+            .chunks(std::mem::size_of::<i64>())
+            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        for &row in &rows_filter {
+            let j = row as usize; // FILL_NULLS=true output is indexed by window-relative row
+            let abs_row = row_group_lo as usize + j;
+            let want = if abs_row < column_top {
+                i64::MIN
+            } else {
+                data_values[abs_row - column_top] as i64
+            };
+            assert_eq!(result_fill[j], want, "FILL_NULLS=true matched row {j}");
+        }
     }
 
     #[test]
