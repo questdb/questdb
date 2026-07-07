@@ -261,6 +261,35 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasProtectedTrailingSpaceTrimmed() {
+        // A quote-protected dotted value with a trailing space ('a.b ') must surface a clean display
+        // name with no bare trailing space (an interop hazard over PG / HTTP / CSV), matching the
+        // operator-token path ('in ' -> in). The dot survives the trim, so the value stays protected
+        // and strips clean; a space-free sibling 'a.b' then dedups it (a.b / a.b_2) rather than
+        // leaving two columns differing only by a trailing space.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        // solo dotted value with a trailing space surfaces trimmed, still protected
+        CharSequence solo = SqlUtil.createExprColumnAlias(store, "a.b ", aliasMap, seqMap, 64, true);
+        Assert.assertEquals("\"a.b\"", solo.toString());
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias(solo));
+        Assert.assertEquals("a.b", SqlUtil.toColumnName(solo));
+
+        // a space-free sibling forces the trailing-space value to dedup instead of colliding
+        CharacterStore store2 = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap2 = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap2 = new LowerCaseCharSequenceIntHashMap();
+        CharSequence first = SqlUtil.createExprColumnAlias(store2, "a.b", aliasMap2, seqMap2, 64, true);
+        Assert.assertEquals("\"a.b\"", first.toString());
+        aliasMap2.put(first.toString(), null);
+        CharSequence second = SqlUtil.createExprColumnAlias(store2, "a.b ", aliasMap2, seqMap2, 64, true);
+        Assert.assertEquals("\"a.b_2\"", second.toString());
+        Assert.assertEquals("a.b_2", SqlUtil.toColumnName(second));
+    }
+
+    @Test
     public void testExprColumnAliasQuotedContentValueDedupsClean() {
         // A PIVOT value whose data is literally "in" displays as in (toColumnName strips the data
         // quotes, the documented quoted-content-value tradeoff). When it collides with an operator-token

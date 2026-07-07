@@ -365,6 +365,36 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotDottedValueWithTrailingSpace() throws Exception {
+        // A dotted pivot value with a trailing space ('FNCL 2.5 ') surfaces a clean column name with
+        // no bare trailing space (an interop hazard over PG / HTTP / CSV) and dedups against the
+        // space-free variant (FNCL 2.5 / FNCL 2.5_2), matching the operator-token trailing-space
+        // behavior rather than two columns differing only by a space.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 2.5 ', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 2.5 ', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('FNCL 2.5', 'FNCL 2.5 ') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tFNCL 2.5\tFNCL 2.5_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotDuplicateOperatorTokenValuesThroughJoin() throws Exception {
         // Two pivots produce operator-token columns ('in') that collide in the outer wildcard.
         // The dedup must yield clean, quote-free names (in / in1) and the join must compile

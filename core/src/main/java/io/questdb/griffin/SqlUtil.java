@@ -583,15 +583,16 @@ public class SqlUtil {
             final boolean emitQuote = quote && contentLen > 0
                     && (contentHasDot || (!deduped && disallowedAliases.contains(base, start, start + contentLen)));
 
-            // Trim trailing spaces from bare content so a bare display name never ends in a space,
-            // matching the non-dotted early-exit check. Keyed on !emitQuote (not !quote): truncation
-            // can drop a quote-protected base's dot, flipping emitQuote to false, and the now-bare
-            // content must still be trimmed. A quote-protected candidate instead keeps its content
-            // verbatim - including a trailing space that is genuine data of the aliased value (e.g. a
-            // pivot value 'FNCL 2.5 '); toColumnName later strips the wrapping quotes, so such a
-            // display name can legitimately end in a space. An all-space slice trims to nothing and
-            // falls through to the "column" placeholder below.
-            if (!emitQuote && contentLen > 0 && base.charAt(start + contentLen - 1) == ' ') {
+            // Trim trailing spaces so a display name never ends in a bare space, matching the
+            // non-dotted early-exit check and the operator-token path ('in ' -> in). This runs
+            // regardless of emitQuote: a quote-protected candidate carries the dot that forced the
+            // quotes, and trailing spaces sit after it, so the trim never reaches the dot - the
+            // content stays protected and strips to a clean name (the pivot value 'FNCL 2.5 ' -> the
+            // column FNCL 2.5, not a bare 'FNCL 2.5 ' with a leaked trailing space that is an interop
+            // hazard over PG / HTTP / CSV). A sibling value 'FNCL 2.5' then dedups it (FNCL 2.5 /
+            // FNCL 2.5_2) via the collision check below, instead of two columns differing only by a
+            // space. An all-space slice trims to nothing and falls through to the "column" placeholder.
+            if (contentLen > 0 && base.charAt(start + contentLen - 1) == ' ') {
                 final int lastNonSpace = Chars.lastIndexOfDifferent(base, start, start + contentLen, ' ') - start;
                 contentLen = lastNonSpace >= 0 ? lastNonSpace + 1 : 0;
             }
