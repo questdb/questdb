@@ -305,11 +305,16 @@ jobs:
         inputs:
           script: |
             set -eo pipefail
-            echo "Scanning image: $(IMAGE_REPO):nightly"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE_REPO):nightly
+            # Scan each arch of the multi-arch manifest. trivy scans statically
+            # (reads the package DB from the image layers, never runs the image),
+            # so the amd64 runner can scan the arm64 sub-image via --platform.
+            for platform in linux/amd64 linux/arm64; do
+              echo "Scanning image: $(IMAGE_REPO):nightly ($platform)"
+              trivy image --platform "$platform" --exit-code 1 --severity HIGH,CRITICAL $(IMAGE_REPO):nightly
 
-            echo "Scanning image: $(IMAGE_REPO):nightly-rhel"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE_REPO):nightly-rhel
+              echo "Scanning image: $(IMAGE_REPO):nightly-rhel ($platform)"
+              trivy image --platform "$platform" --exit-code 1 --severity HIGH,CRITICAL $(IMAGE_REPO):nightly-rhel
+            done
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
       - task: CmdLine@2
@@ -341,12 +346,14 @@ jobs:
           script: |
             set -eo pipefail
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+            # Scan each arch of the multi-arch manifest (see note in nightly scan).
+            for platform in linux/amd64 linux/arm64; do
+              echo "Scanning image: $(IMAGE_REPO):${tag_name} ($platform)"
+              trivy image --platform "$platform" --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${tag_name}"
 
-            echo "Scanning image: $(IMAGE_REPO):${tag_name}"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${tag_name}"
-
-            echo "Scanning image: $(IMAGE_REPO):${tag_name}-rhel"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${tag_name}-rhel"
+              echo "Scanning image: $(IMAGE_REPO):${tag_name}-rhel ($platform)"
+              trivy image --platform "$platform" --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${tag_name}-rhel"
+            done
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
       - task: CmdLine@2
@@ -371,12 +378,14 @@ jobs:
           script: |
             set -eo pipefail
             docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7)
+            # Scan each arch of the multi-arch manifest (see note in nightly scan).
+            for platform in linux/amd64 linux/arm64; do
+              echo "Scanning image: $(IMAGE_REPO):${docker_tag_name} ($platform)"
+              trivy image --platform "$platform" --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${docker_tag_name}"
 
-            echo "Scanning image: $(IMAGE_REPO):${docker_tag_name}"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${docker_tag_name}"
-
-            echo "Scanning image: $(IMAGE_REPO):${docker_tag_name}-rhel"
-            trivy image --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${docker_tag_name}-rhel"
+              echo "Scanning image: $(IMAGE_REPO):${docker_tag_name}-rhel ($platform)"
+              trivy image --platform "$platform" --exit-code 1 --severity HIGH,CRITICAL "$(IMAGE_REPO):${docker_tag_name}-rhel"
+            done
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
 
   - job: NotifyOnFailure
