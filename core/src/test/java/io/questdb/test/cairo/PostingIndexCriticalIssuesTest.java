@@ -3117,6 +3117,225 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Off-operating-thread sibling of
+     * {@link #testBwdNullCursorClosedAfterReaderDoesNotLeakBlockBuffer}. Closes a
+     * still-checked-out backward NullCursor on ANOTHER thread while the reader
+     * stays open -- the connection-migration analogue the canRepool() gate
+     * handles. Pre-gate, PostingIndexBwdReader.NullCursor.close() asserted the
+     * owning thread and threw "posting index null cursor closed off the reader's
+     * owning thread" here under -ea; the gate now routes it to a local release.
+     * key == 0 && columnTop > 0 && minValue < columnTop makes getCursor() vend the
+     * NullCursor.
+     */
+    @Test
+    public void testPostingIndexBwdNullCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_bwd_null_cursor_off_thread";
+            final long columnTop = 256;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Real key-0 entries at/after columnTop with irregular gaps so
+                    // the NullCursor's super.hasNext() decode allocates the block
+                    // buffer; rows below columnTop surface as implicit nulls.
+                    long rowId = columnTop;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, columnTop,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0)) {
+                    final long expected = drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE));
+
+                    // Park a partially-drained NullCursor and close it off-thread.
+                    final RowCursor parked = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                    for (int i = 0; i < 128 && parked.hasNext(); i++) {
+                        parked.next();
+                    }
+                    closeCursorOffOperatingThread(parked);
+
+                    // The reader survived: same row count after the off-thread close.
+                    Assert.assertEquals(expected, drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE)));
+                }
+            }
+        });
+    }
+
+    /**
+     * Off-operating-thread sibling of
+     * {@link #testRowCursorClosedAfterReaderDoesNotLeakBlockBuffer}. That test
+     * closes on the owning thread after the reader is closed (the isOpen() leak
+     * guard); this one closes a still-checked-out backward cursor on ANOTHER
+     * thread while the reader stays open. Pre-gate, PostingIndexBwdReader.Cursor
+     * .close() threw "posting index cursor closed off the reader's owning thread"
+     * here under -ea; the gate now routes the off-thread close to a local release.
+     * Uses the raw reader so it drives {@link PostingIndexBwdReader.Cursor}
+     * directly and deterministically, like the leak-guard siblings in this file.
+     */
+    @Test
+    public void testPostingIndexBwdRowCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_bwd_cursor_off_thread";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Irregular gaps -> non-zero bit-width blocks -> the decode path
+                    // allocates blockBufferAddr (NATIVE_INDEX_READER), the native
+                    // buffer the off-thread release must free.
+                    long rowId = 0;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0)) {
+                    final long expected = drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE));
+
+                    // Partially drive a cursor so it allocates the decode block
+                    // buffer, then park it and close it on a second thread.
+                    final RowCursor parked = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                    for (int i = 0; i < 128 && parked.hasNext(); i++) {
+                        parked.next();
+                    }
+                    closeCursorOffOperatingThread(parked);
+
+                    Assert.assertEquals(expected, drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE)));
+                }
+            }
+        });
+    }
+
+    /**
+     * Off-operating-thread sibling for {@link PostingIndexFwdReader.NullCursor}
+     * (the forward reader's implicit-null cursor). Closes a still-checked-out
+     * forward NullCursor on ANOTHER thread while the reader stays open. Pre-gate
+     * this threw "posting index null cursor closed off the reader's owning thread"
+     * under -ea. key == 0 && columnTop > 0 && minValue < columnTop makes
+     * getCursor() vend the NullCursor.
+     */
+    @Test
+    public void testPostingIndexFwdNullCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_fwd_null_cursor_off_thread";
+            final long columnTop = 256;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = columnTop;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, columnTop)) {
+                    final long expected = drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE));
+
+                    final RowCursor parked = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                    for (int i = 0; i < 128 && parked.hasNext(); i++) {
+                        parked.next();
+                    }
+                    closeCursorOffOperatingThread(parked);
+
+                    Assert.assertEquals(expected, drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE)));
+                }
+            }
+        });
+    }
+
+    /**
+     * Bitmap sibling documenting the M1 fold-in: the same off-thread close on a
+     * plain SYMBOL INDEX (default BITMAP) reader. Unlike the posting variants this
+     * is green with OR without the operating-thread gate -- bitmap cursors hold no
+     * native memory and never had the -ea assert, so the off-thread close never
+     * threw and the gate's only effect (skip pooling) is not black-box observable.
+     * The gate's mechanism is red-tested by the posting variants (identical code);
+     * this test locks in that the sanctioned migration path stays clean for the
+     * default index type.
+     */
+    @Test
+    public void testBitmapIndexRowCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bitmap (
+                        sym SYMBOL INDEX,
+                        qty LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t_bitmap
+                    SELECT 'k' || ((x * x) % 3), x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(30_000)""");
+
+            final String scanSql = "SELECT sym, qty FROM t_bitmap WHERE sym = 'k1'";
+            final String aggSql = "SELECT count() c, min(qty) mn, max(qty) mx FROM t_bitmap WHERE sym = 'k1'";
+            assertQuery(scanSql).noLeakCheck().assertsPlanContaining("Index forward scan on: sym");
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            20000\t1\t29999
+                            """);
+
+            // Peel the QueryProgress wrapper (its close0() swallows close errors)
+            // and close the base record cursor off the thread that checked it out.
+            try (RecordCursorFactory factory = select(scanSql)) {
+                RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext);
+                boolean isClosed = false;
+                try {
+                    var record = cursor.getRecord();
+                    for (int i = 0; i < 128 && cursor.hasNext(); i++) {
+                        record.getLong(1);
+                    }
+                    closeCursorOffOperatingThread(cursor);
+                    isClosed = true;
+                } finally {
+                    if (!isClosed) {
+                        cursor.close();
+                    }
+                }
+            }
+
+            // The orderly close completed and returned the TableReader to the pool.
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            20000\t1\t29999
+                            """);
+        });
+    }
+
+    /**
      * Reader must clamp returned rowids by the picked chain entry's
      * V2_ENTRY_OFFSET_MAX_VALUE field. Writers can leave dirty
      * (key, rowid) pairs in .pv past the chain's tracked coverage --
@@ -10129,6 +10348,32 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         if (closeError.get() != null) {
             throw new AssertionError("record cursor close failed off the operating thread", closeError.get());
         }
+    }
+
+    private static void closeCursorOffOperatingThread(RowCursor cursor) throws InterruptedException {
+        final AtomicReference<Throwable> closeError = new AtomicReference<>();
+        Thread closer = new Thread(() -> {
+            try {
+                cursor.close();
+            } catch (Throwable th) {
+                closeError.set(th);
+            }
+        });
+        closer.start();
+        closer.join();
+        if (closeError.get() != null) {
+            throw new AssertionError("row cursor close failed off the operating thread", closeError.get());
+        }
+    }
+
+    private static long drainRowCursor(RowCursor cursor) {
+        long count = 0;
+        while (cursor.hasNext()) {
+            cursor.next();
+            count++;
+        }
+        cursor.close();
+        return count;
     }
 
     private static String insertPostingRowsSql(int lo, int hi) {
