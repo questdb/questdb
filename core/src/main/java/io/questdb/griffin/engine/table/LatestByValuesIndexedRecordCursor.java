@@ -35,6 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -42,13 +43,12 @@ import org.jetbrains.annotations.Nullable;
 class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
-    private final IntHashSet found = new IntHashSet();
+    private final IntList remainingKeys = new IntList();
     private final DirectLongList rows;
     private final IntHashSet symbolKeys;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long index = 0;
     private boolean isTreeMapBuilt;
-    private int keyCount;
 
     public LatestByValuesIndexedRecordCursor(
             @NotNull CairoConfiguration configuration,
@@ -93,10 +93,9 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
-        keyCount = -1;
         rows.setMemoryTracker(executionContext.getMemoryTracker());
         rows.reopen();
-        found.clear();
+        remainingKeys.clear();
         isTreeMapBuilt = false;
         // prepare for page frame iteration
         super.init(executionContext.getMemoryTracker());
@@ -122,35 +121,50 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         index = 0;
     }
 
-    private void addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
-        int index = found.keyIndex(symbolKey);
-        if (index > -1) {
-            try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
-                if (cursor.hasNext()) {
-                    final long rowId = Rows.toRowID(frameIndex, cursor.next());
-                    rows.add(rowId);
-                    found.addAt(index, symbolKey);
+    private static boolean keysDisjoint(IntHashSet symbolKeys, @Nullable IntHashSet deferredSymbolKeys) {
+        if (deferredSymbolKeys != null) {
+            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
+                if (symbolKeys.contains(deferredSymbolKeys.get(i))) {
+                    return false;
                 }
             }
         }
+        return true;
+    }
+
+    private boolean addFoundKey(int symbolKey, IndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
+        try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+            if (cursor.hasNext()) {
+                rows.add(Rows.toRowID(frameIndex, cursor.next()));
+                return true;
+            }
+        }
+        return false;
     }
 
     private void buildTreeMap() {
-        if (keyCount < 0) {
-            // The found.size() == keyCount early exit (and the dropped per-frame overlap guard) relies on
-            // symbolKeys and deferredSymbolKeys being disjoint; a duplicate would inflate keyCount and stop
-            // the exit from ever firing (full scan). The deduping is done by the factory, so guard the
-            // invariant here against a future caller that wires these sets up directly.
-            assert keysDisjoint(symbolKeys, deferredSymbolKeys)
-                    : "deferredSymbolKeys must be deduped against symbolKeys (see AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor)";
-            keyCount = symbolKeys.size();
-            if (deferredSymbolKeys != null) {
-                keyCount += deferredSymbolKeys.size();
+        // remainingKeys drives both per-frame iteration and the early-exit condition below, so a
+        // duplicate between symbolKeys and deferredSymbolKeys would be probed twice per frame instead
+        // of once. The deduping is done by the factory
+        // (AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor); assert the invariant here, and
+        // defensively skip a duplicate below too, in case a future caller wires these sets up directly.
+        assert keysDisjoint(symbolKeys, deferredSymbolKeys)
+                : "deferredSymbolKeys must be deduped against symbolKeys (see AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor)";
+        remainingKeys.clear();
+        for (int i = 0, n = symbolKeys.size(); i < n; i++) {
+            remainingKeys.add(symbolKeys.get(i));
+        }
+        if (deferredSymbolKeys != null) {
+            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
+                int symbolKey = deferredSymbolKeys.get(i);
+                if (!symbolKeys.contains(symbolKey)) {
+                    remainingKeys.add(symbolKey);
+                }
             }
         }
 
         PageFrame frame;
-        while (found.size() < keyCount && (frame = frameCursor.next()) != null) {
+        while (remainingKeys.size() > 0 && (frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int frameIndex = frameCount;
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
@@ -163,17 +177,14 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             // Invert page frame indexes, so that they grow asc in time order.
             // That's to be able to do post-processing (sorting) of the result set.
             final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
-            for (int i = 0, n = symbolKeys.size(); i < n; i++) {
-                int symbolKey = symbolKeys.get(i);
-                addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
-            }
-            if (deferredSymbolKeys != null) {
-                // deferredSymbolKeys is deduped against symbolKeys at factory level
-                // (AbstractDeferredTreeSetRecordCursorFactory.initRecordCursor), so no overlap guard
-                // is needed here; addFoundKey is idempotent regardless.
-                for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
-                    int symbolKey = deferredSymbolKeys.get(i);
-                    addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
+            // Iterate backward with swap-remove: a found key is replaced by the current last entry and
+            // the list shrinks, so the next (older) frame only probes keys that are still unresolved.
+            for (int i = remainingKeys.size() - 1; i >= 0; i--) {
+                int symbolKey = remainingKeys.getQuick(i);
+                if (addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi)) {
+                    int last = remainingKeys.size() - 1;
+                    remainingKeys.setQuick(i, remainingKeys.getQuick(last));
+                    remainingKeys.setPos(last);
                 }
             }
         }
@@ -182,17 +193,6 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         // in ascending designated-timestamp order, matching the FORWARD scan direction the factory reports.
         rows.sortAsUnsigned();
         index = 0;
-    }
-
-    private static boolean keysDisjoint(IntHashSet symbolKeys, @Nullable IntHashSet deferredSymbolKeys) {
-        if (deferredSymbolKeys != null) {
-            for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
-                if (symbolKeys.contains(deferredSymbolKeys.get(i))) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     private void buildTreeMapConditionally() {

@@ -1599,7 +1599,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "  'g' || (x % 4),\n" +
                                 "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
                                 "  x::double,\n" +
-                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
                                 "from long_sequence(200);"
                 );
                 // Latest 'g2' row on venue 'v1' is the deep ordinal x=198 (px=198), in a frame with partitionLo>0.
@@ -1629,7 +1629,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "  'g' || (x % 4),\n" +
                                 "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
                                 "  x::double,\n" +
-                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
                                 "from long_sequence(200);"
                 );
                 // IN-list drives the multi-value filtered index cursor. Latest per key on venue 'v1':
@@ -1665,7 +1665,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "  'g' || (x % 4),\n" +
                                 "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
                                 "  x::double,\n" +
-                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
                                 "from long_sequence(200);"
                 );
                 bindVariableService.clear();
@@ -1699,7 +1699,7 @@ public class LatestByTest extends AbstractCairoTest {
                         "insert into tk select\n" +
                                 "  'g' || (x % 4),\n" +
                                 "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
-                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
                                 "from long_sequence(100);"
                 );
                 execute("alter table tk add column px double");
@@ -1708,7 +1708,7 @@ public class LatestByTest extends AbstractCairoTest {
                         "insert into tk select\n" +
                                 "  'g' || ((x + 100) % 4),\n" +
                                 "  case when (x + 100) % 5 = 0 then 'v2' else 'v1' end,\n" +
-                                "  ((x + 100) * 1000000)::" + timestampType.getTypeName() + ",\n" +
+                                "  ((x + 100) * 1_000_000)::" + timestampType.getTypeName() + ",\n" +
                                 "  (x + 100)::double\n" +
                                 "from long_sequence(100);"
                 );
@@ -1776,7 +1776,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "  'g' || (x % 4),\n" +
                                 "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
                                 "  x::double,\n" +
-                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
                                 "from long_sequence(200);"
                 );
                 // 'zzz' is not in the symbol table: it must not inflate keyCount nor change the result.
@@ -1813,7 +1813,7 @@ public class LatestByTest extends AbstractCairoTest {
                                 "  'g' || (x % 4),\n" +
                                 "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
                                 "  x::double,\n" +
-                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
                                 "from long_sequence(200);"
                 );
                 assertQuery("select sym, px from tk " +
@@ -1845,7 +1845,7 @@ public class LatestByTest extends AbstractCairoTest {
                         "insert into tk select\n" +
                                 "  'g' || (x % 4),\n" +
                                 "  x::double,\n" +
-                                "  (x * 1000000)::" + timestampType.getTypeName() + "\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
                                 "from long_sequence(200);"
                 );
                 assertQuery("select sym, px from tk " +
