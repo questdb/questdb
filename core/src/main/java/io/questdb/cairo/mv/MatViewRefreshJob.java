@@ -521,7 +521,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // feeds the queue sibling workers are polling, so a sibling can dequeue the re-enqueued task and
         // defer against this still-held latch before the unlock below (the self-fed variant of the
         // lost-update window; enqueueing after the unlock would remove that variant and is a candidate
-        // shape for the txn-gating follow-up). An OOM thrown between finalize's clear and its
+        // shape for a txn-gating follow-up). An OOM thrown between finalize's clear and its
         // enqueue still drops the deferral outright (marker cleared, no task queued: the view reads healthy
         // while stale); enqueue-before-clear would be no better -- a second worker could dequeue and swallow
         // the task against the still-set marker -- and under OOM the process is lost anyway.
@@ -539,18 +539,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         finalizeAndUnlock(engine, stateStore, viewToken, viewState, shouldIncrementRefreshSeq);
     }
 
-    // Shared unlock tail for every latch hold: the tryCloseIf* calls free the parked cursor factory
-    // when a teardown (close/drop) raced this hold and lost the latch to it.
-    private static void unlockAndTryClose(MatViewState viewState) {
-        viewState.unlock();
-        viewState.tryCloseIfDropped();
-        viewState.tryCloseIfClosed();
-    }
-
     private static void finalizeDeferredInvalidation(CairoEngine engine, MatViewStateStore stateStore, TableToken viewToken, MatViewState viewState) {
         // A lock-holder (a refresh, invalidateView's own hold, or a REFRESH ... STATS reset) just completed
         // while holding this view's lock. If a concurrent INVALIDATE deferred in
-        // that window it called markAsPendingInvalidation() and re-enqueued a task that the invalidateView
+        // that window it called markAsPendingInvalidation(reason) and re-enqueued a task that the invalidateView
         // top guard then swallowed (the guard skips a view that is already pending), so nothing else would
         // finalize it and the view would stay valid on disk with stale rows. Clear the pending marker and
         // re-enqueue a fresh INVALIDATE: the re-enqueue runs here under the latch, but with the marker
@@ -577,6 +569,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
         viewState.clearPendingInvalidation();
         stateStore.enqueueInvalidate(viewToken, invalidationReason);
+    }
+
+    // Shared unlock tail for every latch hold: the tryCloseIf* calls free the parked cursor factory
+    // when a teardown (close/drop) raced this hold and lost the latch to it.
+    private static void unlockAndTryClose(MatViewState viewState) {
+        viewState.unlock();
+        viewState.tryCloseIfDropped();
+        viewState.tryCloseIfClosed();
     }
 
     private RefreshContext findRefreshIntervals(
@@ -954,7 +954,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // view invalid (cascading to dependents) -- a spurious-looking valid->invalid flip under the
             // "UPDATE then REFRESH FULL" race. It is conservatively safe (invalid is visible, REFRESH ... FULL
             // recovers it) and better than dropping finalize, which re-exposes the silent frozen-pending freeze
-            // across the whole pump. finalize is reason-blind; gating on the trigger txn is a tracked follow-up.
+            // across the whole pump. finalize is reason-blind; gating on the trigger txn is a possible follow-up.
             finalizeAndUnlock(viewToken, viewState, true);
         }
 
@@ -1590,24 +1590,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // full-refresh holders, invalidateView's own force=false decline below (a never-refreshed view it
         // holds without minting), and the REFRESH ... STATS reset in SqlCompilerImpl -- clearing the guard so
         // the view ends invalid, not frozen. (MatViewState's close/tryCloseIf* holders are teardown-only: a
-        // closed or dropped state dies with its marker and finalize skips it anyway.) Residuals: a
-        // read-only deferral rebuilds from disk on promote; and the lost-update window between finalize's
-        // marker read and the holder's unlock. A concurrent invalidateView landing in that window passes this
-        // guard (the marker is unset or just cleared), fails tryLock against the still-held latch, and defers
-        // -- too late for finalize to see. Whether finalize found no marker and returned early (stranding that
-        // first-and-only deferral) or had just cleared an earlier one (stranding its own re-enqueued
-        // INVALIDATE together with the new deferral), every queued task is then swallowed by this guard for
-        // good. When hit that is a terminal silent freeze, far narrower than the pre-fix always-lost deferral;
-        // but while finalize now recovers that pre-fix class, nothing recovers a deferral lost in this window.
-        // (The pending marker is now a single volatile reference --
-        // see MatViewState#pendingInvalidationMarker -- so it can no longer *tear* to (pending=true,
-        // reason=null) and strand a real deferral in finalize's null-reason no-op branch. The sentinel
-        // null-reason marker CASes only into an empty slot, so it cannot demote a reason-bearing deferral;
-        // it is normally cleared by the queued full refresh that wrote it, but that refresh's short-circuit
-        // exits -- block list, write suspension, missing base table -- return without finalizing, so a
-        // sentinel armed just before one of those conditions strands as a third residual: this guard and the
-        // pending entry guards then skip the view until a restart drops the in-memory marker or
-        // REFRESH ... FULL succeeds. Same freeze the pre-fix boolean produced on these paths.)
+        // closed or dropped state dies with its marker and finalize skips it anyway.) Residuals, each far
+        // narrower than the pre-fix always-lost deferral:
+        // - a read-only deferral: left for the promote-time rebuild from disk;
+        // - a deferral landing between finalize's marker read and the holder's unlock: too late for finalize
+        //   to see, and every queued task is then swallowed by this guard for good -- a terminal silent
+        //   freeze. Every holder release re-runs this window, and timer-driven refreshes are re-admitted
+        //   holders once finalize clears the marker; a sentinel CASed into the just-cleared marker inside
+        //   the window swallows finalize's own re-enqueued INVALIDATE the same way;
+        // - a deferral during fullRefresh's hold whose queued task a sibling swallows before
+        //   resetInvalidState() runs is wiped together with the marker (see fullRefresh);
+        // - a stranded no-reason sentinel: the queued full refresh normally clears it, but its short-circuit
+        //   exits (refresh block list, write suspension, missing base table) return without finalizing,
+        //   freezing the view until a restart drops the in-memory marker or REFRESH ... FULL succeeds --
+        //   the same freeze the pre-fix boolean produced on these paths.
+        // The marker is a single volatile reference and the sentinel cannot demote a reason-bearing
+        // deferral: see MatViewState#pendingInvalidationMarker.
         if (viewState != null && !viewState.isDropped() && !viewState.isInvalid() && !viewState.isPendingInvalidation()) {
             if (engine.isReadOnlyMode()) {
                 // The node is, or just became, a replica: marking the view invalid acquires a WalWriter

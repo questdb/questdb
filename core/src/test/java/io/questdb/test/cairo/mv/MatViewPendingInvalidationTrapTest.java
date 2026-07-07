@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -46,8 +47,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * (a refresh, or {@code invalidateView} itself) holds the view lock and marks the view pending -- the marker
  * half of what a losing concurrent {@code invalidateView} issues; the holder's completion must finalize it.
  * {@link #testRefreshHoldingLockFinalizesDeferredInvalidationWithQueuedTask()} exercises the complete
- * defer-site pair (marker plus the re-enqueued task the guard swallows), and
- * {@link #testLockContendedInvalidationDefersWithReason()} exercises the real defer site itself.
+ * defer-site pair (marker plus the re-enqueued task the guard swallows),
+ * {@link #testLockContendedInvalidationDefersWithReason()} exercises the real defer site itself, and the
+ * {@code testFullRefreshLosingLock*} pair drives the real reschedule-sentinel site (a full refresh losing
+ * the latch) end-to-end.
  * <p>
  * Two branches are left OSS-uncovered here, both needing {@code engine.isReadOnlyMode()} to flip mid-flow:
  * {@code finalizeDeferredInvalidation}'s read-only early-return and {@code invalidateView}'s
@@ -185,6 +188,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             demoted.set(true);
                             return;
                         }
+                        Thread.onSpinWait();
                     }
                 }, "reason-reader");
                 reasonSetter.start();
@@ -394,6 +398,129 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshLosingLockArmsSentinelAndRecovers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // Drives fullRefresh's real losing branch end-to-end: the test thread holds the latch, so the
+            // drained FULL_REFRESH task fails tryLock, arms the no-reason reschedule sentinel and republishes
+            // itself. The drainer thread keeps spinning on the republished task until the latch frees.
+            Assert.assertTrue(state.tryLock());
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                Thread drainer = null;
+                try {
+                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                    drainer = new Thread(() -> drainMatViewQueue(job), "losing-full-refresh-drainer");
+                    drainer.start();
+
+                    while (!state.isPendingInvalidation()) {
+                        Thread.onSpinWait();
+                    }
+                    // The reschedule is a sentinel, not an invalidation: no reason, view still valid.
+                    Assert.assertNull(state.getPendingInvalidationReason());
+                    Assert.assertFalse(state.isInvalid());
+                } finally {
+                    state.unlock();
+                    if (drainer != null) {
+                        drainer.join();
+                    }
+                }
+            }
+            drainWalAndMatViewQueues();
+
+            // The republished full refresh won the freed latch, cleared the sentinel and rebuilt the view.
+            Assert.assertFalse("the re-queued full refresh must clear its reschedule sentinel", state.isPendingInvalidation());
+            Assert.assertNull(state.getPendingInvalidationReason());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
+    public void testFullRefreshLosingLockCannotDemoteReasonDeferral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // Integration form of the keep-strongest CAS pin: the sentinel writer is fullRefresh's real
+            // losing branch, spinning on its republished task while the test thread holds the latch.
+            Assert.assertTrue(state.tryLock());
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                Thread drainer = null;
+                try {
+                    engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                    drainer = new Thread(() -> drainMatViewQueue(job), "losing-full-refresh-drainer");
+                    drainer.start();
+                    // The sentinel arm proves the losing branch is live and re-arming on every spin.
+                    while (!state.isPendingInvalidation()) {
+                        Thread.onSpinWait();
+                    }
+
+                    // A reason-bearing deferral lands mid-hold and upgrades the sentinel. The live sentinel
+                    // loop must never demote it back to null; the read window overlaps thousands of losing
+                    // fullRefresh passes, so a plain last-write-wins sentinel write fails this immediately.
+                    state.markAsPendingInvalidation("update operation");
+                    for (int i = 0; i < 10_000; i++) {
+                        Assert.assertEquals("the losing full refresh demoted a reason-bearing deferral",
+                                "update operation", state.getPendingInvalidationReason());
+                    }
+                } finally {
+                    state.unlock();
+                    if (drainer != null) {
+                        drainer.join();
+                    }
+                }
+            }
+            drainWalAndMatViewQueues();
+
+            // The republished full refresh won the freed latch and rebuilt the view; resetInvalidState wiped
+            // the parked marker. That is the disclosed start-of-hold residual, and here it is benign: the
+            // deferral had no queued task half (with one, the re-delivered force=true INVALIDATE would mint
+            // after the wipe) and the rebuild snapshot post-dates all base data, so valid is correct.
+            Assert.assertFalse(state.isPendingInvalidation());
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testInvalidateViewHoldingLockFinalizesDeferredInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_price (" +
@@ -486,7 +613,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
                 // The real defer site must record the cause so a later finalize can mint with it.
                 Assert.assertTrue("invalidation should have deferred", state.isPendingInvalidation());
-                Assert.assertEquals("update operation", state.getPendingInvalidationReason());
+                Assert.assertEquals(UpdateOperation.MAT_VIEW_INVALIDATION_REASON, state.getPendingInvalidationReason());
                 // The deferral alone must not mint: the view is still valid on disk while pending in memory.
                 Assert.assertFalse("deferral alone must not mark the view invalid", state.isInvalid());
             } finally {
@@ -642,6 +769,12 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             // cleared state.
             state.clearPendingInvalidation();
             state.markAsPendingInvalidation();
+            Assert.assertTrue(state.isPendingInvalidation());
+            Assert.assertNull(state.getPendingInvalidationReason());
+
+            // The String overload routes a null reason into the same sentinel CAS, not a stored null reason.
+            state.clearPendingInvalidation();
+            state.markAsPendingInvalidation((String) null);
             Assert.assertTrue(state.isPendingInvalidation());
             Assert.assertNull(state.getPendingInvalidationReason());
 
@@ -812,6 +945,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final TableToken viewToken = engine.verifyTableName("price_1h");
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+            final long refreshSeqBefore = state.getRefreshSeq();
 
             // A concurrent apply-time INVALIDATE deferring mid-refresh: the seam fires once, while the
             // refresh holds the view lock, and marks the view pending (the marker half of a losing
@@ -834,6 +968,10 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             }
 
             Assert.assertTrue("the seam must have fired during a refresh", fired.get());
+            // finalizeAndUnlock passes shouldIncrementRefreshSeq=true on data-refresh paths; MatViewTimerJob
+            // reads the seq to skip refreshes made redundant by the one that just ran.
+            Assert.assertTrue("a data refresh must bump the refresh seq through finalizeAndUnlock",
+                    state.getRefreshSeq() > refreshSeqBefore);
 
             // The deferred invalidation must be finalized: the view ends invalid (not valid-with-stale),
             // carrying the deferral's reason.
