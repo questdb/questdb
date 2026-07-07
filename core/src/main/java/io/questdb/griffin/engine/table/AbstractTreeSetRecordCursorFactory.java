@@ -67,12 +67,18 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
             @NotNull IntList columnSizeShifts
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
-        this.rows = new DirectLongList(configuration.getSqlLatestByRowCount(), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+        // keepClosed=true: the backing array is allocated lazily on the first cursor's reopen(),
+        // under whatever per-query MemoryTracker is bound at that time, keeping malloc and free
+        // charged symmetrically on the per-query counter.
+        this.rows = new DirectLongList(configuration.getSqlLatestByRowCount(), MemoryTag.NATIVE_LATEST_BY_LONG_LIST, true);
     }
 
     @Override
     protected void _close() {
         super._close();
+        // Cursors free rows at their own close, under the bound tracker. This is a safety net for
+        // the never-opened case; unbind first so it never charges a recycled per-query tracker.
+        rows.setMemoryTracker(null);
         Misc.free(rows);
     }
 
@@ -81,7 +87,13 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(pageFrameCursor, executionContext);
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+        } catch (Throwable th) {
+            // free partial allocations under the still-bound per-query tracker on a failed open
+            cursor.close();
+            throw th;
+        }
         return cursor;
     }
 }

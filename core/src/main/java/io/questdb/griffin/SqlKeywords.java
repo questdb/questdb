@@ -164,22 +164,6 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'n';
     }
 
-    public static boolean isBloomFilterKeyword(CharSequence tok) {
-        return tok.length() == 12
-                && (tok.charAt(0) | 32) == 'b'
-                && (tok.charAt(1) | 32) == 'l'
-                && (tok.charAt(2) | 32) == 'o'
-                && (tok.charAt(3) | 32) == 'o'
-                && (tok.charAt(4) | 32) == 'm'
-                && tok.charAt(5) == '_'
-                && (tok.charAt(6) | 32) == 'f'
-                && (tok.charAt(7) | 32) == 'i'
-                && (tok.charAt(8) | 32) == 'l'
-                && (tok.charAt(9) | 32) == 't'
-                && (tok.charAt(10) | 32) == 'e'
-                && (tok.charAt(11) | 32) == 'r';
-    }
-
     public static boolean isBloomFilterColumnsKeyword(CharSequence tok) {
         return tok.length() == 20
                 && (tok.charAt(0) | 32) == 'b'
@@ -202,6 +186,22 @@ public class SqlKeywords {
                 && (tok.charAt(17) | 32) == 'm'
                 && (tok.charAt(18) | 32) == 'n'
                 && (tok.charAt(19) | 32) == 's';
+    }
+
+    public static boolean isBloomFilterKeyword(CharSequence tok) {
+        return tok.length() == 12
+                && (tok.charAt(0) | 32) == 'b'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'm'
+                && tok.charAt(5) == '_'
+                && (tok.charAt(6) | 32) == 'f'
+                && (tok.charAt(7) | 32) == 'i'
+                && (tok.charAt(8) | 32) == 'l'
+                && (tok.charAt(9) | 32) == 't'
+                && (tok.charAt(10) | 32) == 'e'
+                && (tok.charAt(11) | 32) == 'r';
     }
 
     public static boolean isByKeyword(CharSequence tok) {
@@ -462,17 +462,6 @@ public class SqlKeywords {
                 && (tok.charAt(7) | 32) == 'e';
     }
 
-    public static boolean isDateaddKeyword(CharSequence tok) {
-        return tok.length() == 7
-                && (tok.charAt(0) | 32) == 'd'
-                && (tok.charAt(1) | 32) == 'a'
-                && (tok.charAt(2) | 32) == 't'
-                && (tok.charAt(3) | 32) == 'e'
-                && (tok.charAt(4) | 32) == 'a'
-                && (tok.charAt(5) | 32) == 'd'
-                && (tok.charAt(6) | 32) == 'd';
-    }
-
     public static boolean isDateStyleKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 'd'
@@ -484,6 +473,17 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'y'
                 && (tok.charAt(7) | 32) == 'l'
                 && (tok.charAt(8) | 32) == 'e';
+    }
+
+    public static boolean isDateaddKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'a'
+                && (tok.charAt(5) | 32) == 'd'
+                && (tok.charAt(6) | 32) == 'd';
     }
 
     public static boolean isDayKeyword(CharSequence tok) {
@@ -534,15 +534,6 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'd'
                 && (tok.charAt(3) | 32) == 'u'
                 && (tok.charAt(4) | 32) == 'p';
-    }
-
-    public static boolean isDeltaKeyword(CharSequence tok) {
-        return tok.length() == 5
-                && (tok.charAt(0) | 32) == 'd'
-                && (tok.charAt(1) | 32) == 'e'
-                && (tok.charAt(2) | 32) == 'l'
-                && (tok.charAt(3) | 32) == 't'
-                && (tok.charAt(4) | 32) == 'a';
     }
 
     public static boolean isDeduplicateKeyword(CharSequence tok) {
@@ -625,6 +616,15 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 't'
                 && (tok.charAt(7) | 32) == 'e'
                 && (tok.charAt(8) | 32) == 'r';
+    }
+
+    public static boolean isDeltaKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 't'
+                && (tok.charAt(4) | 32) == 'a';
     }
 
     public static boolean isDescKeyword(CharSequence tok) {
@@ -1913,6 +1913,16 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'n'
                 && (tok.charAt(3) | 32) == 'g'
                 && (tok.charAt(4) | 32) == 'e';
+    }
+
+    public static boolean isRebaseKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'r'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'b'
+                && (tok.charAt(3) | 32) == 'a'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 'e';
     }
 
     public static boolean isRefreshKeyword(CharSequence tok) {

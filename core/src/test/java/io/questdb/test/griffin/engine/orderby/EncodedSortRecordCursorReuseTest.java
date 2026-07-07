@@ -47,17 +47,13 @@ import java.lang.reflect.Constructor;
 public class EncodedSortRecordCursorReuseTest extends AbstractCairoTest {
 
     @Test
-    public void testChainResetOnReuseWithoutClose() throws Exception {
-        // EncodedSortRecordCursor.of() must clear the cached recordChain on
-        // reuse; otherwise varAppendOffset carries forward and the chain
-        // breaches its page budget after one extra reuse. With a 4 KiB / 1
-        // page budget, 100 rows per run fit in one iteration but accumulate
-        // past the limit on iteration 2 without the fix.
-        //
-        // Per chain row for (key LONG, payload LONG, ts TIMESTAMP):
-        //   8B record header + 24B fixed columns = 32B.
-        // 100 rows = 3_200B (under 4_096B). Two runs without clear() would
-        // add to 6_400B and overflow.
+    public void testChainResetOnReuse() throws Exception {
+        // EncodedSortRecordCursor.of() runs only after construction or a close() (it asserts
+        // baseCursor == null), so reuse goes through close() -> of(), as the factory drives it.
+        // This exercises that cycle 5x under a tight 4 KiB / 1-page value budget: each run must
+        // start from a clean recordChain, else a carried-forward varAppendOffset overflows the
+        // single page. Per row (key LONG, payload LONG, ts TIMESTAMP): 8B header + 24B = 32B;
+        // 100 rows = 3_200B fit one 4_096B page, but two runs' worth (6_400B) would not.
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4096);
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, 1);
 
@@ -104,6 +100,8 @@ public class EncodedSortRecordCursorReuseTest extends AbstractCairoTest {
                             rows++;
                         }
                         Assert.assertEquals("iteration " + i + " row count", 100, rows);
+                        // of() requires a preceding close(); close before the next reuse.
+                        sortCursor.close();
                     }
                 } finally {
                     Misc.free((Closeable) sortCursor);

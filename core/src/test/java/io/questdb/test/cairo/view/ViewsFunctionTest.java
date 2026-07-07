@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.cairo.MetadataCacheWriter;
 import org.junit.Test;
 
 public class ViewsFunctionTest extends AbstractViewTest {
@@ -34,18 +35,16 @@ public class ViewsFunctionTest extends AbstractViewTest {
             createTable(TABLE1);
             final String query = "select ts, k, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             createView("test", query, TABLE1);
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("show columns from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "show columns from test",
-                    null,
-                    false
-            );
+                            """);
         });
     }
 
@@ -55,17 +54,46 @@ public class ViewsFunctionTest extends AbstractViewTest {
             createTable(TABLE1);
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create view test as (" + query + ")");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("show create view test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             ddl
                             CREATE VIEW 'test' AS (\s
                             select ts, v+v doubleV, avg(v) from table1 sample by 30s
                             );
-                            """,
-                    "show create view test",
-                    null,
-                    false
-            );
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowCreateViewBeforeStartupHydration() throws Exception {
+        // Regression: SHOW CREATE VIEW resolves the token from the synchronously
+        // loaded table registry but reads the lazily hydrated metadata cache. Plain
+        // views have no _meta file, are skipped by the startup hydrator, and
+        // hydrateTableOnDemand() no-ops on views, so only the async ViewCompilerJob
+        // ever caches them. In the post-restart / embedded window (cache not yet
+        // (re)hydrated) the command must not report a registered view as missing.
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create view test as (" + query + ")");
+            drainWalAndViewQueues();
+
+            // Simulate the window: registry knows the view, metadata cache is empty.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            assertQuery("show create view test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE VIEW 'test' AS (\s
+                            select ts, v+v doubleV, avg(v) from table1 sample by 30s
+                            );
+                            """);
         });
     }
 
@@ -107,6 +135,19 @@ public class ViewsFunctionTest extends AbstractViewTest {
     }
 
     @Test
+    public void testShowCreateViewFailMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createMatView("test_mv", "select ts, k, avg(v) from " + TABLE1 + " sample by 30s");
+            assertExceptionNoLeakCheck(
+                    "show create view test_mv",
+                    17,
+                    "view name expected, got materialized view name"
+            );
+        });
+    }
+
+    @Test
     public void testViewsConsistentWithMatViewsAndTablesCommands() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(1750345200000000L);
@@ -138,7 +179,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -167,7 +208,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 SelectedRecord
                                     materialized_views()
@@ -213,7 +254,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [name]
                                 wal_tables()
                             """
@@ -235,7 +276,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [table_name]
                                 all_tables()
                             """
@@ -259,7 +300,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -291,7 +332,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -312,7 +353,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -329,7 +370,7 @@ public class ViewsFunctionTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """

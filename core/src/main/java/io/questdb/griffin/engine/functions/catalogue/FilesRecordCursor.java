@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -49,6 +50,7 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
     private static final int PATH_COLUMN = 0;
     private static final int SIZE_COLUMN = 1;
     private static final int SIZE_HUMAN_COLUMN = 2;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
     protected final FilesFacade ff;
     protected final Utf8StringSink fileNameSink = new Utf8StringSink();
     protected final FileRecord record = new FileRecord();
@@ -88,6 +90,9 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public boolean hasNext() {
         while (true) {
+            // depth-first directory traversal issues find/stat syscalls per iteration, so observe
+            // the breaker each loop -- a cold-open-only check would leave a deep tree uncancellable.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (!initialized) {
                 if (!ff.exists(rootPath.$())) {
                     return false;
@@ -178,6 +183,11 @@ public class FilesRecordCursor implements NoRandomAccessRecordCursor {
     public void toTop() {
         closeCurrentFind();
         initialized = false;
+    }
+
+    public void toTop(SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
+        toTop();
     }
 
     private void buildRelativePath() {

@@ -31,8 +31,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.PostingSealPurgeTask;
 
 import java.io.Closeable;
 
@@ -126,6 +128,20 @@ public interface IndexWriter extends Closeable, Mutable {
      * chain).
      */
     default void discardForRebuild() {
+    }
+
+    /**
+     * Moves unsafe finite-future purge entries into a TableWriter-owned queue
+     * before this index writer is closed or reopened.
+     */
+    default void drainPendingFuturePurges(
+            ObjList<PostingSealPurgeTask> sink,
+            ObjectStackPool<PostingSealPurgeTask> pool,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
+    ) {
     }
 
     /**
@@ -278,6 +294,9 @@ public interface IndexWriter extends Closeable, Mutable {
     default void sealIfMultiGen(int threshold) {
     }
 
+    default void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
+    }
+
     default void setCoveredColumnNameTxns(LongList txns) {
     }
 
@@ -330,6 +349,15 @@ public interface IndexWriter extends Closeable, Mutable {
      * that follows in {@link #openFromO3Context}.
      */
     default void setO3PathContext(Path path, CharSequence name, long columnNameTxn, long upcomingTxn) {
+    }
+
+    /**
+     * Records the partition timestamp and name-txn on the writer so a deferred
+     * seal-purge task can reconstruct the value-file directory after the writer
+     * is freed. The path-based of(...) overloads used by the parquet rebuild do
+     * not carry these. No-op for writers without a seal-purge outbox (e.g. BITMAP).
+     */
+    default void setPartitionContext(long partitionTimestamp, long partitionNameTxn) {
     }
 
     /**

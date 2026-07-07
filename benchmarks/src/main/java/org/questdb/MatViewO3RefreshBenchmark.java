@@ -138,17 +138,17 @@ public class MatViewO3RefreshBenchmark {
     private static void drainMatView(CairoEngine engine) {
         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 1)) {
             //noinspection StatementWithEmptyBody
-            while (refreshJob.run(0)) ;
+            while (refreshJob.run()) ;
         }
     }
 
     private static void drainWal(CairoEngine engine) {
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
             //noinspection StatementWithEmptyBody
-            while (walApplyJob.run(0)) ;
-            if (new CheckWalTransactionsJob(engine).run(0)) {
+            while (walApplyJob.run()) ;
+            if (new CheckWalTransactionsJob(engine).run()) {
                 //noinspection StatementWithEmptyBody
-                while (walApplyJob.run(0)) ;
+                while (walApplyJob.run()) ;
             }
         }
     }

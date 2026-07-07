@@ -93,7 +93,9 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoByte(record) != GeoHashes.BYTE_NULL) {
-                computeFirst(mapValue, record, rowId);
+                if (mapValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -110,7 +112,8 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
+            // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
+            if (srcRowId > destRowId || destValue.getGeoByte(valueIndex + 1) == GeoHashes.BYTE_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putByte(valueIndex + 1, srcVal);
             }
@@ -146,7 +149,9 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoInt(record) != GeoHashes.INT_NULL) {
-                computeFirst(mapValue, record, rowId);
+                if (mapValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -163,7 +168,8 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
+            // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
+            if (srcRowId > destRowId || destValue.getGeoInt(valueIndex + 1) == GeoHashes.INT_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putInt(valueIndex + 1, srcVal);
             }
@@ -199,7 +205,9 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoLong(record) != GeoHashes.NULL) {
-                computeFirst(mapValue, record, rowId);
+                if (mapValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -216,7 +224,8 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
+            // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
+            if (srcRowId > destRowId || destValue.getGeoLong(valueIndex + 1) == GeoHashes.NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putLong(valueIndex + 1, srcVal);
             }
@@ -252,7 +261,9 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             if (arg.getGeoShort(record) != GeoHashes.SHORT_NULL) {
-                computeFirst(mapValue, record, rowId);
+                if (mapValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL || rowId > mapValue.getLong(valueIndex)) {
+                    computeFirst(mapValue, record, rowId);
+                }
             }
         }
 
@@ -269,7 +280,8 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
             }
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
-            if (srcRowId > destRowId) {
+            // Unlike first_not_null, no destRowId == LONG_NULL term is needed: a real srcRowId always exceeds an empty dest's LONG_NULL.
+            if (srcRowId > destRowId || destValue.getGeoShort(valueIndex + 1) == GeoHashes.SHORT_NULL) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putShort(valueIndex + 1, srcVal);
             }

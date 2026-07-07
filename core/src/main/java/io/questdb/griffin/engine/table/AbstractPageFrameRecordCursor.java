@@ -29,13 +29,16 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
-import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {
     protected final PageFrameAddressCache frameAddressCache;
@@ -51,10 +54,15 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
             @NotNull RecordMetadata metadata
     ) {
         this.metadata = metadata;
-        recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
-        frameAddressCache = new PageFrameAddressCache();
-        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
+        try {
+            recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+            recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
+            frameAddressCache = new PageFrameAddressCache();
+            frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetCacheMemorySize());
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -64,6 +72,11 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         Misc.free(recordB);
         Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
+    }
+
+    @TestOnly
+    public PageFrameMemoryPool getFrameMemoryPool() {
+        return frameMemoryPool;
     }
 
     @Override
@@ -93,9 +106,17 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     @Override
     public void recordAt(Record record, long rowId) {
-        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
+        frameMemoryPool.recordAt(record, rowId);
+    }
+
+    @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        frameMemoryPool.setParquetDecodeHint(hint);
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        frameMemoryPool.setRecordAtRows(source);
     }
 
     @Override
@@ -104,8 +125,9 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         frameCursor.toTop();
     }
 
-    protected void init() {
+    protected void init(@Nullable MemoryTracker memoryTracker) {
         frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+        frameMemoryPool.setMemoryTracker(memoryTracker);
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
         frameCursor.toTop();

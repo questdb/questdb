@@ -255,7 +255,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
                     try (
-                            TableReader reader = engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION);
+                            TableReader reader = engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION, null);
                             TestTableReaderTailRecordCursor cursor = new TestTableReaderTailRecordCursor().of(reader)
                     ) {
                         cursor.toBottom();
@@ -313,7 +313,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
                     try (
-                            TableReader reader = engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION);
+                            TableReader reader = engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION, null);
                             TestTableReaderTailRecordCursor cursor = new TestTableReaderTailRecordCursor().of(reader)
                     ) {
                         Assert.assertTrue(cursor.reload());

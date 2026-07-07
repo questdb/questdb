@@ -415,23 +415,26 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
+                    " FROM table_partitions('" + tableName + "')" +
+                    " WHERE attached" +
+                    " ORDER BY name")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("""
                             name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
                             2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T07:00:00.000000Z\t8\ttrue
                             2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse
-                            """,
-                    "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
-                            " FROM table_partitions('" + tableName + "')" +
-                            " WHERE attached" +
-                            " ORDER BY name",
-                    null, true, true, true
-            );
+                            """);
 
             // Underlying data is still queryable — sum() over the partial-NULL
             // column returns the populated values without exploding on the
             // all-NULL chunk.
-            assertSql("sum\n35\n", "SELECT sum(v) FROM " + tableName);
+            assertQuery("SELECT sum(v) FROM " + tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("sum\n35\n");
         });
     }
 
@@ -479,19 +482,18 @@ public class ShowPartitionsTest extends AbstractCairoTest {
 
             // Despite the cleared raw bit, the parquet partition reports
             // hasParquetGenerated as true.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT name, hasParquetGenerated, isParquet" +
+                    " FROM table_partitions('" + tableName + "')" +
+                    " WHERE attached" +
+                    " ORDER BY name")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("""
                             name\thasParquetGenerated\tisParquet
                             2023-01-01\ttrue\ttrue
                             2023-01-02\tfalse\tfalse
                             2023-01-03\tfalse\tfalse
-                            """,
-                    "SELECT name, hasParquetGenerated, isParquet" +
-                            " FROM table_partitions('" + tableName + "')" +
-                            " WHERE attached" +
-                            " ORDER BY name",
-                    null, true, true, true
-            );
+                            """);
         });
     }
 
@@ -523,22 +525,25 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 drainWalQueue();
             }
 
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
+                    " FROM table_partitions('" + tableName + "')" +
+                    " WHERE attached" +
+                    " ORDER BY name")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("""
                             name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
                             2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T18:00:00.000000Z\t4\ttrue
                             2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse
-                            """,
-                    "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
-                            " FROM table_partitions('" + tableName + "')" +
-                            " WHERE attached" +
-                            " ORDER BY name",
-                    null, true, true, true
-            );
+                            """);
 
             // NULLs survived the round trip and the underlying data is
             // queryable.
-            assertSql("count\n2\n", "SELECT count() FROM " + tableName + " WHERE v IS NULL");
+            assertQuery("SELECT count() FROM " + tableName + " WHERE v IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
         });
     }
 
@@ -547,18 +552,16 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName);
-            assertQueryNoLeakCheck(
-                    replaceSizeToMatchOS(
+            assertQuery("SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(replaceSizeToMatchOS(
                             """
                                     index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\thasParquetGenerated\tisParquet\tparquetFileSize
                                     5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\tfalse\t-1
                                     """,
-                            tableName, configuration, engine, sink),
-                    "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;",
-                    null,
-                    false,
-                    false,
-                    true);
+                            tableName, configuration, engine, sink));
         });
     }
 
@@ -567,18 +570,16 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName, PartitionBy.WEEK);
-            assertQueryNoLeakCheck(
-                    replaceSizeToMatchOS(
+            assertQuery("SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns(replaceSizeToMatchOS(
                             """
                                     index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\thasParquetGenerated\tisParquet\tparquetFileSize
                                     25\tWEEK\t2023-W25\t2023-06-19T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t25\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\tfalse\t-1
                                     """,
-                            tableName, configuration, engine, sink),
-                    "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;",
-                    null,
-                    false,
-                    false,
-                    true);
+                            tableName, configuration, engine, sink));
         });
     }
 
@@ -591,26 +592,25 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             if (isWal) {
                 drainWalQueue();
             }
-            assertQueryNoLeakCheck(
-                    replaceSizeToMatchOS(
+            assertQuery("SELECT * FROM partitions WHERE active = true;")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns(replaceSizeToMatchOS(
                             """
                                     index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\thasParquetGenerated\tisParquet\tparquetFileSize
                                     5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\tfalse\t-1
                                     """,
-                            tableName, configuration, engine, sink),
-                    "SELECT * FROM partitions WHERE active = true;",
-                    null,
-                    true,
-                    false,
-                    true);
+                            tableName, configuration, engine, sink));
         });
     }
 
     @Test
     public void testShowPartitionsTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("show partitions from banana", 21, "table does not exist [table=banana]");
-            assertException("SELECT * FROM table_partitions('banana')", 31, "table does not exist [table=banana]");
+            assertQuery("show partitions from banana")
+                    .fails(21, "table does not exist [table=banana]");
+            assertQuery("SELECT * FROM table_partitions('banana')")
+                    .fails(31, "table does not exist [table=banana]");
         });
     }
 
@@ -626,8 +626,12 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // Three partitions are converted: 2023-01, 2023-02, 2023-03.
             // The remaining three stay native. Both hasParquetGenerated and isParquet
             // must be true for converted partitions; parquetFileSize must be > 0.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT name, hasParquetGenerated, isParquet, parquetFileSize > 0 hasParquetFile" +
+                    " FROM table_partitions('" + tableName + "')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             name\thasParquetGenerated\tisParquet\thasParquetFile
                             2023-01\ttrue\ttrue\ttrue
                             2023-02\ttrue\ttrue\ttrue
@@ -635,13 +639,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                             2023-04\tfalse\tfalse\tfalse
                             2023-05\tfalse\tfalse\tfalse
                             2023-06\tfalse\tfalse\tfalse
-                            """,
-                    "SELECT name, hasParquetGenerated, isParquet, parquetFileSize > 0 hasParquetFile" +
-                            " FROM table_partitions('" + tableName + "')",
-                    null,
-                    false,
-                    true
-            );
+                            """);
         });
     }
 
@@ -685,19 +683,18 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // Verify parquet partition has correct timestamps and isParquet flag.
             // This exercises the ShowPartitionsRecordCursorFactory code path that
             // reads min/max timestamps from the _pm sidecar file.
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
+                    " FROM table_partitions('" + tableName + "')" +
+                    " WHERE attached" +
+                    " ORDER BY name")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("""
                             name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
                             2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T00:00:00.000000Z\t1\ttrue
                             2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse
                             2023-01-03\t2023-01-03T00:00:00.000000Z\t2023-01-03T00:00:00.000000Z\t1\tfalse
-                            """,
-                    "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
-                            " FROM table_partitions('" + tableName + "')" +
-                            " WHERE attached" +
-                            " ORDER BY name",
-                    null, true, true, true
-            );
+                            """);
         });
     }
 
@@ -722,23 +719,17 @@ public class ShowPartitionsTest extends AbstractCairoTest {
 
         engine.releaseInactive();
 
-        assertQuery(
-                finallyExpected,
-                "SELECT * FROM table_partitions('" + tableName + "')",
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("SELECT * FROM table_partitions('" + tableName + "')")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns(finallyExpected);
 
-        assertQuery(
-                finallyExpected,
-                "show partitions from " + tableName,
-                null,
-                null,
-                false,
-                true
-        );
+        assertQuery("show partitions from " + tableName)
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .returns(finallyExpected);
     }
 
     private static void deleteFile(String tableName, String... pathParts) {
@@ -755,21 +746,18 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         }
     }
 
-    private void assertShowPartitions(String expected, String tableName) throws SqlException {
+    private void assertShowPartitions(String expected, String tableName) throws Exception {
         SOCountDownLatch done = new SOCountDownLatch(1);
         String finallyExpected = replaceSizeToMatchOS(expected, tableName, configuration, engine, sink);
         AtomicInteger failureCounter = new AtomicInteger();
         new Thread(() -> {
             try {
                 try {
-                    assertQueryNoLeakCheck(
-                            finallyExpected,
-                            "show partitions from " + tableName,
-                            null,
-                            false,
-                            true,
-                            true
-                    );
+                    assertQuery("show partitions from " + tableName)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .sizeMayVary()
+                            .returns(finallyExpected);
                 } catch (Throwable e) {
                     e.printStackTrace(System.out);
                     failureCounter.incrementAndGet();
@@ -781,14 +769,11 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         }).start();
         done.await();
         Assert.assertEquals(0, failureCounter.get());
-        assertQueryNoLeakCheck(
-                finallyExpected,
-                "SELECT * FROM table_partitions('" + tableName + "')",
-                null,
-                false,
-                true,
-                true
-        );
+        assertQuery("SELECT * FROM table_partitions('" + tableName + "')")
+                .noLeakCheck()
+                .noRandomAccess()
+                .sizeMayVary()
+                .returns(finallyExpected);
     }
 
     private TableToken createTable(String tableName) throws SqlException {
@@ -808,7 +793,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         SOCountDownLatch returned = new SOCountDownLatch(1);
         if (isWal) {
             createTable += " WAL";
-            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+            engine.setPoolListener((factoryType, _, tableToken, event, _, _) -> {
                 if (tableToken != null && tableToken.getTableName().equals(tableName) && factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                     returned.countDown();
                 }

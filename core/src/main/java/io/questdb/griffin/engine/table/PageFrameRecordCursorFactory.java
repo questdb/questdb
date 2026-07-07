@@ -142,7 +142,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                     pageFrameCursor,
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
-                    1 // used for single-threaded exec plans
+                    1, // used for single-threaded exec plans
+                    executionContext.getMemoryTracker()
             );
         }
         return null;

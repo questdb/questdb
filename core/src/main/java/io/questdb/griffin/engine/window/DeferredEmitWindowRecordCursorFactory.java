@@ -575,11 +575,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
-        public void skipRows(Counter rowCount) {
-            RecordCursor.skipRows(this, rowCount);
-        }
-
-        @Override
         public void toTop() {
             baseCursor.toTop();
             if (partitionMap != null) {

@@ -37,16 +37,18 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNonStaticSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n";
+            final String expected = """
+                    name
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    """;
             execute("create table x as (select rnd_str('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
             try (RecordCursorFactory factory = select("(select name::symbol name from x) where name ~ '^op.*'")) {
@@ -62,12 +64,10 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
-            assertQuery(
-                    "name\n",
-                    "select * from x where name ~ null",
-                    true,
-                    true
-            );
+            assertQuery("select * from x where name ~ null")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("name\n");
         });
     }
 
@@ -87,16 +87,18 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n" +
-                    "ope\n";
+            final String expected = """
+                    name
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    ope
+                    """;
             execute("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
             try (RecordCursorFactory factory = select("select * from x where name ~ '^op.*'")) {

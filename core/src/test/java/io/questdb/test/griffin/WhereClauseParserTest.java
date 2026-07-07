@@ -4235,25 +4235,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "testVarcharPracticalParsing_" + timestampType.getTypeName();
             executeWithRewriteTimestamp("create table " + tableName + " ( a string, ts #TIMESTAMP) timestamp(ts)", timestampType.getTypeName());
-            assertPlanNoLeakCheck(
-                    "select * from " + tableName + " where\n" +
-                            "ts = '2024-02-29' or ts <= '2024-03-01'",
-                    "Async JIT Filter workers: 1\n" +
+            assertQuery("select * from " + tableName + " where\n" +
+                    "ts = '2024-02-29' or ts <= '2024-03-01'")
+                    .noLeakCheck()
+                    .assertsPlan("Async JIT Filter workers: 1\n" +
                             "  filter: (2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + tableName + "\n"
-            );
+                            "        Frame forward scan on: " + tableName + "\n");
 
-            assertPlanNoLeakCheck(
-                    "select * from " + tableName + " where\n" +
-                            "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
-                    "Async Filter workers: 1\n" +
+            assertQuery("select * from " + tableName + " where\n" +
+                    "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar")
+                    .noLeakCheck()
+                    .assertsPlan("Async Filter workers: 1\n" +
                             "  filter: ((2024-02-29T00:00:00.000000Z=ts or 2024-03-01T00:00:00.000000Z>=ts) or 2024-05-01T00:00:00.000000Z=ts)\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: " + tableName + "\n"
-            );
+                            "        Frame forward scan on: " + tableName + "\n");
         });
     }
 
@@ -4451,9 +4449,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     private String replaceTimestampSuffix(String expected) {
         return ColumnType.isTimestampNano(timestampType.getTimestampType())
                 ? expected.replaceAll("00000", "00000000")
-                  .replaceAll("99999", "99999999")
-                  .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
-                  .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z")
+                .replaceAll("99999", "99999999")
+                .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
+                .replaceAll("-290308-01-01T19:59:05.224193Z", "1677-01-01T00:12:43.145224193Z")
                 : expected;
     }
 

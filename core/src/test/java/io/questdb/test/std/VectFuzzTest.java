@@ -705,6 +705,86 @@ public class VectFuzzTest {
     }
 
     @Test
+    public void testMergeDedupStringKeyOffsetAbove2GiB() throws Exception {
+        // Regression test for the SIGSEGV in the native dedup merge with a STRING dedup key.
+        // MergeStrBinColumnComparer<int32_t, 2> reads the existing-column var-data offset into
+        // a 32-bit int, so an offset >= 2^31 is sign-flipped negative and
+        // (var_data_base + offset) lands ~2 GiB BELOW the mapped buffer.
+        //
+        // With the bug present this crashes the JVM inside merge_dedup_long_index_int_keys
+        // (hs_err_pid log, problematic frame "libquestdb.so ... MergeStrBinColumnComparer<int, 2>").
+        // In the rare case the wild address is mapped, the comparison goes wrong instead and the
+        // assertion below fails - either way the test is red on the buggy library. With the offset
+        // read as int64_t the comparer reads the real string and the merge returns the single row.
+        TestUtils.assertMemoryLeak(() -> {
+            final long bigOffset = 1L << 31;          // 2_147_483_648 -> INT_MIN when truncated to int32
+            final long colVarLen = bigOffset + 16;    // room for [int32 len][1 UTF-16 char] at bigOffset
+            // Sparse: only the page at bigOffset is touched, so RSS stays ~one page despite the 2 GiB span.
+            final long colVar = Unsafe.malloc(colVarLen, MemoryTag.NATIVE_DEFAULT);
+            try {
+                // Existing-column STRING value "A" parked at the >2 GiB offset: len=1 char, then 'A'.
+                Unsafe.putInt(colVar + bigOffset, 1);
+                Unsafe.putChar(colVar + bigOffset + 4, 'A');
+
+                try (DirectLongList src = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);       // existing-column timestamps
+                     DirectLongList colAux = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);    // STRING .i: int64 offsets
+                     DirectLongList index = new DirectLongList(2, MemoryTag.NATIVE_DEFAULT);     // O3 (ts, rowIndex) pairs
+                     DirectLongList o3Aux = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);     // O3 STRING .i
+                     DirectLongList o3Var = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT);     // O3 STRING .d
+                     DirectLongList dest = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT)) {
+
+                    // One existing row at ts=1000, its string sitting at the huge offset.
+                    src.add(1000);
+                    colAux.add(bigOffset);
+
+                    // One O3 row at the SAME ts=1000 -> forces the dedup conflict path -> invokes the comparer.
+                    index.add(1000);   // ts
+                    index.add(0);      // O3 row index -> comparer's index_index
+
+                    // O3 STRING value "A" at offset 0, so a correct comparison yields equal.
+                    Unsafe.putInt(o3Var.getAddress(), 1);
+                    Unsafe.putChar(o3Var.getAddress() + 4, 'A');
+                    o3Aux.add(0);
+
+                    dest.setPos(4);
+                    try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
+                        colBuffs.setDedupColumnCount(1);
+                        long block = colBuffs.allocateBlock();
+                        long addr = DedupColumnCommitAddresses.setColValues(
+                                block,
+                                0,
+                                ColumnType.STRING,
+                                -1, // var-len marker
+                                0   // column top
+                        );
+                        DedupColumnCommitAddresses.setColAddressValues(addr, colAux.getAddress(), colVar, colVarLen);
+                        DedupColumnCommitAddresses.setO3DataAddressValues(addr, o3Aux.getAddress(), o3Var.getAddress(), 6);
+
+                        long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
+                                src.getAddress(),
+                                0,
+                                src.size() - 1,
+                                index.getAddress(),
+                                0,
+                                index.size() / 2 - 1,
+                                dest.getAddress(),
+                                1,
+                                DedupColumnCommitAddresses.getAddress(block)
+                        );
+
+                        // Timestamps collide and the STRING keys are equal, so the O3 row (index 0)
+                        // wins -> exactly one merged row {ts=1000, i=0}.
+                        dest.setPos(mergedCount * 2);
+                        Assert.assertEquals("1000 0:i", printMergeIndex(dest));
+                    }
+                }
+            } finally {
+                Unsafe.free(colVar, colVarLen, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testMergeFourSameSize() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int count = 1_000_000;

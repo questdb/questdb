@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -40,6 +41,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class VirtualFunctionRecordCursor implements RecordCursor {
     protected final VirtualFunctionRecord recordA;
@@ -172,15 +174,29 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        if (baseCursor != null) {
+            baseCursor.setParquetDecodeHint(hint);
+        }
+    }
+
+    @Override
+    public void setRecordAtRows(@Nullable RowIdSource source) {
+        if (baseCursor != null) {
+            baseCursor.setRecordAtRows(source);
+        }
+    }
+
+    @Override
     public long size() {
         assert baseCursor != null;
         return baseCursor.size();
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
         assert baseCursor != null;
-        baseCursor.skipRows(rowCount);
+        baseCursor.skipRows(rowCount, maxRowsAfterSkip);
     }
 
     @Override

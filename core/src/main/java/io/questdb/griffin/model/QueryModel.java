@@ -1531,7 +1531,9 @@ public class QueryModel implements IQueryModel {
                     }
                     n = n.lhs;
                 } else {
-                    addParsedWhereNode(n, false);
+                    // preserve the predicate's origin: an inner-join ON conjunct pushed onto the
+                    // master model's WHERE must stay distinguishable from a real WHERE predicate
+                    addParsedWhereNode(n, n.innerPredicate);
                     n = null;
                 }
             } else {
@@ -1814,6 +1816,14 @@ public class QueryModel implements IQueryModel {
     public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
         this.sampleBy = sampleBy;
         this.sampleByUnit = sampleByUnit;
+    }
+
+    @Override
+    public void setSampleByFill(ObjList<ExpressionNode> fill) {
+        sampleByFill.clear();
+        if (fill != null) {
+            sampleByFill.addAll(fill);
+        }
     }
 
     @Override

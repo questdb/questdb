@@ -49,12 +49,21 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
             SqlExecutionContext sqlExecutionContext
     ) {
         final Function arg = args.getQuick(0);
-        final int leftTimestampType = args.getQuick(0).getType();
+        final int leftTimestampType = arg.getType();
         final int rightTimestampType = args.getQuick(1).getType();
-        if (!ColumnType.isTimestamp(leftTimestampType) || leftTimestampType == rightTimestampType) {
-            return new CastLongToTimestampFunctionFactory.Func(args.getQuick(0), rightTimestampType);
+        if (ColumnType.isTimestamp(leftTimestampType)) {
+            if (leftTimestampType == rightTimestampType) {
+                // Identity cast: arg is already a timestamp of the target type.
+                // Return it unwrapped so that callers inspecting the argument
+                // (e.g. ColumnFunction.unwrap for twap(price, ts::timestamp))
+                // can still recognize a plain designated-timestamp column.
+                return arg;
+            }
+            return new Func(arg, leftTimestampType, rightTimestampType);
         }
-        return new Func(arg, leftTimestampType, rightTimestampType);
+        // Non-timestamp source (e.g. long): reinterpret its raw value as the
+        // target timestamp type.
+        return new CastLongToTimestampFunctionFactory.Func(arg, rightTimestampType);
     }
 
     public static class Func extends AbstractCastToTimestampFunction {

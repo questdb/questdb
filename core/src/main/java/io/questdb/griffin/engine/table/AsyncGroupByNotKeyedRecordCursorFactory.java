@@ -189,8 +189,15 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         frameSequence.of(base, executionContext, order);
-        cursor.of(frameSequence, executionContext);
-        return cursor;
+        try {
+            cursor.of(frameSequence, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -330,7 +337,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final int functionCount = functions.size();
         try {
-            if (frameMemory.hasColumnTops()) {
+            if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Fall back to row-by-row for the entire frame.
                 record.init(frameMemory);
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -458,7 +465,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {

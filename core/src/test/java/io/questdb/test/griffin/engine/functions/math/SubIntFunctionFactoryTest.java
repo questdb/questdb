@@ -46,47 +46,42 @@ public class SubIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
                     "(NULL, NULL), " +
                     "(NULL, -2147483648), " +
                     "(5, 562940)");
-            assertQueryNoLeakCheck(
-                    "c4\tc6\nnull\tnull\n5\t562940\n",
-                    "SELECT * FROM x WHERE c6 = (562945 - c4)",
-                    null,
-                    true,
-                    false
-            );
+            assertQuery("SELECT * FROM x WHERE c6 = (562945 - c4)")
+                    .noLeakCheck()
+                    .returns("c4\tc6\nnull\tnull\n5\t562940\n");
         });
     }
 
     @Test
     public void testLeftNan() throws Exception {
-        assertQuery(
-                """
+        assertQuery("SELECT null - 5")
+                .expectSize()
+                .returns("""
                         column
                         null
-                        """,
-                "SELECT null - 5"
-        );
+                        """);
     }
 
     @Test
     public void testNegative() throws Exception {
-        assertQuery("column\n-7\n", "SELECT -3-4");
-        assertQuery("column\n-7\n", "SELECT -3- 4");
-        assertQuery("column\n-7\n", "SELECT -3 -4");
+        assertQuery("SELECT -3-4").expectSize().returns("column\n-7\n");
+        assertQuery("SELECT -3- 4").expectSize().returns("column\n-7\n");
+        assertQuery("SELECT -3 -4").expectSize().returns("column\n-7\n");
     }
 
     @Test
     public void testRightNan() throws Exception {
-        assertQuery("column\nnull\n", "SELECT 123 - null");
+        assertQuery("SELECT 123 - null").expectSize().returns("column\nnull\n");
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery("column\n2\n", "SELECT 10 - 8");
+        assertQuery("SELECT 10 - 8").expectSize().returns("column\n2\n");
     }
 
     @Test
     public void testUnderflow() throws Exception {
-        assertQuery("column\n-2147483650\n", "SELECT -2147483648 - 2");
+        assertQuery("SELECT -2147483648 - 2").expectSize().returns("column\n-2147483650\n");
     }
 
     @Override

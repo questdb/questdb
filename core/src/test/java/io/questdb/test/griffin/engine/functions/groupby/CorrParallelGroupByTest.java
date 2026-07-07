@@ -62,15 +62,13 @@ public class CorrParallelGroupByTest extends AbstractCairoTest {
                             ")",
                     ctx
             );
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "corr\nnull\n",
-                    "SELECT corr(y, x) FROM tbl",
-                    null,
-                    ctx,
-                    false,
-                    true
-            );
+            assertQuery("SELECT corr(y, x) FROM tbl")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\nnull\n");
         });
     }
 
@@ -88,19 +86,18 @@ public class CorrParallelGroupByTest extends AbstractCairoTest {
                             ")",
                     ctx
             );
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "grp\tcorr\n" +
-                            "0\t1.0\n" +
-                            "1\t1.0\n" +
-                            "2\t1.0\n" +
-                            "3\t1.0\n",
-                    "SELECT grp, corr(y_val, x_val) FROM tbl ORDER BY grp",
-                    null,
-                    ctx,
-                    true,
-                    true
-            );
+            assertQuery("SELECT grp, corr(y_val, x_val) FROM tbl ORDER BY grp")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .expectSize()
+                    .returns("""
+                            grp\tcorr
+                            0\t1.0
+                            1\t1.0
+                            2\t1.0
+                            3\t1.0
+                            """);
         });
     }
 
@@ -117,15 +114,13 @@ public class CorrParallelGroupByTest extends AbstractCairoTest {
                             ")",
                     ctx
             );
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "corr\n1.0\n",
-                    "SELECT corr(y, x) FROM tbl",
-                    null,
-                    ctx,
-                    false,
-                    true
-            );
+            assertQuery("SELECT corr(y, x) FROM tbl")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("corr\n1.0\n");
         });
     }
 

@@ -18,14 +18,27 @@ pub use dyn_iter::{DynIter, DynStreamingIterator};
 
 pub use compression::{compress, Compressor};
 
-pub use file::{end_file, start_file, write_metadata_sidecar, FileWriter, ParquetFile};
+pub use file::{
+    end_file, start_file, write_metadata_sidecar, CopiedColumnIndex, FileWriter, ParquetFile,
+};
 
 pub use row_group::{write_row_group, ColumnOffsetsMetadata};
+
+use parquet_format_safe::{ColumnOrder, TypeDefinedOrder};
 
 use crate::page::CompressedPage;
 
 pub type RowGroupIter<'a, E> =
     DynIter<'a, std::result::Result<DynStreamingIterator<'a, CompressedPage, E>, E>>;
+
+/// Builds the file-level `column_orders` list: one `TypeDefinedOrder` per leaf
+/// column, in schema order. The Parquet spec requires this whenever the modern
+/// `min_value`/`max_value` statistics are written; without it, conformant readers
+/// (pyarrow, Spark, DuckDB, Trino, Iceberg) treat those bounds as undefined and
+/// ignore them, losing row-group skipping and predicate pushdown.
+pub(crate) fn type_defined_column_orders(num_leaf_columns: usize) -> Vec<ColumnOrder> {
+    vec![ColumnOrder::TYPEORDER(TypeDefinedOrder {}); num_leaf_columns]
+}
 
 /// Write options of different interfaces on this crate
 #[derive(Debug, Copy, Clone, PartialEq)]

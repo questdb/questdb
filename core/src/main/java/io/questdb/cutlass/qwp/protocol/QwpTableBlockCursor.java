@@ -311,7 +311,6 @@ public class QwpTableBlockCursor implements Mutable {
      * @param dataAddress            address of table block data
      * @param dataLength             available bytes
      * @param gorillaEnabled         whether Gorilla encoding is enabled
-     * @param schemaRegistry         schema registry for reference mode (may be null)
      * @param connectionSymbolDict   connection-level symbol dictionary (may be null)
      * @param deltaSymbolDictEnabled whether delta mode is enabled
      * @return bytes consumed from dataAddress
@@ -321,7 +320,6 @@ public class QwpTableBlockCursor implements Mutable {
             long dataAddress,
             int dataLength,
             boolean gorillaEnabled,
-            QwpSchemaRegistry schemaRegistry,
             ObjList<String> connectionSymbolDict,
             boolean deltaSymbolDictEnabled
     ) throws QwpParseException {
@@ -336,40 +334,10 @@ public class QwpTableBlockCursor implements Mutable {
         this.rowCount = (int) tableHeader.getRowCount();
         this.columnCount = tableHeader.getColumnCount();
 
-        // Parse schema section (zero-alloc: reuses parseResult)
+        // Parse schema section (inline columns; zero-alloc: reuses parseResult)
         QwpSchema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
         offset += parseResult.bytesConsumed;
-
-        QwpSchema schema;
-        if (!parseResult.isReference) {
-            schema = parseResult.schema;
-            // Register the schema if registry is enabled
-            if (schemaRegistry != null) {
-                schemaRegistry.put(parseResult.schemaId, schema);
-            }
-        } else {
-            // Schema reference mode - look up in registry
-            if (schemaRegistry == null) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.SCHEMA_NOT_FOUND,
-                        "schema reference mode requires schema registry"
-                );
-            }
-            schema = schemaRegistry.get(parseResult.schemaId);
-            if (schema == null) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.SCHEMA_NOT_FOUND,
-                        "schema not found in registry for table: " + tableHeader.getTableName()
-                );
-            }
-            if (schema.getColumnCount() != columnCount) {
-                throw QwpParseException.create(
-                        QwpParseException.ErrorCode.SCHEMA_MISMATCH,
-                        "schema column count mismatch: header=" + columnCount
-                                + ", schema=" + schema.getColumnCount()
-                );
-            }
-        }
+        QwpSchema schema = parseResult.schema;
 
         this.columnDefs = schema.getColumns();
 

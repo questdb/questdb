@@ -37,6 +37,8 @@ import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -44,6 +46,8 @@ import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -131,6 +135,105 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 int capacity = serverMain.getConfiguration().getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity();
                 Assert.assertEquals(1000, capacity);
+            }
+        });
+    }
+
+    @Test
+    public void testCairoMemoryLimitsReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                CairoConfiguration cairoConfig = serverMain.getConfiguration().getCairoConfiguration();
+                // All three workloads default to unlimited.
+                Assert.assertEquals(0, cairoConfig.getQueryMemoryLimitBytes());
+                Assert.assertEquals(0, cairoConfig.getMatViewRefreshMemoryLimitBytes());
+                Assert.assertEquals(0, cairoConfig.getWalApplyMemoryLimitBytes());
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=1000000\n");
+                    w.write("cairo.mat.view.refresh.memory.limit.bytes=2000000\n");
+                    w.write("cairo.wal.apply.memory.limit.bytes=3000000\n");
+                }
+
+                assertReloadConfigEventually();
+
+                // The reloaded limits are visible through the config getters...
+                Assert.assertEquals(1_000_000, cairoConfig.getQueryMemoryLimitBytes());
+                Assert.assertEquals(2_000_000, cairoConfig.getMatViewRefreshMemoryLimitBytes());
+                Assert.assertEquals(3_000_000, cairoConfig.getWalApplyMemoryLimitBytes());
+
+                // ...and through a tracker freshly acquired after the reload, since the provider
+                // reads the configured limit on each acquisition.
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.QUERY, 1_000_000);
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.MAT_VIEW_REFRESH, 2_000_000);
+                assertTrackerLimit(serverMain, MemoryTrackerWorkload.WAL_APPLY, 3_000_000);
+            }
+        });
+    }
+
+    @Test
+    public void testQueryMemoryLimitReloadUnblocksQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                // Seed two tables whose hash join build map needs far more tracked memory
+                // than the low limit configured below. Seeding runs under the default
+                // unlimited limit, so it is never constrained. A hash join drives the breach
+                // because its build map fails at a single deterministic site with the
+                // per-query OOM message intact, keeping the client-visible error stable.
+                try (Connection conn = getConnection("admin", "quest")) {
+                    try (PreparedStatement stmt = conn.prepareStatement(
+                            "CREATE TABLE master AS (SELECT cast(x AS varchar) k FROM long_sequence(100_000))")) {
+                        stmt.execute();
+                    }
+                    try (PreparedStatement stmt = conn.prepareStatement(
+                            "CREATE TABLE slave AS (SELECT cast(x AS varchar) k, x AS v FROM long_sequence(100_000))")) {
+                        stmt.execute();
+                    }
+                }
+
+                final String query = "SELECT count(*) AS c FROM (SELECT master.k, slave.v FROM master JOIN slave ON k)";
+
+                // Configure a too-low per-query memory limit and reload it in.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=65536\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(65_536, serverMain.getConfiguration().getCairoConfiguration().getQueryMemoryLimitBytes());
+
+                // The aggregation's hash map blows past 64 KiB, so the query fails with an
+                // out-of-memory error tagged with the QUERY workload.
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement(query)
+                ) {
+                    stmt.executeQuery();
+                    Assert.fail("expected out-of-memory error under the low query memory limit");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getMessage(), "workload=QUERY");
+                }
+
+                // Bump the limit to unlimited and reload it in.
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("cairo.query.memory.limit.bytes=0\n");
+                }
+                assertReloadConfigEventually();
+                Assert.assertEquals(0, serverMain.getConfiguration().getCairoConfiguration().getQueryMemoryLimitBytes());
+
+                // The very same query now runs to completion: a freshly acquired tracker reads
+                // the reloaded (unlimited) limit.
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement(query);
+                        ResultSet rs = stmt.executeQuery()
+                ) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals(100_000, rs.getLong(1));
+                }
             }
         });
     }
@@ -1563,6 +1666,19 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             }
             Os.sleep(nextSleepingTimeMillis);
             nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
+
+    private void assertTrackerLimit(ServerMain serverMain, MemoryTrackerWorkload workload, long expectedLimit) {
+        MemoryTracker tracker = serverMain.getEngine().getMemoryTrackerProvider().acquire(
+                AllowAllSecurityContext.INSTANCE,
+                1,
+                workload
+        );
+        try {
+            Assert.assertEquals(expectedLimit, tracker.getLimit());
+        } finally {
+            tracker.close();
         }
     }
 

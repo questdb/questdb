@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
@@ -376,6 +377,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             mutableArgs.setPos(argCount);
             mutableArgPositions.clear();
             mutableArgPositions.setPos(argCount);
+            // The function about to be created is runtime constant iff every arg is constant or
+            // runtime constant and at least one is runtime constant (mirrors the function base
+            // classes). Used below to fold runtime-constant subtrees at boundaries only.
+            boolean allConstOrRuntimeConst = true;
+            boolean anyRuntimeConst = false;
             for (int n = 0; n < argCount; n++) {
                 Function arg = functionStack.poll();
                 final int pos = positionStack.pop();
@@ -397,10 +403,39 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     Misc.freeObjList(mutableArgs);
                     throw SqlException.position(pos).put("Aggregate function cannot be passed as an argument");
                 }
+
+                final boolean argRuntimeConst = arg != null && arg.isRuntimeConstant();
+                if (arg == null || (!argRuntimeConst && !arg.isConstant())) {
+                    allConstOrRuntimeConst = false;
+                } else if (argRuntimeConst) {
+                    // a function is never both constant and runtime constant (see Function.isRuntimeConstant)
+                    anyRuntimeConst = true;
+                }
+            }
+            // At a boundary (the new function is not runtime constant), each runtime-constant arg is
+            // a maximal runtime-constant subtree: wrap it so it evaluates once per cursor, not per
+            // row. Skipped when the parent is runtime constant, so only the topmost node is wrapped.
+            if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
+                for (int n = 0; n < argCount; n++) {
+                    final Function arg = mutableArgs.getQuick(n);
+                    if (RuntimeConstFunction.isFoldable(arg)) {
+                        mutableArgs.setQuick(n, RuntimeConstFunction.newInstance(arg));
+                    }
+                }
             }
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
+    }
+
+    private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {
+        int count = 0;
+        for (int i = 0, n = overload.size(); i < n; i++) {
+            if (overload.getQuick(i).getFactory().isWindow()) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static void handleExpectedAndActual(@Transient IntList argPositions, SqlException ex, int i, int expectedType, int actualType) {
@@ -1213,6 +1248,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } else if (argTypeTag == ColumnType.BYTE && sigArgTypeTag == ColumnType.DECIMAL) {
                 args.setQuick(k, CastByteToDecimalFunctionFactory.newInstance(argPositions.getQuick(k), arg, sqlExecutionContext));
             }
+        }
+        // An untyped NULL literal as the value argument of a polymorphic window function (lead, min,
+        // sum, nth_value, ...) is ambiguous: it ties across every typed variant (NULL to any type has
+        // zero overload distance), so the winner - and the resulting behaviour - depends on classpath
+        // scan order. Different winners give different observable behaviour: a clean rejection on one
+        // platform, a "not yet implemented for NULL" factory error on another, or even silent acceptance
+        // returning NULLs. Reject it deterministically here, before any factory runs, so the user gets
+        // the same clear "cast it" error everywhere. Window functions with a single overload (e.g. ntile,
+        // whose argument is a bucket count rather than a value) resolve deterministically and keep their
+        // own argument validation.
+        if (isWindowContext && candidate.isWindow() && argCount > 0
+                && ColumnType.tagOf(args.getQuick(0).getType()) == ColumnType.NULL
+                && countWindowOverloads(overload) > 1) {
+            Misc.freeObjList(args);
+            throw SqlException.$(node.position, "window function ").put(node.token).put(" does not support an untyped NULL argument; cast it to a concrete type, e.g. null::double");
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
     }

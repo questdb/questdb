@@ -48,57 +48,68 @@ public class EmptyTableRecordCursorFactoryTest extends AbstractCairoTest {
                 cursor.recordAt(cursor.getRecord(), 0);
                 cursor.toTop();
                 Assert.assertFalse(cursor.hasNext());
+                // newSymbolTable must honor the same contract as getSymbolTable: an immutable
+                // empty table that a parallel symbol-table consumer can clone without throwing.
+                Assert.assertSame(cursor.getSymbolTable(0), cursor.newSymbolTable(0));
+                Assert.assertNull(cursor.newSymbolTable(0).valueOf(0));
             }
         }
     }
 
     @Test
-    public void testFoldedFalseFilterAllowsSpliceJoin() throws Exception {
-        // The literal filter ((c0 + null))::TIMESTAMP < '2024-...'::TIMESTAMP folds
-        // through AddIntFunctionFactory's null short-circuit and the timestamp
-        // comparator to constant FALSE. SqlCodeGenerator then substitutes the master
-        // side of the splice join with EmptyTableRecordCursorFactory. The splice join
-        // must compile because the empty cursor supports random access; the bind-form
-        // equivalent compiles via a regular filter, and both forms must agree on the
-        // row count produced.
+    public void testEmptyMasterFeedsSpliceJoin() throws Exception {
+        // Integration counterpart to testCursorIsRandomAccessAndExposesNoRows: a SPLICE join
+        // whose master sub-query carries a constant-FALSE WHERE folds the master to an
+        // EmptyTableRecordCursorFactory (see the "Empty table" plan node), which remains the
+        // splice master because it supports random access. SPLICE is a full outer temporal
+        // join, so an empty master pairs every slave row with an all-NULL master (the splice
+        // cursor calls recordAt on the empty random-access master, a no-op). This was formerly
+        // reached via a master filter that folded to FALSE and got pushed into the master
+        // sub-query; that predicate now stays post-join, so this constant-FALSE sub-query is
+        // the remaining route that places an empty factory as a splice master. Projecting the
+        // master SYMBOL column also drives the empty master's symbol-table API (newSymbolTable
+        // and the keyOf null round-trip), which the assertion's symbol thread-safety pass checks.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (c0 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE t0 (c0 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO t1 VALUES (1::SHORT, '2024-01-01T00:00:00.000000Z'), " +
-                    "(2::SHORT, '2024-01-02T00:00:00.000000Z'), " +
-                    "(3::SHORT, '2024-01-03T00:00:00.000000Z')");
-            execute("INSERT INTO t0 VALUES (10, '2024-01-01T00:00:00.000000Z'), " +
-                    "(20, '2024-01-02T00:00:00.000000Z'), " +
-                    "(30, '2024-01-03T00:00:00.000000Z')");
-            drainWalQueue();
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('s2', 100, 2), ('s2', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 3)");
 
-            String literalSql = "SELECT (a.c0)::STRING AS e0, true AS e1 " +
-                    "FROM t1 a SPLICE JOIN t0 b " +
-                    "WHERE ((a.c0 + null))::TIMESTAMP < '2024-03-06T20:54:00.000000Z'::TIMESTAMP";
-            int literalRows = countRows(literalSql);
-
-            bindVariableService.clear();
-            bindVariableService.setStr("b1", "2024-03-06T20:54:00.000000Z");
-            String bindSql = "SELECT (a.c0)::STRING AS e0, true AS e1 " +
-                    "FROM t1 a SPLICE JOIN t0 b " +
-                    "WHERE ((a.c0 + null))::TIMESTAMP < :b1::TIMESTAMP";
-            int bindRows = countRows(bindSql);
-
-            Assert.assertEquals("literal and bind splice forms must agree", bindRows, literalRows);
-            // SPLICE JOIN with empty master pairs each slave row with a null master.
-            Assert.assertEquals(3, literalRows);
+            // Master folds to Empty table; both slave rows survive with an all-NULL master.
+            // ORDER BY wraps the splice output in a sort so the assertion's calculateSize()
+            // cross-check has a supporting top factory; the Empty table remains the splice master.
+            assertQuery("SELECT a.sym AS e0, a.c1 AS e1, b.v AS e2 " +
+                    "FROM (SELECT * FROM m WHERE 1=2) a SPLICE JOIN s b ON (sym) ORDER BY e2")
+                    .withPlanContaining("Empty table")
+                    .returns("""
+                            e0\te1\te2
+                            \tnull\t10
+                            \tnull\t50
+                            """);
         });
     }
 
-    private int countRows(String sql) throws Exception {
-        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                int n = 0;
-                while (cursor.hasNext()) {
-                    n++;
-                }
-                return n;
-            }
-        }
+    @Test
+    public void testEmptySymbolColumnInNullMatches() throws Exception {
+        // Regression for EmptySymbolMapReader.keyOf(null) == VALUE_IS_NULL: the empty-master SPLICE
+        // gives every row an all-NULL master SYMBOL backed by EmptySymbolMapReader, and "e0 IN (NULL)"
+        // matches it via keyOf(null). With the old VALUE_NOT_FOUND key the filter dropped every row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m VALUES ('s2', 100, 2), ('s2', 200, 4)");
+            execute("CREATE TABLE s (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO s VALUES ('s2', 10, 1), ('x', 50, 3)");
+
+            assertQuery("SELECT * FROM (" +
+                    "SELECT a.sym AS e0, b.v AS e2 FROM (SELECT * FROM m WHERE 1=2) a SPLICE JOIN s b ON (sym)" +
+                    ") WHERE e0 IN (NULL) ORDER BY e2")
+                    .withPlanContaining("Filter filter: a.sym in [null]")
+                    .returns("""
+                            e0\te2
+                            \t10
+                            \t50
+                            """);
+        });
     }
+
 }

@@ -46,8 +46,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
+    private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
     private RowCursor rowCursor;
+    private long rowsProducedSinceSkip;
 
     public PageFrameRecordCursorImpl(
             CairoConfiguration configuration,
@@ -105,23 +108,42 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
         prepareRowCursorFactory();
         try {
+            // frames are only decoded up to the cap; rows past it are undecoded memory
+            if (rowsProducedSinceSkip >= maxRowsAfterSkip) {
+                isExhausted = true;
+                return false;
+            }
             if (rowCursor != null && rowCursor.hasNext()) {
                 final int frameIndex = frameCount - 1;
                 final long rowIndex = rowCursor.next();
                 frameMemoryPool.navigateTo(frameIndex, recordA);
                 recordA.setRowIndex(rowIndex);
+                rowsProducedSinceSkip++;
                 return true;
             }
 
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
+                // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
+                // Use the time-throttled variant rather than the count-throttled statefulThrowExceptionIfTripped()
+                // (whose 2M-consultation window would skip ~2M frames between real checks, disabling mid-scan
+                // cancellation for any realistic table) and rather than the un-throttled variant (which would
+                // perform a recv() connection probe on every frame). A nested-loop/cross join re-scans this
+                // cursor once per master row, so an un-throttled per-frame probe becomes ~one syscall per
+                // master row. The time-throttled variant still checks cancellation/timeout every frame (cheap)
+                // while bounding the connection probe to once per wall-clock window for the whole query.
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 frameAddressCache.add(frameCount, frame);
-                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
+                final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
+                final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
+                final int inFrameHi = (int) Math.min(Math.min(frameSize, remaining), Integer.MAX_VALUE);
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, inFrameHi);
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
                 if (rowCursor.hasNext()) {
                     recordA.init(frameMemory);
                     recordA.setRowIndex(rowCursor.next());
+                    rowsProducedSinceSkip++;
                     return true;
                 }
             }
@@ -148,11 +170,20 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
+        circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        // Consult the breaker at open (time-throttled), so a scan over an empty table (zero frames, so the
+        // per-frame check in hasNext never runs) still observes cancellation/timeout even when this cursor is
+        // not the query's first breaker consultation. The time-throttled variant checks cancellation/timeout
+        // unconditionally (so the count-throttle window can't skip it, unlike statefulThrowExceptionIfTripped())
+        // while bounding the connection probe to once per wall-clock window, matching the per-frame check above.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         areCursorsPrepared = false;
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);
+        maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+        rowsProducedSinceSkip = 0;
         // prepare for page frame iteration
-        super.init();
+        super.init(sqlExecutionContext.getMemoryTracker());
     }
 
     @Override
@@ -166,8 +197,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     }
 
     @Override
-    public void skipRows(Counter rowCount) {
+    public void skipRows(Counter rowCount, long requestedMaxRowsAfterSkip) {
         prepareRowCursorFactory();
+
+        // The clamp decodes only the leading [0, n) rows of a parquet frame, so it is
+        // sound only for a scan that yields the frame's rows 1:1 in ascending order.
+        // isEntity() is that guarantee; a scattered/index row cursor reports false.
+        final boolean canClamp = filter == null && rowCursorFactory.isEntity() && rowCursorFactory.isForwardScan();
+        maxRowsAfterSkip = canClamp ? requestedMaxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
+        rowsProducedSinceSkip = 0;
 
         // Use slow path when:
         // - filter is present (need to evaluate each row)
@@ -176,6 +214,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
+            rowsProducedSinceSkip = 0;
             return;
         }
 
@@ -209,7 +248,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         final int frameIndex = frameCount - 1;
         // page frame is null when table has no partitions so there's nothing to skip
         if (pageFrame != null) {
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            final long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+            final long roomInFrame = frameSize - skipTarget;
+            final long takeFromFrame = Math.min(roomInFrame, maxRowsAfterSkip);
+            // The skipped frame prefix is never read, so the decode window starts at
+            // the skip landing row; the pool rebases published addresses to keep
+            // frame-relative row indexes valid. Only a forward 1:1 scan may do this.
+            final int inFrameLo = canClamp ? (int) Math.min(skipTarget, Integer.MAX_VALUE) : 0;
+            final int inFrameHi = (int) Math.min(skipTarget + takeFromFrame, Integer.MAX_VALUE);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameLo, inFrameHi);
             // move to frame, rowlo doesn't matter
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
@@ -231,8 +278,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (filter != null) {
             filter.toTop();
         }
-        rowCursor = null;
+        rowCursor = Misc.free(rowCursor);
         isExhausted = false;
+        maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
+        rowsProducedSinceSkip = 0;
         super.toTop();
     }
 

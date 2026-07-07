@@ -32,6 +32,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -89,8 +90,8 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
-            this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-            this.slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
+            this.joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
+            this.slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages(), true);
             this.columnSplit = columnSplit;
             this.joinType = joinType;
         } catch (Throwable th) {
@@ -158,15 +159,20 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                     }
                 }
                 if (swapped) {
+                    slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
                     ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
                     return cursor;
                 }
             }
+            slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
             Misc.free(masterCursor);
+            // of() binds the per-query tracker and reopens the slave chain + join map before it can throw;
+            // close() frees them under that tracker and resets isOpen so the factory is reusable.
+            Misc.free(cursor);
             throw e;
         }
     }

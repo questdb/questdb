@@ -53,7 +53,7 @@ public final class GroupByClause {
     private GroupByClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx) {
+    public static GeneratedQuery generate(Rnd rnd, FuzzSource source, BindContext ctx, boolean injectFaultFn) {
         FuzzTable table = source.getTable();
         boolean useAlias = rnd.nextBoolean();
         String alias = useAlias ? "t0" : null;
@@ -87,10 +87,7 @@ public final class GroupByClause {
             sql.put(' ').put(alias);
         }
 
-        if (rnd.nextBoolean()) {
-            String pred = new PredicateGenerator(rnd, 2).generate(table.getColumns(), qualifier, ctx);
-            sql.put(" WHERE ").put(pred);
-        }
+        PredicateGenerator.appendWhere(sql, rnd, table.getColumns(), qualifier, 2, ctx, injectFaultFn);
 
         // Explicit GROUP BY for roughly half of the queries. Each key can
         // be written as the projection alias, the re-emitted expression,

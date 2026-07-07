@@ -28,6 +28,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
 import io.questdb.test.griffin.fuzz.types.SymbolType;
@@ -60,9 +61,18 @@ import java.time.format.DateTimeFormatter;
  */
 public final class FuzzTableFactory {
     private static final long DAY_MICROS = 24L * 60L * 60L * 1_000_000L;
-    private static final double INDEXED_SYMBOL_CHANCE = 0.2;
+    // SYMBOL columns are relatively rare and there are four index kinds
+    // (bitmap plus three posting variants), so a higher rate keeps every kind,
+    // and the primary-vs-shadow index contrast, well represented.
+    private static final double INDEXED_SYMBOL_CHANCE = 0.5;
+    // Drawn uniformly when a SYMBOL column gets indexed, so bitmap and the
+    // three posting variants all get exercised over a run.
+    private static final FuzzIndex.Kind[] INDEX_KINDS = FuzzIndex.Kind.values();
     private static final String JOIN_KEY_COLUMN = "sym";
     private static final double PARTIAL_PARQUET_PARTITION_CHANCE = 0.5;
+    // Per-posting-index chance of attaching a covering INCLUDE list.
+    private static final double POSTING_COVERING_CHANCE = 0.5;
+    private static final int POSTING_MAX_COVERING_COLUMNS = 3;
     private static final String TS_COLUMN = "ts";
 
     private final FuzzConfig config;
@@ -121,22 +131,43 @@ public final class FuzzTableFactory {
         return new ParquetConversion(mode, partitions);
     }
 
+    /**
+     * Assigns a randomly chosen index to a fraction of the SYMBOL columns,
+     * replacing the affected entries in place. The index pass runs after the
+     * full column list exists so a posting index's covering INCLUDE list can
+     * reference any other column by name. Each SYMBOL column is decided
+     * independently, so calling this on a mirrored list gives the shadow a
+     * different indexed shape than the primary.
+     */
+    private void assignIndexes(Rnd rnd, ObjList<FuzzColumn> columns) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            FuzzColumn c = columns.getQuick(i);
+            if (c.getType() == SymbolType.INSTANCE && isIndexedSymbol(rnd)) {
+                FuzzIndex index = pickIndex(rnd, columns, c.getName());
+                columns.setQuick(i, new FuzzColumn(c.getName(), c.getType(), index));
+            }
+        }
+    }
+
     private ObjList<FuzzColumn> buildColumnList(Rnd rnd) {
         int numExtra = config.getMinColumnsPerTable()
                 + rnd.nextInt(config.getMaxColumnsPerTable() - config.getMinColumnsPerTable() + 1);
         ObjList<FuzzColumn> columns = new ObjList<>();
 
         // Shared join key. Always SYMBOL so ASOF/LT/SPLICE on (sym) has a target.
-        columns.add(new FuzzColumn(JOIN_KEY_COLUMN, SymbolType.INSTANCE, isIndexedSymbol(rnd)));
+        columns.add(new FuzzColumn(JOIN_KEY_COLUMN, SymbolType.INSTANCE));
 
         for (int i = 0; i < numExtra; i++) {
             FuzzColumnType type = FuzzColumnTypes.pickRandom(rnd);
-            boolean isIndexed = type == SymbolType.INSTANCE && isIndexedSymbol(rnd);
-            columns.add(new FuzzColumn("c" + i, type, isIndexed));
+            columns.add(new FuzzColumn("c" + i, type));
         }
 
         // Designated timestamp last.
         columns.add(new FuzzColumn(TS_COLUMN, TimestampType.INSTANCE));
+
+        // Decide indexes once the whole list (and thus the covering candidates)
+        // is known.
+        assignIndexes(rnd, columns);
         return columns;
     }
 
@@ -150,7 +181,7 @@ public final class FuzzTableFactory {
             FuzzColumn c = columns.getQuick(i);
             ddl.put(c.getName()).put(' ').put(c.getType().getDdl());
             if (c.isIndexed()) {
-                ddl.put(" INDEX");
+                c.getIndex().appendDdl(ddl);
             }
         }
         ddl.put(") TIMESTAMP(").put(TS_COLUMN).put(") PARTITION BY DAY WAL");
@@ -184,18 +215,72 @@ public final class FuzzTableFactory {
     }
 
     /**
-     * Mirrors a column list -- same names and types -- with index flags
-     * drawn independently so the shadow can have a different indexed-symbol
-     * shape than the primary.
+     * Mirrors a column list -- same names and types -- with indexes drawn
+     * independently so the shadow can have a different index shape (kind and
+     * covering columns) than the primary.
      */
     private ObjList<FuzzColumn> mirrorColumns(Rnd rnd, ObjList<FuzzColumn> source) {
         ObjList<FuzzColumn> out = new ObjList<>();
         for (int i = 0, n = source.size(); i < n; i++) {
             FuzzColumn c = source.getQuick(i);
-            boolean isIndexed = c.getType() == SymbolType.INSTANCE && isIndexedSymbol(rnd);
-            out.add(new FuzzColumn(c.getName(), c.getType(), isIndexed));
+            out.add(new FuzzColumn(c.getName(), c.getType()));
         }
+        assignIndexes(rnd, out);
         return out;
+    }
+
+    /**
+     * Picks up to {@link #POSTING_MAX_COVERING_COLUMNS} distinct covering
+     * columns for a posting index on {@code indexedColName}. Eligible
+     * candidates exclude the indexed column itself, the designated timestamp
+     * (the engine auto-appends it), and the two var-width/composite types whose
+     * covering support the fuzzer does not verify here (ARRAY and DECIMAL), so
+     * table creation never throws. Returns {@code null} when no candidate
+     * qualifies.
+     */
+    private ObjList<String> pickCoveringColumns(Rnd rnd, ObjList<FuzzColumn> columns, String indexedColName) {
+        ObjList<String> candidates = new ObjList<>();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            FuzzColumn c = columns.getQuick(i);
+            if (c.getName().equals(indexedColName) || c.getName().equals(TS_COLUMN)) {
+                continue;
+            }
+            ColumnKind kind = c.getType().getKind();
+            if (kind == ColumnKind.ARRAY || kind == ColumnKind.DECIMAL) {
+                continue;
+            }
+            candidates.add(c.getName());
+        }
+        int size = candidates.size();
+        if (size == 0) {
+            return null;
+        }
+        int count = 1 + rnd.nextInt(Math.min(POSTING_MAX_COVERING_COLUMNS, size));
+        // Partial Fisher-Yates over candidate indices yields 'count' distinct
+        // picks without an INCLUDE duplicate.
+        int[] order = new int[size];
+        for (int i = 0; i < size; i++) {
+            order[i] = i;
+        }
+        ObjList<String> picked = new ObjList<>();
+        for (int i = 0; i < count; i++) {
+            int j = i + rnd.nextInt(size - i);
+            int tmp = order[i];
+            order[i] = order[j];
+            order[j] = tmp;
+            picked.add(candidates.getQuick(order[i]));
+        }
+        return picked;
+    }
+
+    private FuzzIndex pickIndex(Rnd rnd, ObjList<FuzzColumn> columns, String indexedColName) {
+        FuzzIndex.Kind kind = INDEX_KINDS[rnd.nextInt(INDEX_KINDS.length)];
+        ObjList<String> covering = null;
+        // Covering columns ride only on posting indexes.
+        if (kind != FuzzIndex.Kind.BITMAP && rnd.nextDouble() < POSTING_COVERING_CHANCE) {
+            covering = pickCoveringColumns(rnd, columns, indexedColName);
+        }
+        return new FuzzIndex(kind, covering);
     }
 
     /**

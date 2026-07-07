@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -83,6 +84,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         private final Path path;
         private final int plimit;
         private final long tempMem;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int columnCount;
         private int columnIndex = 0;
         // pointer to a struct containing file info,
@@ -154,6 +156,8 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         private boolean next0() {
             do {
+                // scans the db directory reading metadata files per table, so observe the breaker each iteration
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (readNextFileFromDisk) {
                     foundMetadataFile = false;
                     final long pUtf8NameZ = ff.findName(findFileStruct);
@@ -258,6 +262,8 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
         }

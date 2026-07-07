@@ -251,24 +251,11 @@ public class SampleByFillPrevPathBenchmark {
     public void setUp() throws Exception {
         final int workerCount = resolveWorkerCount();
         tempRoot = java.nio.file.Files.createTempDirectory("samplebyfillprevpathbench-");
-        // Override sort memory caps so the encoded sort variants can hold
-        // ~50M AGB output rows (~1.2 GB packed). Default is 256 MB total,
-        // which trips LimitOverflowException on WORST 50M.
         final int sortStrategy = parseSortStrategy(sort);
         final CairoConfiguration configuration = new DefaultCairoConfiguration(tempRoot.toString()) {
             @Override
             public int getSampleByFillSortStrategy() {
                 return sortStrategy;
-            }
-
-            @Override
-            public int getSqlSortKeyMaxPages() {
-                return 8192; // 8192 * 128 KB = 1 GB
-            }
-
-            @Override
-            public int getSqlSortLightValueMaxPages() {
-                return 8192; // 8192 * 128 KB = 1 GB
             }
         };
         engine = new CairoEngine(configuration);

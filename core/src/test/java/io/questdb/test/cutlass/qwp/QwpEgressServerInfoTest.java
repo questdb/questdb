@@ -28,7 +28,7 @@ import io.questdb.client.cutlass.qwp.client.QwpEgressMsgKind;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.cutlass.qwp.client.QwpRoleMismatchException;
 import io.questdb.client.cutlass.qwp.client.QwpServerInfo;
-import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -36,7 +36,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * End-to-end coverage of the v2 {@code SERVER_INFO} frame: boot an embedded
+ * End-to-end coverage of the {@code SERVER_INFO} frame: boot an embedded
  * OSS server, open a {@link QwpQueryClient}, and verify the first frame
  * received carries the expected standalone role and cluster identity. Covers
  * the routing / failover contracts that don't need a multi-node deployment
@@ -52,17 +52,17 @@ public class QwpEgressServerInfoTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
-    public void testNegotiatesVersion2() throws Exception {
+    public void testNegotiatesVersion() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     client.connect();
                     Assert.assertEquals(
-                            "server should advertise v2",
-                            QwpConstants.VERSION_2,
+                            "server should advertise the protocol version",
+                            QwpConstants.VERSION,
                             client.getNegotiatedQwpVersion()
                     );
-                    Assert.assertNotNull("v2 must surface SERVER_INFO", client.getServerInfo());
+                    Assert.assertNotNull("SERVER_INFO must surface", client.getServerInfo());
                 }
             }
         });

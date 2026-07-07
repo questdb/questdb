@@ -130,8 +130,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * via partial-emit: {@link QwpResultBatchBuffer#findLargestEmittablePrefix}
      * binary-searches the largest row prefix that fits inside the send buffer
      * and the remainder carries over into the next batch. Larger batches
-     * amortise per-batch overhead (schema-reference emit, WS header, send
-     * syscall, client queue hand-off) across more rows, which is the dominant
+     * amortise per-batch overhead (WS header, send syscall, client queue
+     * hand-off) across more rows, which is the dominant
      * per-byte throughput lever once the per-row emit cost has been
      * columnarised. Client cap is 1_048_576 so there is ample headroom for
      * future raises if wider schemas benefit.
@@ -284,7 +284,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
         // Leave the state instance in the LocalValueMap slot. onDisconnected
         // releases the per-connection resources (cursor / factory / dict /
-        // schema cache / zstd CCtx) via clear(); the connection-scoped native
+        // zstd CCtx) via clear(); the connection-scoped native
         // scaffolding (pageFrameMemoryPool, pageFrameAddressCache,
         // zstdCompressScratch) is sized to the HttpConnectionContext and gets
         // reused by the next connection that lands on this context. The
@@ -347,15 +347,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
-        // v2 appends a SERVER_INFO WebSocket frame right after the 101 response
-        // bytes, in the same send buffer. Reserve an upper-bound for the frame so
-        // a tiny send buffer that would fit the 101 response alone but not the
-        // follow-up frame is rejected here rather than silently truncating
-        // SERVER_INFO on the wire. The upper bound matches the fixed part of the
-        // frame plus the 16-bit-capped cluster + node id strings.
-        int serverInfoUpperBound = negotiatedVersion >= QwpConstants.VERSION_2
-                ? WS_HEADER_MAX_BYTES + QwpConstants.HEADER_SIZE + SERVER_INFO_BODY_MAX_BYTES
-                : 0;
+        // The server appends a SERVER_INFO WebSocket frame right after the 101
+        // response bytes, in the same send buffer. Reserve an upper-bound for the
+        // frame so a tiny send buffer that would fit the 101 response alone but
+        // not the follow-up frame is rejected here rather than silently
+        // truncating SERVER_INFO on the wire. The upper bound matches the fixed
+        // part of the frame plus the 16-bit-capped cluster + node id strings.
+        int serverInfoUpperBound = WS_HEADER_MAX_BYTES + QwpConstants.HEADER_SIZE + SERVER_INFO_BODY_MAX_BYTES;
         if (requiredHandshakeSize + serverInfoUpperBound > bufferSize) {
             throw HttpException.instance("egress 101 handshake response does not fit send buffer [required=")
                     .put(requiredHandshakeSize + serverInfoUpperBound).put(", available=").put(bufferSize).put(']');
@@ -388,29 +386,27 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
-        // For v2 and above, append an unsolicited SERVER_INFO WebSocket frame to
-        // the same send buffer. The client reads it as the first frame after the
-        // upgrade handshake completes, which lets it route reads to primary vs
-        // replica without a round trip. Old (v1) clients don't get this frame.
-        if (negotiatedVersion >= QwpConstants.VERSION_2) {
-            // server_wall_ns on the SERVER_INFO frame is spec'd as nanoseconds
-            // since the epoch. We source it from the configured MicrosecondClock
-            // (wall-clock µs) and upshift, which gives honest µs precision in a
-            // ns-typed field rather than the 1 ms quantum a currentTimeMillis
-            // upshift would leave on the wire.
-            long serverWallNs = engine.getConfiguration().getMicrosecondClock().getTicks() * 1000L;
-            int frameBytes = writeServerInfoFrame(
-                    bufferAddr + bytesWritten,
-                    bufferSize - bytesWritten,
-                    (byte) negotiatedVersion,
-                    engine.getQwpServerInfoProvider(),
-                    serverWallNs
-            );
-            if (frameBytes < 0) {
-                throw HttpException.instance("egress SERVER_INFO frame does not fit send buffer");
-            }
-            bytesWritten += frameBytes;
+        // Append an unsolicited SERVER_INFO WebSocket frame to the same send
+        // buffer. The client reads it as the first frame after the upgrade
+        // handshake completes, which lets it route reads to primary vs replica
+        // without a round trip.
+        // server_wall_ns on the SERVER_INFO frame is spec'd as nanoseconds since
+        // the epoch. We source it from the configured MicrosecondClock
+        // (wall-clock us) and upshift, which gives honest us precision in a
+        // ns-typed field rather than the 1 ms quantum a currentTimeMillis
+        // upshift would leave on the wire.
+        long serverWallNs = engine.getConfiguration().getMicrosecondClock().getTicks() * 1000L;
+        int frameBytes = writeServerInfoFrame(
+                bufferAddr + bytesWritten,
+                bufferSize - bytesWritten,
+                (byte) negotiatedVersion,
+                engine.getQwpServerInfoProvider(),
+                serverWallNs
+        );
+        if (frameBytes < 0) {
+            throw HttpException.instance("egress SERVER_INFO frame does not fit send buffer");
         }
+        bytesWritten += frameBytes;
         // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
         // from onHeadersReady, so we defer the raw-socket send to
         // onRequestComplete where PISR propagates cleanly into the framework's
@@ -624,10 +620,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private static int parseClientMaxVersion(HttpRequestHeader requestHeader) {
         Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_MAX_VERSION);
         if (maxVersionHeader == null) {
-            return QwpConstants.VERSION_1;
+            return QwpConstants.VERSION;
         }
         int parsed = Numbers.parseNonNegativeIntQuiet(maxVersionHeader);
-        return parsed >= QwpConstants.VERSION_1 ? parsed : QwpConstants.VERSION_1;
+        return parsed >= QwpConstants.VERSION ? parsed : QwpConstants.VERSION;
     }
 
     /**
@@ -669,7 +665,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             QwpServerInfoProvider provider,
             long serverWallNs
     ) {
-        // 26 bytes covers the v2.0 fixed body; CAP_ZONE adds another 2 bytes
+        // 26 bytes covers the fixed body; CAP_ZONE adds another 2 bytes
         // for the zone_id length prefix, so size for the worst case unconditionally
         // (a couple of bytes is negligible against the egress send buffer).
         int minSize = 2 + QwpConstants.HEADER_SIZE + 28;
@@ -1054,8 +1050,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             metrics.markQueryStarted();
             // Check connection-scoped cache caps BEFORE processing the new
             // query. If any soft cap is over, apply the matching local reset
-            // so the upcoming findOrAllocateSchemaId and cursor allocations
-            // see a fresh cache; stash the bitmask so streamResults emits the
+            // so the new query's cursor and dict allocations see a fresh
+            // cache; stash the bitmask so streamResults emits the
             // CACHE_RESET frame once streamingActive=true (which keeps the
             // wire-send recoverable through resumeSend on PISR). Doing the
             // apply here -- between queries, not between batches -- guarantees
@@ -1085,11 +1081,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // table changed mid-recompile -- rare and probably indicates an abusive
             // DDL pattern; propagate as a normal error.
             //
-            // Schema-id allocation is intentionally OUTSIDE this loop. Mutating
-            // the per-connection schema cache before getCursor would let a
-            // TableReferenceOutOfDateException leave a fingerprint behind; the
-            // retry would then see the fingerprint as "reuse" and ship the first
-            // batch in reference mode against an id the client never registered.
             // Compose the select-cache key: SQL text on its own for bindless
             // queries (existing shape), or [type0,type1,...]sql when binds are
             // present so factories compiled under different bind signatures
@@ -1153,31 +1144,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
-            // Cursor acquired without TableReferenceOutOfDateException -- safe to
-            // mutate the per-connection schema cache now. (See loop comment.)
             RecordMetadata metadata = factory.getMetadata();
             int columnCount = metadata.getColumnCount();
             ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
             for (int i = 0; i < columnCount; i++) {
                 columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
             }
-            int schemaId = state.findOrAllocateSchemaId(columnDefs);
-            if (schemaId == QwpEgressProcessorState.SCHEMA_ID_EXHAUSTED) {
-                // The connection has registered DEFAULT_MAX_SCHEMAS_PER_CONNECTION distinct
-                // schemas already; this query's shape is new and would need a fresh id the
-                // client would reject. Surface a controlled error and free the
-                // factory + cursor so the connection stays usable for queries against
-                // schemas already cached.
-                pageFrameCursor = Misc.free(pageFrameCursor);
-                cursor = Misc.free(cursor);
-                factory = Misc.free(factory);
-                sendQueryError(context, state, requestId, QwpConstants.STATUS_LIMIT_EXCEEDED,
-                        "connection schema cache exhausted ("
-                                + QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION
-                                + " distinct schemas); reconnect to reset");
-                return;
-            }
-            boolean schemaAlreadyKnown = state.wasLastSchemaIdReuse();
             // Hand the composite cache key to beginStreaming so cache-back
             // on successful completion writes under the same [types]sql key
             // used to poll. State stringifies the CharSequence into its own
@@ -1191,10 +1163,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // return so the next QWP query reuses the FdCache.
                 pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
                 state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
-                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, cacheKey);
+                        columnCount, decoder.initialCredit, cacheKey);
             } else {
                 state.beginStreaming(requestId, factory, cursor,
-                        columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, cacheKey);
+                        columnCount, decoder.initialCredit, cacheKey);
             }
             streamingHandedOff = true;     // ownership of factory + cursor passed to state
             // Streaming may complete here (cursor short and fast), or throw PeerIsSlowToReadException
@@ -1288,9 +1260,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     /**
      * Step 1 of the cache-reset emission. Checks whether any connection-scoped
      * cache has exceeded its soft cap; if so, applies the matching server-side
-     * reset NOW so that subsequent steps in {@code handleQueryRequest} (most
-     * importantly {@code findOrAllocateSchemaId} and the cursor's first batch)
-     * allocate against a fresh cache, and stashes the bitmask on state for
+     * reset NOW so that the new query's cursor and first batch allocate
+     * against a fresh cache, and stashes the bitmask on state for
      * {@link #emitPendingCacheReset} to emit on the wire once
      * {@code streamingActive=true}.
      * <p>
@@ -1304,8 +1275,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * <p>
      * Called at query-completion boundaries (after {@code RESULT_END},
      * {@code EXEC_DONE}, or {@code QUERY_ERROR}) -- never mid-stream, because
-     * resetting the dict or the schema cache mid-stream would invalidate ids
-     * referenced by in-flight RESULT_BATCH frames.
+     * resetting the dict mid-stream would invalidate ids referenced by
+     * in-flight RESULT_BATCH frames.
      */
     private void applyCacheResetForUpcomingQuery(
             HttpConnectionContext context,
@@ -1318,17 +1289,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.applyCacheReset(resetMask);
         // OR-merge rather than overwrite: an earlier query may have staged
         // bits whose CACHE_RESET frame never went out (a non-SELECT routed
-        // through executeNonSelect, or a SELECT that threw between
-        // findOrAllocateSchemaId and emitPendingCacheReset). Overwriting
+        // through executeNonSelect, or a SELECT that threw before
+        // emitPendingCacheReset ran). Overwriting
         // would drop those bits while the server-side caches they cleared
         // stay cleared -- the client would keep its stale entries and the
         // next batch's deltaStart would land out of sync with connDictSize.
         state.mergePendingCacheResetMask(resetMask);
         if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
             metrics.markCacheResetDict();
-        }
-        if ((resetMask & QwpEgressMsgKind.RESET_MASK_SCHEMAS) != 0) {
-            metrics.markCacheResetSchemas();
         }
         LOG.debug().$("Egress cache reset staged [fd=").$(context.getFd())
                 .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
@@ -1374,7 +1342,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
         int clientMaxVersion = parseClientMaxVersion(requestHeader);
-        int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_VERSION);
+        int negotiated = Math.min(clientMaxVersion, QwpConstants.VERSION);
         Utf8Sequence clientId = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_CLIENT_ID);
         if (clientId != null) {
             LOG.info().$("Egress QWP version negotiated [fd=").$(fd)
@@ -1552,8 +1520,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long requestId,
             long batchSeq,
             QwpResultBatchBuffer batchBuffer,
-            long schemaId,
-            boolean writeFullSchema,
+            boolean isFirstBatch,
             int rowsToShip,
             boolean isPartialEmit
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1589,7 +1556,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             throw HttpException.instance("egress: delta section overflows send buffer");
         }
         int tableBlockSize = batchBuffer.emitTableBlockPrefix(
-                preludeEnd + deltaSize, bufLimit, rowsToShip, schemaId, writeFullSchema);
+                preludeEnd + deltaSize, bufLimit, rowsToShip, isFirstBatch);
         if (tableBlockSize < 0) {
             // Same defensive guard as above. With compute-first sizing this
             // path is unreachable for well-formed callers.
@@ -1670,8 +1637,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long requestId,
             long batchSeq,
             QwpResultBatchBuffer batchBuffer,
-            long schemaId,
-            boolean writeFullSchema,
+            boolean isFirstBatch,
             long totalRows,
             int rowsThisBatch
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1698,7 +1664,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             throw HttpException.instance("egress: delta section overflows send buffer");
         }
         int tableBlockSize = batchBuffer.emitTableBlockPrefix(
-                preludeEnd + deltaSize, bufLimit, rowsThisBatch, schemaId, writeFullSchema);
+                preludeEnd + deltaSize, bufLimit, rowsThisBatch, isFirstBatch);
         if (tableBlockSize < 0) {
             throw HttpException.instance("egress: table block overflows send buffer");
         }
@@ -1791,12 +1757,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long requestId,
             long batchSeq,
             QwpResultBatchBuffer batchBuffer,
-            long schemaId,
-            boolean writeFullSchema,
+            boolean isFirstBatch,
             int rowsToShip
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         sendResultBatch(context, state, requestId, batchSeq, batchBuffer,
-                schemaId, writeFullSchema, rowsToShip, true);
+                isFirstBatch, rowsToShip, true);
     }
 
     private void sendResultEnd(
@@ -1827,8 +1792,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Flush any CACHE_RESET frame staged by handleQueryRequest before
         // streaming the first batch. The frame must reach the client before
-        // any RESULT_BATCH from the new query so the client drops its dict /
-        // schema caches under the same id space the server is about to reuse.
+        // any RESULT_BATCH from the new query so the client drops its dict
+        // cache before the server starts reusing the id space.
         // Running inside the streaming-active region means a PISR park here
         // re-enters through resumeSend -> streamResults and the query
         // continues; running it inside handleQueryRequest (the previous shape)
@@ -1839,7 +1804,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         QwpResultBatchBuffer batchBuffer = state.getBatchBuffer();
         ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(state.getStreamingColumnCount());
         long requestId = state.getStreamingRequestId();
-        int schemaId = state.getStreamingSchemaId();
         // Page-frame path is used when the factory supports it (typical full scans);
         // everything else comes through the RecordCursor path. Both feed the same
         // batchBuffer; the only difference is how we walk rows.
@@ -1942,13 +1906,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 isCursorExhausted = !hasMore;
             }
             int rowsBuffered = batchBuffer.getRowCount();
-            boolean writeFullSchema = !state.isStreamingFullSchemaSent();
+            // The first batch of a query (batch_seq == 0) carries the schema inline;
+            // continuation batches carry rows only.
+            boolean isFirstBatch = state.getStreamingBatchSeq() == 0;
             // Empty trailing batch AND we've already shipped at least one RESULT_BATCH on
             // this query -- skip straight to RESULT_END. The getStreamingBatchSeq() > 0
-            // guard is load-bearing: without it, a query whose schema is already known on
-            // the connection (streamingFullSchemaSent primed to true at beginStreaming) and
-            // whose cursor is empty would take this shortcut on the very first iteration
-            // and ship zero RESULT_BATCH frames, violating spec section 7.
+            // guard is load-bearing: without it, an empty cursor would take this shortcut
+            // on the very first iteration and ship zero RESULT_BATCH frames, violating
+            // spec section 7 (every query response carries the schema in batch 0).
             if (rowsBuffered == 0 && state.getStreamingBatchSeq() > 0) {
                 long finalSeq = state.getStreamingBatchSeq() - 1;
                 long totalRows = state.getStreamingRowsEmitted();
@@ -1988,12 +1953,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     - deltaBytes;
             int rowsToShip;
             boolean isPartialEmit;
-            int fullSize = batchBuffer.computeTableBlockSize(rowsBuffered, writeFullSchema);
+            int fullSize = batchBuffer.computeTableBlockSize(rowsBuffered, isFirstBatch);
             if (fullSize <= budget) {
                 rowsToShip = rowsBuffered;
                 isPartialEmit = false;
             } else {
-                int k = batchBuffer.findLargestEmittablePrefix(budget, writeFullSchema);
+                int k = batchBuffer.findLargestEmittablePrefix(budget, isFirstBatch);
                 if (k <= 0) {
                     throw QwpRowExceedsBufferException.instance(
                             batchBuffer.getColumnCount(), bufSize, rowsBuffered, k == -1);
@@ -2025,15 +1990,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // has the factory reference.
                 cacheStreamingFactoryIfAvailable(state);
                 sendResultBatchAndEnd(context, state, requestId, currentSeq,
-                        batchBuffer, schemaId, writeFullSchema, totalRows, rowsToShip);
+                        batchBuffer, isFirstBatch, totalRows, rowsToShip);
                 return;
             }
             if (isPartialEmit) {
                 sendResultBatchPrefix(context, state, requestId, currentSeq, batchBuffer,
-                        schemaId, writeFullSchema, rowsToShip);
+                        isFirstBatch, rowsToShip);
             } else {
                 sendResultBatch(context, state, requestId, currentSeq, batchBuffer,
-                        schemaId, writeFullSchema, rowsToShip, false);
+                        isFirstBatch, rowsToShip, false);
             }
             // Credit debit, metric update, advanceStartRow, advanceDeltaStart
             // all live inside the send functions so they commit before any

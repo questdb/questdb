@@ -30,7 +30,7 @@ use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResul
 use crate::parquet::io::FromRawFdI32Ext;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_metadata::convert::{
-    convert_from_parquet, detect_designated_timestamp, extract_sorting_columns, TsStatsBackfill,
+    convert_from_parquet, detect_designated_timestamp, resolve_sorting_columns, TsStatsBackfill,
 };
 use crate::parquet_metadata::error::ParquetMetaErrorKind;
 use crate::parquet_read::decode_column::{decode_single_timestamp_value, reconstruct_descriptor};
@@ -132,7 +132,7 @@ fn generate_parquet_meta(
     })?;
     let parquet_bytes: &[u8] = &file_data;
 
-    let sorting_cols = extract_sorting_columns(&metadata)?;
+    let sorting_cols = resolve_sorting_columns(&metadata, qdb_meta.as_ref())?;
     let designated_ts = detect_designated_timestamp(&metadata, qdb_meta.as_ref(), &sorting_cols);
 
     let backfill: Option<Box<TsStatsBackfill<'_>>> = if designated_ts >= 0 {

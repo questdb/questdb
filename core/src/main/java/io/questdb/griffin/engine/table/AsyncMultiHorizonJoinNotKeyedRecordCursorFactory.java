@@ -172,8 +172,15 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         frameSequence.of(masterFactory, executionContext, ORDER_ASC);
-        cursor.of(frameSequence, executionContext);
-        return cursor;
+        try {
+            cursor.of(frameSequence, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            // On a mid-reopen breach, close() drains the partially reopened atom and resets isOpen
+            // so the cached factory stays reusable.
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -249,7 +256,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             // Apply filter to master rows
             final DirectLongList rows = filterCtx.getFilteredRows(slotId);
             rows.clear();
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(
@@ -459,8 +466,10 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
 
     @Override
     protected void _close() {
-        Misc.free(frameSequence);
+        // Free cursor before frameSequence: a cursor left half-open by a failed
+        // getCursor() still references frameSequence and reset()s it on close().
         Misc.free(cursor);
+        Misc.free(frameSequence);
         Misc.free(masterFactory);
         Misc.freeObjList(slaveFactories);
         Misc.free(horizonJoinMetadata);

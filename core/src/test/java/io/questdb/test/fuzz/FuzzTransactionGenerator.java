@@ -76,7 +76,8 @@ public class FuzzTransactionGenerator {
             String[] symbols,
             int metaVersion,
             double probabilityOfSetParquetEncoding,
-            double probabilityOfAddCoveringIndex
+            double probabilityOfAddCoveringIndex,
+            double probabilityOfSetTableFormat
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
@@ -95,7 +96,9 @@ public class FuzzTransactionGenerator {
                 + probabilityOfAddCoveringIndex
                 + probabilityOfDataInsert
                 + probabilityOfSymbolAccessValidation
-                + probabilityOfQuery;
+                + probabilityOfQuery
+                + probabilityOfSetTableFormat
+                + probabilityOfSetParquetEncoding;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
@@ -107,6 +110,8 @@ public class FuzzTransactionGenerator {
         probabilityOfAddCoveringIndex = probabilityOfAddCoveringIndex / sumOfProbabilities;
         probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
         probabilityOfQuery = probabilityOfQuery / sumOfProbabilities;
+        probabilityOfSetParquetEncoding = probabilityOfSetParquetEncoding / sumOfProbabilities;
+        probabilityOfSetTableFormat = probabilityOfSetTableFormat / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
         // probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
@@ -137,6 +142,13 @@ public class FuzzTransactionGenerator {
             transactionCount++;
         }
 
+        // Decide if SET FORMAT PARQUET|NATIVE will be generated
+        boolean generateSetTableFormat = rnd.nextDouble() < probabilityOfSetTableFormat;
+        int setTableFormatIteration = generateSetTableFormat ? rnd.nextInt(transactionCount) : -1;
+        if (generateSetTableFormat) {
+            transactionCount++;
+        }
+
         long estimatedTotalRows = rowCount + initialRowCount;
 
         for (int i = 0; i < transactionCount; i++) {
@@ -156,6 +168,10 @@ public class FuzzTransactionGenerator {
                 if (generateSetParquetEncoding(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
                     waitBarrierVersion++;
                 }
+                continue;
+            }
+            if (i == setTableFormatIteration) {
+                generateSetTableFormat(transactionList, metaVersion, waitBarrierVersion++, rnd);
                 continue;
             }
             final double rndDouble = rnd.nextDouble();
@@ -570,6 +586,17 @@ public class FuzzTransactionGenerator {
             return true;
         }
         return false;
+    }
+
+    private static void generateSetTableFormat(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
+        boolean parquet = rnd.nextBoolean();
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transaction.reopenTable = true;
+        transaction.operationList.add(new FuzzSetTableFormatOperation(parquet));
+        transactionList.add(transaction);
     }
 
     private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {

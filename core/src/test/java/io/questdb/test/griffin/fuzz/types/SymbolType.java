@@ -28,6 +28,12 @@ import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.expr.FuzzConstant;
 
 public final class SymbolType implements FuzzColumnType {
+    // A fixed, known symbol domain (plus NULL in the data). Keeping it small and
+    // known lets the query generator emit equality/IN predicates that actually
+    // match stored rows -- without this, a random literal almost never equals a
+    // random stored symbol, so WHERE sym = ..., ON (sym) joins, and posting
+    // covering reads would all be effectively empty.
+    public static final String[] DOMAIN = {"s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"};
     public static final SymbolType INSTANCE = new SymbolType();
 
     private SymbolType() {
@@ -35,10 +41,10 @@ public final class SymbolType implements FuzzColumnType {
 
     @Override
     public FuzzConstant generateConstant(Rnd rnd) {
-        if (rnd.nextInt(32) == 0) {
+        if (rnd.nextInt(16) == 0) {
             return FuzzConstant.nonBindable("null");
         }
-        String v = rnd.nextString(1 + rnd.nextInt(4));
+        String v = DOMAIN[rnd.nextInt(DOMAIN.length)];
         return new FuzzConstant("'" + v + "'", "SYMBOL", v);
     }
 
@@ -54,8 +60,13 @@ public final class SymbolType implements FuzzColumnType {
 
     @Override
     public String getRndCall() {
-        // 8 distinct symbols of length 3..5, null rate 1:8
-        return "rnd_symbol(8, 3, 5, 8)";
+        // Draws from DOMAIN with NULL mixed in (null rate ~1:9).
+        StringBuilder sb = new StringBuilder("rnd_symbol(");
+        for (String v : DOMAIN) {
+            sb.append('\'').append(v).append("', ");
+        }
+        sb.append("null)");
+        return sb.toString();
     }
 
     @Override

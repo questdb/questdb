@@ -32,16 +32,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -174,21 +170,13 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             TableToken tableToken,
             SqlCompiler compiler,
             SqlExecutionContext context
-    ) throws SqlException {
-        try (
-                RecordCursorFactory factory = compiler.compile("SHOW PARTITIONS FROM " + tableToken.getTableName(), context).getRecordCursorFactory();
-                RecordCursor cursor0 = factory.getCursor(context);
-                RecordCursor cursor1 = factory.getCursor(context)
-        ) {
-            RecordMetadata meta = factory.getMetadata();
-            StringSink sink = Misc.getThreadLocalSink();
-            LongList rows = new LongList();
-            for (int j = 0; j < 5; j++) {
-                AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor0, meta, sink, rows, false);
-                cursor0.toTop();
-                AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, rows, false);
-                cursor1.toTop();
-            }
+    ) throws Exception {
+        try (RecordCursorFactory factory = CairoEngine.select(compiler, "SHOW PARTITIONS FROM " + tableToken.getTableName(), context)) {
+            new QueryAssertion(context.getCairoEngine(), factory)
+                    .withContext(context)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(finallyExpected);
         }
     }
 

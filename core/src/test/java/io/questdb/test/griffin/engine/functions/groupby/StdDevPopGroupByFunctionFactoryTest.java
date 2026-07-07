@@ -31,18 +31,22 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testStddevPopAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "stddev_pop\nnull\n", "select stddev_pop(x) from (select cast(null as double) x from long_sequence(100))"
-        ));
+        assertMemoryLeak(() -> assertQuery("select stddev_pop(x) from (select cast(null as double) x from long_sequence(100))")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("stddev_pop\nnull\n"));
     }
 
     @Test
     public void testStddevPopAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 17.2151921 x from long_sequence(100))");
-            assertSql(
-                    "stddev_pop\n0.0\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n0.0\n");
         });
     }
 
@@ -50,9 +54,11 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevPopDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
-            assertSql(
-                    "stddev_pop\n28.86607004772212\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n28.86607004772212\n");
         });
     }
 
@@ -62,9 +68,11 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x double)");
             execute("insert into 'tbl1' VALUES (null)");
             execute("insert into 'tbl1' select x from long_sequence(100)");
-            assertSql(
-                    "stddev_pop\n28.86607004772212\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n28.86607004772212\n");
         });
     }
 
@@ -72,9 +80,11 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevPopFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x from long_sequence(100))");
-            assertSql(
-                    "stddev_pop\n28.86607004772212\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n28.86607004772212\n");
         });
     }
 
@@ -82,9 +92,11 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevPopHugeValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select 100_000_000 * x x from long_sequence(1_000_000))");
-            assertSql(
-                    "stddev_pop\n2.886751345946702E13\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n2.886751345946702E13\n");
         });
     }
 
@@ -92,9 +104,11 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevPopIntValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as int) x from long_sequence(100))");
-            assertSql(
-                    "stddev_pop\n28.86607004772212\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n28.86607004772212\n");
         });
     }
 
@@ -102,9 +116,11 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testStddevPopNoValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1(x int)");
-            assertSql(
-                    "stddev_pop\nnull\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\nnull\n");
         });
     }
 
@@ -114,9 +130,11 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
             execute("create table tbl1(x int)");
             execute("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
-            assertSql(
-                    "stddev_pop\n0.0\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n0.0\n");
         });
     }
 
@@ -125,9 +143,11 @@ public class StdDevPopGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as double) x from long_sequence(100))");
             execute("insert into 'tbl1' VALUES (null)");
-            assertSql(
-                    "stddev_pop\n28.86607004772212\n", "select stddev_pop(x) from tbl1"
-            );
+            assertQuery("select stddev_pop(x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n28.86607004772212\n");
         });
     }
 }

@@ -138,6 +138,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
+    // Leaf nodes (column / bind variable / constant) the float-suppressed
+    // narrow-i64 widening must sign-extend to i64 for the current predicate.
+    // Holds node references, compared by identity. See markFloatI64WidenLeaves.
+    private final ObjList<ExpressionNode> i64WidenLeaves = new ObjList<>();
     private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
     private final PredicateContext predicateContext = new PredicateContext();
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
@@ -301,7 +305,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (argCount == 0) {
             switch (node.type) {
                 case ExpressionNode.LITERAL:
-                    serializeColumn(node.position, node.token);
+                    serializeColumn(node, node.position, node.token);
                     break;
                 case ExpressionNode.BIND_VARIABLE:
                     serializeBindVariable(node);
@@ -332,11 +336,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // Also force scalar when narrow-to-i64 widening is in play; SX_I64 is not
             // implemented on the SIMD path (see avx2.h) and the compiled SIMD filter
             // would silently miscompare a sign-extended narrow column against an i64
-            // operand.
+            // operand. The float-suppressed widen set (i64WidenLeaves) emits SX_I64
+            // too, so it forces scalar as well.
             forceScalarMode |= predicateContext.hasArithmeticOperations
                     && (predicateContext.localTypesObserver.maxSize() <= 2
                     || predicateContext.localTypesObserver.hasNarrowInt()
-                    || predicateContext.needsNarrowI64Widening);
+                    || predicateContext.needsNarrowI64Widening)
+                    || i64WidenLeaves.size() > 0;
 
             // Then backfill constants and symbol bind variables and clean up
             try {
@@ -345,6 +351,78 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             } catch (SqlWrapperException e) {
                 throw e.wrappedException;
             }
+        }
+    }
+
+    private void addNarrowLeaf(ExpressionNode node) {
+        int typeCode = arithExprType(node);
+        if (typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE) {
+            i64WidenLeaves.add(node);
+        }
+    }
+
+    /**
+     * Classifies the arithmetic result type code of a numeric expression
+     * subtree (column / bind variable / numeric constant / + - * / over them),
+     * or {@link #UNDEFINED_CODE} for anything that is not pure numeric
+     * arithmetic. Mirrors the implicit-promotion rules the Java filter applies,
+     * so {@link #markFloatI64WidenLeaves} can find the LONG-width subtrees whose
+     * narrow operands the Java filter reads at 64 bits.
+     */
+    private int arithExprType(ExpressionNode node) {
+        if (node == null) {
+            return UNDEFINED_CODE;
+        }
+        switch (node.type) {
+            case ExpressionNode.LITERAL: {
+                int index = metadata.getColumnIndexQuiet(node.token);
+                if (index == -1) {
+                    return UNDEFINED_CODE;
+                }
+                return columnTypeCode(ColumnType.tagOf(metadata.getColumnType(index)));
+            }
+            case ExpressionNode.BIND_VARIABLE: {
+                Function bindFunction = lookupBindVariable(node.token);
+                return bindFunction != null
+                        ? bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()))
+                        : UNDEFINED_CODE;
+            }
+            case ExpressionNode.CONSTANT: {
+                int typeCode = floatConstantTypeCode(node.token);
+                if (typeCode != UNDEFINED_CODE) {
+                    return typeCode;
+                }
+                typeCode = longConstantTypeCode(node.token);
+                if (typeCode != UNDEFINED_CODE) {
+                    return typeCode;
+                }
+                // Plain int literal stays I4; non-numeric tokens are not arithmetic.
+                try {
+                    Numbers.parseInt(node.token);
+                    return I4_TYPE;
+                } catch (NumericException notInt) {
+                    return UNDEFINED_CODE;
+                }
+            }
+            case ExpressionNode.OPERATION: {
+                if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+                    return arithExprType(node.rhs != null ? node.rhs : node.lhs);
+                }
+                if (!isArithmeticOperation(node)) {
+                    return UNDEFINED_CODE;
+                }
+                // A pure-constant subtree folds in descend(), so type it by the
+                // folded value's width; it never wraps at runtime.
+                try {
+                    long folded = tryFoldConstantArith(node);
+                    return (int) folded != folded ? I8_TYPE : I4_TYPE;
+                } catch (NumericException notConstant) {
+                    // Not pure-constant; fall through to operand promotion.
+                }
+                return promoteArithType(arithExprType(node.lhs), arithExprType(node.rhs));
+            }
+            default:
+                return UNDEFINED_CODE;
         }
     }
 
@@ -395,6 +473,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (len == 0) {
             return UNDEFINED_CODE;
         }
+        // Reserved literal keywords (true / false) embed an 'e' that would
+        // otherwise trip the float scan below. Bail out before the numeric
+        // shape checks; null is rejected here too for symmetry with
+        // longConstantTypeCode, even though its shape would not match this
+        // detector.
+        if (isReservedConstantKeyword(token)) {
+            return UNDEFINED_CODE;
+        }
         char first = token.charAt(0);
         if (first == '\'' || first == '"' || first == '`' || first == '#' || first == ':') {
             return UNDEFINED_CODE;
@@ -437,6 +523,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
+    private static boolean isReservedConstantKeyword(CharSequence token) {
+        return SqlKeywords.isNullKeyword(token)
+                || SqlKeywords.isTrueKeyword(token)
+                || SqlKeywords.isFalseKeyword(token);
+    }
+
     private static boolean isTopLevelOperation(ExpressionNode node) {
         final CharSequence token = node.token;
         if (SqlKeywords.isNotKeyword(token)) {
@@ -470,6 +562,101 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return type == STRING_HEADER_TYPE || type == BINARY_HEADER_TYPE || type == VARCHAR_HEADER_TYPE;
     }
 
+    // A leaf operand the IR emits as a single value: a column, bind variable,
+    // numeric constant, or the unary-minus node descend() stubs for a negative
+    // numeric literal.
+    private static boolean isWidenableLeaf(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        switch (node.type) {
+            case ExpressionNode.LITERAL:
+            case ExpressionNode.BIND_VARIABLE:
+            case ExpressionNode.CONSTANT:
+                return true;
+            case ExpressionNode.OPERATION:
+                if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+                    ExpressionNode operand = node.rhs != null ? node.rhs : node.lhs;
+                    return operand != null && operand.type == ExpressionNode.CONSTANT;
+                }
+        }
+        return false;
+    }
+
+    /**
+     * Returns {@link #I8_TYPE} when {@code token} is the lexical form of a
+     * LONG integer constant, {@link #UNDEFINED_CODE} otherwise. Recognises a
+     * trailing {@code 'L'/'l'} suffix or a magnitude that overflows
+     * {@code int}; non-numeric and float-shaped tokens return
+     * {@code UNDEFINED_CODE}. Used by the narrow-widen pre-pass so a literal
+     * LONG operand alone (e.g. {@code c4 * c8 >= -432577L}) is enough to
+     * pull narrow integer operands up to i64 and match the Java filter's
+     * {@code MulInt.getLong} long-width arithmetic.
+     */
+    private static int longConstantTypeCode(CharSequence token) {
+        int len = token.length();
+        if (len == 0) {
+            return UNDEFINED_CODE;
+        }
+        // Reserved literal keywords (null / NULL, true, false) end in
+        // 'l' / 'e' and would otherwise be folded into a bogus I8
+        // observation by the suffix check below. They have their own
+        // dedicated emission paths in serializeConstant and must not
+        // influence the narrow-widen pre-pass.
+        if (isReservedConstantKeyword(token)) {
+            return UNDEFINED_CODE;
+        }
+        char first = token.charAt(0);
+        if (first == '\'' || first == '"' || first == '`' || first == '#' || first == ':') {
+            return UNDEFINED_CODE;
+        }
+        // Floats are detected separately; do not classify them as LONG.
+        if (floatConstantTypeCode(token) != UNDEFINED_CODE) {
+            return UNDEFINED_CODE;
+        }
+        char last = token.charAt(len - 1);
+        if (last == 'L' || last == 'l') {
+            return I8_TYPE;
+        }
+        // No suffix: classify by magnitude. A parseInt success means the
+        // value fits in i32; a parseLong success after parseInt failure means
+        // it doesn't and the constant is effectively LONG.
+        try {
+            Numbers.parseInt(token);
+            return UNDEFINED_CODE;
+        } catch (NumericException ignored) {
+        }
+        try {
+            Numbers.parseLong(token);
+            return I8_TYPE;
+        } catch (NumericException ignored) {
+        }
+        return UNDEFINED_CODE;
+    }
+
+    /**
+     * Promotes two arithmetic operand type codes to the result type code of a
+     * binary arithmetic operation, following QuestDB's widening rules: a
+     * DOUBLE / FLOAT operand makes the result floating point, otherwise the
+     * result is the wider of the two integer widths. Returns
+     * {@link #UNDEFINED_CODE} when either operand is not a recognised numeric
+     * type.
+     */
+    private static int promoteArithType(int a, int b) {
+        if (a == UNDEFINED_CODE || b == UNDEFINED_CODE) {
+            return UNDEFINED_CODE;
+        }
+        if (a == F8_TYPE || b == F8_TYPE) {
+            return F8_TYPE;
+        }
+        if (a == F4_TYPE || b == F4_TYPE) {
+            return F4_TYPE;
+        }
+        // Integer widths order as I1=0 < I2=1 < I4=2 < I8=4, so the wider type
+        // is the larger code.
+        return Math.max(a, b);
+    }
+
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
         int position = node.position;
         CharSequence token = node.token;
@@ -484,7 +671,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        serializeConstant(offset, position, token, negate);
+        serializeConstant(offset, position, token, negate, isI64WidenLeaf(node));
     }
 
     private void backfillNode(long key, ExpressionNode value) {
@@ -751,6 +938,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return columnTypeTag == ColumnType.BOOLEAN;
     }
 
+    // Reference (not value) membership: the same node objects are marked and serialized.
+    private boolean isI64WidenLeaf(ExpressionNode node) {
+        for (int i = 0, n = i64WidenLeaves.size(); i < n; i++) {
+            if (i64WidenLeaves.getQuick(i) == node) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isInTimestampPredicate() throws SqlException {
         // visit inOperationNode to get an expression type
         predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
@@ -809,7 +1006,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private Function lookupBindVariable(CharSequence token) {
         BindVariableService svc = executionContext.getBindVariableService();
-        if (svc == null || token == null || token.length() == 0) {
+        if (svc == null || token == null || token.isEmpty()) {
             return null;
         }
         if (token.charAt(0) == ':') {
@@ -825,16 +1022,65 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return null;
     }
 
-    private void maybeEmitI64Widening(int typeCode) {
-        // Sign-extend the narrow integer operand to i64 so the next arithmetic
-        // op dispatches to int64_*, matching the Java filter's
-        // MulInt.getLong / AddInt.getLong, which compute via ((long) l) OP r.
-        // Only triggers when NarrowI64WidenDetector saw arithmetic + LONG +
-        // INT in the predicate; BYTE / SHORT alone never overflow int32 so
-        // they do not need widening.
-        if (predicateContext.needsNarrowI64Widening
-                && (typeCode == I1_TYPE || typeCode == I2_TYPE || typeCode == I4_TYPE)) {
+    /**
+     * Sign-extends a narrow integer leaf to i64 so the next arithmetic op
+     * dispatches to int64_*, matching the Java filter's MulInt / AddInt#getLong.
+     * Fires either for the whole predicate (NarrowI64WidenDetector saw
+     * arithmetic + LONG + INT, no float) or, when a float suppresses that, just
+     * for the leaves under a LONG-width subtree that {@code node} belongs to.
+     */
+    private void maybeEmitI64Widening(ExpressionNode node, int typeCode) {
+        if (typeCode != I1_TYPE && typeCode != I2_TYPE && typeCode != I4_TYPE) {
+            return;
+        }
+        if (predicateContext.needsNarrowI64Widening || isI64WidenLeaf(node)) {
             putOperator(SX_I64);
+        }
+    }
+
+    /**
+     * Marks the narrow-int leaves that need i64 widening when a float source
+     * suppresses the global widening. The Java filter computes a LONG-width
+     * arithmetic subtree at 64 bits (operands flow through #getLong), so an
+     * INT-width op inside it must not wrap mod 2^32. Only the operands of a
+     * narrow-width op computed at 64 bits need sign-extending: a wide (I8) op
+     * already promotes its narrow operand through convert().
+     */
+    private void markFloatI64WidenLeaves(ExpressionNode node) {
+        markI64Widen(node, false);
+    }
+
+    // underLong: whether the parent reads `node` at 64-bit width.
+    private void markI64Widen(ExpressionNode node, boolean underLong) {
+        if (node == null || node.type != ExpressionNode.OPERATION) {
+            return; // a bare leaf is widened, if needed, by its parent below
+        }
+        if (isArithmeticOperation(node)) {
+            int type = arithExprType(node);
+            boolean thisLong = underLong || type == I8_TYPE;
+            markI64WidenOperand(node.lhs, type, thisLong);
+            markI64WidenOperand(node.rhs, type, thisLong);
+            return;
+        }
+        if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            markI64Widen(node.rhs != null ? node.rhs : node.lhs, underLong);
+            return;
+        }
+        // Comparison / boolean / IN / NOT: a narrow operand is read at 32 bits
+        // (via getInt) unless it is itself I8-typed.
+        markI64Widen(node.lhs, arithExprType(node.lhs) == I8_TYPE);
+        markI64Widen(node.rhs, arithExprType(node.rhs) == I8_TYPE);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            ExpressionNode arg = node.args.getQuick(i);
+            markI64Widen(arg, arithExprType(arg) == I8_TYPE);
+        }
+    }
+
+    private void markI64WidenOperand(ExpressionNode child, int parentType, boolean parentLong) {
+        if (parentLong && parentType != I8_TYPE && isWidenableLeaf(child)) {
+            addNarrowLeaf(child);
+        } else {
+            markI64Widen(child, parentLong);
         }
     }
 
@@ -920,7 +1166,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             bindVarFunctions.add(varFunction);
             int index = bindVarFunctions.size() - 1;
             putOperand(VAR, typeCode, index);
-            maybeEmitI64Widening(typeCode);
+            maybeEmitI64Widening(node, typeCode);
         } else {
             throw SqlException.position(node.position)
                     .put("bind variable outside of predicate: ")
@@ -928,7 +1174,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeColumn(int position, final CharSequence token) throws SqlException {
+    private void serializeColumn(ExpressionNode node, int position, final CharSequence token) throws SqlException {
         if (predicateContext.isActive()) {
             final int index = metadata.getColumnIndexQuiet(token);
             if (index == -1) {
@@ -955,7 +1201,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 return;
             }
             putOperand(MEM, typeCode, index);
-            maybeEmitI64Widening(typeCode);
+            maybeEmitI64Widening(node, typeCode);
         } else {
             throw SqlException.position(position)
                     .put("non-boolean column outside of predicate: ")
@@ -963,7 +1209,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeConstant(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
+    private void serializeConstant(long offset, int position, final CharSequence token, boolean negated, boolean widenToI64) throws SqlException {
         final int len = token.length();
         final int typeCode = predicateContext.localTypesObserver.constantTypeCode();
         if (typeCode == UNDEFINED_CODE) {
@@ -1057,7 +1303,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
-            serializeUntypedNumber(offset, position, token, negated);
+            serializeUntypedNumber(offset, position, token, negated, widenToI64);
         } else {
             serializeNumber(offset, position, token, typeCode, negated);
         }
@@ -1521,21 +1767,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         putOperand(offset, VAR, typeCode, index);
     }
 
-    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated) throws SqlException {
+    private void serializeUntypedNumber(long offset, int position, final CharSequence token, boolean negated, boolean widenToI64) throws SqlException {
         long sign = negated ? -1 : 1;
 
-        // Skip the parseInt fallback when the predicate has a LONG operand
-        // and no FLOAT/DOUBLE source: the Java filter's SubLong / AddLong
-        // reaches into MulInt.getLong and computes at long width, so the
-        // JIT IMM must be I8 too. With a FLOAT/DOUBLE in the same predicate
-        // the int-arithmetic subtree is consumed by IntFunction#getDouble /
-        // IntFunction#getFloat, both of which call getInt() and wrap mod
-        // 2^32. Widening the constant to I8 there would let convert()
-        // promote the int operand to i64 at op time and dispatch to
-        // int64_mul, preserving the long product and diverging from the
-        // Java filter's wrap. Keep the constant at I4 so int32_mul wraps
-        // on both sides.
-        if (!predicateContext.localTypesObserver.hasI8() || predicateContext.hasFloatInPredicate) {
+        // Emit the constant as I8 when the predicate computes at long width and
+        // has no float (SubLong / AddLong reach into MulInt.getLong), or when
+        // markFloatI64WidenLeaves tagged this constant as living under a
+        // LONG-width subtree despite a float elsewhere. Otherwise keep it I4 so
+        // int32_mul wraps mod 2^32 on both the JIT and Java sides.
+        boolean keepI4 = (!predicateContext.localTypesObserver.hasI8() || predicateContext.hasFloatInPredicate)
+                && !widenToI64;
+        if (keepI4) {
             try {
                 final int i = Numbers.parseInt(token);
                 putOperand(offset, IMM, I4_TYPE, sign * i);
@@ -1863,7 +2105,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // whose only float source is a literal (e.g. c7 + 0.5)
                     // suppresses narrow-int widening, matching the Java
                     // filter's IntFunction#getDouble path that wraps at int32.
+                    // Also observe LONG integer constants (L/l suffix or
+                    // magnitude that overflows int) so a predicate whose only
+                    // long source is a literal (e.g. c4 * c8 >= -432577L) is
+                    // enough to pull narrow operands up to i64, matching the
+                    // Java filter's MulInt.getLong long-width arithmetic.
                     int typeCode = floatConstantTypeCode(node.token);
+                    if (typeCode == UNDEFINED_CODE) {
+                        typeCode = longConstantTypeCode(node.token);
+                    }
                     if (typeCode != UNDEFINED_CODE) {
                         typesObserver.observe(typeCode);
                     }
@@ -1969,6 +2219,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // to i64 at IR emission time, and remember whether any
                     // FLOAT / DOUBLE source is present anywhere in the
                     // predicate. See NarrowI64WidenDetector.
+                    i64WidenLeaves.clear();
                     try {
                         narrowI64WidenDetector.clear();
                         traverseAlgo.traverse(node, narrowI64WidenDetector);
@@ -1978,6 +2229,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         // Detector does not throw; defensive only.
                         needsNarrowI64Widening = false;
                         hasFloatInPredicate = false;
+                    }
+                    // A float suppresses the global narrow-i64 widening, but a
+                    // LONG-width arithmetic subtree still computes at 64 bits in
+                    // the Java filter. Tag the narrow leaves under such subtrees
+                    // so the IR sign-extends exactly them, keeping a nested INT
+                    // product from wrapping mod 2^32.
+                    if (hasFloatInPredicate) {
+                        markFloatI64WidenLeaves(node);
                     }
                 }
                 if (topLevelBooleanColumn) {

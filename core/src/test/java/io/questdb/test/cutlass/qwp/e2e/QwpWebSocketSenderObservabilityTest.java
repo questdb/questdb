@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.client.LineSenderServerException;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderConnectionEvent;
 import io.questdb.client.SenderConnectionListener;
@@ -53,6 +54,55 @@ import java.util.concurrent.atomic.AtomicLong;
  * contract plus the no-op short-circuits inside {@code startOrphanDrainers}.
  */
 public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTest {
+
+    @Test
+    public void testFlushAndGetSequenceReturnsNegativeOneWhenNothingPublished() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("empty_flush")
+                        .longColumn("v", 1L)
+                        .at(1_000_000L, ChronoUnit.MICROS);
+                long fsn1 = sender.flushAndGetSequence();
+                Assert.assertEquals("first flush returns FSN", 0L, fsn1);
+
+                long fsn2 = sender.flushAndGetSequence();
+                Assert.assertEquals("empty flush returns -1", -1L, fsn2);
+            }
+            drainWalQueue();
+        });
+    }
+
+    /**
+     * Validates the key scenario from issue #7142: {@code drain()} after a
+     * prior {@code flush()} with unacked frames must still wait for the
+     * server to acknowledge those frames, even though the inner
+     * {@code flushAndGetSequence()} returns {@code -1} (nothing published
+     * by the empty flush). Without the watermark-based {@code drain()}
+     * override, the default implementation would short-circuit immediately.
+     */
+    @Test
+    public void testDrainWaitsForPriorUnackedFrames() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Publish data via flush (not drain), so ACK may be in-flight.
+                sender.table("drain_prior")
+                        .longColumn("v", 1L)
+                        .at(1_000_000L, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Now drain() with no new data buffered. The inner
+                // flushAndGetSequence() returns -1, but drain() must still
+                // wait for the prior publish to be acknowledged.
+                boolean drained = sender.drain(10_000L);
+                Assert.assertTrue("drain() must wait for prior unacked frames", drained);
+
+                // Verify the server actually processed it.
+                long ackedFsn = sender.getAckedFsn();
+                Assert.assertTrue("ackedFsn must be >= 0 after drain", ackedFsn >= 0L);
+            }
+            drainWalQueue();
+        });
+    }
 
     /**
      * Exercises {@link QwpWebSocketSender#getActiveBackgroundDrainers()}.
@@ -190,8 +240,8 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
     /**
      * Exercises {@link QwpWebSocketSender#getTotalErrorNotificationsDelivered()}.
      * Send a string into a column that was first created as DOUBLE; the server
-     * rejects with SCHEMA_MISMATCH (DROP_AND_CONTINUE policy), the error
-     * handler fires, and the delivered counter advances past zero.
+     * rejects with SCHEMA_MISMATCH (a latched TERMINAL under NACK policy v2),
+     * the error handler fires, and the delivered counter advances past zero.
      */
     @Test
     public void testGetTotalErrorNotificationsDeliveredAfterSchemaMismatch() throws Exception {
@@ -205,16 +255,32 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
             }
             drainWalQueue();
 
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
+            CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
+            CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
+            QwpWebSocketSender sender = connectWs(port, err -> {
+                if (err.getAppliedPolicy() == SenderError.Policy.TERMINAL) {
+                    terminalFut.complete(err);
+                }
+                firstErrFut.complete(err);
+            });
+            SenderError.Category expectedTerminalCategory = null;
+            try {
                 sender.table(table).stringColumn("v", "not-a-double").at(2_000_000L, ChronoUnit.MICROS);
-                sender.flush();
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                try {
+                    sender.flush();
+                } catch (LineSenderServerException ignored) {
+                    // the I/O thread latched the terminal before flush()'s
+                    // own error poll ran
+                }
+                SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
                 Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
                 long delivered = sender.getTotalErrorNotificationsDelivered();
                 Assert.assertTrue("expected at least one delivery, got " + delivered, delivered >= 1L);
                 // Sanity: error did not surface as a drop on the dispatcher inbox.
                 Assert.assertEquals(0L, sender.getDroppedErrorNotifications());
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
+            } finally {
+                assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory);
             }
             drainWalQueue();
         });

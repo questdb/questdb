@@ -95,9 +95,9 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         final GroupByLongTopKTask task = queue.get(cursor);
-        run(workerId, task, subSeq, cursor, null);
+        run(workerContext.carrierId(), task, subSeq, cursor, null);
         return true;
     }
 }

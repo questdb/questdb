@@ -49,7 +49,7 @@ jobs:
           mavenPomFile: "pom.xml"
           mavenOptions: "$(MAVEN_OPTS)"
           options:
-            "compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+            "-s $(MAVEN_SETTINGS_FILE) compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
           jdkVersionOption: $(jdk)
 
       # Check bytecode size

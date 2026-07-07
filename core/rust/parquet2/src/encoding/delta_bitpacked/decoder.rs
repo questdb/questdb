@@ -68,10 +68,30 @@ impl<'a> Block<'a> {
         // unwrap is ok: we sliced it by num_mini_blocks in try_new
         let num_bits = self.bitwidths.next().copied().unwrap() as usize;
 
+        // A foreign or corrupt page can declare a per-miniblock bitwidth wider
+        // than the 64-bit values it unpacks into (the byte is unchecked, range
+        // 0..=255). The bitpacked u64 unpacker only handles widths 0..=64; a wider
+        // one reaches unpack64's unreachable!() and panics, which aborts the whole
+        // JVM across the JNI boundary. Reject it with a clean error instead.
+        if num_bits > 64 {
+            return Err(Error::oos(format!(
+                "delta binary packed miniblock bit width {num_bits} exceeds 64"
+            )));
+        }
+
         self.current_miniblock = if num_bits > 0 {
             let length = std::cmp::min(self.remaining, self.values_per_mini_block);
 
-            let miniblock_length = ceil8(self.values_per_mini_block * num_bits);
+            // checked_mul: a corrupt values_per_mini_block (e.g. derived from a
+            // 2^63 block size that still passes the %128 header guard) overflows
+            // this product. Release builds disable overflow checks, so an unchecked
+            // multiply would wrap to a short miniblock and then panic on the
+            // bitpacked decoder below; reject it with a clean error instead.
+            let miniblock_bits = self
+                .values_per_mini_block
+                .checked_mul(num_bits)
+                .ok_or_else(|| Error::oos("delta binary packed miniblock length overflows"))?;
+            let miniblock_length = ceil8(miniblock_bits);
             if miniblock_length > self.values.len() {
                 return Err(Error::oos(
                     "block must contain at least miniblock_length bytes (the mini block)",
@@ -82,7 +102,7 @@ impl<'a> Block<'a> {
             self.values = remainder;
             self.consumed_bytes += miniblock_length;
 
-            Some(bitpacked::Decoder::try_new(miniblock, num_bits, length).unwrap())
+            Some(bitpacked::Decoder::try_new(miniblock, num_bits, length)?)
         } else {
             None
         };
@@ -138,7 +158,15 @@ impl<'a> Decoder<'a> {
         let mut consumed_bytes = 0;
         let (block_size, consumed) = uleb128::decode(values)?;
         consumed_bytes += consumed;
-        assert_eq!(block_size % 128, 0);
+        // A valid DELTA_BINARY_PACKED header always carries a block size that is
+        // a multiple of 128. A foreign or corrupt page may not; reject it with a
+        // clean error instead of asserting -- a panic across the JNI boundary
+        // aborts the whole JVM with no recovery.
+        if !block_size.is_multiple_of(128) {
+            return Err(Error::oos(format!(
+                "delta binary packed block size {block_size} is not a multiple of 128"
+            )));
+        }
         values = &values[consumed..];
         let (num_mini_blocks, consumed) = uleb128::decode(values)?;
         let num_mini_blocks = num_mini_blocks as usize;
@@ -152,8 +180,18 @@ impl<'a> Decoder<'a> {
         consumed_bytes += consumed;
         values = &values[consumed..];
 
+        // Guard the division: a zero mini-block count divides by zero.
+        if num_mini_blocks == 0 {
+            return Err(Error::oos(
+                "delta binary packed header declares zero mini blocks",
+            ));
+        }
         let values_per_mini_block = block_size as usize / num_mini_blocks;
-        assert_eq!(values_per_mini_block % 8, 0);
+        if !values_per_mini_block.is_multiple_of(8) {
+            return Err(Error::oos(format!(
+                "delta binary packed values per mini block {values_per_mini_block} is not a multiple of 8"
+            )));
+        }
 
         // If we only have one value (first_value), there are no blocks.
         let current_block = if total_count > 1 {
@@ -361,5 +399,120 @@ mod tests {
 
         assert_eq!(&expected[..], &r[..]);
         assert_eq!(decoder.consumed_bytes(), data.len() - 3);
+    }
+
+    #[test]
+    fn malformed_block_size_not_multiple_of_128() {
+        // block_size=1: a foreign/corrupt header. Previously asserted (panic);
+        // now a clean error.
+        let err = Decoder::try_new(&[1, 1, 1, 0]).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("not a multiple of 128"),
+            "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_zero_mini_blocks() {
+        // block_size=0 (passes the %128 check), num_mini_blocks=0: previously a
+        // 0/0 divide panic; now a clean error.
+        let err = Decoder::try_new(&[0, 0, 1, 0]).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("zero mini blocks"),
+            "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_values_per_mini_block_not_multiple_of_8() {
+        // block_size=128, num_mini_blocks=3 -> values_per_mini_block=42:
+        // previously asserted (panic); now a clean error.
+        let err = Decoder::try_new(&[128, 1, 3, 1, 0]).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("not a multiple of 8"),
+            "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_miniblock_bitwidth_over_64_is_error() {
+        // A foreign/corrupt DELTA_BINARY_PACKED page can declare a per-miniblock
+        // bitwidth > 64 (the byte is read from page contents, range 0..=255). The
+        // vendored bitpacked u64 unpacker only handles widths 0..=64; without the
+        // guard in advance_miniblock a wider width would reach unpack64's
+        // unreachable!() and panic, aborting the JVM across the JNI boundary.
+        // advance_miniblock must instead surface a clean error. Header:
+        // block_size=128, num_mini_blocks=1, total_count=2, first_value=0,
+        // min_delta=0, bitwidth=65, then a 1040-byte miniblock.
+        let mut data = vec![0x80u8, 0x01, 0x01, 0x02, 0x00, 0x00, 65];
+        data.extend(std::iter::repeat_n(0u8, 1040));
+        assert!(
+            Decoder::try_new(&data).is_err(),
+            "bitwidth>64 must be a clean error, not a panic"
+        );
+    }
+
+    #[test]
+    fn malformed_block_size_overflows_miniblock_length() {
+        // block_size = 2^63 passes the %128 guard (2^63 % 128 == 0), giving
+        // values_per_mini_block = 2^63. Without the checked_mul in
+        // advance_miniblock, values_per_mini_block * num_bits overflows usize:
+        // debug would panic on the multiply, release would wrap to a short
+        // miniblock and panic on the bitpacked try_new().unwrap(). Either way a
+        // foreign page aborts the JVM; it must surface a clean error.
+        let mut data = vec![
+            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01, // block_size = 2^63
+            0x01, // num_mini_blocks
+            0x02, // total_count
+            0x00, // first_value
+            0x00, // min_delta
+            0x02, // bitwidth
+        ];
+        data.extend(std::iter::repeat_n(0u8, 64));
+        assert!(
+            Decoder::try_new(&data).is_err(),
+            "oversized block_size must be a clean error, not a panic/overflow"
+        );
+    }
+
+    #[test]
+    fn bitwidth_exactly_64_is_accepted() {
+        // 64 is the maximum width the bitpacked u64 unpacker handles and must NOT
+        // be rejected by the num_bits > 64 guard (guards against a > 64 -> >= 64
+        // off-by-one regression). Header: block_size=128, num_mini_blocks=1,
+        // total_count=2, first_value=0, min_delta=0, bitwidth=64, then a
+        // ceil8(128*64)=1024-byte all-zero miniblock. Every delta unpacks to 0, so
+        // both values decode to 0.
+        let mut data = vec![0x80u8, 0x01, 0x01, 0x02, 0x00, 0x00, 64];
+        data.extend(std::iter::repeat_n(0u8, 1024));
+        let decoded = Decoder::try_new(&data)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(decoded, vec![0, 0]);
+    }
+
+    #[test]
+    fn malformed_second_miniblock_bitwidth_is_error() {
+        // The first miniblock is valid (bitwidth 0) but the second declares
+        // bitwidth 65. advance_miniblock is called again from Block::next when
+        // iteration crosses the miniblock boundary, so the guard must hold on that
+        // path too -- here the error surfaces during iteration, not construction.
+        // Header: block_size=128, num_mini_blocks=2 (values_per_mini_block=64),
+        // total_count=66, first_value=0, min_delta=0, bitwidths=[0, 65].
+        let data = vec![
+            0x80, 0x01, // block_size = 128
+            0x02, // num_mini_blocks
+            0x42, // total_count = 66
+            0x00, // first_value
+            0x00, // min_delta
+            0x00, 0x41, // bitwidths: miniblock 1 = 0, miniblock 2 = 65
+        ];
+        let mut decoder = Decoder::try_new(&data).unwrap(); // first miniblock is fine
+        let result: Result<Vec<_>, _> = decoder.by_ref().collect();
+        assert!(
+            result.is_err(),
+            "bad 2nd-miniblock bitwidth must surface as an iteration error"
+        );
     }
 }

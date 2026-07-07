@@ -33,6 +33,7 @@ import org.jetbrains.annotations.Nullable;
 public class LogRecordSinkAdapter implements Utf16Sink {
 
     private LogRecord line;
+    private int[] ryuE10;
 
     public LogRecordSinkAdapter of(LogRecord line) {
         this.line = line;
@@ -102,5 +103,13 @@ public class LogRecordSinkAdapter implements Utf16Sink {
     public Utf16Sink putQuoted(@NotNull CharSequence cs) {
         line.$('\"').$(cs).I$();
         return this;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 }

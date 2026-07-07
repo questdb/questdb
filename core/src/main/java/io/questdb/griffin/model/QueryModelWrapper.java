@@ -1203,6 +1203,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setSampleByFill(ObjList<ExpressionNode> fill) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setSampleByFromTo(ExpressionNode from, ExpressionNode to) {
         throw new UnsupportedOperationException();
     }

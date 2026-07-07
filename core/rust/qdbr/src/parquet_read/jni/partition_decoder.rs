@@ -58,6 +58,45 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetParti
     }
 }
 
+/// Decode a contiguous run of whole row groups [row_group_lo, row_group_hi] (both
+/// inclusive) into one set of column buffers. Used by the O3 parquet merge to
+/// deduplicate row groups joined by a shared boundary timestamp as a single unit.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetPartitionDecoder_decodeRowGroupRange(
+    mut env: JNIEnv,
+    _class: JClass,
+    _allocator: *const QdbAllocator,
+    ctx: *mut DecodeContext,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
+    row_group_bufs: *mut RowGroupBuffers,
+    columns: *const (ParquetColumnIndex, ColumnType),
+    column_count: u32,
+    row_group_lo: u32,
+    row_group_hi: u32,
+) -> u32 {
+    let env = &mut env;
+    let res = parquet_meta_decode_row_group_range_impl(
+        ctx,
+        parquet_file_ptr,
+        parquet_file_size,
+        parquet_meta_reader_ptr,
+        row_group_bufs,
+        columns,
+        column_count,
+        row_group_lo,
+        row_group_hi,
+    );
+    match res {
+        Ok(count) => count as u32,
+        Err(mut err) => {
+            err.add_context("error in ParquetPartitionDecoder.decodeRowGroupRange");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetPartitionDecoder_decodeRowGroupWithRowFilter(
     mut env: JNIEnv,
@@ -285,6 +324,65 @@ fn parquet_meta_decode_row_group_impl(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn parquet_meta_decode_row_group_range_impl(
+    ctx: *mut DecodeContext,
+    parquet_file_ptr: *const u8,
+    parquet_file_size: u64,
+    parquet_meta_reader_ptr: *const JniParquetMetaReader,
+    row_group_bufs: *mut RowGroupBuffers,
+    columns: *const (ParquetColumnIndex, ColumnType),
+    column_count: u32,
+    row_group_lo_idx: u32,
+    row_group_hi_idx: u32,
+) -> ParquetResult<usize> {
+    if ctx.is_null() {
+        return Err(fmt_err!(InvalidType, "decode context pointer is null"));
+    }
+    if row_group_bufs.is_null() {
+        return Err(fmt_err!(InvalidType, "row group buffers pointer is null"));
+    }
+    if columns.is_null() && column_count > 0 {
+        return Err(fmt_err!(InvalidType, "columns pointer is null"));
+    }
+    if column_count > 0 {
+        let col_pairs = unsafe { slice::from_raw_parts(columns, column_count as usize) };
+        validate_jni_column_types(col_pairs)?;
+    }
+    if parquet_meta_reader_ptr.is_null() {
+        return Err(fmt_err!(
+            InvalidType,
+            "JniParquetMetaReader pointer is null"
+        ));
+    }
+    if parquet_file_ptr.is_null() || parquet_file_size == 0 {
+        return Err(fmt_err!(
+            InvalidType,
+            "parquet file pointer is null or size is zero"
+        ));
+    }
+
+    let parquet_meta_reader: &ParquetMetaReader = unsafe { &*parquet_meta_reader_ptr }.reader();
+    let file_data = unsafe { slice::from_raw_parts(parquet_file_ptr, parquet_file_size as usize) };
+    let ctx = unsafe { &mut *ctx };
+    let row_group_bufs = unsafe { &mut *row_group_bufs };
+    let col_pairs = if columns.is_null() {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(columns, column_count as usize) }
+    };
+
+    crate::parquet_read::parquet_meta_decode::decode_row_group_range(
+        ctx,
+        row_group_bufs,
+        file_data,
+        parquet_meta_reader,
+        col_pairs,
+        row_group_lo_idx as usize,
+        row_group_hi_idx as usize,
+    )
+}
+
 /// Find the row group containing the given timestamp using `_pm` metadata.
 ///
 /// Reads min/max timestamp stats directly from the `_pm` file's column chunks.
@@ -482,6 +580,7 @@ mod tests {
             column_top: 0,
             designated_timestamp: false,
             not_null_hint: false,
+            strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };

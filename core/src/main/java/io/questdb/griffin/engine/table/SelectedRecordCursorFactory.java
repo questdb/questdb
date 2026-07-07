@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -388,6 +389,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            delegate.setParquetDecodeHint(hint);
+        }
+
+        @Override
         public void toTop() {
             delegate.toTop();
         }
@@ -581,7 +587,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             columnMapping.clear();
             for (int i = 0, n = columnCrossIndex.size(); i < n; i++) {
                 final int basePos = columnCrossIndex.getQuick(i);
-                columnMapping.addColumn(baseMapping.getColumnIndex(basePos), baseMapping.getWriterIndex(basePos));
+                columnMapping.addColumn(
+                        baseMapping.getColumnIndex(basePos),
+                        baseMapping.getWriterIndex(basePos),
+                        baseMapping.getOriginalWriterIndex(basePos)
+                );
             }
             return this;
         }
@@ -698,6 +708,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void seekEstimate(long timestamp) {
             baseCursor.seekEstimate(timestamp);
+        }
+
+        @Override
+        public void setParquetDecodeHint(ParquetDecodeHint hint) {
+            baseCursor.setParquetDecodeHint(hint);
         }
 
         @Override

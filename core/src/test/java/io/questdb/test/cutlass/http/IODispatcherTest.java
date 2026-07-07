@@ -61,6 +61,8 @@ import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
@@ -122,6 +124,7 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
@@ -267,7 +270,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> {
                                 if (operation == IOOperation.WRITE) {
                                     Assert.assertEquals(1024, Net.send(context.getFd(), context.buffer, 1024));
@@ -366,7 +369,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (dispatcherRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                         }
                     } finally {
                         dispatcherHaltLatch.countDown();
@@ -456,7 +459,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                         }
                     } finally {
@@ -1276,13 +1279,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        col_a\tts
-                        1000\t1970-01-01T00:00:00.001000Z
-                        2000\t1970-01-01T00:00:00.002000Z
-                        3000\t1970-01-01T00:00:00.003000Z
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                col_a\tts
+                                1000\t1970-01-01T00:00:00.001000Z
+                                2000\t1970-01-01T00:00:00.002000Z
+                                3000\t1970-01-01T00:00:00.003000Z
+                                """);
             }
         });
     }
@@ -1335,13 +1341,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        col_b\tcol_a
-                        1000\t1000
-                        2000\t2000
-                        3000\t3000
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                col_b\tcol_a
+                                1000\t1000
+                                2000\t2000
+                                3000\t3000
+                                """);
             }
         });
     }
@@ -1698,21 +1707,24 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        ts\tvalue
-                        1970-01-01T00:01:40.000000Z\t1000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        1970-01-01T00:01:40.000001Z\t2000
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                ts\tvalue
+                                1970-01-01T00:01:40.000000Z\t1000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                1970-01-01T00:01:40.000001Z\t2000
+                                """);
             }
         });
     }
@@ -1890,13 +1902,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        geo1\tgeo2\tgeo4\tgeo8\tgeo2b
-                        \t\t\t\t
-                        q\tque\tquestd\tquestdb12345\t10
-                        u\tu10\tu10m99\tu10m99dd3pbj\t11
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                geo1\tgeo2\tgeo4\tgeo8\tgeo2b
+                                \t\t\t\t
+                                q\tque\tquestd\tquestdb12345\t10
+                                u\tu10\tu10m99\tu10m99dd3pbj\t11
+                                """);
             }
         });
     }
@@ -1904,7 +1919,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportGeoHashesForNewTable() throws Exception {
         new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler(); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+            try (SqlCompiler _ = engine.getSqlCompiler(); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                         POST /upload?name=test&forceHeader=true HTTP/1.1\r
                         Host: localhost:9000\r
@@ -1958,13 +1973,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(compiler, executionContext, "test", sink, """
-                        geo1\tgeo2\tgeo4\tgeo8\tgeo2b
-                        \t\t\t\t
-                        q\tque\tquestd\tquestdb12345\t10
-                        u\tu10\tu10m99\tu10m99dd3pbj\t11
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                geo1\tgeo2\tgeo4\tgeo8\tgeo2b
+                                \t\t\t\t
+                                q\tque\tquestd\tquestdb12345\t10
+                                u\tu10\tu10m99\tu10m99dd3pbj\t11
+                                """);
             }
         });
     }
@@ -2017,15 +2035,18 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        ip1\tip2
-                        \t0.0.0.42
-                        \t
-                        \t
-                        127.0.0.1\t2.135.87.178
-                        127.0.0.1\t
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                ip1\tip2
+                                \t0.0.0.42
+                                \t
+                                \t
+                                127.0.0.1\t2.135.87.178
+                                127.0.0.1\t
+                                """);
             }
         });
     }
@@ -2077,13 +2098,16 @@ public class IODispatcherTest extends AbstractTest {
                         \r
                         """, 1, 0, false);
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "test", sink, """
-                        d1\td2\td3
-                        2000-12-31T00:00:00.000Z\t2000-12-31T12:49:59.000Z\t2000-12-31T13:39:49.000Z
-                        2001-12-31T00:00:00.000Z\t2001-12-31T12:49:59.000Z\t2001-12-31T13:39:49.000Z
-                        2002-12-31T00:00:00.000Z\t2002-12-31T12:49:59.000Z\t2002-12-31T13:39:49.000Z
-                        """);
+                assertQuery("test")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("""
+                                d1\td2\td3
+                                2000-12-31T00:00:00.000Z\t2000-12-31T12:49:59.000Z\t2000-12-31T13:39:49.000Z
+                                2001-12-31T00:00:00.000Z\t2001-12-31T12:49:59.000Z\t2001-12-31T13:39:49.000Z
+                                2002-12-31T00:00:00.000Z\t2002-12-31T12:49:59.000Z\t2002-12-31T13:39:49.000Z
+                                """);
             }
         });
     }
@@ -4445,12 +4469,7 @@ public class IODispatcherTest extends AbstractTest {
                 \r
                 """, 1, true);
 
-        final String expectedEvent = """
-                100\t1
-                1\t2
-                101\t1
-                """;
-        assertTelemetryEventAndOrigin(expectedEvent);
+        assertTelemetryEventAndOrigin();
     }
 
     @Test
@@ -4480,12 +4499,7 @@ public class IODispatcherTest extends AbstractTest {
                 \r
                 """, 2, true);
 
-        final String expected = """
-                100	1
-                1	2
-                101	1
-                """;
-        assertTelemetryEventAndOrigin(expected);
+        assertTelemetryEventAndOrigin();
     }
 
     @Test
@@ -4546,6 +4560,88 @@ public class IODispatcherTest extends AbstractTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testPooledHttpContextParsesQuotedContentTypeParameter() throws Exception {
+        final String expectedResponse = """
+                HTTP/1.1 200 OK\r
+                Server: questDB/1.0\r
+                Date: Thu, 1 Jan 1970 00:00:00 GMT\r
+                Transfer-Encoding: chunked\r
+                Content-Type: text/plain\r
+                Connection: close\r
+                \r
+                0f\r
+                Status: Healthy\r
+                00\r
+                \r
+                """;
+        final String warmupRequest = """
+                GET /status HTTP/1.1\r
+                Host: localhost:9001\r
+                Connection: keep-alive\r
+                Accept: */*\r
+                \r
+                """;
+        final String quotedContentTypeRequest = """
+                GET /status HTTP/1.1\r
+                Host: localhost:9001\r
+                Connection: keep-alive\r
+                Content-Type: application/json; charset="utf-8"\r
+                Accept: */*\r
+                \r
+                """;
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withServerKeepAlive(false))
+                .run((engine, sqlExecutionContext) -> {
+                    sendAndReceive(NetworkFacadeImpl.INSTANCE, warmupRequest, expectedResponse, 1, 0, false, true);
+                    sendAndReceive(NetworkFacadeImpl.INSTANCE, quotedContentTypeRequest, expectedResponse, 1, 0, false, true);
+                });
+    }
+
+    @Test
+    public void testResponseCompressionDoesNotLeakAcrossKeepAliveRequests() throws Exception {
+        final Utf8String contentEncodingHeader = new Utf8String("Content-Encoding");
+        final StringSink sink = new StringSink();
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withAllowDeflateBeforeSend(true)
+                        .withServerKeepAlive(true)
+                )
+                .run((engine, sqlExecutionContext) -> {
+                    try (HttpClient client = HttpClientFactory.newPlainTextInstance()) {
+                        HttpClient.Request gzipRequest = client.newRequest("localhost", 9001);
+                        gzipRequest.GET()
+                                .url("/exec")
+                                .query("query", "select 1")
+                                .header("Accept-Encoding", "gzip");
+                        HttpClient.ResponseHeaders headers = gzipRequest.send();
+                        headers.await();
+                        TestUtils.assertEquals("gzip", headers.getHeader(contentEncodingHeader));
+                        headers.getResponse().discard();
+
+                        HttpClient.Request plainRequest = client.newRequest("localhost", 9001);
+                        plainRequest.GET()
+                                .url("/exec")
+                                .query("query", "select 2");
+                        headers = plainRequest.send();
+                        headers.await();
+                        Assert.assertNull(headers.getHeader(contentEncodingHeader));
+                        sink.clear();
+                        headers.getResponse().copyTextTo(sink);
+                        TestUtils.assertEquals(
+                                "{\"query\":\"select 2\",\"columns\":[{\"name\":\"2\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
+                                sink
+                        );
+                    }
+                });
     }
 
     @Test
@@ -5064,7 +5160,7 @@ public class IODispatcherTest extends AbstractTest {
                     new Thread(() -> {
                         try {
                             do {
-                                dispatcher.run(0);
+                                dispatcher.run();
                                 dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                             } while (serverRunning.get());
                         } finally {
@@ -5300,7 +5396,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         do {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, null, dispatcher1));
                         } while (serverRunning.get());
                     } finally {
@@ -5875,7 +5971,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                         }
                     } finally {
@@ -6051,7 +6147,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                         }
                     } finally {
@@ -6204,7 +6300,7 @@ public class IODispatcherTest extends AbstractTest {
                 new Thread(() -> {
                     try {
                         while (serverRunning.get()) {
-                            dispatcher.run(0);
+                            dispatcher.run();
                             dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                         }
                     } finally {
@@ -6893,7 +6989,7 @@ public class IODispatcherTest extends AbstractTest {
 
                                 try {
                                     while (serverRunning.get()) {
-                                        dispatcher.run(0);
+                                        dispatcher.run();
                                         dispatcher.processIOQueue((operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, dispatcher1));
                                     }
                                 } finally {
@@ -7018,7 +7114,7 @@ public class IODispatcherTest extends AbstractTest {
                     try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                         while (queryError.get() == null) {
                             walApplyJob.drain(0);
-                            new CheckWalTransactionsJob(engine).run(0);
+                            new CheckWalTransactionsJob(engine).run();
                             // run once again as there might be notifications to handle now
                             walApplyJob.drain(0);
                         }
@@ -7060,8 +7156,11 @@ public class IODispatcherTest extends AbstractTest {
                 queryError.set(new Exception());//stop wal thread
                 stopped.await();
 
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "select count(*) from tab where b=false", sink, "count\n1000\n");
+                assertQuery("select count(*) from tab where b=false")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("count\n1000\n");
 
             } finally {
                 engine.getQueryRegistry().setListener(null);
@@ -7137,7 +7236,7 @@ public class IODispatcherTest extends AbstractTest {
                         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(engine)) {
                             while (queryError.get() == null) {
                                 walApplyJob.drain(0);
-                                new CheckWalTransactionsJob(engine).run(0);
+                                new CheckWalTransactionsJob(engine).run();
                                 // run once again as there might be notifications to handle now
                                 walApplyJob.drain(0);
                             }
@@ -7190,8 +7289,11 @@ public class IODispatcherTest extends AbstractTest {
 
             // run query in separate engine so it doesn't time out
             try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root)); SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                StringSink sink = new StringSink();
-                TestUtils.assertSql(engine, executionContext, "select count(*) from tab where b=false", sink, "count\n3000\n");
+                assertQuery("select count(*) from tab where b=false")
+                        .withEngine(engine)
+                        .withContext(executionContext)
+                        .noLeakCheck()
+                        .returnsOnce("count\n3000\n");
             }
 
         });
@@ -7313,7 +7415,7 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
-    private void assertTelemetryEventAndOrigin(CharSequence expected) {
+    private void assertTelemetryEventAndOrigin() {
         final String baseDir = root;
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
@@ -7327,11 +7429,11 @@ public class IODispatcherTest extends AbstractTest {
             final StringSink sink = new StringSink();
             sink.clear();
             printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
-            TestUtils.assertEquals(expected, sink);
+            TestUtils.assertEquals("100\t1\n1\t2\n101\t1\n", sink);
             cursor.toTop();
             sink.clear();
             printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
-            TestUtils.assertEquals(expected, sink);
+            TestUtils.assertEquals("100\t1\n1\t2\n101\t1\n", sink);
         }
     }
 
@@ -7827,7 +7929,7 @@ public class IODispatcherTest extends AbstractTest {
 
                         try {
                             do {
-                                dispatcher.run(0);
+                                dispatcher.run();
                                 dispatcher.processIOQueue(requestProcessor);
                                 // We can't use Os.pause() here since we rely on thread interrupts.
                                 LockSupport.parkNanos(1);

@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
@@ -46,13 +45,11 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Files;
-import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -188,7 +185,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
                                     "  ts TIMESTAMP," +
@@ -200,13 +197,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     engine.execute("insert into x select x::timestamp, rnd_double_array(2), rnd_double_array(2) from long_sequence(50000)", sqlExecutionContext);
                     engine.execute("insert into x values (50001, ARRAY[[1,1],[2,2]], ARRAY[[1,1],[2,2]])", sqlExecutionContext);
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count() from x where a = b",
-                            sink,
-                            "count\n1\n"
-                    );
+                    assertQuery("select count() from x where a = b")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n1\n");
                 },
                 configuration,
                 LOG
@@ -277,7 +274,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
                                     "  ts TIMESTAMP," +
@@ -288,13 +285,12 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     );
                     engine.execute("insert into x select x::timestamp, x::timestamp, x from long_sequence(100000)", sqlExecutionContext);
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            query,
-                            sink,
-                            expected
-                    );
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns(expected);
                 },
                 configuration,
                 LOG
@@ -308,7 +304,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             "CREATE TABLE x (ts TIMESTAMP, iv INT, lv LONG) timestamp(ts) PARTITION BY DAY;",
@@ -318,20 +314,20 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             "INSERT INTO x SELECT x::timestamp, x::int, x FROM long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
                             sqlExecutionContext
                     );
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "SELECT count(*) FROM x WHERE length((iv)::SYMBOL) < 4",
-                            sink,
-                            "count\n999\n"
-                    );
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "SELECT count(*) FROM x WHERE length((lv)::SYMBOL) < 4",
-                            sink,
-                            "count\n999\n"
-                    );
+                    assertQuery("SELECT count(*) FROM x WHERE length((iv)::SYMBOL) < 4")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n999\n");
+                    assertQuery("SELECT count(*) FROM x WHERE length((lv)::SYMBOL) < 4")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n999\n");
                 },
                 configuration,
                 LOG
@@ -403,7 +399,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
@@ -445,7 +441,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             TestUtils.await(barrier);
 
                             final RecordCursorFactory factory = factories[finalI];
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine, workerCount);
+                                 RecordCursor cursor = factory.getCursor(threadCtx)) {
                                 Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
                                 cursor.toTop();
                                 final Record record = cursor.getRecord();
@@ -456,9 +453,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 }
                                 Assert.assertEquals(numOfRows, rowCount);
                             } catch (Throwable e) {
-                                e.printStackTrace();
+                                e.printStackTrace(System.err);
                                 errors.incrementAndGet();
                             } finally {
+                                Path.clearThreadLocals();
                                 haltLatch.countDown();
                             }
                         }).start();
@@ -520,7 +518,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                 Assert.assertEquals(158, record.getLong(0));
                                 Assert.assertFalse(cursor.hasNext());
                             } catch (Throwable e) {
-                                e.printStackTrace();
+                                e.printStackTrace(System.err);
                                 errors.incrementAndGet();
                             }
                         }
@@ -575,7 +573,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute(
                             "CREATE TABLE x (ts TIMESTAMP, iv INT) timestamp(ts) PARTITION BY DAY;",
@@ -585,20 +583,20 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             "INSERT INTO x SELECT x::timestamp, x::int FROM long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
                             sqlExecutionContext
                     );
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "SELECT count(*) FROM x WHERE (abs(iv))::LONG256 != (iv)::LONG256",
-                            sink,
-                            "count\n0\n"
-                    );
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "SELECT count(*) FROM x WHERE (iv)::LONG256 != to_long256(iv::long, 0, 0, 0)",
-                            sink,
-                            "count\n0\n"
-                    );
+                    assertQuery("SELECT count(*) FROM x WHERE (abs(iv))::LONG256 != (iv)::LONG256")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n0\n");
+                    assertQuery("SELECT count(*) FROM x WHERE (iv)::LONG256 != to_long256(iv::long, 0, 0, 0)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n0\n");
                 },
                 configuration,
                 LOG
@@ -764,7 +762,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (" +
                                     "  ts TIMESTAMP," +
@@ -795,13 +793,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         );
                         Assert.assertTrue(Files.exists(path.$()));
 
-                        TestUtils.assertSql(
-                                engine,
-                                sqlExecutionContext,
-                                "select count() from read_parquet('price.parquet') where value > 0.5",
-                                sink,
-                                "count\n25139\n"
-                        );
+                        assertQuery("select count() from read_parquet('price.parquet') where value > 0.5")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\n25139\n");
                     }
                 },
                 configuration,
@@ -830,62 +828,6 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testVarcharBindVariable() throws Exception {
         testStrBindVariable("VARCHAR", SqlJitMode.JIT_MODE_ENABLED);
-    }
-
-    private static boolean assertCursor(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            SqlExecutionContext sqlExecutionContext,
-            StringSink sink,
-            LongList rows
-    ) throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertTrue("supports random access", factory.recordCursorSupportsRandomAccess());
-            if (
-                    assertCursor(
-                            expected,
-                            true,
-                            false,
-                            true,
-                            cursor,
-                            factory.getMetadata(),
-                            sink,
-                            rows,
-                            factory.fragmentedSymbolTables()
-                    )
-            ) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static void assertQuery(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            SqlExecutionContext sqlExecutionContext
-    ) throws Exception {
-        StringSink sink = new StringSink();
-        LongList rows = new LongList();
-        if (
-                assertCursor(
-                        expected,
-                        factory,
-                        sqlExecutionContext,
-                        sink,
-                        rows
-                )
-        ) {
-            return;
-        }
-        // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(
-                expected,
-                factory,
-                sqlExecutionContext,
-                sink,
-                rows
-        );
     }
 
     private void testAsyncOffloadTimeout(String query) throws Exception {
@@ -945,10 +887,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                     circuitBreaker
                             );
 
-                            TestUtils.assertSql(compiler, context, query, sink, "");
-                            Assert.fail();
-                        } catch (CairoException ex) {
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+                            assertQuery(query)
+                                    .withCompiler(compiler)
+                                    .withContext(context)
+                                    .noLeakCheck()
+                                    .failsWith("timeout, query aborted");
                         } finally {
                             Misc.free(circuitBreaker);
                         }
@@ -983,13 +926,13 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         );
                     }
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            query,
-                            sink,
-                            "count\n20000\n"
-                    );
+                    assertQuery(query)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n20000\n");
                 },
                 configuration,
                 LOG
@@ -1040,23 +983,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     sqlExecutionContext.getBindVariableService().setInt(1, 1);
                     sqlExecutionContext.getBindVariableService().setInt(2, 2);
                     sqlExecutionContext.getBindVariableService().setInt(3, 3);
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from x where i64 > $1 and i32 > $2 and i16 > $3 and i8 > $4",
-                            sink,
-                            scalarExpected
-                    );
+                    assertQuery("select count(*) from x where i64 > $1 and i32 > $2 and i16 > $3 and i8 > $4")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(scalarExpected);
 
                     // scalar, no bind vars
                     sqlExecutionContext.getBindVariableService().clear();
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from x where i64 > 0 and i32 > 1 and i16 > 2 and i8 > 3",
-                            sink,
-                            scalarExpected
-                    );
+                    assertQuery("select count(*) from x where i64 > 0 and i32 > 1 and i16 > 2 and i8 > 3")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(scalarExpected);
 
                     // simd
                     final String simdExpected = """
@@ -1065,23 +1008,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             """;
                     sqlExecutionContext.getBindVariableService().clear();
                     sqlExecutionContext.getBindVariableService().setLong(0, 8080548038033927892L);
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from x where i64 = $1",
-                            sink,
-                            simdExpected
-                    );
+                    assertQuery("select count(*) from x where i64 = $1")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(simdExpected);
 
                     // simd, no bind vars
                     sqlExecutionContext.getBindVariableService().clear();
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from x where i64 = 8080548038033927892L",
-                            sink,
-                            simdExpected
-                    );
+                    assertQuery("select count(*) from x where i64 = 8080548038033927892L")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(simdExpected);
 
                     // simd, neq
                     final String simdExpected2 = """
@@ -1090,23 +1033,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             """;
                     sqlExecutionContext.getBindVariableService().clear();
                     sqlExecutionContext.getBindVariableService().setLong(0, 8080548038033927892L);
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from x where i64 != $1",
-                            sink,
-                            simdExpected2
-                    );
+                    assertQuery("select count(*) from x where i64 != $1")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(simdExpected2);
 
                     // simd, neq, no bind vars
                     sqlExecutionContext.getBindVariableService().clear();
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from x where i64 != 8080548038033927892L",
-                            sink,
-                            simdExpected2
-                    );
+                    assertQuery("select count(*) from x where i64 != 8080548038033927892L")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(simdExpected2);
 
                     // simd, i32
                     final String simdExpected3 = """
@@ -1115,23 +1058,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             """;
                     sqlExecutionContext.getBindVariableService().clear();
                     sqlExecutionContext.getBindVariableService().setInt(0, 2137862371);
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from x where i32 = $1",
-                            sink,
-                            simdExpected3
-                    );
+                    assertQuery("select count(*) from x where i32 = $1")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(simdExpected3);
 
                     // simd, i32, no bind vars
                     sqlExecutionContext.getBindVariableService().clear();
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from x where i32 = 2137862371",
-                            sink,
-                            simdExpected3
-                    );
+                    assertQuery("select count(*) from x where i32 = 2137862371")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(simdExpected3);
 
                     // simd, table with <4 rows
                     final String simdExpected4 = """
@@ -1140,23 +1083,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             """;
                     sqlExecutionContext.getBindVariableService().clear();
                     sqlExecutionContext.getBindVariableService().setInt(0, 0);
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from y where i64 != $1",
-                            sink,
-                            simdExpected4
-                    );
+                    assertQuery("select count(*) from y where i64 != $1")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(simdExpected4);
 
                     // simd, table with <4 rows, no bind vars
                     sqlExecutionContext.getBindVariableService().clear();
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select count(*) from y where i64 != 0",
-                            sink,
-                            simdExpected4
-                    );
+                    assertQuery("select count(*) from y where i64 != 0")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(simdExpected4);
                 },
                 configuration,
                 LOG
@@ -1169,7 +1112,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
                                     "  ts TIMESTAMP," +
@@ -1179,15 +1122,16 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     );
                     engine.execute("insert into tab select (x * 1000 * 1000 * 60)::timestamp, cast(x * 1000 as decimal(30,2)) from long_sequence(10000)", sqlExecutionContext);
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select * from tab where val = 13000 or val = 42000 limit 10",
-                            sink,
-                            "ts\tval\n" +
-                                    "1970-01-01T00:13:00.000000Z\t13000.00\n" +
-                                    "1970-01-01T00:42:00.000000Z\t42000.00\n"
-                    );
+                    assertQuery("select * from tab where val = 13000 or val = 42000 limit 10")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
+                                    ts\tval
+                                    1970-01-01T00:13:00.000000Z\t13000.00
+                                    1970-01-01T00:42:00.000000Z\t42000.00
+                                    """);
                 },
                 configuration,
                 LOG
@@ -1217,19 +1161,18 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         );
                     }
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select * from tab where type IN (2, 3, 4, 6) limit 10",
-                            sink,
-                            """
+                    assertQuery("select * from tab where type IN (2, 3, 4, 6) limit 10")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
                                     ts\ttype\tvalue
                                     1970-01-01T00:00:00.000002Z\t2\tt2
                                     1970-01-01T00:00:00.000003Z\t3\tt3
                                     1970-01-01T00:00:00.000004Z\t4\tt4
                                     1970-01-01T00:00:00.000006Z\t6\tt6
-                                    """
-                    );
+                                    """);
                 },
                 configuration,
                 LOG
@@ -1260,12 +1203,12 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         );
                     }
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select * from tab where preciseTs in '1970-01-01T00:00:00;4m;1d;5' and value IN ('t1', 't3') limit 10",
-                            sink,
-                            """
+                    assertQuery("select * from tab where preciseTs in '1970-01-01T00:00:00;4m;1d;5' and value IN ('t1', 't3') limit 10")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
                                     ts\tpreciseTs\ttype\tvalue
                                     1970-01-01T00:01:00.000000Z\t1970-01-01T00:01:00.000000Z\t1\tt1
                                     1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3
@@ -1277,8 +1220,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                     1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3
                                     1970-01-05T00:01:00.000000Z\t1970-01-05T00:01:00.000000Z\t1\tt1
                                     1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3
-                                    """
-                    );
+                                    """);
                 },
                 configuration,
                 LOG
@@ -1309,20 +1251,19 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         );
                     }
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select * from tab where preciseTs in '1970-01-01T00:00:00;4m;1d;5' and value = 't3' limit 10",
-                            sink,
-                            """
+                    assertQuery("select * from tab where preciseTs in '1970-01-01T00:00:00;4m;1d;5' and value = 't3' limit 10")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
                                     ts\tpreciseTs\ttype\tvalue
                                     1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3
                                     1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3
                                     1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3
                                     1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3
                                     1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3
-                                    """
-                    );
+                                    """);
                 },
                 configuration,
                 LOG
@@ -1335,7 +1276,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "create table x ( " +
                                     " v long, " +
@@ -1364,9 +1305,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             TestUtils.await(barrier);
                             try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                 RecordCursorFactory factory = factories[finalI];
-                                assertQuery(expected, factory, ctx);
+                                assertFactory(factory).withContext(ctx).sizeMayVary().returns(expected);
                             } catch (Throwable e) {
-                                e.printStackTrace();
+                                e.printStackTrace(System.err);
                                 errors.incrementAndGet();
                             } finally {
                                 haltLatch.countDown();
@@ -1390,7 +1331,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
-                (engine, compiler, sqlExecutionContext) -> {
+                (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "create table x ( " +
                                     " l long, " +
@@ -1419,9 +1360,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             TestUtils.await(barrier);
                             try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 4)) {
                                 RecordCursorFactory factory = factories[finalI];
-                                assertQuery(expected, factory, ctx);
+                                assertFactory(factory).withContext(ctx).sizeMayVary().returns(expected);
                             } catch (Throwable e) {
-                                e.printStackTrace();
+                                e.printStackTrace(System.err);
                                 errors.incrementAndGet();
                             } finally {
                                 haltLatch.countDown();
@@ -1464,12 +1405,12 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
                     sqlExecutionContext.getBindVariableService().clear();
                     sqlExecutionContext.getBindVariableService().setStr(0, "t3");
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "select * from price where type = $1 limit 10",
-                            sink,
-                            """
+                    assertQuery("select * from price where type = $1 limit 10")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
                                     ts\ttype\tvalue
                                     1970-01-01T00:00:00.000003Z\tt3\t0.08486964232560668
                                     1970-01-01T00:00:00.000008Z\tt3\t0.9856290845874263
@@ -1481,8 +1422,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                     1970-01-01T00:00:00.000038Z\tt3\t0.7664256753596138
                                     1970-01-01T00:00:00.000043Z\tt3\t0.05048190020054388
                                     1970-01-01T00:00:00.000048Z\tt3\t0.8001121139739173
-                                    """
-                    );
+                                    """);
                 },
                 configuration,
                 LOG

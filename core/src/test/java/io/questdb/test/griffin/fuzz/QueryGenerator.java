@@ -27,23 +27,35 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.clauses.PostingClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
 import io.questdb.test.griffin.fuzz.clauses.SimpleClause;
 import io.questdb.test.griffin.fuzz.clauses.TemporalJoinClause;
+import io.questdb.test.griffin.fuzz.clauses.WindowClause;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 
 /**
  * Picks a query shape and delegates to the matching clause generator.
  * <p>
- * Shape distribution is roughly: SIMPLE 40%, GROUP BY 25%, SAMPLE BY
- * 20%, temporal JOIN 15% (when two or more tables exist, else replaced
- * with SIMPLE).
+ * Shape distribution is roughly: temporal JOIN 15% (when two or more
+ * tables exist), posting-index read 15% (when the table has a
+ * posting-indexed symbol), SAMPLE BY 20%, GROUP BY 20%, and the remaining
+ * ~30% split between SIMPLE and WINDOW. The join and posting bands fall
+ * through to the generic single-table shapes when their precondition is
+ * not met; SAMPLE BY and WINDOW downgrade to SIMPLE on sources without a
+ * designated timestamp.
+ * <p>
+ * When window fuzzing is enabled ({@code windowEnabled}, on by default), a
+ * WINDOW band is carved out of the upper half of the SIMPLE range; the
+ * SAMPLE BY and GROUP BY bands are unchanged, so disabling window restores
+ * the exact pre-window shape distribution (SIMPLE ~30%).
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
  * CTE, or replaced by a {@code long_sequence()} virtual table. Virtual
  * tables have no designated timestamp, so SAMPLE BY queries on them
- * fall back to SIMPLE.
+ * fall back to SIMPLE. Posting-index read shapes always use a direct
+ * real table since the planner needs the base table to pick the index.
  */
 public final class QueryGenerator {
 
@@ -55,7 +67,7 @@ public final class QueryGenerator {
     private QueryGenerator() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx) {
+    public static GeneratedQuery generate(Rnd rnd, ObjList<FuzzTable> tables, BindContext ctx, boolean injectFaultFn, boolean windowEnabled) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
 
@@ -67,22 +79,43 @@ public final class QueryGenerator {
             // Joins stay on direct, real tables: ASOF/LT/SPLICE need a
             // designated timestamp on both sides which virtual tables
             // don't carry.
-            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx);
+            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn);
+        }
+
+        // Posting-index read shapes (distinct key enumeration / covering read)
+        // on a direct real table. tryGenerate returns null without touching rnd
+        // when the table has no posting-indexed symbol, so the generic shape
+        // distribution below stays unchanged in that case. Function faults skip
+        // this path so test_fault() always lands in a clause that emits it;
+        // PostingClause builds its own narrow SQL without a generic WHERE.
+        if (pick < 30 && !injectFaultFn) {
+            GeneratedQuery posting = PostingClause.tryGenerate(rnd, t, ctx);
+            if (posting != null) {
+                return posting;
+            }
         }
 
         FuzzSource source = pickSource(rnd, t);
-        if (pick < 35) {
+        if (pick < 50) {
             // SAMPLE BY requires a designated ts; downgrade to SIMPLE on
             // virtual-only sources.
             if (source.getTable().getTsColumnName() == null) {
-                return SimpleClause.generate(rnd, source, ctx);
+                return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
             }
-            return SampleByClause.generate(rnd, source, ctx);
+            return SampleByClause.generate(rnd, source, ctx, injectFaultFn);
         }
-        if (pick < 60) {
-            return GroupByClause.generate(rnd, source, ctx);
+        if (pick < 70) {
+            return GroupByClause.generate(rnd, source, ctx, injectFaultFn);
         }
-        return SimpleClause.generate(rnd, source, ctx);
+        // pick in [70, 100) is SIMPLE. When window fuzzing is enabled, carve the
+        // upper half [85, 100) into a WINDOW band; this leaves the SAMPLE BY and
+        // GROUP BY bands untouched, so disabling window restores the exact
+        // pre-window distribution. Window functions order by the designated
+        // timestamp, so a source without one falls through to SIMPLE.
+        if (windowEnabled && pick >= 85 && source.getTable().getTsColumnName() != null) {
+            return WindowClause.generate(rnd, source, ctx, injectFaultFn);
+        }
+        return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
     }
 
     private static FuzzSource pickSource(Rnd rnd, FuzzTable realTable) {

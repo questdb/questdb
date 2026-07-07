@@ -29,9 +29,9 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 class ExceptRecordCursor extends AbstractSetRecordCursor {
@@ -47,7 +47,7 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
         this.mapA = mapA;
         this.mapB = mapB;
         this.recordSink = recordSink;
-        isOpen = true;
+        isOpen = false;
     }
 
     @Override
@@ -136,14 +136,16 @@ class ExceptRecordCursor extends AbstractSetRecordCursor {
         this.cursorB = Misc.free(this.cursorB);
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
+            mapA.setMemoryTracker(executionContext.getMemoryTracker());
+            mapB.setMemoryTracker(executionContext.getMemoryTracker());
             mapA.reopen();
             mapB.reopen();
         }
 
-        super.of(cursorA, cursorB, circuitBreaker);
+        super.of(cursorA, cursorB, executionContext);
         recordA = cursorA.getRecord();
         recordB = cursorB.getRecord();
         isCursorBHashed = false;

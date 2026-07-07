@@ -51,6 +51,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -64,6 +65,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     protected static final int DATAGRAM_LEFT_UNCOMMITTED_ROWS = 1;
     protected static final int DATAGRAM_TRIGGERED_COMMIT = 2;
 
+    protected final AtomicBoolean acceptOpen;
     protected final int bufLen;
     protected final long commitInterval;
     protected final int maxUncommittedDatagrams;
@@ -96,6 +98,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     }
 
     public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool) {
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool, AtomicBoolean acceptOpen) {
+        this.acceptOpen = acceptOpen;
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.bufLen = configuration.getMsgBufferSize();
@@ -207,7 +214,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             // runSerially() executes under the SynchronizedJob lock with
             // closed=true, confirming no concurrent access to shared resources.
             while (!closedAcknowledged) {
-                this.run(0);
+                this.run();
                 Os.pause();
             }
 
@@ -250,14 +257,40 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     }
 
     @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        // Close-acknowledgment path: once closed=true, close() spins this.run()
+        // until runSerially() executes under the SyncJob lock and checkClosed()
+        // sets closedAcknowledged. Bypass the acceptOpen short-circuit in that
+        // case so the spin can make progress. The receiver is already closed,
+        // so no ingestion can happen even if super.run() is invoked.
+        if (closed) {
+            return super.run(workerContext);
+        }
+        if (!acceptOpen.get()) {
+            return false;
+        }
+        return super.run(workerContext);
+    }
+
+    @Override
     public boolean runSerially() {
         if (checkClosed()) {
+            return false;
+        }
+        if (!acceptOpen.get()) {
+            // Mirror the worker-path acceptOpen gate so the own-thread driver
+            // also quiesces after switchRole publishes acceptOpen=false. Placed
+            // AFTER checkClosed() so close()'s acknowledgment spin (which sets
+            // closedAcknowledged inside checkClosed()) can still progress.
             return false;
         }
         boolean ran = false;
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
             ran = true;
+            if (!acceptOpen.get()) {
+                return true;
+            }
             int datagramState = processDatagram(buf, count);
             if ((datagramState & DATAGRAM_DROPPED) == 0) {
                 processedCount++;
@@ -352,7 +385,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
         int datagramState = 0;
         try {
-            messageCursor.of(address, (int) totalLength, null, null);
+            messageCursor.of(address, (int) totalLength, null);
             while (messageCursor.hasNextTable()) {
                 QwpTableBlockCursor tableBlock = messageCursor.nextTable();
                 WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
@@ -456,11 +489,6 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         @Override
         public int getQwpMaxRowsPerTable() {
             return configuration.getMaxRowsPerTable();
-        }
-
-        @Override
-        public int getQwpMaxSchemasPerConnection() {
-            return QwpConstants.DEFAULT_MAX_SCHEMAS_PER_CONNECTION;
         }
 
         @Override

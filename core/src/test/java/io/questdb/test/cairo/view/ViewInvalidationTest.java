@@ -62,7 +62,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -111,7 +111,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """
@@ -160,7 +160,7 @@ public class ViewInvalidationTest extends AbstractViewTest {
                     false,
                     """
                             QUERY PLAN
-                            Sort
+                            Encode sort
                               keys: [view_name]
                                 views()
                             """

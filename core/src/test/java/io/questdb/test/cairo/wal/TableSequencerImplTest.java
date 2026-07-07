@@ -349,7 +349,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     engine.getConfiguration().getMicrosecondClock())
             ) {
                 //noinspection StatementWithEmptyBody
-                while (job.run(0)) {
+                while (job.run()) {
                 }
             }
 

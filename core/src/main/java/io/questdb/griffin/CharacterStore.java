@@ -41,6 +41,7 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
     private int capacity;
     private char[] chars;
     private NameAssemblerCharSequence next = null;
+    private int[] ryuE10;
     private int size = 0;
 
     public CharacterStore(int capacity, int poolCapacity) {
@@ -91,6 +92,14 @@ public class CharacterStore implements CharacterStoreEntry, Mutable, Utf16Sink {
             put(cs, 0, cs.length());
         }
         return this;
+    }
+
+    @Override
+    public int[] ryuScratch() {
+        if (ryuE10 == null) {
+            ryuE10 = new int[1];
+        }
+        return ryuE10;
     }
 
     @Override

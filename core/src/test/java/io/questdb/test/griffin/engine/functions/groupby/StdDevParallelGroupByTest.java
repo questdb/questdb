@@ -63,16 +63,18 @@ public class StdDevParallelGroupByTest extends AbstractCairoTest {
                             ")",
                     ctx
             );
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "grp\tvar_pop\tvar_samp\tstddev_pop\tstddev_samp\n" +
-                            "0\t10.666666666666666\t16.0\t3.265986323710904\t4.0\n" +
-                            "1\t10.666666666666666\t16.0\t3.265986323710904\t4.0\n" +
-                            "2\t4.0\t8.0\t2.0\t2.8284271247461903\n" +
-                            "3\t4.0\t8.0\t2.0\t2.8284271247461903\n",
-                    "SELECT grp, var_pop(val), var_samp(val), stddev_pop(val), stddev_samp(val) FROM tbl ORDER BY grp",
-                    null, ctx, true, true
-            );
+            assertQuery("SELECT grp, var_pop(val), var_samp(val), stddev_pop(val), stddev_samp(val) FROM tbl ORDER BY grp")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .expectSize()
+                    .returns("""
+                            grp\tvar_pop\tvar_samp\tstddev_pop\tstddev_samp
+                            0\t10.666666666666666\t16.0\t3.265986323710904\t4.0
+                            1\t10.666666666666666\t16.0\t3.265986323710904\t4.0
+                            2\t4.0\t8.0\t2.0\t2.8284271247461903
+                            3\t4.0\t8.0\t2.0\t2.8284271247461903
+                            """);
         });
     }
 
@@ -80,12 +82,13 @@ public class StdDevParallelGroupByTest extends AbstractCairoTest {
     public void testParallelStdDevPopSparseNulls() throws Exception {
         runWithPool((compiler, ctx) -> {
             createSparseTable(compiler, ctx);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "stddev_pop\n2.8722813232690143\n",
-                    "SELECT stddev_pop(x) FROM tbl",
-                    null, ctx, false, true
-            );
+            assertQuery("SELECT stddev_pop(x) FROM tbl")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_pop\n2.8722813232690143\n");
         });
     }
 
@@ -93,12 +96,13 @@ public class StdDevParallelGroupByTest extends AbstractCairoTest {
     public void testParallelStdDevSampSparseNulls() throws Exception {
         runWithPool((compiler, ctx) -> {
             createSparseTable(compiler, ctx);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "stddev_samp\n3.0276503540974917\n",
-                    "SELECT stddev_samp(x) FROM tbl",
-                    null, ctx, false, true
-            );
+            assertQuery("SELECT stddev_samp(x) FROM tbl")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("stddev_samp\n3.0276503540974917\n");
         });
     }
 
@@ -106,12 +110,13 @@ public class StdDevParallelGroupByTest extends AbstractCairoTest {
     public void testParallelVarPopSparseNulls() throws Exception {
         runWithPool((compiler, ctx) -> {
             createSparseTable(compiler, ctx);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "var_pop\n8.25\n",
-                    "SELECT var_pop(x) FROM tbl",
-                    null, ctx, false, true
-            );
+            assertQuery("SELECT var_pop(x) FROM tbl")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_pop\n8.25\n");
         });
     }
 
@@ -119,12 +124,13 @@ public class StdDevParallelGroupByTest extends AbstractCairoTest {
     public void testParallelVarSampSparseNulls() throws Exception {
         runWithPool((compiler, ctx) -> {
             createSparseTable(compiler, ctx);
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "var_samp\n9.166666666666666\n",
-                    "SELECT var_samp(x) FROM tbl",
-                    null, ctx, false, true
-            );
+            assertQuery("SELECT var_samp(x) FROM tbl")
+                    .noLeakCheck()
+                    .withCompiler(compiler)
+                    .withContext(ctx)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("var_samp\n9.166666666666666\n");
         });
     }
 
@@ -143,7 +149,7 @@ public class StdDevParallelGroupByTest extends AbstractCairoTest {
     private void runWithPool(PoolRunnable body) throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) ->
+                TestUtils.execute(pool, (_, compiler, sqlExecutionContext) ->
                         body.run(compiler, sqlExecutionContext), configuration, LOG);
             }
         });

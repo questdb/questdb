@@ -411,7 +411,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "SELECT day_of_week(ts) day, key, vwap(price, quantity) FROM tab GROUP BY day, key ORDER BY day, key LIMIT 10",
                 """
                         QUERY PLAN[VARCHAR]
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [day, key]
                             VirtualRecord
                               functions: [day,key,vwap(price, quantity)]
@@ -450,7 +450,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "SELECT key, count_distinct(x) FROM tab ORDER BY key LIMIT 10",
                 """
                         QUERY PLAN[VARCHAR]
-                        Sort light lo: 10
+                        Encode sort light lo: 10
                           keys: [key]
                             Async Group By workers: 4
                               keys: [key]

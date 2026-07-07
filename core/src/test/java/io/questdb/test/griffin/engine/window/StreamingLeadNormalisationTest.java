@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -107,7 +108,7 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select x, lag(x, 1) over (order by y desc) as lx from t",
                     """
-                            CachedWindow
+                            CachedWindowLight
                               orderedFunctions: [[y desc] => [lag(x, 1, NULL) over ()]]
                                 PageFrame
                                     Row forward scan
@@ -137,7 +138,7 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
                             SelectedRecord
                                 Encode sort light
                                   keys: [y, ts]
-                                    CachedWindow
+                                    CachedWindowLight
                                       orderedFunctions: [[ts desc] => [lag(x, 1, NULL) over ()]]
                                         PageFrame
                                             Row forward scan
@@ -320,5 +321,28 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
                     null, false, true
             );
         });
+    }
+
+    // Bridge: AbstractCairoTest.assertQueryNoLeakCheck/assertPlanNoLeakCheck were removed in favor of
+    // the QueryAssertion builder (OSS #7195). Drive the builder so the suite's calls keep working.
+    private void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws Exception {
+        assertQuery(query).noLeakCheck().assertsPlan(expectedPlan);
+    }
+
+    private void assertQueryNoLeakCheck(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean expectSize
+    ) throws Exception {
+        QueryAssertion assertion = assertQuery(query).noLeakCheck().expectSize(expectSize);
+        if (expectedTimestamp != null) {
+            assertion.timestamp(expectedTimestamp);
+        }
+        if (!supportsRandomAccess) {
+            assertion.noRandomAccess();
+        }
+        assertion.returns(expected);
     }
 }

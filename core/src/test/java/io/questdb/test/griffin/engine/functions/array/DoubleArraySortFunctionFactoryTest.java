@@ -140,14 +140,18 @@ public class DoubleArraySortFunctionFactoryTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> 4)) {
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         // sorting preserves all values, so sum must be identical to unsorted
                         String unsorted = "SELECT sym, round(sum(array_sum(book)), 2) s FROM tmp GROUP BY sym ORDER BY 1";
                         TestUtils.printSql(engine, sqlExecutionContext, unsorted, sink);
                         String expected = sink.toString();
 
                         String sorted = "SELECT sym, round(sum(array_sum(array_sort(book))), 2) s FROM tmp GROUP BY sym ORDER BY 1";
-                        TestUtils.assertSql(engine, sqlExecutionContext, sorted, sink, expected);
+                        assertQuery(sorted)
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .returnsOnce(expected);
                     },
                     configuration,
                     LOG
@@ -211,9 +215,11 @@ public class DoubleArraySortFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[rnd_double(0) * 100, rnd_double(0) * 100, rnd_double(0) * 100] arr FROM long_sequence(5))");
 
-            assertSql(
-                    "count\n5\n",
-                    "SELECT count(*) FROM (SELECT array_sort(arr) FROM tango)");
+            assertQuery("SELECT count(*) FROM (SELECT array_sort(arr) FROM tango)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n5\n");
         });
     }
 
@@ -228,9 +234,11 @@ public class DoubleArraySortFunctionFactoryTest extends AbstractCairoTest {
                     )""");
 
             // verify array_sort works inside aggregate query
-            assertSql(
-                    "count\n2\n",
-                    "SELECT count(*) FROM (SELECT sym, count() FROM tango WHERE array_sum(array_sort(arr)) > -1 GROUP BY sym)");
+            assertQuery("SELECT count(*) FROM (SELECT sym, count() FROM tango WHERE array_sum(array_sort(arr)) > -1 GROUP BY sym)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2\n");
         });
     }
 }

@@ -374,8 +374,6 @@ public class QwpEgressMetricsScrapeTest extends AbstractQwpBootstrapTest {
                             scrape.contains("qwp_egress_connections"));
                     Assert.assertTrue("qwp_egress_cache_reset_dict must appear",
                             scrape.contains("qwp_egress_cache_reset_dict"));
-                    Assert.assertTrue("qwp_egress_cache_reset_schemas must appear",
-                            scrape.contains("qwp_egress_cache_reset_schemas"));
                 }
             }
         });

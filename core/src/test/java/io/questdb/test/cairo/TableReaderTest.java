@@ -1629,7 +1629,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                     Assert.assertFalse(ff.wasCalled());
                     try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
-                        job.run(0);
+                        job.run();
                     }
 
                     checkColumnPurgeRemovesFiles(counterRef, ff, 1);
@@ -4195,69 +4195,55 @@ public class TableReaderTest extends AbstractCairoTest {
             );
 
             // SELECT subset of columns — only a and ts (FullPartitionFrameCursorFactory)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a, ts FROM x")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             a\tts
                             1\t1970-01-01T00:00:00.000000Z
                             2\t1970-01-01T10:00:00.000000Z
                             3\t1970-01-01T20:00:00.000000Z
                             4\t1970-01-02T06:00:00.000000Z
                             5\t1970-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT a, ts FROM x",
-                    null,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // SELECT different subset — only b and c
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT b, c FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             b\tc
                             100\t1.5
                             200\t3.0
                             300\t4.5
                             400\t6.0
                             500\t7.5
-                            """,
-                    "SELECT b, c FROM x",
-                    null,
-                    null,
-                    true,
-                    true
-            );
+                            """);
 
             // SELECT all columns
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
                             a\tb\tc\tts
                             1\t100\t1.5\t1970-01-01T00:00:00.000000Z
                             2\t200\t3.0\t1970-01-01T10:00:00.000000Z
                             3\t300\t4.5\t1970-01-01T20:00:00.000000Z
                             4\t400\t6.0\t1970-01-02T06:00:00.000000Z
                             5\t500\t7.5\t1970-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT * FROM x",
-                    null,
-                    "ts",
-                    true,
-                    true
-            );
+                            """);
 
             // SELECT with WHERE (interval filter — uses IntervalPartitionFrameCursorFactory)
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT a, ts FROM x WHERE ts IN '1970-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             a\tts
                             4\t1970-01-02T06:00:00.000000Z
                             5\t1970-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT a, ts FROM x WHERE ts IN '1970-01-02'",
-                    null,
-                    "ts",
-                    true,
-                    false
-            );
+                            """);
         });
     }
 
@@ -5047,7 +5033,7 @@ public class TableReaderTest extends AbstractCairoTest {
         Assert.assertFalse(ff.wasCalled());
         counterRef.set(0);
         try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
-            job.run(0);
+            job.run();
         }
         int actual = ff.called();
         Assert.assertTrue("Expected at least " + removeCallsExpected + " file removals, but got " + actual, actual >= removeCallsExpected);

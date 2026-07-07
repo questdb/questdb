@@ -142,6 +142,9 @@ public interface ColumnIndexer extends QuietCloseable {
     default void seal() {
     }
 
+    default void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
+    }
+
     default void setCoveredColumnNameTxns(LongList txns) {
     }
 

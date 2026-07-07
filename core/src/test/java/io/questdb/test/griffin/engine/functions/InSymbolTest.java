@@ -24,10 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.BindVarTuple;
 import org.junit.Test;
 
 public class InSymbolTest extends AbstractCairoTest {
@@ -45,26 +44,22 @@ public class InSymbolTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('A'), ('B'), ('C')");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "Z");
-            assertSql(
-                    "s\n",
-                    "SELECT s FROM t WHERE 'A'::SYMBOL IN ((:b0)::VARCHAR)"
-            );
+            assertQuery("SELECT s FROM t WHERE 'A'::SYMBOL IN ((:b0)::VARCHAR)")
+                    .noLeakCheck()
+                    .returns("s\n");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "A");
-            assertSql(
-                    "s\nA\nB\nC\n",
-                    "SELECT s FROM t WHERE 'A'::SYMBOL IN ((:b0)::VARCHAR) ORDER BY 1"
-            );
+            assertQuery("SELECT s FROM t WHERE 'A'::SYMBOL IN ((:b0)::VARCHAR) ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("s\nA\nB\nC\n");
         });
     }
 
     @Test
-    public void testBindVarTypeChange2() throws SqlException {
-        execute("create table test as (select x, rnd_symbol(20, 2, 5, 1) a from long_sequence(100))");
-
+    public void testBindVarTypeChange2() throws Exception {
         // when more than one argument supplied, the function will match exact values from the list
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "simple",
                 """
                         x\ta
@@ -85,28 +80,28 @@ public class InSymbolTest extends AbstractCairoTest {
                 }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "undefined bind variable",
+                23,
                 "undefined bind variable: 2",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "ELLKK");
                     bindVariableService.setStr(1, "RX");
-                },
-                23
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.fails(
                 "bad type",
+                20,
                 "inconvertible types: INT -> SYMBOL [from=INT, to=SYMBOL]",
                 bindVariableService -> {
                     bindVariableService.setStr(0, "RX");
                     bindVariableService.setInt(1, 30);
                     bindVariableService.setStr(2, "CPSWH");
-                },
-                20
+                }
         ));
 
-        tuples.add(new BindVariableTestTuple(
+        cases.add(BindVarTuple.ok(
                 "with nulls",
                 """
                         x\ta
@@ -176,7 +171,9 @@ public class InSymbolTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("test where a in ($1,$2,$3)", tuples);
+        assertQuery("test where a in ($1,$2,$3)")
+                .ddl("create table test as (select x, rnd_symbol(20, 2, 5, 1) a from long_sequence(100))")
+                .assertBinds(cases);
     }
 
     @Test
@@ -194,45 +191,39 @@ public class InSymbolTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('A'), (NULL), ('B')");
             // CHAR(0) alongside another literal: the NULL row matches via CHAR(0),
             // 'A' picks up its own row.
-            assertSql(
-                    "s\n\nA\n",
-                    "SELECT s FROM t WHERE s IN ('A', (0)::CHAR) ORDER BY 1"
-            );
+            assertQuery("SELECT s FROM t WHERE s IN ('A', (0)::CHAR) ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("s\n\nA\n");
             // CHAR(0) alone in the list: only the NULL row matches.
-            assertSql(
-                    "s\n\n",
-                    "SELECT s FROM t WHERE s IN ((0)::CHAR)"
-            );
+            assertQuery("SELECT s FROM t WHERE s IN ((0)::CHAR)")
+                    .noLeakCheck()
+                    .returns("s\n\n");
             // CHAR(0) alongside an explicit NULL: both map to set-null, no double-add
             // or false-mismatch; only the NULL row matches.
-            assertSql(
-                    "s\n\n",
-                    "SELECT s FROM t WHERE s IN (NULL, (0)::CHAR)"
-            );
+            assertQuery("SELECT s FROM t WHERE s IN (NULL, (0)::CHAR)")
+                    .noLeakCheck()
+                    .returns("s\n\n");
             // A non-zero CHAR keeps its 1-char string and only matches the
             // corresponding symbol row, never the NULL row.
-            assertSql(
-                    "s\nA\n",
-                    "SELECT s FROM t WHERE s IN (('A')::CHAR)"
-            );
+            assertQuery("SELECT s FROM t WHERE s IN (('A')::CHAR)")
+                    .noLeakCheck()
+                    .returns("s\nA\n");
             // Bind variant: the runtime-constant CHAR(0) is deferred to
             // Func.init() and routed through deferredValueToString, which must
             // also map CHAR(0) to null so the deferred set agrees with the
             // eager-fold branch.
             bindVariableService.clear();
             bindVariableService.setStr("b0", "0");
-            assertSql(
-                    "s\n\nA\n",
-                    "SELECT s FROM t WHERE s IN ('A', (:b0::INT)::CHAR) ORDER BY 1"
-            );
+            assertQuery("SELECT s FROM t WHERE s IN ('A', (:b0::INT)::CHAR) ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("s\n\nA\n");
             // Bind-only variant: CHAR(0) is the only IN entry, exercising the
             // deferred path with no eagerly-folded set. Only the NULL row matches.
             bindVariableService.clear();
             bindVariableService.setStr("b0", "0");
-            assertSql(
-                    "s\n\n",
-                    "SELECT s FROM t WHERE s IN ((:b0::INT)::CHAR)"
-            );
+            assertQuery("SELECT s FROM t WHERE s IN ((:b0::INT)::CHAR)")
+                    .noLeakCheck()
+                    .returns("s\n\n");
         });
     }
 
@@ -250,14 +241,12 @@ public class InSymbolTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("b0", "B");
             bindVariableService.setStr("b1", "C");
-            assertSql(
-                    "s\nA\nB\n",
-                    "SELECT s FROM t WHERE s IN ('A', :b0::SYMBOL) ORDER BY 1"
-            );
-            assertSql(
-                    "s\nA\nC\n",
-                    "SELECT s FROM t WHERE s IN ('A', :b1::CHAR) ORDER BY 1"
-            );
+            assertQuery("SELECT s FROM t WHERE s IN ('A', :b0::SYMBOL) ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("s\nA\nB\n");
+            assertQuery("SELECT s FROM t WHERE s IN ('A', :b1::CHAR) ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("s\nA\nC\n");
         });
     }
 }

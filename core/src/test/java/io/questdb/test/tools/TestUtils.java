@@ -99,7 +99,7 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -158,7 +158,7 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
     }
@@ -986,29 +986,6 @@ public final class TestUtils {
         }
     }
 
-    public static void assertSql(
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink,
-            CharSequence expected
-    ) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertSql(compiler, sqlExecutionContext, sql, sink, expected);
-        }
-    }
-
-    public static void assertSql(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink,
-            CharSequence expected
-    ) throws SqlException {
-        printSql(compiler, sqlExecutionContext, sql, sink);
-        assertEquals(expected, sink);
-    }
-
     public static void assertSqlCursors(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -1519,7 +1496,7 @@ public final class TestUtils {
     public static void drainWalQueue(CairoEngine engine) {
         try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
             walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run(0);
+            new CheckWalTransactionsJob(engine).run();
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }
@@ -1576,7 +1553,7 @@ public final class TestUtils {
                 runnable.run(engine, compiler, sqlExecutionContext);
             } finally {
                 if (pool != null) {
-                    pool.halt();
+                    pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
                 }
             }
             Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -2044,10 +2021,21 @@ public final class TestUtils {
             path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash();
-            if (ff.exists(path.$()) && !Files.rmdir(path, true)) {
-                StringSink dir = new StringSink();
-                dir.put(path.$());
-                Assert.fail("Test dir " + dir + " cleanup error: " + Os.errno());
+            // Eager deletion (haltOnFail=false): some tests intentionally leave background worker threads
+            // running into teardown -- e.g. BackupTest.testBackupShutdownTimeout forces a backup-shutdown
+            // timeout that abandons its native upload/compression threads, "relying on process shutdown". Those
+            // threads race this cleanup and delete tree entries concurrently. haltOnFail=true aborts on the
+            // first already-gone entry (a benign "does not exist", errno 2/3 on Windows) and leaves the rest of
+            // the tree behind; eager mode keeps deleting and only fails if the root cannot ultimately be emptied.
+            if (ff.exists(path.$()) && !Files.rmdir(path, false)) {
+                final int errno = Os.errno();
+                // The racing deleter may have removed the root from under us -- treat "does not exist" as success.
+                // A genuine leak (an open file handle) instead leaves the root non-empty and still surfaces here.
+                if (errno != CairoException.ERRNO_FILE_DOES_NOT_EXIST && errno != CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN) {
+                    StringSink dir = new StringSink();
+                    dir.put(path.$());
+                    Assert.fail("Test dir " + dir + " cleanup error: " + errno);
+                }
             }
 
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
@@ -2669,26 +2657,37 @@ public final class TestUtils {
             // Checks that the same tag used for allocation and freeing native memory
             long memAfter = Unsafe.getMemUsed();
             long memNativeSqlCompilerDiff = 0;
+            long memNativeMemoryTrackerDiff = 0;
             Assert.assertTrue(memAfter > -1);
             if (mem != memAfter) {
                 for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                     long actualMemByTag = Unsafe.getMemUsedByTag(i);
                     if (memoryUsageByTag[i] != actualMemByTag) {
-                        if (i != MemoryTag.NATIVE_SQL_COMPILER) {
+                        if (i == MemoryTag.NATIVE_SQL_COMPILER) {
+                            // SqlCompiler memory is not released immediately as compilers are pooled
+                            Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
+                            memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
+                        } else if (i == MemoryTag.NATIVE_MEMORY_TRACKER) {
+                            // A deficit is legitimate: a nested leak check can baseline a tracker the
+                            // enclosing scope pooled, then the teardown's engine.clear() drains it. A
+                            // surplus, by contrast, is a tracker acquired and never released - a leak.
+                            Assert.assertTrue(
+                                    "Memory usage by tag: " + MemoryTag.nameOf(i)
+                                            + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
+                                    actualMemByTag <= memoryUsageByTag[i]
+                            );
+                            memNativeMemoryTrackerDiff = actualMemByTag - memoryUsageByTag[i];
+                        } else {
                             Assert.assertEquals(
                                     "Memory usage by tag: " + MemoryTag.nameOf(i)
                                             + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
                                     memoryUsageByTag[i], actualMemByTag
                             );
                             Assert.assertTrue(actualMemByTag > -1);
-                        } else {
-                            // SqlCompiler memory is not released immediately as compilers are pooled
-                            Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
-                            memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
                         }
                     }
                 }
-                Assert.assertEquals(mem + memNativeSqlCompilerDiff, memAfter);
+                Assert.assertEquals(mem + memNativeSqlCompilerDiff + memNativeMemoryTrackerDiff, memAfter);
             }
 
             int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();

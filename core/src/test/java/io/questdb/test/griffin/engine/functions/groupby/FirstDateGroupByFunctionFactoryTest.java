@@ -111,8 +111,20 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleFill() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select b, first(a), k from x sample by 3h fill(prev)")
+                    .noLeakCheck()
+                    .ddl("create table x as " +
+                            "(" +
+                            "select" +
+                            " rnd_date(0, 100000000L, 2) a," +
+                            " rnd_symbol(5,4,4,1) b," +
+                            " timestamp_sequence(172800000000, 360000000) k" +
+                            " from" +
+                            " long_sequence(100)" +
+                            ") timestamp(k) partition by NONE")
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .returns("""
                             b\tfirst\tk
                             \t\t1970-01-03T00:00:00.000000Z
                             VTJW\t1970-01-01T23:18:12.817Z\t1970-01-03T00:00:00.000000Z
@@ -138,20 +150,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
                             HYRX\t1970-01-01T17:07:59.067Z\t1970-01-03T09:00:00.000000Z
                             CPSW\t1970-01-01T00:09:58.820Z\t1970-01-03T09:00:00.000000Z
                             PEHN\t1970-01-01T14:39:15.119Z\t1970-01-03T09:00:00.000000Z
-                            """,
-                    "select b, first(a), k from x sample by 3h fill(prev)",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_date(0, 100000000L, 2) a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(172800000000, 360000000) k" +
-                            " from" +
-                            " long_sequence(100)" +
-                            ") timestamp(k) partition by NONE",
-                    "k",
-                    false
-            );
+                            """);
             execute("insert into x select * from (" +
                     "select" +
                     " rnd_date() a," +
@@ -160,8 +159,12 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
                     " from" +
                     " long_sequence(35)" +
                     ") timestamp(k)");
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("select b, first(a), k from x sample by 3h fill(prev)")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .timestamp("k")
+                    .noRandomAccess()
+                    .returns("""
                             b\tfirst\tk
                             \t\t1970-01-03T00:00:00.000000Z
                             VTJW\t1970-01-01T23:18:12.817Z\t1970-01-03T00:00:00.000000Z
@@ -273,12 +276,7 @@ public class FirstDateGroupByFunctionFactoryTest extends AbstractCairoTest {
                             CPSW\t1970-01-01T00:09:58.820Z\t1970-01-04T06:00:00.000000Z
                             HYRX\t1970-01-01T17:07:59.067Z\t1970-01-04T06:00:00.000000Z
                             MXUK\t1970-01-01T00:39:19.580Z\t1970-01-04T06:00:00.000000Z
-                            """,
-                    "select b, first(a), k from x sample by 3h fill(prev)",
-                    null,
-                    "k",
-                    false
-            );
+                            """);
         });
     }
 

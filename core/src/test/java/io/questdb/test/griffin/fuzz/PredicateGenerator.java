@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -52,6 +53,40 @@ public final class PredicateGenerator {
     public PredicateGenerator(Rnd rnd, int maxDepth) {
         this.rnd = rnd;
         this.maxDepth = maxDepth;
+    }
+
+    /**
+     * Emits an optional {@code WHERE} clause onto {@code sql}. With probability
+     * 1/2 it appends {@code WHERE <predicate>} over {@code columns}, the
+     * predicate built at {@code maxDepth}. When {@code injectFaultFn} is set the
+     * fuzzer's {@code test_fault()} function is woven in as the first conjunct --
+     * so it is evaluated for every scanned row -- forcing a WHERE even when none
+     * would otherwise be emitted. The rnd draw sequence is identical regardless
+     * of {@code injectFaultFn}, so non-fault generation stays byte-identical and
+     * the bind-variant determinism invariant holds.
+     */
+    public static void appendWhere(
+            StringSink sql,
+            Rnd rnd,
+            ObjList<FuzzColumn> columns,
+            String qualifier,
+            int maxDepth,
+            BindContext ctx,
+            boolean injectFaultFn
+    ) {
+        boolean hasWhere = rnd.nextBoolean();
+        if (!hasWhere && !injectFaultFn) {
+            return;
+        }
+        sql.put(" WHERE ");
+        if (injectFaultFn) {
+            sql.put(TestFaultFunctionFactory.CALL);
+            if (hasWhere) {
+                sql.put(" AND ").put(new PredicateGenerator(rnd, maxDepth).generate(columns, qualifier, ctx));
+            }
+        } else {
+            sql.put(new PredicateGenerator(rnd, maxDepth).generate(columns, qualifier, ctx));
+        }
     }
 
     public String generate(ObjList<FuzzColumn> columns, String qualifier, BindContext ctx) {

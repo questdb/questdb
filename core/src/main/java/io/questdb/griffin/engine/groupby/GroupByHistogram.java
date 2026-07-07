@@ -116,9 +116,9 @@ public class GroupByHistogram implements Mutable {
         this.ptr = ptr;
 
         if (ptr != 0) {
-            this.countsArrayLength = Unsafe.getUnsafe().getInt(ptr + countsArrayLengthPosition);
-            this.bucketCount = Unsafe.getUnsafe().getInt(ptr + bucketCountPosition);
-            this.highestTrackableValue = Unsafe.getUnsafe().getLong(ptr + highestTrackableValuePosition);
+            this.countsArrayLength = Unsafe.getInt(ptr + countsArrayLengthPosition);
+            this.bucketCount = Unsafe.getInt(ptr + bucketCountPosition);
+            this.highestTrackableValue = Unsafe.getLong(ptr + highestTrackableValuePosition);
             this.allocatedSize = headerSize + (countsArrayLength * 8L);
         } else {
             this.countsArrayLength = defaultCountsArrayLength;
@@ -158,19 +158,19 @@ public class GroupByHistogram implements Mutable {
         if (ptr == 0) {
             return 0;
         }
-        int normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
-        return Unsafe.getUnsafe().getLong(ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3));
+        int normalizingIndexOffset = Unsafe.getInt(ptr + normalizingIndexOffsetPosition);
+        return Unsafe.getLong(ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3));
     }
 
     public long getTotalCount() {
-        return (ptr != 0) ? Unsafe.getUnsafe().getLong(ptr) : 0;
+        return (ptr != 0) ? Unsafe.getLong(ptr) : 0;
     }
 
     public long getMaxValue() {
         if (ptr == 0) {
             return 0;
         }
-        long maxVal = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
+        long maxVal = Unsafe.getLong(ptr + maxValuePosition);
         return (maxVal == 0) ? 0 : highestEquivalentValue(maxVal);
     }
 
@@ -178,66 +178,66 @@ public class GroupByHistogram implements Mutable {
         if (ptr == 0) {
             return Long.MAX_VALUE;
         }
-        long minVal = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
+        long minVal = Unsafe.getLong(ptr + minNonZeroValuePosition);
         return (minVal == Long.MAX_VALUE) ? Long.MAX_VALUE : lowestEquivalentValue(minVal);
     }
 
     public long getStartTimeStamp() {
-        return (ptr != 0) ? Unsafe.getUnsafe().getLong(ptr + startTimeStampMsecPosition) : Long.MAX_VALUE;
+        return (ptr != 0) ? Unsafe.getLong(ptr + startTimeStampMsecPosition) : Long.MAX_VALUE;
     }
 
     public void setStartTimeStamp(long timeStampMsec) {
         if (ptr != 0) {
-            Unsafe.getUnsafe().putLong(ptr + startTimeStampMsecPosition, timeStampMsec);
+            Unsafe.putLong(ptr + startTimeStampMsecPosition, timeStampMsec);
         }
     }
 
     public long getEndTimeStamp() {
-        return (ptr != 0) ? Unsafe.getUnsafe().getLong(ptr + endTimeStampMsecPosition) : 0;
+        return (ptr != 0) ? Unsafe.getLong(ptr + endTimeStampMsecPosition) : 0;
     }
 
     public void setEndTimeStamp(long timeStampMsec) {
         if (ptr != 0) {
-            Unsafe.getUnsafe().putLong(ptr + endTimeStampMsecPosition, timeStampMsec);
+            Unsafe.putLong(ptr + endTimeStampMsecPosition, timeStampMsec);
         }
     }
 
     void addToCountAtIndex(int index, long value) {
         checkBounds(index);
         ensureCapacity();
-        int normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
+        int normalizingIndexOffset = Unsafe.getInt(ptr + normalizingIndexOffsetPosition);
         long addr = ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
-        Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + value);
+        Unsafe.putLong(addr, Unsafe.getLong(addr) + value);
     }
 
     void addToTotalCount(long value) {
         if (ptr != 0) {
-            long totalCount = Unsafe.getUnsafe().getLong(ptr);
-            Unsafe.getUnsafe().putLong(ptr, totalCount + value);
+            long totalCount = Unsafe.getLong(ptr);
+            Unsafe.putLong(ptr, totalCount + value);
         }
     }
 
     int getNormalizingIndexOffset() {
-        return (ptr != 0) ? Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition) : 0;
+        return (ptr != 0) ? Unsafe.getInt(ptr + normalizingIndexOffsetPosition) : 0;
     }
 
     void incrementCountAtIndex(int index) {
         checkBounds(index);
         ensureCapacity();
-        int normalizingIndexOffset = Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition);
+        int normalizingIndexOffset = Unsafe.getInt(ptr + normalizingIndexOffsetPosition);
         long addr = ptr + headerSize + ((long) normalizeIndex(index, normalizingIndexOffset, countsArrayLength) << 3);
-        Unsafe.getUnsafe().putLong(addr, Unsafe.getUnsafe().getLong(addr) + 1);
+        Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
     }
 
     void incrementTotalCount() {
         if (ptr != 0) {
-            long totalCount = Unsafe.getUnsafe().getLong(ptr);
-            Unsafe.getUnsafe().putLong(ptr, totalCount + 1);
+            long totalCount = Unsafe.getLong(ptr);
+            Unsafe.putLong(ptr, totalCount + 1);
         }
     }
 
     void resize(long newHighestTrackableValue) {
-        int oldNormalizingIndexOffset = (ptr != 0) ? Unsafe.getUnsafe().getInt(ptr + normalizingIndexOffsetPosition) : 0;
+        int oldNormalizingIndexOffset = (ptr != 0) ? Unsafe.getInt(ptr + normalizingIndexOffsetPosition) : 0;
         int oldNormalizedZeroIndex = normalizeIndex(0, oldNormalizingIndexOffset, countsArrayLength);
         int oldCountsArrayLength = countsArrayLength;
         boolean hadPreviousAllocation = (ptr != 0);
@@ -267,26 +267,26 @@ public class GroupByHistogram implements Mutable {
         }
 
         // Update size fields in header for of() repointing to work correctly
-        Unsafe.getUnsafe().putInt(ptr + countsArrayLengthPosition, countsArrayLength);
-        Unsafe.getUnsafe().putInt(ptr + bucketCountPosition, bucketCount);
-        Unsafe.getUnsafe().putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
+        Unsafe.putInt(ptr + countsArrayLengthPosition, countsArrayLength);
+        Unsafe.putInt(ptr + bucketCountPosition, bucketCount);
+        Unsafe.putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
     }
 
     private void allocate(long newCapacity) {
         ptr = allocator.malloc(newCapacity);
         allocatedSize = newCapacity;
 
-        Unsafe.getUnsafe().putLong(ptr, 0);
-        Unsafe.getUnsafe().putInt(ptr + normalizingIndexOffsetPosition, 0);
-        Unsafe.getUnsafe().putLong(ptr + maxValuePosition, 0);
-        Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE);
-        Unsafe.getUnsafe().putInt(ptr + countsArrayLengthPosition, countsArrayLength);
-        Unsafe.getUnsafe().putInt(ptr + bucketCountPosition, bucketCount);
-        Unsafe.getUnsafe().putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
-        Unsafe.getUnsafe().putLong(ptr + startTimeStampMsecPosition, Long.MAX_VALUE);
-        Unsafe.getUnsafe().putLong(ptr + endTimeStampMsecPosition, 0);
-        Unsafe.getUnsafe().putLong(ptr + lowestDiscernibleValuePosition, lowestDiscernibleValue);
-        Unsafe.getUnsafe().putInt(ptr + numberOfSignificantValueDigitsPosition, numberOfSignificantValueDigits);
+        Unsafe.putLong(ptr, 0);
+        Unsafe.putInt(ptr + normalizingIndexOffsetPosition, 0);
+        Unsafe.putLong(ptr + maxValuePosition, 0);
+        Unsafe.putLong(ptr + minNonZeroValuePosition, Long.MAX_VALUE);
+        Unsafe.putInt(ptr + countsArrayLengthPosition, countsArrayLength);
+        Unsafe.putInt(ptr + bucketCountPosition, bucketCount);
+        Unsafe.putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
+        Unsafe.putLong(ptr + startTimeStampMsecPosition, Long.MAX_VALUE);
+        Unsafe.putLong(ptr + endTimeStampMsecPosition, 0);
+        Unsafe.putLong(ptr + lowestDiscernibleValuePosition, lowestDiscernibleValue);
+        Unsafe.putInt(ptr + numberOfSignificantValueDigitsPosition, numberOfSignificantValueDigits);
 
         Vect.memset(ptr + headerSize, countsArrayLength * 8L, 0);
     }
@@ -307,7 +307,7 @@ public class GroupByHistogram implements Mutable {
 
     void setTotalCount(long totalCount) {
         if (ptr != 0) {
-            Unsafe.getUnsafe().putLong(ptr, totalCount);
+            Unsafe.putLong(ptr, totalCount);
         }
     }
 
@@ -316,19 +316,19 @@ public class GroupByHistogram implements Mutable {
             return;
         }
 
-        long currentMax = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
+        long currentMax = Unsafe.getLong(ptr + maxValuePosition);
         if (value > currentMax) {
             long newMax = value | unitMagnitudeMask;
-            Unsafe.getUnsafe().putLong(ptr + maxValuePosition, newMax);
+            Unsafe.putLong(ptr + maxValuePosition, newMax);
         }
 
-        long currentMin = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
+        long currentMin = Unsafe.getLong(ptr + minNonZeroValuePosition);
         if ((value < currentMin) && (value != 0)) {
             if (value <= unitMagnitudeMask) {
                 return;
             }
             long newMin = value & ~unitMagnitudeMask;
-            Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, newMin);
+            Unsafe.putLong(ptr + minNonZeroValuePosition, newMin);
         }
     }
 
@@ -336,9 +336,9 @@ public class GroupByHistogram implements Mutable {
         if (ptr == 0) {
             return;
         }
-        long currentMax = Unsafe.getUnsafe().getLong(ptr + maxValuePosition);
+        long currentMax = Unsafe.getLong(ptr + maxValuePosition);
         long newMax = Math.max(currentMax, value | unitMagnitudeMask);
-        Unsafe.getUnsafe().putLong(ptr + maxValuePosition, newMax);
+        Unsafe.putLong(ptr + maxValuePosition, newMax);
     }
 
     private void updateMinNonZeroValue(long value) {
@@ -348,9 +348,9 @@ public class GroupByHistogram implements Mutable {
         if (value <= unitMagnitudeMask) {
             return;
         }
-        long currentMin = Unsafe.getUnsafe().getLong(ptr + minNonZeroValuePosition);
+        long currentMin = Unsafe.getLong(ptr + minNonZeroValuePosition);
         long newMin = Math.min(currentMin, value & ~unitMagnitudeMask);
-        Unsafe.getUnsafe().putLong(ptr + minNonZeroValuePosition, newMin);
+        Unsafe.putLong(ptr + minNonZeroValuePosition, newMin);
     }
 
     private void ensureCapacity() {
@@ -546,7 +546,7 @@ public class GroupByHistogram implements Mutable {
         int countsIndex = countsArrayIndex(value);
         addToCountAtIndex(countsIndex, count);
         this.highestTrackableValue = highestEquivalentValue(valueFromIndex(countsArrayLength - 1));
-        Unsafe.getUnsafe().putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
+        Unsafe.putLong(ptr + highestTrackableValuePosition, highestTrackableValue);
     }
 
     public void add(final GroupByHistogram otherHistogram) throws CairoException {

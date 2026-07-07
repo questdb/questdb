@@ -27,7 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Decimal256;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Sinkable;
@@ -35,7 +35,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 public class LineProtocolException extends CairoException {
-    private static final ThreadLocal<LineProtocolException> tlException = new ThreadLocal<>(LineProtocolException::new);
+    private static final CarrierLocal<LineProtocolException> tlException = new CarrierLocal<>(LineProtocolException::new);
 
     public static LineProtocolException boundsError(long entityValue, int colType, CharSequence tableNameUtf16, CharSequence columnName) {
         return instance()

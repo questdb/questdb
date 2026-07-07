@@ -107,6 +107,9 @@ public class PostingIndexBenchmarkSuite {
         //   "wal":             walFastLag* and walLargePartition*
         //   "wal_o3":          walLargePartitionO3* — O3 commit paths
         //                      (commitDense + rebuildSidecarsByCopy)
+        //   "wal_o3_spill":    walLargePartitionO3SpillReseal — reseal cost as
+        //                      the spill budget forces mid-stream flushes
+        //                      (commitDense's flushAllPendingDense vs seal())
         //   "io":              page-fault analysis only (skip JMH benchmarks)
         //   anything else:     literal regex body, expanded to
         //                      "PostingIndexBenchmarkSuite\.(<token>)$"
@@ -119,6 +122,7 @@ public class PostingIndexBenchmarkSuite {
             case "wal" -> suiteName + "\\.(walFastLag|walLargePartition).*";
             case "wal_o3" -> suiteName + "\\.walLargePartitionO3.*";
             case "wal_o3_append" -> suiteName + "\\.walLargePartitionO3AppendInsert.*";
+            case "wal_o3_spill" -> suiteName + "\\.walLargePartitionO3SpillReseal.*";
             case "io" -> null;
             default -> suiteName + "\\.(" + filter + ")$";
         };
@@ -128,7 +132,7 @@ public class PostingIndexBenchmarkSuite {
             org.openjdk.jmh.runner.options.ChainedOptionsBuilder builder = new OptionsBuilder()
                     .include(includePattern)
                     .resultFormat(ResultFormatType.TEXT);
-            if ("wal_o3".equals(filter) || "wal_o3_append".equals(filter)) {
+            if ("wal_o3".equals(filter) || "wal_o3_append".equals(filter) || "wal_o3_spill".equals(filter)) {
                 builder.forks(1)
                         .warmupIterations(1)
                         .measurementIterations(2);
@@ -140,7 +144,12 @@ public class PostingIndexBenchmarkSuite {
             results = new Runner(builder.build()).run();
             printSummary(results);
         }
-        runPageFaultAnalysis();
+        // Page-fault projection is part of the broad/IO sweeps; skip it for
+        // focused single-benchmark runs (e.g. -Dquestdb.suite.bench=sqlLimit)
+        // so iteration stays fast.
+        if ("all".equals(filter) || "core".equals(filter) || "io".equals(filter)) {
+            runPageFaultAnalysis();
+        }
     }
 
     /**
@@ -283,6 +292,35 @@ public class PostingIndexBenchmarkSuite {
     }
 
     @Benchmark
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MICROSECONDS)
+    public long sqlLimit(LimitState s) throws Exception {
+        // One LIMIT query end to end. The first hasNext() triggers
+        // fetchAllFrames(); for a covering LIMIT that includes buildAddressCache()
+        // materializing the whole matching-key result set up front -- the M1 cost.
+        // Reads every projected column so the VARCHAR copy is on the hot path too.
+        long sum = 0;
+        var meta = s.factory.getMetadata();
+        int cols = meta.getColumnCount();
+        try (RecordCursor cursor = s.factory.getCursor(LimitState.ctx)) {
+            Record rec = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int c = 0; c < cols; c++) {
+                    switch (ColumnType.tagOf(meta.getColumnType(c))) {
+                        case ColumnType.DOUBLE -> sum += (long) rec.getDouble(c);
+                        case ColumnType.VARCHAR -> {
+                            var v = rec.getVarcharA(c);
+                            sum += v == null ? 0 : v.size();
+                        }
+                        default -> sum++;
+                    }
+                }
+            }
+        }
+        return sum;
+    }
+
+    @Benchmark
     public long sqlQuery(SqlState s) throws Exception {
         long sum = 0;
         try (RecordCursorFactory factory = s.compiler.compile(s.sql, s.ctx).getRecordCursorFactory()) {
@@ -325,7 +363,7 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + s.batchRows + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -396,7 +434,7 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + WalLargePartitionState.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -424,7 +462,7 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + WalLargePartitionO3AppendState.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -452,7 +490,39 @@ public class PostingIndexBenchmarkSuite {
                 "FROM long_sequence(" + WalLargePartitionO3State.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
         s.applyJob.drain(0);
-        s.checkJob.run(0);
+        s.checkJob.run();
+        s.applyJob.drain(0);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    @Fork(1)
+    @Warmup(iterations = 1)
+    @Measurement(iterations = 2)
+    public void walLargePartitionO3SpillReseal(WalLargePartitionO3SpillState s) throws Exception {
+        // Same O3-mutating insert as walLargePartitionO3Insert (forces
+        // sealPostingIndexForPartition's canSkipRebuild=false reseal:
+        // discardForRebuild + index + commitDense + rebuildSidecars), but with
+        // cairo.posting.index.indexer.spill.bytes.max parameterised so the
+        // reseal's index() loop spills a controlled number of times:
+        //   - spillBytesMax=256MiB: no mid-stream flush. commitDense stays on
+        //     flushAllPendingDense (the unchanged fast path) -- a no-op for the
+        //     fix, so this column is the no-regression baseline.
+        //   - spillBytesMax=2MiB / 256KiB: re-indexing the ~1M-row partition
+        //     trips compactIfOverBudget, so commitDense routes through seal()
+        //     (flushAllPending + sealFull consolidation). This is the path the
+        //     fix added; before the fix it crashed (covering) or dropped rows
+        //     (non-covering), so there is no pre-fix number to compare against.
+        // Single shot on a freshly preloaded partition (Level.Iteration setup).
+        String sql = "INSERT INTO walbench(ts, sym, " + s.extraColumns + ") " +
+                "SELECT dateadd('u', rnd_int(1, " + WalLargePartitionO3SpillState.PRELOAD_TS_LIMIT_US +
+                ", 0), '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
+                "FROM long_sequence(" + WalLargePartitionO3SpillState.BATCH_ROWS + ")";
+        s.engine.execute(sql, s.ctx);
+        s.applyJob.drain(0);
+        s.checkJob.run();
         s.applyJob.drain(0);
     }
 
@@ -740,6 +810,22 @@ public class PostingIndexBenchmarkSuite {
                 if (v != null) {
                     out.printf("    %-28s %,12.0f ops/s%n", group[i], v);
                 }
+            }
+        }
+
+        // --- Limit by covered-column type (M1: covering over-materialization) ---
+        if (scores.get("sqlLimit/neg_cov_double") != null) {
+            out.println();
+            out.println("── LIMIT by covered type (us/op, lower=better; cov=covering, pl=plain) ────────────");
+            out.printf("  %-9s %11s %11s %11s %11s%n", "shape", "neg cov", "neg pl", "pos cov", "pos pl");
+            for (String shape : new String[]{"double", "varchar", "both"}) {
+                Double nc = scores.get("sqlLimit/neg_cov_" + shape);
+                Double np = scores.get("sqlLimit/neg_plain_" + shape);
+                Double pc = scores.get("sqlLimit/pos_cov_" + shape);
+                Double pp = scores.get("sqlLimit/pos_plain_" + shape);
+                out.printf("  %-9s %,11.1f %,11.1f %,11.1f %,11.1f%n", shape,
+                        nc != null ? nc : 0, np != null ? np : 0,
+                        pc != null ? pc : 0, pp != null ? pp : 0);
             }
         }
 
@@ -1574,6 +1660,126 @@ public class PostingIndexBenchmarkSuite {
     }
 
     /**
+     * LIMIT over a covering index vs a plain index, across covered-column
+     * shapes, on a reasonably large hot-key dataset: {@link #ROWS} rows over
+     * {@link #KEYS} symbols spread across ~{@code ROWS/86400} DAY partitions,
+     * so each key has ~{@code ROWS/KEYS} matching rows.
+     * <p>
+     * The grid is direction (neg/pos) x index (cov/plain) x shape
+     * (double/varchar/both). A covering LIMIT materializes the whole
+     * matching-key result set up front (buildAddressCache drains every
+     * sub-frame before a row is returned); the plain twin shares the data
+     * shape, so the gap is the covering materialization cost. The shape axis
+     * exposes how that cost scales with the covered column type -- an 8-byte
+     * DOUBLE store vs a variable-length VARCHAR copy (M1's worst case).
+     * <p>
+     * The covering table covers BOTH name (VARCHAR) and price (DOUBLE); the
+     * plain twin has the same columns without INCLUDE. Both tables are built
+     * ONCE and shared across every param combination, so the grid costs only a
+     * query compile per cell, not another multi-million-row load. ROWS/KEYS are
+     * overridable via {@code -Dquestdb.limit.bench.rows} /
+     * {@code -Dquestdb.limit.bench.keys}.
+     */
+    @State(Scope.Benchmark)
+    public static class LimitState {
+        static final int KEYS = Integer.getInteger("questdb.limit.bench.keys", 16);
+        static final int ROWS = Integer.getInteger("questdb.limit.bench.rows", 5_000_000);
+        private static String covKey;
+        private static SqlExecutionContextImpl ctx;
+        private static String ncKey;
+        private static java.nio.file.Path sharedDir;
+        private static CairoEngine sharedEngine;
+
+        RecordCursorFactory factory;
+        @Param({
+                "neg_cov_double", "neg_plain_double", "pos_cov_double", "pos_plain_double",
+                "neg_cov_varchar", "neg_plain_varchar", "pos_cov_varchar", "pos_plain_varchar",
+                "neg_cov_both", "neg_plain_both", "pos_cov_both", "pos_plain_both"
+        })
+        String queryType;
+
+        // Build the two large tables exactly once and share them across every
+        // param combination -- adding shapes/directions then costs only a
+        // compile, not another load.
+        private static synchronized void ensureData() throws Exception {
+            if (sharedEngine != null) {
+                return;
+            }
+            sharedDir = Files.createTempDirectory("suite-limit");
+            CairoConfiguration config = new DefaultCairoConfiguration(sharedDir.toString()) {
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 8192;
+                }
+            };
+            CairoEngine engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                // Covering table: posting index on sym, INCLUDE covers both the
+                // VARCHAR (name) and DOUBLE (price), so any projection is served
+                // from the sidecar. Plain twin: same columns, bitmap index, no
+                // INCLUDE -- projected/filtered columns come from the base.
+                engine.execute("CREATE TABLE lim (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (name, price), name VARCHAR, price DOUBLE) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("INSERT INTO lim SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP, " +
+                        "rnd_symbol(" + KEYS + ", 4, 8, 0), rnd_varchar(10, 30, 0), rnd_double() * 1000 " +
+                        "FROM long_sequence(" + ROWS + ")", ctx);
+                engine.execute("CREATE TABLE lim_nc (ts TIMESTAMP, sym SYMBOL INDEX, name VARCHAR, price DOUBLE) " +
+                        "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("INSERT INTO lim_nc SELECT dateadd('s', x::INT, '2024-01-01')::TIMESTAMP, " +
+                        "rnd_symbol(" + KEYS + ", 4, 8, 0), rnd_varchar(10, 30, 0), rnd_double() * 1000 " +
+                        "FROM long_sequence(" + ROWS + ")", ctx);
+                engine.releaseAllWriters();
+                covKey = resolveKey(compiler, ctx, "lim");
+                ncKey = resolveKey(compiler, ctx, "lim_nc");
+            }
+            sharedEngine = engine;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                Misc.free(sharedEngine);
+                deleteDirRecursive(sharedDir.toFile());
+            }));
+        }
+
+        @Setup(Level.Trial)
+        public void setup() throws Exception {
+            ensureData();
+            boolean covering = queryType.contains("_cov_");
+            String table = covering ? "lim" : "lim_nc";
+            String key = covering ? covKey : ncKey;
+            String limit = queryType.startsWith("neg") ? " LIMIT -5" : " LIMIT 5";
+            String proj;
+            String filter;
+            if (queryType.endsWith("double")) {
+                proj = "price";
+                filter = "price > 500";
+            } else if (queryType.endsWith("varchar")) {
+                proj = "name";
+                filter = "name != 'x'";
+            } else {
+                proj = "name, price";
+                filter = "price > 500";
+            }
+            String sql = "SELECT " + proj + " FROM " + table + " WHERE sym = '" + key + "' AND " + filter + limit;
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(sharedEngine)) {
+                factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+            }
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            factory = Misc.free(factory);
+        }
+    }
+
+    /**
      * S9: WAL fast-lag cost suite — per-commit seal cost, point-query cost in
      * the unsealed window, and combined insert+query cost.
      * <p>
@@ -1709,7 +1915,7 @@ public class PostingIndexBenchmarkSuite {
                     "FROM long_sequence(" + PRELOAD_ROWS + ")";
             engine.execute(preloadSql, ctx);
             applyJob.drain(0);
-            checkJob.run(0);
+            checkJob.run();
             applyJob.drain(0);
 
             // Drive the chain to the target unsealed gen count. Each
@@ -1725,7 +1931,7 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + PREBUILD_BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
 
@@ -1839,7 +2045,7 @@ public class PostingIndexBenchmarkSuite {
                     "FROM long_sequence(" + PRELOAD_ROWS + ")";
             engine.execute(preloadSql, ctx);
             applyJob.drain(0);
-            checkJob.run(0);
+            checkJob.run();
             applyJob.drain(0);
 
             // Sample distinct symbols from the preloaded data for the read
@@ -1959,7 +2165,7 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
 
@@ -1970,7 +2176,7 @@ public class PostingIndexBenchmarkSuite {
                     sentinelExtraValues() + ")";
             engine.execute(sentinelSql, ctx);
             applyJob.drain(0);
-            checkJob.run(0);
+            checkJob.run();
             applyJob.drain(0);
         }
 
@@ -2086,7 +2292,117 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
+                applyJob.drain(0);
+            }
+        }
+
+        @TearDown(Level.Iteration)
+        public void tearDown() {
+            Misc.free(applyJob);
+            Misc.free(compiler);
+            Misc.free(engine);
+            deleteDirRecursive(tmpDir.toFile());
+        }
+    }
+
+    /**
+     * State for {@code walLargePartitionO3SpillReseal}: preload a single ~1M-row
+     * DAY partition, then let the benchmark O3-mutate it so the posting index
+     * reseals from the column file. {@code keyCount} is small so each symbol is
+     * hot and re-indexing the partition spills enough rowids to cross the small
+     * {@link #spillBytesMax} budgets. {@code spillBytesMax} controls how often
+     * the reseal's index() loop flushes mid-stream, selecting commitDense's
+     * fast path (no flush) vs its seal() consolidation path (>=1 flush).
+     */
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.SingleShotTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class WalLargePartitionO3SpillState {
+        static final int BATCH_ROWS = 100_000;
+        static final int PARTITION_SIZE = 1_000_000;
+        // Matches the preload span (1us spacing over PARTITION_SIZE rows) so the
+        // benchmark's O3 rows land inside the existing data and force mutation
+        // (canSkipRebuild=false), not a pure append.
+        static final int PRELOAD_TS_LIMIT_US = PARTITION_SIZE;
+
+        ApplyWal2TableJob applyJob;
+        CheckWalTransactionsJob checkJob;
+        SqlCompilerImpl compiler;
+        SqlExecutionContextImpl ctx;
+        CairoEngine engine;
+        String extraColumns;
+        String extraValues;
+        @Param({"posting_covering", "posting"})
+        String indexType;
+        int keyCount = 100;
+        // cairo.posting.index.indexer.spill.bytes.max. 256MiB never flushes
+        // mid-stream (flushAllPendingDense fast path = no-regression baseline);
+        // 2MiB and 256KiB trip compactIfOverBudget so commitDense routes through
+        // seal() (the path the fix added).
+        @Param({"268435456", "2097152", "262144"})
+        long spillBytesMax;
+        java.nio.file.Path tmpDir;
+
+        @Setup(Level.Iteration)
+        public void setup() throws Exception {
+            tmpDir = Files.createTempDirectory("suite-largepart-o3-spill");
+            CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
+                @Override
+                public long getPostingIndexerSpillBytesMax() {
+                    return spillBytesMax;
+                }
+
+                @Override
+                public byte getPostingIndexRowIdEncoding() {
+                    return IS_DELTA ? PostingIndexUtils.ENCODING_DELTA : PostingIndexUtils.ENCODING_ADAPTIVE;
+                }
+
+                @Override
+                public int getRndFunctionMemoryMaxPages() {
+                    return 4096;
+                }
+
+                @Override
+                public boolean isPostingIndexAutoIncludeTimestamp() {
+                    // Without this, POSTING auto-covers the designated timestamp,
+                    // so the "posting" variant would also be covering and the two
+                    // @Param values would measure the same path. Disabling it keeps
+                    // "posting" on the non-covering reseal (commitDense -> seal,
+                    // no rebuildSidecars) and "posting_covering" on the covering
+                    // reseal via the explicit INCLUDE (price) below.
+                    return false;
+                }
+            };
+            engine = new CairoEngine(config);
+            ctx = new SqlExecutionContextImpl(engine, 1)
+                    .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null);
+            compiler = new SqlCompilerImpl(engine);
+
+            String ddl = switch (indexType) {
+                case "posting" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        ", price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                case "posting_covering" -> "CREATE TABLE walbench (ts TIMESTAMP, sym SYMBOL INDEX TYPE " + POSTING_SQL +
+                        " INCLUDE (price), price DOUBLE, name VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                default -> throw new IllegalArgumentException(indexType);
+            };
+            extraColumns = "price, name";
+            extraValues = "rnd_double() * 1000, rnd_varchar(10, 20, 0)";
+            engine.execute(ddl, ctx);
+            applyJob = new ApplyWal2TableJob(engine, 0);
+            checkJob = new CheckWalTransactionsJob(engine);
+
+            int batches = PARTITION_SIZE / BATCH_ROWS;
+            for (int i = 0; i < batches; i++) {
+                int batchOffsetUs = i * BATCH_ROWS + 1;
+                String batchSql = "INSERT INTO walbench(ts, sym, " + extraColumns + ") " +
+                        "SELECT dateadd('u', x::INT + " + batchOffsetUs + ", '2024-01-01T00:00:00.000000Z'::TIMESTAMP), " +
+                        "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
+                        "FROM long_sequence(" + BATCH_ROWS + ")";
+                engine.execute(batchSql, ctx);
+                applyJob.drain(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
         }
@@ -2214,7 +2530,7 @@ public class PostingIndexBenchmarkSuite {
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
                 applyJob.drain(0);
-                checkJob.run(0);
+                checkJob.run();
                 applyJob.drain(0);
             }
 

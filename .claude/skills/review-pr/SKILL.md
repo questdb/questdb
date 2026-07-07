@@ -146,7 +146,7 @@ Every agent receives:
 
 Launch the following agents in parallel.
 
-**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite.
+**Agent 1 — Correctness & bugs:** NULL handling, edge cases, logic errors, off-by-one, operator precedence, error paths. Cross-reference every changed symbol against its callsite inventory and verify the new behavior is correct at each callsite. When the diff touches the QWP ingress / role-gating path, an in-place switch or failover, a `java-questdb-client` submodule bump, or store-and-forward test suites, also verify the "Store-and-forward & pool startup invariants" checklist — a change that lets a running SF drainer surface transport errors to the producer, imposes a reconnect time budget on it, or hard-fails it on a transient outage is a Critical (data-loss) finding.
 
 **Agent 2 — Concurrency:** Race conditions, shared mutable state, missing volatile, lock ordering, thread-safety of data structures. Use the implicit contract list (lock order, thread-affinity) and check every callsite from 2.5b for violations of the new contract.
 
@@ -179,9 +179,9 @@ For every new or changed loop, traversal, data structure, or computation:
 For changed symbols now reachable from new contexts (per 2.5d), check whether any of those new contexts is a hot path
 that amplifies an otherwise-acceptable cost.
 
-**Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management. Walk every callsite from 2.5b that constructs, owns, or transfers ownership of changed types and verify cleanup on all paths.
+**Agent 4 — Resource management:** Leaks on all code paths (especially errors), try-with-resources, native memory, pool management. Walk every callsite from 2.5b that constructs, owns, or transfers ownership of changed types and verify cleanup on all paths. When the diff adds or changes a native allocation site, also apply the "Per-query memory tracker integration" checklist below: confirm large, unbounded, data-scaled allocators are wired into the per-query `MemoryTracker` and bounded / process-lived ones are deliberately left out, that malloc and its matching free charge the same tracker, and that newly wired sites have breach / success / leak-loop tests.
 
-**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage. Cross-reference 2.5d: every cross-context exposure should have a test that exercises the changed symbol from that context. Missing tests for cross-context callsites is a high-priority finding.
+**Agent 5 — Test review & coverage:** Coverage gaps, error path tests, NULL tests, boundary conditions, regression tests, test quality, `assertMemoryLeak()` usage. Cross-reference 2.5d: every cross-context exposure should have a test that exercises the changed symbol from that context. Missing tests for cross-context callsites is a high-priority finding. **Enforce the "SQL test assertions (builder API — strict)" checklist on every added/modified test line: any new `assertSql(...)`/`assertPlanNoLeakCheck(...)`/`getPlan(...)`/`TestUtils.assertSql(...)` is Critical; any new `.returnsOnce(...)` on a deterministic (non-RNG, non-time-varying) query is Critical; a lone `assertQuery(...)` wrapped in `assertMemoryLeak(...)` is a finding.**
 
 **Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies.
 
@@ -357,14 +357,118 @@ Every new loop, traversal, data structure choice, and computation must be justif
 - try-with-resources used where applicable
 - Native memory freed correctly
 
+### Per-query memory tracker integration (if PR adds or changes native-memory allocation sites)
+
+QuestDB caps how much native memory a single bounded workload (user SQL query, materialized view refresh, WAL apply batch) may allocate through a per-query `MemoryTracker`. The tracker is bound on `SqlExecutionContext` (`getMemoryTracker()` / `setMemoryTracker(...)`) and threaded into the tracker-aware `Unsafe.malloc` / `realloc` / `free` / `getNativeAllocator(tag, tracker)` overloads (and the Rust `QdbAllocator`). A `null` tracker degrades to global-RSS-only accounting. Apply this checklist whenever the diff adds or changes a native allocation site, a factory/cursor that owns growing native buffers, or a pooled memory class (`Map`, `RecordChain`, `RecordArray`, sort/tree chains, `GroupByAllocator`, join-key maps, etc.).
+
+**The tracker is for large, potentially unbounded allocations only — that is the whole decision rule.** Do not treat "wire everything" as the safe default; over-wiring is itself a finding.
+
+- **Wire it** when the allocation grows with the data or query cardinality and has no structural cap: map / hash-table backing, sort / tree / record chains, hash-join key (and match-id) maps, the group-by allocator and aggregate function state, `LATEST BY` rowid lists and maps, set-operation maps, encoded and top-K `ORDER BY ... LIMIT N` sort buffers (parallel and single-threaded), secondary / markout-horizon cross-join buffers, window-join and horizon-join aggregation maps, window partition maps and RANGE-frame ring buffers, SAMPLE BY fill, parquet decode buffers. These are the runaway vectors the limit exists to catch — an unbounded site that passes `null` (or omits the tracker overload entirely) is a **Critical** coverage gap; flag it with the runaway query path that reaches it.
+- **Leave it on the global counter only** when the allocation is structurally bounded, self-capped, or process / session-lived: page-frame buffers, JIT buffers, `string_agg`, fixed-size heaps (e.g. the single-column long top-K heap), ROWS-frame window buffers, table reader / writer columns, symbol tables, connection buffers, memory-mapped pages. Wiring one of these is a finding in its own right: it adds two atomic counter updates per malloc/free on both the Java and Rust paths for no protective benefit, and tracker-aware pooled classes give up cross-query backing retention (they free native backing on cursor close and re-allocate on next use), so charging a bounded or retained allocator to the tracker trades away a pool optimization for nothing.
+
+For each new or changed allocation site, verify:
+
+- **Same tracker for malloc and its matching free.** A site that allocates with a tracker but frees with `null` (or vice versa) desyncs the counter and trips the live `recordPerQueryMemAlloc` balance assert. Trace every free / close path — error paths and `toTop()` / `clear()` / cursor-close reuse included — and confirm the identical tracker is used on both ends.
+- **Nested SQL inherits the outer tracker.** Subqueries, the mat-view refresh inner SELECT, and WAL apply inner SQL must inherit the tracker already bound on the context, not acquire their own. A new acquisition site that acquires unconditionally (instead of only when no outer tracker is present) double-counts — flag it.
+- **Coverage has a test.** A newly wired allocator needs a `*MemoryTrackerTest` proving (a) a breach throws the per-query out-of-memory message, (b) an under-limit run succeeds, and (c) a `getCursor()`-to-close leak loop stays balanced. Missing tracker tests for a newly wired site is a high-priority finding; so is a factory-class routing guard that no longer pins the test to the intended plan.
+
+### Store-and-forward & pool startup invariants (QWP client contract)
+Apply this whenever the diff touches the QWP ingress path (upgrade/role
+gating, in-place demote / lifecycle switch, connection handling on role
+change), replication failover, a `java-questdb-client` submodule bump, or
+tests that drive a producer through a failover/switch window. These are the
+CLIENT's store-and-forward guarantees (the client code lives in the
+`java-questdb-client` submodule); server-side changes and tests in this repo
+must be reviewed against them. A violation here is a **Critical** finding:
+the whole point of store-and-forward is that a running producer never loses
+data and never hard-fails on a transient outage.
+
+**Drainer (steady state — once the pool is running).**
+- Once the pool is running, an async drainer thread ships buffered SF data to
+  the server. It MUST NOT propagate server / transport errors back to the
+  client (`Sender` producer calls, `flush()`, the pooled handle). The ONLY
+  error a running drainer may surface to the caller is **SF out of space** (the
+  on-disk / backing buffer is full and can accept no more rows). Flag any other
+  failure class (connect-refused, DNS, unreachable/black-hole, TLS/cert, auth,
+  role-reject, upgrade/protocol timeout, reset) that can escape the drainer
+  onto a producer or borrow call.
+- Primary reconnect MUST be fully contained inside the drainer thread and MUST
+  have **no time limit** — no `reconnect_max_duration_millis`-style budget, no
+  deadline, no "give up and latch terminal after N ms". A budget that latches
+  the sender terminal on a long outage is a Critical violation: it drops a
+  producer that store-and-forward promised to keep alive. Flag any bounded
+  reconnect loop, `deadlineNanos` / `while (now < deadline)`, or terminal
+  `SenderError` reachable from the running drainer's reconnect path.
+- The drainer must retry with **exponential backoff** and handle every connect
+  failure class gracefully, without a hard fail — it keeps buffering and keeps
+  retrying until the wire is back. The per-attempt backoff may be capped (a max
+  delay between attempts), but the RETRY LOOP ITSELF must be unbounded. Flag a
+  capped total retry duration or an attempt-count cap on the steady-state
+  drainer.
+- **Sanctioned terminals (orphan-slot drainer only).** The orphan drainer
+  (`BackgroundDrainer`) MAY quarantine its slot (`.failed` sentinel,
+  human-in-the-loop) on conditions that are terminal by design: auth failure,
+  a non-421 upgrade reject, and a genuine cluster-wide durable-ack capability
+  gap that exhausted its documented settle budget (16 consecutive
+  capability-gap sweeps, or a wall-clock budget anchored at the FIRST
+  capability-gap error of the episode — whichever is hit first). These are
+  NOT violations of the no-budget rule above. The settle budget applies ONLY
+  to consecutive capability-gap attempts: transient classes (role reject,
+  transport error) must never increment it or burn its wall clock — a
+  transient state consuming the terminal budget (shared attempt counter,
+  entry-anchored deadline) IS a Critical violation of this checklist.
+
+**Pool startup — two modes; the mode decides who sees connectivity errors.**
+- `lazy_connect=true`: `build()` MUST succeed with **no server present**. The
+  producing `Sender` must work immediately (writes buffer via SF), and once the
+  server comes up the read side must also connect and read (reads are deferred,
+  not disabled).
+- `lazy_connect=false` (default): `build()` / the initial connect MUST expose
+  connectivity problems to the caller — DNS errors, connect-refused /
+  unreachable, TLS/cert, authentication/authorization, and connect/upgrade
+  timeouts must all surface as a thrown exception at startup, not be swallowed.
+- **In BOTH modes the boundary is the same:** connectivity errors are only
+  ever the caller's problem DURING initialization. Once the client has
+  connected and is past initialization, the running drainer reverts to the
+  steady-state contract above — it must NEVER expose transport problems, NEVER
+  impose a reconnect time budget, and NEVER hard-fail on a transient outage.
+
+**Server-side & test application (this repo).**
+- The server MUST NOT rely on producer-visible role errors: an in-place
+  demote CLOSES QWP ingress connections (no per-write SECURITY_ERROR to an SF
+  sender). A server change that reintroduces per-write role errors on the QWP
+  ingress path breaks the containment contract above.
+- Flag any test (unit, integration, or e2e) that uses QWP producer-visible
+  role errors as evidence of the REPLICA write gate — under the containment
+  contract the producer is silent by design. Write-gate evidence belongs on
+  pg-wire probes, frozen commit counts on the settled replica, and
+  post-promotion SF drain (durable-ack await barriers + dense oracles).
+- Dense/count oracles over rows produced through an SF sender must account
+  for at-least-once replay: durably ack (await) seed rows before the
+  disturbance, or use a DEDUP table — otherwise the oracle reports replay
+  duplicates as data corruption.
+
 ### SQL conventions (if tests or SQL involved)
 - Keywords in UPPERCASE
 - `expr::TYPE` cast syntax preferred over CAST()
 - Underscores in numbers >= 5 digits (e.g., 1_000_000)
 - Multiline strings for complex queries
 - No DELETE statements (suggest DROP PARTITION or soft delete)
-- Tests use `assertMemoryLeak()`, `assertQueryNoLeakCheck()`, `execute()` for DDL
+- Tests use the `assertQuery(...)` builder for SQL assertions (see "SQL test assertions" below) and `execute()` for DDL
 - Single INSERT for multiple rows
+
+### SQL test assertions (builder API — strict, blocking)
+
+QuestDB has migrated SQL test assertions to the fluent `AbstractCairoTest.assertQuery(query)` builder. These rules are blocking — treat violations as **Critical** findings, not style nits. Apply them to every test line the diff **adds or modifies** (a residual pattern that the PR merely moves or reindents is not a finding; a newly written or edited one is).
+
+- **`assertSql(...)` has been REMOVED — there is no query-result `assertSql(...)`/`TestUtils.assertSql(...)` to fall back to.** Any new or changed test code that asserts query results with `assertSql(...)` / `TestUtils.assertSql(...)` is a Critical finding (it will not even compile against the current base class); the author must use the builder instead:
+    - data: `assertQuery(sql).returns(expected)` — chain `.timestamp(...)`, `.expectSize()`, `.noRandomAccess()`, `.sizeMayVary()`, `.ddl(...)`, `.mutateWith(...)`, `.withEngine(...)`, `.withContext(...)` as needed.
+    - plans: `assertQuery(sql).assertsPlan(plan)` / `.assertsPlanContaining(...)` / `.assertsPlanNotContaining(...)`, or fold the plan into a data assertion via `.withPlan(...)` / `.withPlanContaining(...)` / `.withPlanNotContaining(...)`.
+  Do **not** accept "the surrounding file already uses `assertSql`" — there is no such helper anymore, so the diff's lines must use the new API. Flag `assertPlanNoLeakCheck(...)`, `getPlan(...)`, `assertPlanDoesNotContain(...)`, and direct `TestUtils.assertSql(...)` in new/changed test code for the same reason. The one `assertSql` that legitimately survives is the live-`ServerMain` wrapper `TestServerMain.assertSql(sql, expected)` (and the enterprise `EntGriffinServerMain.assertSql(...)`): it is a convenience for the running-server context, internally drives the builder via `returnsOnce()` (single pass, because a live server's state mutates between reads), and is NOT the banned query-result helper — do not flag it.
+
+- **`.returnsOnce(...)` is a correctness smell — flag every newly added use.** `returnsOnce` runs the query through a SINGLE cursor pass and deliberately SKIPS the second read, the `calculateSize()` pass, the variable-column check, and the factory-property assertions (`supportsRandomAccess`, `expectSize`) that `.returns(...)` performs. Those skipped checks catch real bugs: cursors that don't reset correctly on `toTop()`, `size()` that disagrees between passes, random-access records that return wrong values via `recordAt()`. `returnsOnce` is **only** justified when the query's output is genuinely unstable across two reads with no underlying data change — e.g. an unseeded `rnd_*` in the projection, `now()`/`sysdate()`/`systimestamp()`-style time-varying output, or inherently non-deterministic row order. For a `.returnsOnce(...)` on a deterministic query this is a Critical finding: demand `.returns(...)`. Require the author to state *why* the query is unstable; "it was simpler" is not a reason — the shortcut leaves real bugs untested.
+
+- **Anti-pattern: a lone `assertQuery(...)` wrapped in `assertMemoryLeak(() -> { ... })`.** The builder runs its OWN memory-leak check by default (it wraps internally unless `.noLeakCheck()` is set). When an `assertMemoryLeak(...)` lambda's only meaningful statement is a single `assertQuery(...)` chain, the outer wrapper is redundant and almost always forces a `.noLeakCheck()` on the builder — which disables the builder's leak check and replaces it with a hand-rolled one, defeating the point. Flag it: drop the `assertMemoryLeak` wrapper and the `.noLeakCheck()`, letting the builder leak-check itself. The wrapper is only legitimate when the lambda genuinely holds multiple statements (DDL + inserts + several assertions) that must share one leak-check scope; a single builder call does not.
 
 ### Enterprise permissions & ACL (if PR introduces new SQL statements or ALTER operations)
 - New ALTER TABLE operations almost always require a new enterprise permission. If the PR adds a new ALTER statement (or any new SQL statement that modifies state), flag it if there is no corresponding `SecurityContext.authorize*()` call in the execution path.

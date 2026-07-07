@@ -40,7 +40,6 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
@@ -229,11 +228,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public Pass1ScanDirection getPass1ScanDirection() {
             return Pass1ScanDirection.BACKWARD;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -497,11 +491,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public Pass1ScanDirection getPass1ScanDirection() {
             return Pass1ScanDirection.BACKWARD;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
         }
 
         @Override

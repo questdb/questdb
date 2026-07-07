@@ -224,6 +224,7 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
                 serverB.stop();
                 drainWalQueue();
                 engine.releaseInactive();
+                engine.getMemoryTrackerProvider().clear();
             } finally {
                 serverA.stop();
                 serverB.stop();

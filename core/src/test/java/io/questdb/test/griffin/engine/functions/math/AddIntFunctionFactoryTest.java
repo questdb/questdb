@@ -33,24 +33,22 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLeftNull() throws Exception {
-        assertQuery("column\n" +
-                "null\n", "SELECT (null + 10)");
+        assertQuery("SELECT (null + 10)").expectSize().returns("column\nnull\n");
     }
 
     @Test
     public void testOverflow() throws Exception {
-        assertQuery("column\n2147483650\n", "SELECT 2147483647 + 3");
+        assertQuery("SELECT 2147483647 + 3").expectSize().returns("column\n2147483650\n");
     }
 
     @Test
     public void testRightNull() throws Exception {
-        assertQuery("column\n" +
-                "null\n", "SELECT (4 + null)");
+        assertQuery("SELECT (4 + null)").expectSize().returns("column\nnull\n");
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery("column\n15\n", "SELECT 10 + 5");
+        assertQuery("SELECT 10 + 5").expectSize().returns("column\n15\n");
     }
 
     @Override

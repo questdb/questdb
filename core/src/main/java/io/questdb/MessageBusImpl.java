@@ -265,6 +265,8 @@ public class MessageBusImpl implements MessageBus {
     @TestOnly
     public void clear() {
         columnPurgeSubSeq.clear();
+        postingSealPurgeSubSeq.clear();
+        groupByLongTopKSubSeq.clear();
         groupByMergeShardSubSeq.clear();
         indexerSubSeq.clear();
         latestBySubSeq.clear();
@@ -279,6 +281,7 @@ public class MessageBusImpl implements MessageBus {
         copyExportRequestSubSeq.clear();
         vectorAggregateSubSeq.clear();
         walTxnNotificationSubSequence.clear();
+        queryCacheEventSubSeq.clear();
         unorderedPageFrameReduceSubSeq.clear();
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();

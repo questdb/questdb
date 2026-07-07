@@ -49,11 +49,13 @@ import org.jetbrains.annotations.Nullable;
  */
 public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameReduceJob.class);
+    private final CairoEngine engine;
     private final MessageBus messageBus;
     private SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private PageFrameMemoryRecord record;
 
     public UnorderedPageFrameReduceJob(CairoEngine engine, MessageBus messageBus) {
+        this.engine = engine;
         this.messageBus = messageBus;
         this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, engine.getConfiguration().getCircuitBreakerConfiguration());
@@ -73,15 +75,33 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
     }
 
     @Override
+    public Job cloneInstance() {
+        return new UnorderedPageFrameReduceJob(engine, messageBus);
+    }
+
+    @Override
     public void close() {
         circuitBreaker = Misc.free(circuitBreaker);
         record = Misc.free(record);
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
+    public void recycleInstance() {
+        record.clear();
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
         return !consumeQueue(
-                workerId,
+                workerContext.carrierId(),
                 messageBus.getUnorderedPageFrameReduceQueue(),
                 messageBus.getUnorderedPageFrameReduceSubSeq(),
                 record,

@@ -46,6 +46,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
+import io.questdb.std.CarrierLocal;
 
 public final class IntervalUtils {
     public static final int HI_INDEX = 1;
@@ -71,13 +72,13 @@ public final class IntervalUtils {
     //   tlCompileSink2  — time override parsing (parseSink)
     //   tlCompileSink3  — bracket expansion inside static elements (expansionSink)
     //   tlCompileTmp    — scratch list for intermediate parsing
-    private static final ThreadLocal<StringSink> tlCompileSink1 = ThreadLocal.withInitial(StringSink::new);
-    private static final ThreadLocal<StringSink> tlCompileSink2 = ThreadLocal.withInitial(StringSink::new);
-    private static final ThreadLocal<StringSink> tlCompileSink3 = ThreadLocal.withInitial(StringSink::new);
-    private static final ThreadLocal<LongList> tlCompileTmp = ThreadLocal.withInitial(LongList::new);
-    private static final ThreadLocal<StringSink> tlDateVarSink = ThreadLocal.withInitial(StringSink::new);
-    private static final ThreadLocal<FlyweightCharSequence> tlExchangeCs = ThreadLocal.withInitial(FlyweightCharSequence::new);
-    private static final ThreadLocal<LongList> tlExchangeFilterTemp = ThreadLocal.withInitial(LongList::new);
+    private static final CarrierLocal<StringSink> tlCompileSink1 = CarrierLocal.withInitial(StringSink::new);
+    private static final CarrierLocal<StringSink> tlCompileSink2 = CarrierLocal.withInitial(StringSink::new);
+    private static final CarrierLocal<StringSink> tlCompileSink3 = CarrierLocal.withInitial(StringSink::new);
+    private static final CarrierLocal<LongList> tlCompileTmp = CarrierLocal.withInitial(LongList::new);
+    private static final CarrierLocal<StringSink> tlDateVarSink = CarrierLocal.withInitial(StringSink::new);
+    private static final CarrierLocal<FlyweightCharSequence> tlExchangeCs = CarrierLocal.withInitial(FlyweightCharSequence::new);
+    private static final CarrierLocal<LongList> tlExchangeFilterTemp = CarrierLocal.withInitial(LongList::new);
     // Thread-local sinks for bracket expansion, isolated to avoid conflicts with other code.
     // Two sinks are needed for nested usage scenarios:
     //   1. parseTickExpr -> expandBracketsRecursive (uses tlSink1)
@@ -87,8 +88,8 @@ public final class IntervalUtils {
     //                           -> expandDateList with brackets in elements
     //                           -> expandBracketsRecursive (needs tlSink2, since tlSink1 is in use)
     //   3. tlDateVarSink is used for date variable formatting (isolated from other sinks)
-    private static final ThreadLocal<StringSink> tlSink1 = ThreadLocal.withInitial(StringSink::new);
-    private static final ThreadLocal<StringSink> tlSink2 = ThreadLocal.withInitial(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink1 = CarrierLocal.withInitial(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink2 = CarrierLocal.withInitial(StringSink::new);
 
     /**
      * Formats a timestamp as "YYYY-MM-DD" into the given sink.

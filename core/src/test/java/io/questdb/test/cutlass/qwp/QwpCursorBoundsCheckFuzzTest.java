@@ -199,7 +199,7 @@ public class QwpCursorBoundsCheckFuzzTest {
         message[1] = 'W';
         message[2] = 'P';
         message[3] = '1';
-        message[HEADER_OFFSET_VERSION] = VERSION_1;
+        message[HEADER_OFFSET_VERSION] = VERSION;
         message[HEADER_OFFSET_FLAGS] = 0;
         message[HEADER_OFFSET_TABLE_COUNT] = (byte) tableCount;
         message[HEADER_OFFSET_TABLE_COUNT + 1] = (byte) (tableCount >>> 8);
@@ -218,7 +218,7 @@ public class QwpCursorBoundsCheckFuzzTest {
      */
     private static void parseAndIterate(long address, int length) throws QwpParseException {
         QwpMessageCursor cursor = new QwpMessageCursor();
-        cursor.of(address, length, null, null);
+        cursor.of(address, length, null);
 
         while (cursor.hasNextTable()) {
             QwpTableBlockCursor table = cursor.nextTable();
@@ -401,9 +401,7 @@ public class QwpCursorBoundsCheckFuzzTest {
         writeVarint(out, rowCount);
         writeVarint(out, columnCount);
 
-        // Schema: full mode (0x00) + varint(schemaId=0) + column definitions
-        out.write(SCHEMA_MODE_FULL);
-        writeVarint(out, 0); // schemaId
+        // Schema: inline column definitions
         for (int i = 0; i < columnCount; i++) {
             byte[] colNameBytes = columnNames[i].getBytes(StandardCharsets.UTF_8);
             writeVarint(out, colNameBytes.length);

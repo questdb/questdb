@@ -1143,7 +1143,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     }
 
     @Override
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
+    protected boolean doRun(long cursor, WorkerContext workerContext) {
         try {
             copy(queue.get(cursor), cursor, subSeq);
         } catch (CairoException th) {

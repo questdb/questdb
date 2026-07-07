@@ -36,8 +36,10 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             execute("create table B(col0 long, col1 string, col2 float)");
             execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
-            assertQueryNoLeakCheck(
-                    """
+            assertQuery("SELECT * FROM information_schema.questdb_columns() ORDER BY table_name")
+                    .noLeakCheck()
+                    .ddl(null)
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\tA\tcol0\t0\t\tyes\tINT
                             qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL
@@ -48,12 +50,7 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
                             qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE
                             qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR
                             qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE
-                            """,
-                    "SELECT * FROM information_schema.questdb_columns() ORDER BY table_name",
-                    null,
-                    null,
-                    true
-            );
+                            """);
         });
     }
 
@@ -63,44 +60,44 @@ public class InformationSchemaQuestDBColumnsFunctionFactoryTest extends Abstract
             execute("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("show columns from test_rename")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "show columns from test_rename"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("information_schema.questdb_columns()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP
                             qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT
-                            """,
-                    "information_schema.questdb_columns()"
-            );
+                            """);
 
             execute("rename table test_rename to test_renamed");
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("show columns from test_renamed")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
                             ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
                             x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            """,
-                    "show columns from test_renamed"
-            );
+                            """);
 
-            assertSql(
-                    """
+            assertQuery("information_schema.questdb_columns()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
                             qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP
                             qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT
-                            """,
-                    "information_schema.questdb_columns()"
-            );
+                            """);
         });
     }
 }

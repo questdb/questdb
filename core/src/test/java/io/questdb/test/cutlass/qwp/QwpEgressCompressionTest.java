@@ -85,7 +85,7 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=auto;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertSumMany(client);
                 }
             }
@@ -163,7 +163,7 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=raw;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertLongSum(client, "SELECT * FROM r", 500, 500L * 501L / 2L);
                 }
             }
@@ -186,7 +186,7 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertLongSum(client, "SELECT * FROM f", 4000, 4000L * 4001L / 2L);
                 }
             }
@@ -281,7 +281,7 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertLongSum(client, "SELECT * FROM z", 10000, 10_000L * 10_001L / 2L);
                 }
             }
@@ -337,7 +337,7 @@ public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
                                 + ";compression=zstd;compression_level=" + level + ";")) {
                     client.connect();
                     Assert.assertEquals("negotiated QWP version",
-                            QwpConstants.MAX_SUPPORTED_VERSION, client.getNegotiatedQwpVersion());
+                            QwpConstants.VERSION, client.getNegotiatedQwpVersion());
                     assertLongSum(client, "SELECT * FROM L", 2000, 2000L * 2001L / 2L);
                 }
             }

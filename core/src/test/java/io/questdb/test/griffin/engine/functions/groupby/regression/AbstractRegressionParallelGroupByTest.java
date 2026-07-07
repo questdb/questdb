@@ -77,22 +77,20 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     public void testParallelAllNull() throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
                             "create table tbl as (" +
                                     "select cast(null as double) x, cast(null as double) y from long_sequence(4_000))",
                             sqlExecutionContext
                     );
-                    assertQueryNoLeakCheck(
-                            compiler,
-                            funcName() + "\nnull\n",
-                            "select " + funcName() + "(y, x) from tbl",
-                            null,
-                            sqlExecutionContext,
-                            false,
-                            true
-                    );
+                    assertQuery("select " + funcName() + "(y, x) from tbl")
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(funcName() + "\nnull\n");
                 }, configuration, LOG);
             }
         });
@@ -111,7 +109,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     public void testParallelKeyedSparseNulls() throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
                             "create table tbl as (" +
@@ -122,15 +120,12 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
                                     "from long_sequence(4_000))",
                             sqlExecutionContext
                     );
-                    assertQueryNoLeakCheck(
-                            compiler,
-                            expectedKeyedSparseNulls(),
-                            "select g, round(" + funcName() + "(y_v, x_v), 10) " + funcName() + " from tbl order by g",
-                            null,
-                            sqlExecutionContext,
-                            true,
-                            true
-                    );
+                    assertQuery("select g, round(" + funcName() + "(y_v, x_v), 10) " + funcName() + " from tbl order by g")
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .expectSize()
+                            .returns(expectedKeyedSparseNulls());
                 }, configuration, LOG);
             }
         });
@@ -146,22 +141,20 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     public void testParallelPerfectLine() throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
                             "create table tbl as (" +
                                     "select cast(x as double) x, cast(2 * x + 5 as double) y from long_sequence(4_000))",
                             sqlExecutionContext
                     );
-                    assertQueryNoLeakCheck(
-                            compiler,
-                            funcName() + "\n" + expectedPerfectLine() + "\n",
-                            "select round(" + funcName() + "(y, x), 10) " + funcName() + " from tbl",
-                            null,
-                            sqlExecutionContext,
-                            false,
-                            true
-                    );
+                    assertQuery("select round(" + funcName() + "(y, x), 10) " + funcName() + " from tbl")
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(funcName() + "\n" + expectedPerfectLine() + "\n");
                 }, configuration, LOG);
             }
         });
@@ -185,7 +178,7 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
     public void testParallelSparseNulls() throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (_, compiler, sqlExecutionContext) -> {
                     execute(
                             compiler,
                             "create table tbl as (" +
@@ -196,15 +189,13 @@ public abstract class AbstractRegressionParallelGroupByTest extends AbstractCair
                             sqlExecutionContext
                     );
                     for (int run = 0; run < 8; run++) {
-                        assertQueryNoLeakCheck(
-                                compiler,
-                                funcName() + "\n" + expectedSparseNulls() + "\n",
-                                "select round(" + funcName() + "(y, x), 10) " + funcName() + " from tbl",
-                                null,
-                                sqlExecutionContext,
-                                false,
-                                true
-                        );
+                        assertQuery("select round(" + funcName() + "(y, x), 10) " + funcName() + " from tbl")
+                                .noLeakCheck()
+                                .withCompiler(compiler)
+                                .withContext(sqlExecutionContext)
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(funcName() + "\n" + expectedSparseNulls() + "\n");
                     }
                 }, configuration, LOG);
             }

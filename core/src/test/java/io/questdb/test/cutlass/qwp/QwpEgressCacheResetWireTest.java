@@ -40,9 +40,8 @@ import org.junit.Test;
 /**
  * End-to-end tests for the QWP egress {@code CACHE_RESET} frame and the soft
  * caps that trigger it. Sets tight caps per test via
- * {@link QwpEgressProcessorState#defaultMaxDictEntriesOverrideForTest},
- * {@link QwpEgressProcessorState#defaultMaxDictHeapBytesOverrideForTest}, and
- * {@link QwpEgressProcessorState#defaultMaxSchemasOverrideForTest}, restores
+ * {@link QwpEgressProcessorState#defaultMaxDictEntriesOverrideForTest} and
+ * {@link QwpEgressProcessorState#defaultMaxDictHeapBytesOverrideForTest}, restores
  * them in {@code @After} so subsequent tests start clean, and asserts both the
  * observable client behaviour (dict resolves across the reset, subsequent
  * queries decode normally) and the server-side metrics counters.
@@ -60,7 +59,6 @@ public class QwpEgressCacheResetWireTest extends AbstractQwpBootstrapTest {
     public void restoreCaps() {
         QwpEgressProcessorState.defaultMaxDictEntriesOverrideForTest = -1;
         QwpEgressProcessorState.defaultMaxDictHeapBytesOverrideForTest = -1;
-        QwpEgressProcessorState.defaultMaxSchemasOverrideForTest = -1;
     }
 
     /**
@@ -164,42 +162,6 @@ public class QwpEgressCacheResetWireTest extends AbstractQwpBootstrapTest {
     }
 
     /**
-     * Schemas cap at 2: run three queries with distinct column shapes and
-     * assert {@code CACHE_RESET} with the {@code RESET_MASK_SCHEMAS} bit fires.
-     */
-    @Test
-    public void testCacheResetFiresOnSchemaCap() throws Exception {
-        QwpEgressProcessorState.defaultMaxSchemasOverrideForTest = 2;
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(
-                    "QDB_METRICS_ENABLED", "true")) {
-                serverMain.execute("CREATE TABLE cap_schemas(a LONG, b INT, c DOUBLE, ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO cap_schemas VALUES (1, 2, 3.0, 1::TIMESTAMP)");
-                serverMain.awaitTable("cap_schemas");
-                QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
-                long before = metrics.cacheResetSchemasCount();
-
-                try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-
-                    // Three distinct shapes -> cap of 2 trips on the 2nd or 3rd
-                    // query. We don't care which, only that a schema reset
-                    // fires somewhere in the sequence.
-                    final int[] batches = {0};
-                    client.execute("SELECT a FROM cap_schemas", noopHandler(batches));
-                    client.execute("SELECT b FROM cap_schemas", noopHandler(batches));
-                    client.execute("SELECT c FROM cap_schemas", noopHandler(batches));
-                    Assert.assertTrue("at least one RESULT_BATCH must deliver", batches[0] > 0);
-                }
-                Assert.assertTrue("schema cap must trigger at least one schema reset",
-                        metrics.cacheResetSchemasCount() > before);
-            }
-        });
-    }
-
-    /**
      * Under default caps, no {@code CACHE_RESET} must fire for a small
      * workload. Pins the contract that the reset path is quiescent in normal
      * operation.
@@ -215,7 +177,6 @@ public class QwpEgressCacheResetWireTest extends AbstractQwpBootstrapTest {
                 serverMain.awaitTable("quiet");
                 QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 long dictBefore = metrics.cacheResetDictCount();
-                long schemasBefore = metrics.cacheResetSchemasCount();
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
@@ -229,8 +190,6 @@ public class QwpEgressCacheResetWireTest extends AbstractQwpBootstrapTest {
                 }
                 Assert.assertEquals("no dict reset expected under defaults",
                         dictBefore, metrics.cacheResetDictCount());
-                Assert.assertEquals("no schemas reset expected under defaults",
-                        schemasBefore, metrics.cacheResetSchemasCount());
             }
         });
     }

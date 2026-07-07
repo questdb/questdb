@@ -41,18 +41,16 @@ public class InCharTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES ('Y'), ('I'), ('Z')");
             bindVariableService.clear();
             bindVariableService.setStr("b0", "Z");
-            assertSql(
-                    "c\nI\nY\nZ\n",
-                    "SELECT c FROM t WHERE c IN ('Y', 'I', :b0::CHAR) ORDER BY 1"
-            );
+            assertQuery("SELECT c FROM t WHERE c IN ('Y', 'I', :b0::CHAR) ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("c\nI\nY\nZ\n");
             // Bind value that doesn't appear in the data should not match,
             // verifying the deferred set is rebuilt per init().
             bindVariableService.clear();
             bindVariableService.setStr("b0", "Q");
-            assertSql(
-                    "c\nI\nY\n",
-                    "SELECT c FROM t WHERE c IN ('Y', 'I', :b0::CHAR) ORDER BY 1"
-            );
+            assertQuery("SELECT c FROM t WHERE c IN ('Y', 'I', :b0::CHAR) ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("c\nI\nY\n");
         });
     }
 
@@ -71,22 +69,22 @@ public class InCharTest extends AbstractCairoTest {
             execute("CREATE TABLE t (k INT)");
             execute("INSERT INTO t VALUES (1), (2)");
             // Literal form: fold-time constant CHAR(0) IN list with CHAR(0) and 'Z'.
-            assertSql(
-                    "k\n1\n2\n",
-                    "SELECT k FROM t WHERE (0.49)::CHAR IN ((0.49)::CHAR, 'Z')"
-            );
+            assertQuery("SELECT k FROM t WHERE (0.49)::CHAR IN ((0.49)::CHAR, 'Z')")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("k\n1\n2\n");
             // Bind form: same query with the LHS routed through a bind variable.
             bindVariableService.clear();
             bindVariableService.setStr("b0", "0.49");
-            assertSql(
-                    "k\n1\n2\n",
-                    "SELECT k FROM t WHERE (:b0::DOUBLE)::CHAR IN ((0.49)::CHAR, 'Z')"
-            );
+            assertQuery("SELECT k FROM t WHERE (:b0::DOUBLE)::CHAR IN ((0.49)::CHAR, 'Z')")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("k\n1\n2\n");
             // CHAR(0) should not match a list with no NUL element.
-            assertSql(
-                    "k\n",
-                    "SELECT k FROM t WHERE (0.49)::CHAR IN ('Z', 'X')"
-            );
+            assertQuery("SELECT k FROM t WHERE (0.49)::CHAR IN ('Z', 'X')")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("k\n");
         });
     }
 
@@ -98,10 +96,9 @@ public class InCharTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr("b0", "Y");
             bindVariableService.setStr("b1", "Z");
-            assertSql(
-                    "c\nI\nY\nZ\n",
-                    "SELECT c FROM t WHERE c IN ('I', :b0::CHAR, :b1::STRING) ORDER BY 1"
-            );
+            assertQuery("SELECT c FROM t WHERE c IN ('I', :b0::CHAR, :b1::STRING) ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("c\nI\nY\nZ\n");
         });
     }
 }

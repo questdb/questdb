@@ -31,25 +31,17 @@ public class PgIndexFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPgIndexFunc() throws Exception {
-        assertQuery(
-                "indexrelid\tindrelid\tindnatts\tindnkeyatts\tindisunique\tindnullsnotdistinct\tindisprimary\tindisexclusion\tindimmediate\tindisclustered\tindisvalid\tindcheckxmin\tindisready\tindislive\tindisreplident\tindkey\tindcollation\tindclass\tindoption\tindexprs\tindpred\n",
-                "pg_index;",
-                "create table x(a int)",
-                null,
-                true,
-                true
-        );
+        assertQuery("pg_index;")
+                .ddl("create table x(a int)")
+                .expectSize()
+                .returns("indexrelid\tindrelid\tindnatts\tindnkeyatts\tindisunique\tindnullsnotdistinct\tindisprimary\tindisexclusion\tindimmediate\tindisclustered\tindisvalid\tindcheckxmin\tindisready\tindislive\tindisreplident\tindkey\tindcollation\tindclass\tindoption\tindexprs\tindpred\n");
     }
 
     @Test
     public void testPrefixedPgIndexFunc() throws Exception {
-        assertQuery(
-                "indexrelid\tindrelid\tindnatts\tindnkeyatts\tindisunique\tindnullsnotdistinct\tindisprimary\tindisexclusion\tindimmediate\tindisclustered\tindisvalid\tindcheckxmin\tindisready\tindislive\tindisreplident\tindkey\tindcollation\tindclass\tindoption\tindexprs\tindpred\n",
-                "pg_catalog.pg_index;",
-                "create table x(a int)",
-                null,
-                true,
-                true
-        );
+        assertQuery("pg_catalog.pg_index;")
+                .ddl("create table x(a int)")
+                .expectSize()
+                .returns("indexrelid\tindrelid\tindnatts\tindnkeyatts\tindisunique\tindnullsnotdistinct\tindisprimary\tindisexclusion\tindimmediate\tindisclustered\tindisvalid\tindcheckxmin\tindisready\tindislive\tindisreplident\tindkey\tindcollation\tindclass\tindoption\tindexprs\tindpred\n");
     }
 }

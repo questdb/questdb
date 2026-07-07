@@ -265,6 +265,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
+    public void setCoveredColumnAddrSizes(LongList dataSizes, LongList auxSizes) {
+        writer.setCoveredColumnAddrSizes(dataSizes, auxSizes);
+    }
+
+    @Override
     public void setCoveredColumnNameTxns(LongList txns) {
         writer.setCoveredColumnNameTxns(txns);
     }

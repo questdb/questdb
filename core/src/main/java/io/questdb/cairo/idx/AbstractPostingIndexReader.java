@@ -103,6 +103,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     protected int genCount;
     protected int keyCount;
     protected RecordMetadata metadata;
+    // Assertion-only stamp of the thread that last checked out a cursor; see
+    // assertStampOperatingThread() / assertSameOperatingThread().
+    private long assertOperatingThreadId = -1L;
     // Last successfully observed seqlock value of the chain header's active
     // page. Used by reloadConditionally to detect any publish (appendNewEntry
     // or extendHead — both republish the header) and skip the picker walk
@@ -810,6 +813,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     ) {
         int plen = path.size();
         try {
+            // A rowid-only reader (null metadata) can't map writer indices to dense
+            // columns, so it serves no covered reads: skip sidecar setup and leave
+            // coverCount at 0. Otherwise denseIndexFromWriter() NPEs on the null
+            // metadata and the propagating catch below fails the query.
+            if (metadata == null) {
+                return;
+            }
             LPSZ pciFile = PostingIndexUtils.coverInfoFileName(path, columnName, columnNameTxn);
             if (!ff.exists(pciFile)) {
                 return;
@@ -853,8 +863,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             coverCount = count;
         } catch (Throwable e) {
+            // The covered read path has no base-table fallback, so degrading here
+            // would leave a covered read walking an absent sidecar. Propagate so
+            // the caller fails the query and closes the reader.
             LOG.error().$("failed to open sidecar files").$(e).$();
             closeSidecarMems();
+            throw e;
         } finally {
             Misc.free(infoMem);
             path.trimTo(plen);
@@ -1075,6 +1089,27 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     protected static long varBlockOffsetsSize(int count, boolean longOffsets) {
         return (long) (count + 1) * (longOffsets ? Long.BYTES : Integer.BYTES);
+    }
+
+    // Single-owner tripwire (assertion-only). A posting reader and its pooled
+    // cursors are driven by exactly one thread at a time: the thread that owns the
+    // enclosing TableReader between pool acquire/release. getCursor() stamps that
+    // thread via assertStampOperatingThread() and every cursor close() checks it
+    // here. A posting cursor whose close() runs after the reader was released to the
+    // pool and re-acquired by another thread -- the lifecycle hazard that
+    // CoveringIndexRecordCursorFactory.CoveringCursor.close() avoids by freeing the
+    // row cursor BEFORE the frame cursor -- trips this assert instead of silently
+    // re-pooling into / racing a concurrently-reloaded reader. Never relied upon for
+    // correctness: the isOpen() guard in each cursor close() is the actual leak
+    // mitigation, and this stamp is only written under -ea.
+    protected boolean assertSameOperatingThread() {
+        final long owner = assertOperatingThreadId;
+        return owner == -1L || owner == Thread.currentThread().threadId();
+    }
+
+    protected boolean assertStampOperatingThread() {
+        assertOperatingThreadId = Thread.currentThread().threadId();
+        return true;
     }
 
     protected void ensureSidecarOpen(int c) {

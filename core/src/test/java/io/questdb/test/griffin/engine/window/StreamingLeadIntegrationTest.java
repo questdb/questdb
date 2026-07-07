@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -67,7 +68,7 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select x, lead(x, 1) ignore nulls over () as lx from t",
                     """
-                            CachedWindow
+                            CachedWindowLight
                               unorderedFunctions: [lead(x, 1, NULL) ignore nulls over ()]
                                 PageFrame
                                     Row forward scan
@@ -289,7 +290,7 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t",
                     """
-                            CachedWindow
+                            CachedWindowLight
                               unorderedFunctions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]
                                 PageFrame
                                     Row forward scan
@@ -400,7 +401,7 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select x, lead(x, 1, y) over () as lx from t",
                     """
-                            CachedWindow
+                            CachedWindowLight
                               unorderedFunctions: [lead(x, 1, y) over ()]
                                 PageFrame
                                     Row forward scan
@@ -1204,5 +1205,28 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                     null, false, true
             );
         });
+    }
+
+    // Bridge: AbstractCairoTest.assertQueryNoLeakCheck/assertPlanNoLeakCheck were removed in favor of
+    // the QueryAssertion builder (OSS #7195). Drive the builder so the suite's calls keep working.
+    private void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws Exception {
+        assertQuery(query).noLeakCheck().assertsPlan(expectedPlan);
+    }
+
+    private void assertQueryNoLeakCheck(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean expectSize
+    ) throws Exception {
+        QueryAssertion assertion = assertQuery(query).noLeakCheck().expectSize(expectSize);
+        if (expectedTimestamp != null) {
+            assertion.timestamp(expectedTimestamp);
+        }
+        if (!supportsRandomAccess) {
+            assertion.noRandomAccess();
+        }
+        assertion.returns(expected);
     }
 }

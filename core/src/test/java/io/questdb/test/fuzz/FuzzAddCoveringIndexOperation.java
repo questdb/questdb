@@ -103,7 +103,13 @@ public class FuzzAddCoveringIndexOperation implements FuzzTransactionOperation {
                 if (Chars.contains(e.getMessage(), "already indexed")
                         || Chars.contains(e.getMessage(), "does not exist")
                         || Chars.contains(e.getMessage(), "column is already indexed")
-                        || Chars.contains(e.getMessage(), "table busy")) {
+                        || Chars.contains(e.getMessage(), "table busy")
+                        // The symbol check above is performed against getTableMetadata(), which for WAL
+                        // tables is the lagging applied metadata. The ALTER below is validated against the
+                        // fresh sequencer metadata, so a concurrent drop/re-add (column-name reuse) that
+                        // turned the column into a non-symbol type can legitimately surface here. Tolerate
+                        // it like the other transient races above.
+                        || Chars.contains(e.getMessage(), "indexes are only supported for symbol type")) {
                     return;
                 }
                 if (e instanceof CairoException ce && ce.isTableDropped()) {

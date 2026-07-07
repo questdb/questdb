@@ -41,6 +41,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 import java.util.Map;
 
+// Entries are keyed per table token and hold a fixed array of allocation slots.
 public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends AbstractPool implements ResourcePool<T> {
     public final static String LOCKED = "pool is locked";
     public final static String NO_LOCK_REASON = "unknown";
@@ -56,22 +57,12 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final int maxEntries;
     private final int maxSegments;
     private final int segmentSize;
-    private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
         this.maxSegments = maxSegments;
         this.segmentSize = configuration.getPoolSegmentSize();
         this.maxEntries = maxSegments * configuration.getPoolSegmentSize();
-        if (configuration.cairoResourcePoolTracingEnabled()) {
-            threadLocalPoolSupervisor = new io.questdb.std.ThreadLocal<>(TracingResourcePoolSupervisor::new);
-        } else {
-            threadLocalPoolSupervisor = new ThreadLocal<>();
-        }
-    }
-
-    public void configureThreadLocalPoolSupervisor(@NotNull ResourcePoolSupervisor<T> poolSupervisor) {
-        this.threadLocalPoolSupervisor.set(poolSupervisor);
     }
 
     public Map<CharSequence, Entry<T>> entries() {
@@ -80,7 +71,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     @Override
     public T get(TableToken tableToken) {
-        return get0(tableToken, null);
+        return get0(tableToken, null, null);
+    }
+
+    protected T getWithSupervisor(TableToken tableToken, @Nullable ResourcePoolSupervisor<T> supervisor) {
+        return get0(tableToken, null, supervisor);
     }
 
     public int getBusyCount() {
@@ -206,10 +201,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    public void removeThreadLocalPoolSupervisor() {
-        this.threadLocalPoolSupervisor.remove();
-    }
-
     public void unlock(TableToken tableToken) {
         unlock(tableToken, false);
     }
@@ -261,7 +252,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    private T get0(TableToken tableToken, @Nullable T copyOfTenant) {
+    private T get0(TableToken tableToken, @Nullable T copyOfTenant, @Nullable ResourcePoolSupervisor<T> poolSupervisor) {
         Entry<T> rootEntry = getEntry(tableToken);
         Entry<T> e = rootEntry;
 
@@ -291,7 +282,16 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                     Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
                     T tenant = e.getTenant(i);
-                    ResourcePoolSupervisor<T> supervisor = threadLocalPoolSupervisor.get();
+                    // The query-scoped supervisor is supplied by the borrowing caller; it lives
+                    // on SqlExecutionContext (passed in via CairoEngine.getReader) so it travels
+                    // with a continuation that parks and resumes on a different worker. When none
+                    // is supplied and resource pool tracing is enabled, fall back to a per-borrow
+                    // tracing supervisor so the debug "left behind" attribution keeps working for
+                    // every pool, including non-SQL borrows that have no execution context.
+                    ResourcePoolSupervisor<T> supervisor = poolSupervisor;
+                    if (supervisor == null && getConfiguration().cairoResourcePoolTracingEnabled()) {
+                        supervisor = new TracingResourcePoolSupervisor<>();
+                    }
                     if (tenant == null) {
                         try {
                             LOG.debug()
@@ -393,6 +393,18 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return e;
     }
 
+    private boolean isEntryEmpty(Entry<T> e) {
+        do {
+            for (int i = 0; i < segmentSize; i++) {
+                if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED || e.getTenant(i) != null) {
+                    return false;
+                }
+            }
+            e = e.next;
+        } while (e != null);
+        return true;
+    }
+
     private void notifyListener(long thread, TableToken token, short event, int segment, int position) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
@@ -428,11 +440,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    protected T getCopyOf(@NotNull T srcTenant) {
+    protected T getCopyOf(@NotNull T srcTenant, @Nullable ResourcePoolSupervisor<T> supervisor) {
         if (!isCopyOfSupported()) {
             throw new UnsupportedOperationException("getCopyOf is not supported by this pool");
         }
-        return get0(srcTenant.getTableToken(), srcTenant);
+        return get0(srcTenant.getTableToken(), srcTenant, supervisor);
     }
 
     protected abstract byte getListenerSrc();
@@ -504,6 +516,22 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             // Release the item, to not block the pool, but throw an exception to fail the test
             throw CairoException.nonCritical()
                     .put("table is left behind on pool shutdown [table=").put(leftBehind).put(']');
+        }
+
+        // On a full release (pool close / @TestOnly engine.clear()) every tenant above is now closed,
+        // so also drop the now-empty per-dir-name entries. Otherwise a dropped or ALTER TABLE ... REBASE
+        // WAL'd table leaves its entry behind flagged dropped -- cleared only once WalPurgeJob fully
+        // deletes the dir and calls removeTableToken -- and a later reuse of the same dir name (tests
+        // reset the table-id generator and recreate e.g. base_price~1) inherits that stale flag and
+        // disposes every writer on return. Gated to Long.MAX_VALUE: releaseInactive() runs concurrently
+        // with get() in production, where removing an entry out from under a live borrow is unsafe.
+        if (deadline == Long.MAX_VALUE) {
+            for (Map.Entry<CharSequence, Entry<T>> me : entries.entrySet()) {
+                final Entry<T> e = me.getValue();
+                if (isEntryEmpty(e)) {
+                    entries.remove(me.getKey(), e);
+                }
+            }
         }
 
         // when we are timing out entries the result is "true" if there was any work done

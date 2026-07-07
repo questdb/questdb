@@ -23,7 +23,14 @@ ExecStart=/usr/bin/java \
     -XX:+UseParallelGC \
     -DQuestDB-Runtime-66535 \
     -ea -Dnoebug \
-    --add-exports java.base/jdk.internal.math=io.questdb \
+    --sun-misc-unsafe-memory-access=allow \
+    --enable-native-access=io.questdb \
+    --add-opens=java.base/java.lang=io.questdb \
+    --add-opens=java.base/java.lang.reflect=io.questdb \
+    --add-opens=java.base/java.nio=io.questdb \
+    --add-opens=java.base/java.time.zone=io.questdb \
+    --add-exports=java.base/jdk.internal.math=io.questdb \
+    --add-exports=java.base/jdk.internal.vm=io.questdb \
     -p /usr/local/bin/questdb.jar \
     -m io.questdb/io.questdb.ServerMain \
     -d /var/lib/questdb

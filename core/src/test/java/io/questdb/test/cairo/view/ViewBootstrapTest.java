@@ -41,7 +41,7 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
-import io.questdb.std.ThreadLocal;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -76,7 +76,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     private static final String VIEW1 = "view1";
     private static final String VIEW2 = "view2";
     private static final LogCapture capture = new LogCapture();
-    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
     private ServerMain questdb;
 
     private static void assertExecRequest(

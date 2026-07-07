@@ -6,11 +6,79 @@ use crate::parquet_read::decode_column::{
     decode_column_chunk_filtered_with_params, decode_column_chunk_with_params,
     reconstruct_descriptor,
 };
-use crate::parquet_read::{DecodeContext, RowGroupBuffers};
+use crate::parquet_read::row_groups::{plan_decode_conversion, post_convert, DecodeAs};
+use crate::parquet_read::{DecodeContext, RowGroupBuffers, VarcharSliceBufGuard};
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
 use crate::parquet_read::row_groups::ParquetColumnIndex;
+
+/// Resolve the decode-time column type from the sidecar's stored column type
+/// and the caller-requested target type. Mirrors the resolution that
+/// [`crate::parquet_read::row_groups::ParquetDecoder::decode_row_group`]
+/// performs on the legacy file path so both planning paths share semantics.
+///
+/// Returns `(column_type, original_column_type)` where `column_type` is what
+/// the per-page decoder should produce, and `original_column_type` is the
+/// type the buffer holds before [`post_convert`] runs. They differ when
+/// [`plan_decode_conversion`] picks `DecodeAs::Source` and post_convert is
+/// expected to convert in place.
+fn resolve_decode_column_type(
+    sidecar_column_type: ColumnType,
+    to_column_type: ColumnType,
+    column_idx: usize,
+) -> ParquetResult<(ColumnType, ColumnType)> {
+    let mut column_type = sidecar_column_type;
+
+    // Symbol columns in QDB-written parquet are stored as BYTE_ARRAY (UTF-8),
+    // matching String/Varchar/VarcharSlice physically.
+    if column_type.tag() == ColumnTypeTag::Symbol
+        && (to_column_type.tag() == ColumnTypeTag::Varchar
+            || to_column_type.tag() == ColumnTypeTag::VarcharSlice
+            || to_column_type.tag() == ColumnTypeTag::String)
+    {
+        column_type = to_column_type;
+    }
+
+    // VarcharSlice is a zero-copy decode format over the same UTF-8 bytes
+    // that back Varchar/String.
+    if (column_type.tag() == ColumnTypeTag::Varchar || column_type.tag() == ColumnTypeTag::String)
+        && to_column_type.tag() == ColumnTypeTag::VarcharSlice
+    {
+        column_type = to_column_type;
+    }
+
+    let original_column_type = column_type;
+    if column_type != to_column_type {
+        match plan_decode_conversion(column_type.tag(), to_column_type.tag()) {
+            Some(DecodeAs::Target) => column_type = to_column_type,
+            Some(DecodeAs::Source) => {} // post_convert handles the conversion
+            None => {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "requested column type {} does not match file column type {}, column index: {}",
+                    to_column_type,
+                    column_type,
+                    column_idx
+                ));
+            }
+        }
+    }
+
+    Ok((column_type, original_column_type))
+}
+
+/// Count of column-top (def-level 0) rows that fall inside the decoded window.
+///
+/// `rg_column_top` is the per-row-group column top (for a no-sentinel source it equals the
+/// column chunk's null count). The decoded buffer starts at row-group row `row_group_lo`, so the
+/// leading nulls present in this window are the column-top rows minus those skipped before the
+/// window start, clamped to the window length.
+fn window_leading_nulls(rg_column_top: usize, row_group_lo: usize, row_group_hi: usize) -> usize {
+    rg_column_top
+        .saturating_sub(row_group_lo)
+        .min(row_group_hi.saturating_sub(row_group_lo))
+}
 
 /// Decode a row group using metadata from a `_pm` sidecar file.
 ///
@@ -18,8 +86,9 @@ use crate::parquet_read::row_groups::ParquetColumnIndex;
 /// `_pm` binary format via [`ParquetMetaReader`]. The `col_pairs` array
 /// uses the same `[parquet_column_index, column_type]` pair format as
 /// `PartitionDecoder` for compatibility with `PageFrameMemoryPool`.
-/// The `column_type` from Java is used for Symbol->Varchar and
-/// Varchar->VarcharSlice overrides; the base type comes from `_pm`.
+/// The `column_type` from Java drives Symbol/Varchar/String overrides and
+/// any fixed-to-fixed or var-to-var conversions supported by
+/// [`plan_decode_conversion`]; the base type comes from `_pm`.
 #[allow(clippy::too_many_arguments)]
 pub fn decode_row_group(
     ctx: &mut DecodeContext,
@@ -31,6 +100,11 @@ pub fn decode_row_group(
     row_group_lo: usize,
     row_group_hi: usize,
 ) -> ParquetResult<usize> {
+    // Release the varchar-slice reuse pool and scratch vecs on every exit
+    // path, including the error returns below: buffers stranded in the
+    // context after a failed decode are invisible to the Java cache budget.
+    let mut ctx_guard = VarcharSliceBufGuard::new(ctx);
+    let ctx = ctx_guard.ctx();
     let rg_count = parquet_meta_reader.row_group_count();
     if row_group_index >= rg_count as usize {
         return Err(fmt_err!(
@@ -60,22 +134,11 @@ pub fn decode_row_group(
 
         let col_desc = parquet_meta_reader.column_descriptor(column_idx)?;
         let col_type_code = col_desc.col_type;
-        let mut column_type = ColumnType::new_raw(col_type_code)
+        let sidecar_column_type = ColumnType::new_raw(col_type_code)
             .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
 
-        // Apply the same Symbol->Varchar and Varchar->VarcharSlice overrides
-        // as ParquetDecoder::decode_row_group().
-        if column_type.tag() == ColumnTypeTag::Symbol
-            && (to_column_type.tag() == ColumnTypeTag::Varchar
-                || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
-        {
-            column_type = to_column_type;
-        }
-        if column_type.tag() == ColumnTypeTag::Varchar
-            && to_column_type.tag() == ColumnTypeTag::VarcharSlice
-        {
-            column_type = to_column_type;
-        }
+        let (column_type, original_column_type) =
+            resolve_decode_column_type(sidecar_column_type, to_column_type, column_idx)?;
 
         let flags = ColumnFlags(col_desc.flags);
         let field_rep = flags
@@ -95,7 +158,13 @@ pub fn decode_row_group(
         let ascii = if flags.is_ascii() { Some(true) } else { None };
 
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
-        let col_info = QdbMetaCol { column_type, column_top: 0, format, ascii };
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format,
+            ascii,
+            id: None,
+        };
 
         let chunk = rg_block.column_chunk(column_idx)?;
         let stat_flags = StatFlags(chunk.stat_flags);
@@ -141,38 +210,80 @@ pub fn decode_row_group(
             row_group_hi,
             column_name,
             row_group_index,
+            true,
         ) {
             Ok(count) => decoded = count,
             Err(err) => return Err(err),
         }
+
+        // For a source type with no in-band null sentinel (BYTE/SHORT/CHAR), the only nulls
+        // are the contiguous column-top prefix, so the column-chunk null count equals its
+        // length. post_convert stamps the target sentinel over those rows. Falls back to 0
+        // when stats are absent (e.g. external parquet files, which carry no column top).
+        // The buffer starts at row_group_lo, so make the count window-relative: a partial
+        // window (row_group_lo > 0) must not stamp rows before the window start.
+        let rg_column_top = if stat_flags.has_null_count() {
+            usize::try_from(chunk.null_count).unwrap_or(0)
+        } else {
+            0
+        };
+        let leading_nulls = window_leading_nulls(rg_column_top, row_group_lo, row_group_hi);
+        // Surface the count to Java (read via chunkColumnTopOffset) for lazy fixed->var
+        // conversions, where the source has no in-band null and Java must emit NULL here.
+        column_chunk_bufs.column_top = leading_nulls;
+        post_convert(
+            original_column_type,
+            to_column_type,
+            leading_nulls,
+            column_chunk_bufs,
+        )?;
     }
 
     Ok(decoded)
 }
 
-/// Decode a row group with row-level filtering using `_pm` metadata.
+/// Decode a contiguous run of whole row groups [row_group_lo_idx, row_group_hi_idx]
+/// (both inclusive) into one set of column buffers, as if they were a single row group.
 ///
-/// When `FILL_NULLS` is true, unfiltered rows are filled with nulls.
-/// When false, unfiltered rows are skipped.
-#[allow(clippy::too_many_arguments)]
-pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
+/// Used by the O3 parquet merge when a timestamp value straddles row-group boundaries:
+/// the tied groups must be decoded and deduplicated together so a dedup key at the shared
+/// timestamp is compared against every existing copy, regardless of which row group holds
+/// it. Each column resets its buffer on the first group of the run and appends the rest;
+/// the var-size sinks write absolute data_vec offsets, so appended chunks stay consistent
+/// without offset fixup. The all-null-chunk fast path is intentionally NOT taken here so
+/// that every group contributes its full row count to the concatenation. Column tops are
+/// always 0 in the `_pm` decode path, so no cross-group top handling is needed.
+pub fn decode_row_group_range(
     ctx: &mut DecodeContext,
     row_group_bufs: &mut RowGroupBuffers,
     file_data: &[u8],
     parquet_meta_reader: &ParquetMetaReader,
-    column_offset: usize,
     col_pairs: &[(ParquetColumnIndex, ColumnType)],
-    row_group_index: usize,
-    row_group_lo: usize,
-    row_group_hi: usize,
-    filtered_rows: &[i64],
+    row_group_lo_idx: usize,
+    row_group_hi_idx: usize,
 ) -> ParquetResult<usize> {
-    let rg_block = parquet_meta_reader.row_group(row_group_index)?;
+    let rg_count = parquet_meta_reader.row_group_count() as usize;
+    if row_group_hi_idx >= rg_count {
+        return Err(fmt_err!(
+            InvalidType,
+            "row group index {} out of range [0,{})",
+            row_group_hi_idx,
+            rg_count
+        ));
+    }
+    if row_group_lo_idx > row_group_hi_idx {
+        return Err(fmt_err!(
+            InvalidType,
+            "row group range [{},{}] is empty",
+            row_group_lo_idx,
+            row_group_hi_idx
+        ));
+    }
+
     let col_count = parquet_meta_reader.column_count();
+    row_group_bufs.ensure_n_columns(col_pairs.len())?;
 
-    row_group_bufs.ensure_n_columns(column_offset + col_pairs.len())?;
-
-    let mut decoded = 0usize;
+    let mut total = 0usize;
     for (dest_col_idx, &(column_idx, to_column_type)) in col_pairs.iter().enumerate() {
         let column_idx = column_idx as usize;
         if column_idx >= col_count as usize {
@@ -188,7 +299,6 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
         let col_type_code = col_desc.col_type;
         let mut column_type = ColumnType::new_raw(col_type_code)
             .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
-
         if column_type.tag() == ColumnTypeTag::Symbol
             && (to_column_type.tag() == ColumnTypeTag::Varchar
                 || to_column_type.tag() == ColumnTypeTag::VarcharSlice)
@@ -215,11 +325,144 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             None
         };
         let ascii = if flags.is_ascii() { Some(true) } else { None };
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format,
+            ascii,
+            id: None,
+        };
+        let descriptor = reconstruct_descriptor(
+            col_desc.physical_type,
+            col_desc.fixed_byte_len,
+            col_desc.max_rep_level,
+            col_desc.max_def_level,
+            column_name,
+            repetition,
+        );
+
+        let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
+        let mut col_decoded = 0usize;
+        for rg in row_group_lo_idx..=row_group_hi_idx {
+            let rg_block = parquet_meta_reader.row_group(rg)?;
+            let chunk = rg_block.column_chunk(column_idx)?;
+            let group_rows = chunk.num_values as usize;
+            let col_start = chunk.byte_range_start as usize;
+            let col_len = chunk.total_compressed as usize;
+            let compression = chunk
+                .codec()
+                .map_err(|e| fmt_err!(InvalidType, "invalid codec: {}", e))?;
+            let compression: parquet2::compression::Compression = compression.into();
+            let num_values = i64::try_from(chunk.num_values).map_err(|_| {
+                fmt_err!(
+                    InvalidType,
+                    "num_values {} out of i64 range",
+                    chunk.num_values
+                )
+            })?;
+
+            col_decoded += decode_column_chunk_with_params(
+                ctx,
+                column_chunk_bufs,
+                file_data,
+                col_start,
+                col_len,
+                compression,
+                descriptor.clone(),
+                num_values,
+                col_info,
+                0,
+                group_rows,
+                column_name,
+                rg,
+                rg == row_group_lo_idx,
+            )?;
+        }
+
+        if dest_col_idx > 0 && total != col_decoded {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column chunk size {col_decoded} does not match previous size {total}",
+            ));
+        }
+        total = col_decoded;
+    }
+
+    Ok(total)
+}
+
+/// Decode a row group with row-level filtering using `_pm` metadata.
+///
+/// When `FILL_NULLS` is true, unfiltered rows are filled with nulls.
+/// When false, unfiltered rows are skipped.
+#[allow(clippy::too_many_arguments)]
+pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
+    ctx: &mut DecodeContext,
+    row_group_bufs: &mut RowGroupBuffers,
+    file_data: &[u8],
+    parquet_meta_reader: &ParquetMetaReader,
+    column_offset: usize,
+    col_pairs: &[(ParquetColumnIndex, ColumnType)],
+    row_group_index: usize,
+    row_group_lo: usize,
+    row_group_hi: usize,
+    filtered_rows: &[i64],
+) -> ParquetResult<usize> {
+    // Release the varchar-slice reuse pool and scratch vecs on every exit
+    // path, including the error returns below: buffers stranded in the
+    // context after a failed decode are invisible to the Java cache budget.
+    let mut ctx_guard = VarcharSliceBufGuard::new(ctx);
+    let ctx = ctx_guard.ctx();
+    let rg_block = parquet_meta_reader.row_group(row_group_index)?;
+    let col_count = parquet_meta_reader.column_count();
+
+    row_group_bufs.ensure_n_columns(column_offset + col_pairs.len())?;
+
+    let mut decoded = 0usize;
+    for (dest_col_idx, &(column_idx, to_column_type)) in col_pairs.iter().enumerate() {
+        let column_idx = column_idx as usize;
+        if column_idx >= col_count as usize {
+            return Err(fmt_err!(
+                InvalidType,
+                "column index {} out of range [0,{})",
+                column_idx,
+                col_count
+            ));
+        }
+
+        let col_desc = parquet_meta_reader.column_descriptor(column_idx)?;
+        let col_type_code = col_desc.col_type;
+        let sidecar_column_type = ColumnType::new_raw(col_type_code)
+            .ok_or_else(|| fmt_err!(InvalidType, "unknown column type code: {}", col_type_code))?;
+
+        let (column_type, original_column_type) =
+            resolve_decode_column_type(sidecar_column_type, to_column_type, column_idx)?;
+
+        let flags = ColumnFlags(col_desc.flags);
+        let field_rep = flags
+            .repetition()
+            .unwrap_or(crate::parquet_metadata::types::FieldRepetition::Optional);
+        let repetition: Repetition = field_rep.into();
+        let column_name = parquet_meta_reader
+            .column_name(column_idx)
+            .unwrap_or("<unknown>");
+        let format = if flags.is_local_key_global() {
+            Some(QdbMetaColFormat::LocalKeyIsGlobal)
+        } else {
+            None
+        };
+        let ascii = if flags.is_ascii() { Some(true) } else { None };
 
         let chunk = rg_block.column_chunk(column_idx)?;
         let buf_idx = column_offset + dest_col_idx;
         let column_chunk_bufs = &mut row_group_bufs.column_bufs[buf_idx];
-        let col_info = QdbMetaCol { column_type, column_top: 0, format, ascii };
+        let col_info = QdbMetaCol {
+            column_type,
+            column_top: 0,
+            format,
+            ascii,
+            id: None,
+        };
         let stat_flags = StatFlags(chunk.stat_flags);
         if stat_flags.has_null_count() && chunk.null_count == chunk.num_values {
             column_chunk_bufs.reset();
@@ -272,6 +515,33 @@ pub fn decode_row_group_filtered<const FILL_NULLS: bool>(
             Ok(count) => decoded = count,
             Err(err) => return Err(err),
         }
+
+        // Column-top nulls for a no-sentinel source must be stamped with the target sentinel,
+        // same as the non-filtered path. filtered_rows is window-relative and ascending and the
+        // output preserves that order, so the matched column-top rows are a contiguous leading
+        // prefix of the (possibly compacted) buffer.
+        let rg_column_top = if stat_flags.has_null_count() {
+            usize::try_from(chunk.null_count).unwrap_or(0)
+        } else {
+            0
+        };
+        let window_column_top = window_leading_nulls(rg_column_top, row_group_lo, row_group_hi);
+        let leading_nulls = if FILL_NULLS {
+            // Output is full-width scan order over [row_group_lo, row_group_hi): the column-top
+            // rows are literally the first window_column_top outputs.
+            window_column_top
+        } else {
+            // Output is compacted matched rows in ascending order: count the matched rows whose
+            // window-relative index falls inside the column top.
+            filtered_rows.partition_point(|&r| (r as usize) < window_column_top)
+        };
+        column_chunk_bufs.column_top = leading_nulls;
+        post_convert(
+            original_column_type,
+            to_column_type,
+            leading_nulls,
+            column_chunk_bufs,
+        )?;
     }
 
     Ok(decoded)
@@ -695,6 +965,98 @@ mod tests {
     }
 
     #[test]
+    fn decode_row_group_error_releases_varchar_slice_bufs() -> ParquetResult<()> {
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(10)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut bufs = RowGroupBuffers::new(allocator);
+
+        // Simulate buffers parked or staged by an in-flight decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
+        ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
+
+        // Column 99 doesn't exist, so the decode fails.
+        let col_pairs = [(99i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+        let res = decode_row_group(
+            &mut ctx,
+            &mut bufs,
+            &parquet_data,
+            &reader,
+            &col_pairs,
+            0,
+            0,
+            10,
+        );
+        assert!(res.is_err());
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "a failed row-group decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "a failed row-group decode must release the page-buffer scratch"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "a failed row-group decode must release the dict-buffer scratch"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_row_group_filtered_error_releases_varchar_slice_bufs() -> ParquetResult<()> {
+        let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
+            build_matched_parquet_meta(10)?;
+        let reader =
+            ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size)?;
+
+        let tas = crate::allocator::TestAllocatorState::new();
+        let allocator = tas.allocator();
+        let mut ctx = DecodeContext::new(parquet_data.as_ptr(), parquet_data.len() as u64);
+        let mut bufs = RowGroupBuffers::new(allocator);
+
+        // Simulate buffers parked or staged by an in-flight decode.
+        ctx.varchar_slice_buf_pool.push(vec![0u8; 4096]);
+        ctx.varchar_slice_page_bufs_scratch.push(vec![0u8; 1024]);
+        ctx.varchar_slice_dict_bufs_scratch.push(vec![0u8; 1024]);
+
+        // Column 99 doesn't exist, so the decode fails.
+        let col_pairs = [(99i32, ColumnType::new(ColumnTypeTag::Timestamp, 0))];
+        let res = decode_row_group_filtered::<false>(
+            &mut ctx,
+            &mut bufs,
+            &parquet_data,
+            &reader,
+            0,
+            &col_pairs,
+            0,
+            0,
+            10,
+            &[0, 1],
+        );
+        assert!(res.is_err());
+        assert!(
+            ctx.varchar_slice_buf_pool.is_empty(),
+            "a failed filtered decode must release the varchar-slice reuse pool"
+        );
+        assert!(
+            ctx.varchar_slice_page_bufs_scratch.is_empty(),
+            "a failed filtered decode must release the page-buffer scratch"
+        );
+        assert!(
+            ctx.varchar_slice_dict_bufs_scratch.is_empty(),
+            "a failed filtered decode must release the dict-buffer scratch"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn decode_partial_row_range() -> ParquetResult<()> {
         let (parquet_data, parquet_meta_bytes, parquet_meta_file_size) =
             build_matched_parquet_meta(100)?;
@@ -804,6 +1166,7 @@ mod tests {
             column_top: 0,
             designated_timestamp: true,
             not_null_hint: true,
+            strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };

@@ -547,6 +547,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         return metadata.getPartitionBy();
     }
 
+    @TestOnly
+    public ReaderScanProfile getScanProfile() {
+        return scanProfile;
+    }
+
     public long getSeqTxn() {
         return txFile.getSeqTxn();
     }

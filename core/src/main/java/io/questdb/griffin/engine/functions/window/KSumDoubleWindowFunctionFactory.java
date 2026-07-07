@@ -49,10 +49,12 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Kahan summation window function.
@@ -642,6 +644,12 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -896,7 +904,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             timestampIndex = timestampIdx;
 
             capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            // memory allocates lazily on reopen(), under the tracker bound by the cursor
             firstIdx = 0;
             frameSize = 0;
             sum = 0.0;
@@ -1036,6 +1044,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void reset() {
             super.reset();
             memory.close();
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
         }
 
         @Override

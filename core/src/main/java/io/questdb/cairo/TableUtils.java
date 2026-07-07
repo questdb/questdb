@@ -114,8 +114,10 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
+    public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
+    public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -130,6 +132,7 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
+    public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -142,8 +145,13 @@ public final class TableUtils {
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
+    // Writer lock reason used by internal system jobs (partition/posting-seal purge,
+    // CSV copy status) when they acquire a TableWriter on behalf of the engine itself.
+    public static final String SYSTEM_WRITER_LOCK_REASON = "QuestDB system";
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_EXISTS = 0;
+    public static final int TABLE_FORMAT_NATIVE = 0;
+    public static final int TABLE_FORMAT_PARQUET = 1;
     // Regular data table kind
     public static final int TABLE_KIND_REGULAR_TABLE = 0;
     // Parquet export table kind - allows table creation in read-only mode for parquet exports
@@ -155,6 +163,10 @@ public final class TableUtils {
     public static final int TABLE_TYPE_VIEW = 3;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    // Dot-prefixed db-root staging dir for ALTER TABLE ... REBASE WAL (mirrors ".download"/".checkpoint").
+    // The startup table-dir scans only consider immediate db-root children that are complete tables and
+    // never recurse, so the in-progress clone built inside here is invisible until renamed into place.
+    public static final String REBASE_TMP_DIR = ".rebase";
     public static final String TODO_FILE_NAME = "_todo_";
     /**
      * TXN file structure
@@ -313,7 +325,8 @@ public final class TableUtils {
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
         }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getColumnName();
+        TableColumnMetadata existingMeta = columnMetadata.getQuick(existingIndex);
+        String columnNameStr = existingMeta.getColumnName();
         int columnIndex = columnMetadata.size();
         columnMetadata.add(
                 new TableColumnMetadata(
@@ -327,7 +340,8 @@ public final class TableUtils {
                         false,
                         existingIndex + 1, // replacing column index by convention can be 0 if not in use
                         symbolCacheFlag,
-                        symbolCapacity
+                        symbolCapacity,
+                        existingMeta.getOriginalWriterIndex()
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();
@@ -351,6 +365,23 @@ public final class TableUtils {
         return memSize;
     }
 
+    public static boolean checkStoragePolicyTtl(
+            TxReader txReader,
+            TimestampDriver timestampDriver,
+            long partitionTimestamp,
+            long maxTimestamp,
+            int ttl
+    ) {
+        assert ttl != 0 : "ttl cannot be 0, invalid value";
+        // Storage policies measure age from the partition's own floor (its start), not its
+        // ceiling like table TTL does. This shifts every threshold forward by one partition
+        // width relative to table TTL. For an interval up to one partition width, that means a
+        // partition becomes eligible as soon as the next (active) partition begins; for larger
+        // intervals it simply becomes eligible one partition width sooner than table TTL would.
+        final long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
+        return isOlderThanTtl(timestampDriver, partitionFloor, maxTimestamp, ttl);
+    }
+
     public static boolean checkTtl(
             TxReader txReader,
             TimestampDriver timestampDriver,
@@ -359,11 +390,11 @@ public final class TableUtils {
             int ttl
     ) {
         assert ttl != 0 : "ttl cannot be 0, invalid value";
+        // Table TTL measures age from the partition ceiling (the start of the next logical
+        // partition), so a partition expires only once even its newest possible record is
+        // older than the TTL.
         final long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
-        // TTL < 0 means it's in months
-        return ttl > 0
-                ? maxTimestamp - partitionCeiling >= timestampDriver.fromHours(ttl)
-                : timestampDriver.monthsBetween(partitionCeiling, maxTimestamp) >= -ttl;
+        return isOlderThanTtl(timestampDriver, partitionCeiling, maxTimestamp, ttl);
     }
 
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -760,6 +791,40 @@ public final class TableUtils {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
+    /**
+     * Derives the dense descriptor indexes of columns carrying the bloom-filter flag
+     * (bit 25, set by {@link #packParquetConfig}) in their per-column parquet encoding
+     * config, appending them to {@code indexes}.
+     * <p>
+     * The index space is the parquet encoder's dense column list: deleted columns are
+     * skipped, so the produced indexes line up with the columns added to the
+     * {@link io.questdb.griffin.engine.table.parquet.PartitionDescriptor PartitionDescriptor}
+     * by both {@link #produceParquetFromNative} (CONVERT) and
+     * {@code O3PartitionJob.writeFreshParquetFromO3} (fresh O3 partitions). The Rust encoder
+     * reads bloom columns solely from this explicit list, never from the per-column config,
+     * so every encoder path that wants config-driven bloom filters must build the list here.
+     * <p>
+     * Like {@link #parseBloomFilterColumnIndexes}, this method only appends; the caller clears
+     * {@code indexes} first when a fresh result is required.
+     *
+     * @param metadata table metadata whose per-column parquet encoding config flags are inspected
+     * @param indexes  reusable DirectIntList that receives the flagged columns' dense indexes
+     */
+    public static void deriveBloomFilterColumnIndexes(RecordMetadata metadata, DirectIntList indexes) {
+        final int columnCount = metadata.getColumnCount();
+        int descriptorIndex = 0;
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType <= 0) {
+                continue; // skip deleted columns
+            }
+            if (isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
+                indexes.add(descriptorIndex);
+            }
+            descriptorIndex++;
+        }
+    }
+
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
         long recSize = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -972,6 +1037,28 @@ public final class TableUtils {
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
         return getSymbolWriterIndexOffset(symbolWriterCount);
+    }
+
+    /**
+     * Walks the replacingIndex chain starting from {@code writerIndex} and returns the
+     * root (oldest) writer index. Caps iterations at {@code columnCount}: a longer chain
+     * implies a cycle (e.g. A->B->A) from a corrupt metadata file and triggers a
+     * validation exception rather than spinning forever.
+     */
+    public static int getReplacingChainHead(MemoryR metaMem, int writerIndex, int columnCount) {
+        int origWriterIndex = writerIndex;
+        int ri = getReplacingColumnIndex(metaMem, writerIndex);
+        int hops = 0;
+        while (ri >= 0) {
+            if (++hops > columnCount) {
+                throw validationException(metaMem)
+                        .put("replacingIndex cycle detected starting at writer index ")
+                        .put(writerIndex);
+            }
+            origWriterIndex = ri;
+            ri = getReplacingColumnIndex(metaMem, ri);
+        }
+        return origWriterIndex;
     }
 
     public static int getReplacingColumnIndex(MemoryR metaMem, int columnIndex) {
@@ -1782,10 +1869,13 @@ public final class TableUtils {
                     }
 
                     final String columnName = metadata.getColumnName(columnIndex);
-                    final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    // Store the original writer index in the parquet file so that a later
+                    // parquet->native conversion can match columns by their original id even
+                    // after a column-type conversion has re-keyed the column.
+                    final int columnId = metadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
 
-                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnId);
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnId);
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
@@ -1810,7 +1900,7 @@ public final class TableUtils {
                             ff.madvise(columnAddr, columnSize, Files.POSIX_MADV_SEQUENTIAL);
 
                             // root symbol files use separate txn
-                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnId);
+                            final long symbolTableNameTxn = columnVersionReader.getSymbolTableNameTxn(columnIndex);
 
                             offsetFileName(path.trimTo(pathSize), columnName, symbolTableNameTxn);
                             if (!ff.exists(path.$())) {
@@ -1916,17 +2006,7 @@ public final class TableUtils {
                 bloomFilterIndexes.clear();
                 if (useMetadataBloomFilters) {
                     // Derive bloom filter columns from per-column metadata flags
-                    int metaDescriptorIndex = 0;
-                    for (int i = 0; i < columnCount; i++) {
-                        final int colType = metadata.getColumnType(i);
-                        if (colType <= 0) {
-                            continue;
-                        }
-                        if (TableUtils.isParquetConfigBloomFilter(metadata.getColumnMetadata(i).getParquetEncodingConfig())) {
-                            bloomFilterIndexes.add(metaDescriptorIndex);
-                        }
-                        metaDescriptorIndex++;
-                    }
+                    deriveBloomFilterColumnIndexes(metadata, bloomFilterIndexes);
                 } else {
                     // Explicit bloom_filter_columns override from CONVERT PARTITION WITH clause
                     parseBloomFilterColumnIndexes(metadata, bloomFilterColumns, bloomFilterIndexes);
@@ -2544,6 +2624,7 @@ public final class TableUtils {
         mem.putBool(tableStruct.isWalEnabled());
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
+        mem.putInt(tableStruct.getTableFormat());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -2611,7 +2692,7 @@ public final class TableUtils {
         return metaMem.getStrA(offset);
     }
 
-    private static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
+    static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
         int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
         short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
         short actualChecksum = checksumForMetaFormatMinorVersionField(
@@ -2620,6 +2701,13 @@ public final class TableUtils {
         );
         short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
         return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= minorVersion;
+    }
+
+    private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {
+        // TTL < 0 means it's in months
+        return ttl > 0
+                ? maxTimestamp - partitionBoundary >= timestampDriver.fromHours(ttl)
+                : timestampDriver.monthsBetween(partitionBoundary, maxTimestamp) >= -ttl;
     }
 
     // Utility method for debugging. This method is not used in production.
@@ -2677,10 +2765,31 @@ public final class TableUtils {
             boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(metaMem, i));
 
             if (replacingColumnIndex > -1 && replacingColumnIndex < columnCount - 1) {
-                // Replace the column index
-                targetList.set(3 * replacingColumnIndex, i);
-                targetList.set(3 * replacingColumnIndex + 1, nameOffset);
-                targetList.set(3 * replacingColumnIndex + 2, isSymbol ? denseSymbolIndex : -1);
+                // Find the slot where the replaced column currently lives.
+                // For a chain A→B→C, when C replaces B, B may already have been
+                // moved into A's slot by a prior replacement, and slot B holds a
+                // dead marker of the form (-prevReplacingIndex - 1). Decode the
+                // marker to hop directly to the next slot in the chain: the
+                // column that ended up at slot prevReplacingIndex is the one we
+                // need to follow. Continue until the slot is live (non-negative
+                // writer index); that slot holds the column we want to overwrite.
+                // This is O(chain length) instead of O(N) scan per replacement.
+                int targetSlot = replacingColumnIndex;
+                int marker = targetList.getQuick(3 * targetSlot);
+                int hops = 0;
+                while (marker < 0) {
+                    if (++hops > columnCount) {
+                        throw validationException(metaMem)
+                                .put("replacingIndex cycle detected in dead-marker chain at column ").put(i).put(", slot ").put(targetSlot);
+                    }
+                    targetSlot = -marker - 1;
+                    marker = targetList.getQuick(3 * targetSlot);
+                }
+
+                // Replace the column index at the found slot
+                targetList.set(3 * targetSlot, i);
+                targetList.set(3 * targetSlot + 1, nameOffset);
+                targetList.set(3 * targetSlot + 2, isSymbol ? denseSymbolIndex : -1);
 
                 targetList.add(-replacingColumnIndex - 1);
                 targetList.add(0);
@@ -2751,8 +2860,16 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
+    static int getTableFormat(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TABLE_FORMAT)
+                ? metaMem.getInt(TableUtils.META_OFFSET_TABLE_FORMAT)
+                : TABLE_FORMAT_NATIVE;
+    }
+
     static int getTtlHoursOrMonths(MemoryR metaMem) {
-        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_TTL)
+                ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS)
+                : 0;
     }
 
     static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {

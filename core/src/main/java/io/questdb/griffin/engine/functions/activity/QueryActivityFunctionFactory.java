@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
@@ -65,6 +66,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         private final LongList entryIds = new LongList();
         private final QueryRegistry queryRegistry;
         private final QueryActivityRecord record = new QueryActivityRecord();
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private QueryRegistry.Entry entry;
         private int entryIndex;
 
@@ -91,6 +93,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
+            // Consult the breaker at the top, so even an empty/fully-filtered registry scan stays cancellable.
+            circuitBreaker.statefulThrowExceptionIfTripped();
             while (++entryIndex < entryIds.size()) {
                 entry = queryRegistry.getEntry(entryIds.get(entryIndex));
                 if (entry != null) {
@@ -103,6 +107,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         }
 
         public void of(SqlExecutionContext executionContext) {
+            circuitBreaker = executionContext.getCircuitBreaker();
             try {
                 executionContext.getSecurityContext().authorizeSqlEngineAdmin();
                 isAdmin = true;
@@ -148,6 +153,10 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return entryIds.getQuick(entryIndex);
                 } else if (col == 1) {
                     return entry.getWorkerId();
+                } else if (col == 9) {
+                    return entry.getMemoryUsed();
+                } else if (col == 10) {
+                    return entry.getMemoryLimit();
                 }
 
                 return Record.super.getLong(col);
@@ -228,6 +237,8 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("state", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("is_wal", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("query", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("memory_used", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("memory_limit", ColumnType.LONG));
         METADATA = metadata;
     }
 }

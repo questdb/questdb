@@ -406,6 +406,25 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testFloatSuppressedI64WideningNestedIntUnderLong() throws Exception {
+        // A float suppresses the global narrow-i64 widening, but the inner
+        // INT*INT product (anint * 100000) feeds a LONG-width multiply, so the
+        // Java filter computes it at 64 bits. The serializer sign-extends the
+        // inner operands while leaving along (already i64) and the leaf operand
+        // of the long multiply alone.
+        serialize("afloat <= along * (anint * 100000)");
+        assertIR("(i64 100000L)(i32 anint)(sx_i64)(*)(i64 along)(*)(f32 afloat)(<=)(ret)");
+    }
+
+    @Test
+    public void testFloatSuppressedI64WideningSkipsLongTypedOp() throws Exception {
+        // anint * 9000000000 is already i64 (the constant overflows int), so the
+        // long multiply promotes anint through convert(); no sx_i64 is needed.
+        serialize("afloat <= along * (anint * 9000000000)");
+        assertIR("(i64 9000000000L)(i32 anint)(*)(i64 along)(*)(f32 afloat)(<=)(ret)");
+    }
+
+    @Test
     public void testConstantTypes() throws Exception {
         final String[][] columns = new String[][]{
                 {"abyte", "i8", "1", "1L", "i8"},

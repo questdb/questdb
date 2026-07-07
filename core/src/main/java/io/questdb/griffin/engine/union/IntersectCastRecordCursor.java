@@ -30,7 +30,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -54,7 +54,7 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     ) {
         this.mapA = mapA;
         this.mapB = mapB;
-        isOpen = true;
+        isOpen = false;
         this.recordSink = recordSink;
         castRecord = new UnionCastRecord(castFunctionA, castFunctionB);
     }
@@ -142,16 +142,18 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
         this.cursorB = Misc.free(this.cursorB);
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionContext executionContext) {
         if (!isOpen) {
             isOpen = true;
+            mapA.setMemoryTracker(executionContext.getMemoryTracker());
+            mapB.setMemoryTracker(executionContext.getMemoryTracker());
             mapA.reopen();
             mapB.reopen();
         }
 
         this.cursorA = cursorA;
         this.cursorB = cursorB;
-        this.circuitBreaker = circuitBreaker;
+        this.circuitBreaker = executionContext.getCircuitBreaker();
         castRecord.of(cursorA.getRecord(), cursorB.getRecord());
         castRecord.setAb(false);
         isCursorBHashed = false;

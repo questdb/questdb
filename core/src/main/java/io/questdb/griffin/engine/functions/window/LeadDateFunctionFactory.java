@@ -82,7 +82,7 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
                     }
                 },
                 LeadFunction::new,
-                LagLongFunctionFactory.LeadLagValueCurrentRow::new,
+                LagDateFunctionFactory.LeadLagValueCurrentRow::new,
                 LeadOverPartitionFunction::new
         );
     }

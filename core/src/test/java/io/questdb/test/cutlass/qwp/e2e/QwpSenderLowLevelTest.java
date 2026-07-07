@@ -64,11 +64,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql("SELECT count() FROM test_date", "count\n3\n");
-            assertSql(
-                    "SELECT event_date FROM test_date ORDER BY ts",
-                    "event_date\n2024-01-01T00:00:00.000Z\n2024-06-15T12:30:00.000Z\n1970-01-01T00:00:00.000Z\n"
-            );
+            assertQuery("SELECT count() FROM test_date")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
+            assertQuery("SELECT event_date FROM test_date ORDER BY ts")
+                    .noLeakCheck()
+                    .returnsOnce("event_date\n2024-01-01T00:00:00.000Z\n2024-06-15T12:30:00.000Z\n1970-01-01T00:00:00.000Z\n");
         });
     }
 
@@ -92,14 +93,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM test_null_long256 WHERE value IS NULL",
-                    "count\n1\n"
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_long256 WHERE value IS NOT NULL",
-                    "count\n2\n"
-            );
+            assertQuery("SELECT count() FROM test_null_long256 WHERE value IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT count() FROM test_null_long256 WHERE value IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -123,14 +122,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM test_null_ts WHERE event_time IS NULL",
-                    "count\n1\n"
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_ts WHERE event_time IS NOT NULL",
-                    "count\n2\n"
-            );
+            assertQuery("SELECT count() FROM test_null_ts WHERE event_time IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT count() FROM test_null_ts WHERE event_time IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -154,14 +151,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM test_null_uuid WHERE id IS NULL",
-                    "count\n1\n"
-            );
-            assertSql(
-                    "SELECT count() FROM test_null_uuid WHERE id IS NOT NULL",
-                    "count\n2\n"
-            );
+            assertQuery("SELECT count() FROM test_null_uuid WHERE id IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n1\n");
+            assertQuery("SELECT count() FROM test_null_uuid WHERE id IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
         });
     }
 
@@ -197,14 +192,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM omit_date WHERE col IS NULL",
-                    "count\n2\n"
-            );
-            assertSql(
-                    "SELECT count() FROM omit_date WHERE col IS NOT NULL",
-                    "count\n3\n"
-            );
+            assertQuery("SELECT count() FROM omit_date WHERE col IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT count() FROM omit_date WHERE col IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 
@@ -237,14 +230,12 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
             }
 
             drainWalQueue();
-            assertSql(
-                    "SELECT count() FROM omit_geohash WHERE col IS NULL",
-                    "count\n2\n"
-            );
-            assertSql(
-                    "SELECT count() FROM omit_geohash WHERE col IS NOT NULL",
-                    "count\n3\n"
-            );
+            assertQuery("SELECT count() FROM omit_geohash WHERE col IS NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n2\n");
+            assertQuery("SELECT count() FROM omit_geohash WHERE col IS NOT NULL")
+                    .noLeakCheck()
+                    .returnsOnce("count\n3\n");
         });
     }
 }

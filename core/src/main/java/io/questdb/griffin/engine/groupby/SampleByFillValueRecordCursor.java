@@ -92,7 +92,9 @@ class SampleByFillValueRecordCursor extends AbstractSampleByFillRecordCursor imp
         record.of(map.getRecord());
         mapCursor = map.getCursor();
         mapRecord = map.getRecord();
-        isOpen = true;
+        // Lazy map (openOnInit=false): start closed so the factory's reopen()
+        // allocates the backing under the bound MemoryTracker on the first cursor.
+        isOpen = false;
     }
 
     @Override

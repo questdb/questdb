@@ -25,13 +25,15 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
-import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
@@ -40,11 +42,15 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -58,6 +64,2238 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </ul>
  */
 public class ParquetWriteTest extends AbstractCairoTest {
+
+    @Test
+    public void testAlterColumnTypeAllFixedToStringWithParquetPartition() throws Exception {
+        testConvertFixedToVar("STRING");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllFixedToVarcharWithParquetPartition() throws Exception {
+        testConvertFixedToVar("VARCHAR");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToByteWithParquetPartition() throws Exception {
+        testConvertAllToType("BYTE",
+                """
+                        rnd_short() v_short,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_float(4) v_float,
+                        rnd_double(4) v_double""",
+                new String[]{"v_short", "v_int", "v_long", "v_float", "v_double"},
+                "42");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToDateWithParquetPartition() throws Exception {
+        testConvertAllToType("DATE",
+                """
+                        rnd_long(0, 1_000_000_000_000L, 4) v_long,
+                        rnd_timestamp(
+                            to_timestamp('2000', 'yyyy'),
+                            to_timestamp('2025', 'yyyy'), 4
+                        ) v_ts""",
+                new String[]{"v_long", "v_ts"},
+                "'2020-07-01T00:00:00.000Z'");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToDoubleWithParquetPartition() throws Exception {
+        testConvertAllToType("DOUBLE",
+                """
+                        rnd_byte() v_byte,
+                        rnd_short() v_short,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_float(4) v_float""",
+                new String[]{"v_byte", "v_short", "v_int", "v_long", "v_float"},
+                "3.14");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToFloatWithParquetPartition() throws Exception {
+        testConvertAllToType("FLOAT",
+                """
+                        rnd_byte() v_byte,
+                        rnd_short() v_short,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_double(4) v_double""",
+                new String[]{"v_byte", "v_short", "v_int", "v_long", "v_double"},
+                "1.5");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToIntWithParquetPartition() throws Exception {
+        testConvertAllToType("INT",
+                """
+                        rnd_boolean() v_bool,
+                        rnd_byte() v_byte,
+                        rnd_short() v_short,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_float(4) v_float,
+                        rnd_double(4) v_double""",
+                new String[]{"v_bool", "v_byte", "v_short", "v_long", "v_float", "v_double"},
+                "12345");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToLongWithParquetPartition() throws Exception {
+        testConvertAllToType("LONG",
+                """
+                        rnd_byte() v_byte,
+                        rnd_short() v_short,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_float(4) v_float,
+                        rnd_double(4) v_double,
+                        rnd_date(
+                            to_date('2000', 'yyyy'),
+                            to_date('2025', 'yyyy'), 4
+                        ) v_date,
+                        rnd_timestamp(
+                            to_timestamp('2000', 'yyyy'),
+                            to_timestamp('2025', 'yyyy'), 4
+                        ) v_ts""",
+                new String[]{"v_byte", "v_short", "v_int", "v_float", "v_double", "v_date", "v_ts"},
+                "123456789");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToShortWithParquetPartition() throws Exception {
+        testConvertAllToType("SHORT",
+                """
+                        rnd_byte() v_byte,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_float(4) v_float,
+                        rnd_double(4) v_double""",
+                new String[]{"v_byte", "v_int", "v_long", "v_float", "v_double"},
+                "999");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToTimestampWithParquetPartition() throws Exception {
+        testConvertAllToType("TIMESTAMP",
+                """
+                        rnd_long(0, 1_000_000_000_000L, 4) v_long,
+                        rnd_date(
+                            to_date('2000', 'yyyy'),
+                            to_date('2025', 'yyyy'), 4
+                        ) v_date""",
+                new String[]{"v_long", "v_date"},
+                "'2020-07-01T00:00:00.000000Z'");
+    }
+
+    @Test
+    public void testAlterColumnTypeBooleanToIntWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (true, '2020-01-01T00:00:00.000Z'),
+                            (false, '2020-01-01T06:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (true, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            // Boolean has no distinct null (sentinel = 0 = false),
+            // so NULL boolean expands to INT 0, not INT null.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            0\t2020-01-01T12:00:00.000000Z
+                            1\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeByteToDoubleWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (127, '2020-01-01T06:00:00.000Z'),
+                            (-1, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (42, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1.0\t2020-01-01T00:00:00.000000Z
+                            127.0\t2020-01-01T06:00:00.000000Z
+                            -1.0\t2020-01-01T12:00:00.000000Z
+                            42.0\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeChainedFixedToVarWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Three chained conversions: INT → LONG → DOUBLE → VARCHAR.
+            // The parquet file stores data under the original INT writer index.
+            // The read path and O3 merge must walk the full replacingIndex chain.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            drainWalQueue();
+
+            // The second ALTER TYPE eagerly converts the parquet partition to native so
+            // it goes through the same chain as the native one:
+            // INT → LONG → DOUBLE → VARCHAR, producing "10.0", "30.0", "40.0".
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """);
+
+            // O3 merge into the (now native) partition.
+            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeChainedWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Two consecutive type changes: INT → LONG → DOUBLE.
+            // The parquet file stores data under the original INT writer index.
+            // The O3 merge must walk the full replacingIndex chain to find it.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99.0
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDateToLongWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (CAST('1970-01-01T00:00:01.000Z' AS DATE), '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (CAST('1970-01-01T00:16:40.000Z' AS DATE), '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (CAST('1970-01-01T00:00:00.100Z' AS DATE), '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            // DATE and LONG share the same i64 representation (milliseconds)
+            // and null sentinel (Long.MIN_VALUE). Conversion is a no-op.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1000\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            1000000\t2020-01-01T12:00:00.000000Z
+                            100\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDateToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (CAST('1970-01-01T00:00:01.000Z' AS DATE), '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (CAST('1970-01-01T00:16:40.000Z' AS DATE), '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (CAST('1970-01-01T00:00:00.500Z' AS DATE), '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            // DATE (ms) → TIMESTAMP (µs): values are scaled ×1000.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:01.000000Z\t2020-01-01T00:00:00.000000Z
+                            \t2020-01-01T06:00:00.000000Z
+                            1970-01-01T00:16:40.000000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.500000Z\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToByteWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z'),
+                            (1e10, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE BYTE");
+            drainWalQueue();
+
+            // Out-of-range 1e10 should become BYTE null (0).
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            0\t2020-01-01T18:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0, '2020-01-01T00:00:00.000Z'),
+                            (-1.0, '2020-01-01T04:00:00.000Z'),
+                            (NULL, '2020-01-01T08:00:00.000Z'),
+                            (0.0, '2020-01-01T12:00:00.000Z'),
+                            (86400000.0, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0, '2020-01-02T00:00:00.000Z'),
+                            (-1.0, '2020-01-02T04:00:00.000Z'),
+                            (NULL, '2020-01-02T08:00:00.000Z'),
+                            (0.0, '2020-01-02T12:00:00.000Z'),
+                            (86400000.0, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            // DOUBLE→DATE is a range-checked f64→i64 cast. NaN→null.
+            // Both partitions must produce identical results.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
+                            \t2020-01-01T08:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-02T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
+                            \t2020-01-02T08:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-02T12:00:00.000000Z
+                            1970-01-02T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToIntOutOfRangeWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (42.5, '2020-01-01T00:00:00.000Z'),
+                            (1e15, '2020-01-01T06:00:00.000Z'),
+                            (-1e15, '2020-01-01T12:00:00.000Z'),
+                            (NULL, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (3.7, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            // C++ converts out-of-range doubles to INT null. The Rust parquet
+            // decoder must do the same: values outside [INT_MIN+1, INT_MAX]
+            // should become null, and fractional parts are truncated toward zero.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            42\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            null\t2020-01-01T12:00:00.000000Z
+                            null\t2020-01-01T18:00:00.000000Z
+                            3\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToShortWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z'),
+                            (1e10, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE SHORT");
+            drainWalQueue();
+
+            // Out-of-range 1e10 should become SHORT null (0).
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            0\t2020-01-01T18:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0, '2020-01-01T00:00:00.000Z'),
+                            (-1.0, '2020-01-01T04:00:00.000Z'),
+                            (NULL, '2020-01-01T08:00:00.000Z'),
+                            (0.0, '2020-01-01T12:00:00.000Z'),
+                            (1000000.0, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0, '2020-01-02T00:00:00.000Z'),
+                            (-1.0, '2020-01-02T04:00:00.000Z'),
+                            (NULL, '2020-01-02T08:00:00.000Z'),
+                            (0.0, '2020-01-02T12:00:00.000Z'),
+                            (1000000.0, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            // DOUBLE→TIMESTAMP is a range-checked f64→i64 cast. NaN��null.
+            // Both partitions must produce identical results.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
+                            \t2020-01-01T08:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
+                            \t2020-01-02T08:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-02T12:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t2020-01-02T16:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToVarcharWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v DOUBLE");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (3.14, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (-0.5, '2020-01-01T16:00:00.000Z'),
+                            (1000000.123, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (42.0, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t3.14
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t-0.5
+                            2020-01-01T20:00:00.000000Z\t1000000.123
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t42.0
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES ('99.9', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t99.9
+                            2020-01-01T08:00:00.000000Z\t3.14
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t-0.5
+                            2020-01-01T20:00:00.000000Z\t1000000.123
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t42.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToByteWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE BYTE");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0::FLOAT, '2020-01-01T00:00:00.000Z'),
+                            (-1.0::FLOAT, '2020-01-01T04:00:00.000Z'),
+                            (NULL, '2020-01-01T08:00:00.000Z'),
+                            (0.0::FLOAT, '2020-01-01T12:00:00.000Z'),
+                            (86400000.0::FLOAT, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0::FLOAT, '2020-01-02T00:00:00.000Z'),
+                            (-1.0::FLOAT, '2020-01-02T04:00:00.000Z'),
+                            (NULL, '2020-01-02T08:00:00.000Z'),
+                            (0.0::FLOAT, '2020-01-02T12:00:00.000Z'),
+                            (86400000.0::FLOAT, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            // FLOAT→DATE is a range-checked f32→i64 cast. NaN→null.
+            // Both partitions must produce identical results.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
+                            \t2020-01-01T08:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-02T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
+                            \t2020-01-02T08:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-02T12:00:00.000000Z
+                            1970-01-02T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToDoubleWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v FLOAT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (1.5, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (3.5, '2020-01-01T16:00:00.000Z'),
+                            (4.5, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (5.5, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t1.5
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t3.5
+                            2020-01-01T20:00:00.000000Z\t4.5
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t5.5
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (9.5, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t9.5
+                            2020-01-01T08:00:00.000000Z\t1.5
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t3.5
+                            2020-01-01T20:00:00.000000Z\t4.5
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t5.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToIntOutOfRangeWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (42.5, '2020-01-01T00:00:00.000Z'),
+                            (1e15, '2020-01-01T06:00:00.000Z'),
+                            (-1e15, '2020-01-01T12:00:00.000Z'),
+                            (NULL, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.9, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            42\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            null\t2020-01-01T12:00:00.000000Z
+                            null\t2020-01-01T18:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToLongWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToShortWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE SHORT");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0::FLOAT, '2020-01-01T00:00:00.000Z'),
+                            (-1.0::FLOAT, '2020-01-01T04:00:00.000Z'),
+                            (NULL, '2020-01-01T08:00:00.000Z'),
+                            (0.0::FLOAT, '2020-01-01T12:00:00.000Z'),
+                            (1000000.0::FLOAT, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0::FLOAT, '2020-01-02T00:00:00.000Z'),
+                            (-1.0::FLOAT, '2020-01-02T04:00:00.000Z'),
+                            (NULL, '2020-01-02T08:00:00.000Z'),
+                            (0.0::FLOAT, '2020-01-02T12:00:00.000Z'),
+                            (1000000.0::FLOAT, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            // FLOAT→TIMESTAMP is a range-checked f32→i64 cast. NaN→null.
+            // Both partitions must produce identical results.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
+                            \t2020-01-01T08:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
+                            \t2020-01-02T08:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-02T12:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t2020-01-02T16:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToBooleanWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (0, '2020-01-01T06:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (42, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (0, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE BOOLEAN");
+            drainWalQueue();
+
+            // INT→BOOLEAN: non-zero → true, zero → false, NULL → false.
+            // The Rust decoder normalizes via contract_to_bool (not truncation).
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            true\t2020-01-01T00:00:00.000000Z
+                            false\t2020-01-01T06:00:00.000000Z
+                            false\t2020-01-01T12:00:00.000000Z
+                            true\t2020-01-01T18:00:00.000000Z
+                            false\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (-1, '2020-01-01T04:00:00.000Z'),
+                            (2_147_483_647, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (0, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            // Native partition for comparison.
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-02T00:00:00.000Z'),
+                            (-1, '2020-01-02T04:00:00.000Z'),
+                            (2_147_483_647, '2020-01-02T08:00:00.000Z'),
+                            (NULL, '2020-01-02T12:00:00.000Z'),
+                            (0, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            // INT→DATE is a plain i32→i64 widening. The int value becomes
+            // the DATE millisecond value. INT NULL (Integer.MIN_VALUE) maps
+            // to DATE NULL. Both partitions must produce identical results.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
+                            1970-01-25T20:31:23.647Z\t2020-01-01T08:00:00.000000Z
+                            \t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
+                            1970-01-25T20:31:23.647Z\t2020-01-02T08:00:00.000000Z
+                            \t2020-01-02T12:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToDoubleWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99.0
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToStringWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE STRING");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (-1, '2020-01-01T04:00:00.000Z'),
+                            (2_147_483_647, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (0, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-02T00:00:00.000Z'),
+                            (-1, '2020-01-02T04:00:00.000Z'),
+                            (2_147_483_647, '2020-01-02T08:00:00.000Z'),
+                            (NULL, '2020-01-02T12:00:00.000Z'),
+                            (0, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            // INT→TIMESTAMP is a plain i32→i64 widening. The int value becomes
+            // the TIMESTAMP microsecond value. Both partitions must match.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
+                            1970-01-01T00:35:47.483647Z\t2020-01-01T08:00:00.000000Z
+                            \t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
+                            1970-01-01T00:35:47.483647Z\t2020-01-02T08:00:00.000000Z
+                            \t2020-01-02T12:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-02T16:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToVarcharWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // INT → VARCHAR. Parquet partition has column_top=2 for v.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            drainWalQueue();
+
+            // Read path: lazy conversion in PageFrameMemoryRecord.
+            // column_top rows → null (empty), explicit NULL → null, values → string representation.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50
+                            """);
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // O3 merge: Rust post_convert eagerly converts INT → VARCHAR.
+            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1000, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (1000000, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:01.000Z\t2020-01-01T00:00:00.000000Z
+                            \t2020-01-01T06:00:00.000000Z
+                            1970-01-01T00:16:40.000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.100Z\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToFloatWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (100, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-42, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE FLOAT");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            100.0\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            -42.0\t2020-01-01T12:00:00.000000Z
+                            7.0\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToIntWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v LONG");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // LONG narrowed to INT — small values are preserved.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1000000, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (1000000000, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (100000, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:01.000000Z\t2020-01-01T00:00:00.000000Z
+                            \t2020-01-01T06:00:00.000000Z
+                            1970-01-01T00:16:40.000000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.100000Z\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToVarcharWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v LONG");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (100_000, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (-42, '2020-01-01T16:00:00.000Z'),
+                            (9_999_999_999, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (7, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t100000
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t-42
+                            2020-01-01T20:00:00.000000Z\t9999999999
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t7
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES ('123', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t123
+                            2020-01-01T08:00:00.000000Z\t100000
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t-42
+                            2020-01-01T20:00:00.000000Z\t9999999999
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeShortToDoubleWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (100, '2020-01-01T00:00:00.000Z'),
+                            (-32768, '2020-01-01T06:00:00.000Z'),
+                            (0, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            100.0\t2020-01-01T00:00:00.000000Z
+                            -32768.0\t2020-01-01T06:00:00.000000Z
+                            0.0\t2020-01-01T12:00:00.000000Z
+                            1.0\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeShortToFloatWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (100, '2020-01-01T00:00:00.000Z'),
+                            (32767, '2020-01-01T06:00:00.000Z'),
+                            (-100, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE FLOAT");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            100.0\t2020-01-01T00:00:00.000000Z
+                            32767.0\t2020-01-01T06:00:00.000000Z
+                            -100.0\t2020-01-01T12:00:00.000000Z
+                            7.0\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeShortToIntWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v SHORT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (5, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (7, '2020-01-01T16:00:00.000Z'),
+                            (8, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (9, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            // The 00:00 and 04:00 rows were inserted before ADD COLUMN v -- they are
+            // column_top rows and read back as INT null on both native and parquet
+            // (parquet stores them as def-level=0 since SHORT/BYTE/CHAR are now
+            // declared OPTIONAL in the parquet schema). Explicit NULL inserted into
+            // SHORT becomes 0 because SHORT has no null sentinel; that 0 stays 0
+            // after SHORT->INT on both paths.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t5
+                            2020-01-01T12:00:00.000000Z\t0
+                            2020-01-01T16:00:00.000000Z\t7
+                            2020-01-01T20:00:00.000000Z\t8
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t9
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t5
+                            2020-01-01T12:00:00.000000Z\t0
+                            2020-01-01T16:00:00.000000Z\t7
+                            2020-01-01T20:00:00.000000Z\t8
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t9
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeStringToAllFixedWithParquetPartition() throws Exception {
+        testConvertVarToAllFixed("STRING");
+    }
+
+    @Test
+    public void testAlterColumnTypeTimestampToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            ('1970-01-01T00:00:01.000000Z', '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            ('1970-01-01T00:16:40.123456Z', '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES ('1970-01-01T00:00:00.500999Z', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            // TIMESTAMP (µs) → DATE (ms): values are divided by 1000, truncating
+            // sub-millisecond precision.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1970-01-01T00:00:01.000Z\t2020-01-01T00:00:00.000000Z
+                            \t2020-01-01T06:00:00.000000Z
+                            1970-01-01T00:16:40.123Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.500Z\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeTimestampToLongWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            ('1970-01-01T00:00:01.000000Z', '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            ('1970-01-01T00:16:40.000000Z', '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES ('1970-01-01T00:00:00.100000Z', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            // TIMESTAMP and LONG share the same i64 representation (microseconds)
+            // and null sentinel (Long.MIN_VALUE). Conversion is a no-op.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            1000000\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            1000000000\t2020-01-01T12:00:00.000000Z
+                            100000\t2020-01-02T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeToSymbolWithUndefinedParquetColumn() throws Exception {
+        // When a column is added after a partition is converted to parquet,
+        // the parquet file has no data for that column (UNDEFINED). Converting
+        // that column to SYMBOL must set the null flag on the symbol map,
+        // because all rows in the parquet partition are NULL for that column.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (v INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T04:00:00.000Z'),
+                            (3, '2020-01-01T08:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Convert to parquet before adding the new column.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+            }
+
+            // Add a STRING column — it won't exist in the parquet file.
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            drainWalQueue();
+
+            // Insert rows with non-null values for the new column in a new partition.
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (4, '2020-01-02T00:00:00.000Z', 'abc'),
+                            (5, '2020-01-02T04:00:00.000Z', 'def')
+                            """
+            );
+            drainWalQueue();
+
+            // Convert s from STRING to SYMBOL. The parquet partition has
+            // UNDEFINED for s, so the pre-pass should set the null flag.
+            execute("ALTER TABLE x ALTER COLUMN s TYPE SYMBOL");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            // Verify: parquet partition rows have NULL for 's',
+            // native partition rows have the symbol values.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts\ts
+                            1\t2020-01-01T00:00:00.000000Z\t
+                            2\t2020-01-01T04:00:00.000000Z\t
+                            3\t2020-01-01T08:00:00.000000Z\t
+                            4\t2020-01-02T00:00:00.000000Z\tabc
+                            5\t2020-01-02T04:00:00.000000Z\tdef
+                            """);
+
+            // Re-convert to parquet. If the null flag was not set on the symbol
+            // map, the encoder would use Required encoding for 's', which fails
+            // to encode the NULL rows from the old parquet partition.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts\ts
+                            1\t2020-01-01T00:00:00.000000Z\t
+                            2\t2020-01-01T04:00:00.000000Z\t
+                            3\t2020-01-01T08:00:00.000000Z\t
+                            4\t2020-01-02T00:00:00.000000Z\tabc
+                            5\t2020-01-02T04:00:00.000000Z\tdef
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeVarcharToAllFixedWithParquetPartition() throws Exception {
+        testConvertVarToAllFixed("VARCHAR");
+    }
+
+    @Test
+    public void testAlterColumnTypeWithDecimalInParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (
+                                d DECIMAL(8,2),
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
+            execute(
+                    """
+                            INSERT INTO x(d, ts) VALUES
+                            ('100.50', '2020-01-01T00:00:00.000Z'),
+                            ('200.75', '2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(d, ts) VALUES ('600.00', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(d, v, ts) VALUES
+                            ('300.25', 10, '2020-01-01T08:00:00.000Z'),
+                            ('350.00', NULL, '2020-01-01T12:00:00.000Z'),
+                            ('400.99', 30, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(d, v, ts) VALUES ('700.50', 50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            d\tts\tv
+                            100.50\t2020-01-01T00:00:00.000000Z\tnull
+                            200.75\t2020-01-01T04:00:00.000000Z\tnull
+                            300.25\t2020-01-01T08:00:00.000000Z\t10
+                            350.00\t2020-01-01T12:00:00.000000Z\tnull
+                            400.99\t2020-01-01T16:00:00.000000Z\t30
+                            600.00\t2020-01-02T00:00:00.000000Z\tnull
+                            700.50\t2020-01-02T12:00:00.000000Z\t50
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(d, v, ts) VALUES ('999.99', 99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            d\tts\tv
+                            100.50\t2020-01-01T00:00:00.000000Z\tnull
+                            200.75\t2020-01-01T04:00:00.000000Z\tnull
+                            999.99\t2020-01-01T06:00:00.000000Z\t99
+                            300.25\t2020-01-01T08:00:00.000000Z\t10
+                            350.00\t2020-01-01T12:00:00.000000Z\tnull
+                            400.99\t2020-01-01T16:00:00.000000Z\t30
+                            600.00\t2020-01-02T00:00:00.000000Z\tnull
+                            700.50\t2020-01-02T12:00:00.000000Z\t50
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeWithExoticColumnsInParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (
+                                ip IPv4,
+                                uu UUID,
+                                gh GEOHASH(4c),
+                                l2 LONG256,
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, ts) VALUES
+                            ('10.0.0.1', '11111111-1111-1111-1111-111111111111', #u33d, CAST('0x01' AS LONG256), '2020-01-01T00:00:00.000Z'),
+                            ('10.0.0.2', '22222222-2222-2222-2222-222222222222', #u33e, CAST('0x02' AS LONG256), '2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, ts) VALUES
+                            ('10.0.0.6', '66666666-6666-6666-6666-666666666666', #u33k, CAST('0x06' AS LONG256), '2020-01-02T00:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
+                            ('10.0.0.3', '33333333-3333-3333-3333-333333333333', #u33f, CAST('0x03' AS LONG256), 10, '2020-01-01T08:00:00.000Z'),
+                            ('10.0.0.4', '44444444-4444-4444-4444-444444444444', #u33g, CAST('0x04' AS LONG256), NULL, '2020-01-01T12:00:00.000Z'),
+                            ('10.0.0.5', '55555555-5555-5555-5555-555555555555', #u33h, CAST('0x05' AS LONG256), 30, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
+                            ('10.0.0.7', '77777777-7777-7777-7777-777777777777', #u33m, CAST('0x07' AS LONG256), 50, '2020-01-02T12:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // INT → LONG with column_top, NULLs, and exotic columns.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ip\tuu\tgh\tl2\tts\tv
+                            10.0.0.1\t11111111-1111-1111-1111-111111111111\tu33d\t0x01\t2020-01-01T00:00:00.000000Z\tnull
+                            10.0.0.2\t22222222-2222-2222-2222-222222222222\tu33e\t0x02\t2020-01-01T04:00:00.000000Z\tnull
+                            10.0.0.3\t33333333-3333-3333-3333-333333333333\tu33f\t0x03\t2020-01-01T08:00:00.000000Z\t10
+                            10.0.0.4\t44444444-4444-4444-4444-444444444444\tu33g\t0x04\t2020-01-01T12:00:00.000000Z\tnull
+                            10.0.0.5\t55555555-5555-5555-5555-555555555555\tu33h\t0x05\t2020-01-01T16:00:00.000000Z\t30
+                            10.0.0.6\t66666666-6666-6666-6666-666666666666\tu33k\t0x06\t2020-01-02T00:00:00.000000Z\tnull
+                            10.0.0.7\t77777777-7777-7777-7777-777777777777\tu33m\t0x07\t2020-01-02T12:00:00.000000Z\t50
+                            """);
+
+            // O3 merge into the parquet partition.
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
+                            ('10.0.0.9', '99999999-9999-9999-9999-999999999999', #u33z, CAST('0x09' AS LONG256), 99, '2020-01-01T06:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ip\tuu\tgh\tl2\tts\tv
+                            10.0.0.1\t11111111-1111-1111-1111-111111111111\tu33d\t0x01\t2020-01-01T00:00:00.000000Z\tnull
+                            10.0.0.2\t22222222-2222-2222-2222-222222222222\tu33e\t0x02\t2020-01-01T04:00:00.000000Z\tnull
+                            10.0.0.9\t99999999-9999-9999-9999-999999999999\tu33z\t0x09\t2020-01-01T06:00:00.000000Z\t99
+                            10.0.0.3\t33333333-3333-3333-3333-333333333333\tu33f\t0x03\t2020-01-01T08:00:00.000000Z\t10
+                            10.0.0.4\t44444444-4444-4444-4444-444444444444\tu33g\t0x04\t2020-01-01T12:00:00.000000Z\tnull
+                            10.0.0.5\t55555555-5555-5555-5555-555555555555\tu33h\t0x05\t2020-01-01T16:00:00.000000Z\t30
+                            10.0.0.6\t66666666-6666-6666-6666-666666666666\tu33k\t0x06\t2020-01-02T00:00:00.000000Z\tnull
+                            10.0.0.7\t77777777-7777-7777-7777-777777777777\tu33m\t0x07\t2020-01-02T12:00:00.000000Z\t50
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            // More rows with v, including an explicit NULL.
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // INT → LONG. Parquet partition has column_top=2 for v.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            // column_top rows → null, explicit NULL preserved, values converted.
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50
+                            """);
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertQuery("SELECT * FROM x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50
+                            """);
+        });
+    }
 
     @Test
     public void testArrayCorruptionAfterWriterReopenBeforeParquetConversion() throws Exception {
@@ -119,20 +2357,20 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Verify baseline before any conversions
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 896")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 896"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 897")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 897"
-            );
+                            """);
 
             // *** Critical point: writer closes before convert to parquet ***
             engine.releaseInactive();
@@ -142,40 +2380,40 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Check immediately after parquet conversion
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 896")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 896"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 897")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 897"
-            );
+                            """);
 
             // Convert back to native (materializes all 1098 rows)
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01T00'");
             drainWalQueue();
 
             // Check after native conversion
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 896")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 896"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 897")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 897"
-            );
+                            """);
 
             engine.releaseInactive();
 
@@ -220,20 +2458,20 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Check the parquet file
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 896")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 896"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 897")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 897"
-            );
+                            """);
 
             engine.releaseInactive();
 
@@ -254,34 +2492,34 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Verify after O3 merge
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 896")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 896"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 897")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 897"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 0")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:00.000000Z\t0\tnull
-                            """,
-                    "SELECT * FROM x WHERE x = 0"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 20000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:00.500000Z\t20000\t[[0.0]]
-                            """,
-                    "SELECT * FROM x WHERE x = 20000"
-            );
+                            """);
         });
     }
 
@@ -336,13 +2574,13 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 896")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 896"
-            );
+                            """);
         });
     }
 
@@ -402,13 +2640,13 @@ public class ParquetWriteTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             // Verify baseline
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 897")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 897"
-            );
+                            """);
 
             // Queue ALL critical operations for a single writer session
 
@@ -455,34 +2693,34 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Verify row 897 has 3x3 matrix, not NULL
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 896")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:56.000000Z\t896\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 896"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 897")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:14:57.000000Z\t897\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 897"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 0")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:00.000000Z\t0\tnull
-                            """,
-                    "SELECT * FROM x WHERE x = 0"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 1098")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:18:18.000000Z\t1098\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 1098"
-            );
+                            """);
         });
     }
 
@@ -571,8 +2809,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // If bloom_filter_offset is stale on copied RG0', its bloom filter
             // read fails silently → RG0' is NOT skipped → fewer skips.
             // Verify data correctness.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             100\t2020-01-01T00:30:00.000000Z
@@ -591,9 +2832,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             11\t2020-01-01T10:00:00.000000Z
                             12\t2020-01-01T11:00:00.000000Z
                             1000\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
 
             // Bloom filter skip check. assertSql runs a single query execution,
             // so the counter reflects exactly one scan of the 3 row groups.
@@ -605,12 +2844,259 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // With stale bloom_filter_offset on copied RG0', bloom filter read
             // fails silently → RG0' NOT skipped → counter = 2.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
-            assertSql("x\n", "SELECT x FROM x WHERE x = 50");
+            // Use returnsOnce(): it runs a single query execution (the builder's
+            // single-factory path, equivalent to assertSql), so the row-group skip
+            // counter reflects exactly one scan. The returns() path would re-read
+            // the cursor, which would inflate the counter.
+            assertQuery("SELECT x FROM x WHERE x = 50")
+                    .noLeakCheck()
+                    .returnsOnce("x\n");
             Assert.assertEquals(
                     "bloom filter should skip all 3 row groups (2 by bloom, 1 by min/max)",
                     3,
                     ParquetRowGroupFilter.getRowGroupsSkipped()
             );
+        });
+    }
+
+    @Test
+    public void testDedupRowGroupBoundary() throws Exception {
+        // A single timestamp value (11:58:00) straddles the boundary between two
+        // parquet row groups: with row group size 5750 and 8 symbols per minute, the
+        // 8000-row first commit writes the 2020-02-27 partition as two row groups and
+        // splits minute 718 (11:58) across them - 6 symbols in rg0, 2 in rg1. The
+        // second commit re-inserts all 8 symbols at 11:58 as out-of-order data; they
+        // are known dedup keys, so the row count must stay 8000 with no (ts, s)
+        // duplicates. The merge must deduplicate the boundary symbols that live in rg1.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5750);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab (ts timestamp, s symbol index) " +
+                            "timestamp(ts) partition by day format parquet wal " +
+                            "dedup upsert keys(ts, s)"
+            );
+
+            // Commit 1: 8000 in-order rows (1000 minutes x 8 symbols) -> Feb 27
+            // partition written as parquet with two row groups, minute 718
+            // (11:58:00) split across the boundary.
+            execute(
+                    "insert into tab " +
+                            "select dateadd('m', a.m, '2020-02-27T00:00:00.000000Z'::TIMESTAMP) ts, ('sym' || b.sy) s " +
+                            "from (select x::INT - 1 m from long_sequence(1000)) a " +
+                            "cross join (select x::INT - 1 sy from long_sequence(8)) b " +
+                            "order by ts, s"
+            );
+            drainWalQueue();
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8000\n");
+
+            // Commit 2: re-insert all 8 symbols at the boundary timestamp as
+            // out-of-order data. They are all known dedup keys, so the row count
+            // must stay 8000 and no (ts, s) duplicates may appear.
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T11:58:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(8)"
+            );
+            drainWalQueue();
+
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8000\n");
+            // No (ts, s) duplicates: the largest group size must be 1. Use max() over the
+            // materialized group-by rather than count() over a filtered subquery, which
+            // trips an unrelated count fast-path bug (questdb/questdb#7201).
+            assertQuery("select max(c) from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("max\n1\n");
+        });
+    }
+
+    @Test
+    public void testDedupSameTimestampSpansThreeRowGroups() throws Exception {
+        // Degraded variant of testDedupRowGroupBoundary: a single timestamp value
+        // is large enough to span THREE parquet row groups. With row group size 4,
+        // 12 rows that all share timestamp 12:00 are written as 3 row groups, each
+        // with min == max == 12:00. A second commit re-inserts the same 12 keys as
+        // out-of-order data.
+        //
+        // computeMergeActions assigns ALL 12 O3 rows to the first row group (the
+        // overlap test o3Ts <= rgMax matches rg0, then o3Cursor advances past the
+        // whole run). mergeRowGroup must deduplicate them against every tied row
+        // group, not just rg0, so the keys living in rg1/rg2 are not duplicated.
+        // Correct behaviour: the row count stays 12 with no (ts, s) duplicates.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab (ts timestamp, s symbol index) " +
+                            "timestamp(ts) partition by day format parquet wal " +
+                            "dedup upsert keys(ts, s)"
+            );
+
+            // Commit 1: 12 rows at a single timestamp -> 3 row groups, all [12:00, 12:00].
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
+
+            // Commit 2: re-insert the same 12 keys at the same timestamp as
+            // out-of-order data. All are known dedup keys, so the count must stay 12
+            // and no (ts, s) duplicates may appear.
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
+            // No (ts, s) duplicates: the largest group size must be 1. Use max() over the
+            // materialized group-by rather than count() over a filtered subquery, which
+            // trips an unrelated count fast-path bug (questdb/questdb#7201).
+            assertQuery("select max(c) from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("max\n1\n");
+        });
+    }
+
+    @Test
+    public void testDirtyAheadHeaderQueryReturnsCommittedSnapshot() throws Exception {
+        // Drive the crash window end-to-end through SQL. commitParquetMeta
+        // publishes the _pm header (M) before the _txn commit (N); a crash in that
+        // window leaves _pm physically grown with its header dirty-ahead of the
+        // committed footer, while _txn still records N. A query maps _pm at the raw
+        // header M but must resolve the committed footer at N and serve only
+        // committed rows -- no SIGBUS, no truncate, no never-committed data. The
+        // reader-level testDirtyAheadHeaderResolvesToCommittedHead pins this; here
+        // it runs against a real table through SELECT and SHOW PARTITIONS.
+        //
+        // Row-group-size 4 over 8 rows -> the committed footer carries two row
+        // groups, more than the spliced dead footer's one, so the row-group span
+        // reported by SHOW PARTITIONS proves the dead footer was skipped.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows / row-group-size 4 -> two row groups in the committed footer.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+            File tableDir = new File(root, tableToken.getDirName());
+            final long committedPmSize = parquetMetaLength(tableDir);
+            Assert.assertTrue(committedPmSize > 0);
+
+            // Baseline: the committed snapshot reads back as eight rows. The
+            // interval-filtered parquet scan reports an unknown size, hence
+            // sizeMayVary/noRandomAccess rather than expectSize here.
+            assertQuery("SELECT * FROM x WHERE ts IN '2020-01-01'")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            """);
+
+            // Splice _pm into the dirty-ahead crash state. Release every handle
+            // first so the rewrite never races a live mmap (required on Windows).
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseInactive();
+            final long dirtyPmSize = makeParquetMetaDirtyAhead(tableDir);
+            Assert.assertTrue(
+                    "dead footer must grow _pm past the committed head [committed=" + committedPmSize + ", dirty=" + dirtyPmSize + "]",
+                    dirtyPmSize > committedPmSize
+            );
+            Assert.assertEquals("header must read the dirty-ahead M", dirtyPmSize, parquetMetaHeaderSize(tableDir));
+
+            // Fresh readers map _pm at the dirty header M, walk back to the
+            // committed footer at N, and serve the committed snapshot unchanged --
+            // the dead footer past the committed head is never read.
+            assertQuery("SELECT * FROM x WHERE ts IN '2020-01-01'")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            """);
+
+            // SHOW PARTITIONS maps _pm too, reading min/max from the resolved
+            // footer's row groups: the committed two-row-group span (00:00..07:00,
+            // 8 rows) confirms the dead one-row-group footer was skipped.
+            assertQuery(
+                    """
+                            SELECT name, minTimestamp, maxTimestamp, numRows, isParquet
+                            FROM table_partitions('x') WHERE isParquet
+                            """
+            )
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
+                            2020-01-01\t2020-01-01T00:00:00.000000Z\t2020-01-01T07:00:00.000000Z\t8\ttrue
+                            """);
+
+            // The read path never truncates _pm: it stays dirty-ahead at M.
+            Assert.assertEquals("read path must not truncate _pm", dirtyPmSize, parquetMetaLength(tableDir));
+            Assert.assertEquals(dirtyPmSize, parquetMetaHeaderSize(tableDir));
         });
     }
 
@@ -734,8 +3220,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                 }
             }
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             9\t2020-01-01T00:30:00.000000Z
@@ -750,9 +3239,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\t2020-01-01T06:00:00.000000Z
                             8\t2020-01-01T07:00:00.000000Z
                             100\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -797,19 +3284,31 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T03:00:00.000000Z\t4\tnull\t\t
                     """;
 
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // native → parquet → native round-trip
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertPmAllNullChunkUsesZeroPointers("x", "n", ColumnType.LONG, "v", ColumnType.VARCHAR_SLICE);
-            assertSql(expected, "SELECT * FROM x");
+            assertPmAllNullChunkUsesZeroPointers();
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Second round-trip to verify the normalized representation remains stable.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
@@ -819,7 +3318,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -872,18 +3375,30 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T06:00:00.000000Z\t7\t[[null]]
                     """;
 
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // native → parquet → native round-trip
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -929,18 +3444,27 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T03:00:00.000000Z\t4\tnull\t\t
                     """;
 
-            assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected01);
 
             // native → parquet → native round-trip for 2020-01-01
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected01);
 
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected01);
 
             // Second round-trip to verify the normalized representation remains stable.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
@@ -950,7 +3474,65 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected01, "SELECT * FROM x WHERE ts < '2020-01-02'");
+            assertQuery("SELECT * FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected01);
+        });
+    }
+
+    @Test
+    public void testNonDedupSameTimestampSpansThreeRowGroups() throws Exception {
+        // Non-deduplicating counterpart of testDedupSameTimestampSpansThreeRowGroups with
+        // identical data: 12 rows all sharing timestamp 12:00 are written as 3 row groups
+        // (row group size 4), then the same 12 rows are re-inserted as out-of-order data.
+        //
+        // Without dedup, computeMergeActions must NOT coalesce the tied row groups (the
+        // coalesceBoundaryTies gate is false), so the O3 batch merges through the ordinary
+        // per-row-group path and no full-partition rewrite is forced. All 24 rows must
+        // survive: every (ts, s) appears exactly twice.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab (ts timestamp, s symbol index) " +
+                            "timestamp(ts) partition by day format parquet wal"
+            );
+
+            // Commit 1: 12 rows at a single timestamp -> 3 row groups, all [12:00, 12:00].
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n12\n");
+
+            // Commit 2: re-insert the same 12 rows at the same timestamp as out-of-order
+            // data. No dedup, so every row is kept: the count doubles to 24.
+            execute(
+                    "insert into tab " +
+                            "select '2020-02-27T12:00:00.000000Z'::TIMESTAMP, ('sym' || (x - 1)) " +
+                            "from long_sequence(12)"
+            );
+            drainWalQueue();
+
+            assertQuery("select count() from tab")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n24\n");
+            // 12 distinct (ts, s) groups, each appearing exactly twice: max == min == 2.
+            // (max()/min() over the materialized group-by avoids the count() fast-path bug
+            // that a filtered count subquery trips -- questdb/questdb#7201.)
+            assertQuery("select max(c) mx, min(c) mn from (select ts, s, count() c from tab)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("mx\tmn\n2\t2\n");
         });
     }
 
@@ -1008,8 +3590,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ta
                             1\t2020-01-01T00:00:00.000000Z\tnull
                             9\t2020-01-01T00:30:00.000000Z\t[1.5,2.5]
@@ -1022,9 +3607,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\t2020-01-01T06:00:00.000000Z\tnull
                             8\t2020-01-01T07:00:00.000000Z\tnull
                             100\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -1086,8 +3669,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ta
                             1\t2020-01-01T00:00:00.000000Z\tnull
                             9\t2020-01-01T00:30:00.000000Z\t[1.5,2.5]
@@ -1100,9 +3686,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\t2020-01-01T06:00:00.000000Z\tnull
                             8\t2020-01-01T07:00:00.000000Z\tnull
                             100\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -1155,8 +3739,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\ts\tts\ty
                             1\ta\t2020-01-01T00:00:00.000000Z\tnull
                             9\tb\t2020-01-01T00:30:00.000000Z\t1.5
@@ -1169,9 +3756,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\tc\t2020-01-01T06:00:00.000000Z\tnull
                             8\tb\t2020-01-01T07:00:00.000000Z\tnull
                             100\td\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -1218,8 +3803,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\ts\tts\ty
                             1\ta\t2020-01-01T00:00:00.000000Z\tnull
                             5\tb\t2020-01-01T03:00:00.000000Z\t1.5
@@ -1229,9 +3817,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\tc\t2020-01-01T15:00:00.000000Z\t3.5
                             4\tc\t2020-01-01T18:00:00.000000Z\tnull
                             100\td\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -1260,15 +3846,16 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ty
                             2\t2020-01-01T06:00:00.000000Z\t1.5
                             1\t2020-01-01T12:00:00.000000Z\tnull
                             100\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -1323,8 +3910,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             // Old rows have y=NULL, new rows have y=10/20.
             // Dedup keys (ts, y) differ, so all rows are kept.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ty
                             1\t2020-01-01T00:00:00.000000Z\tnull
                             5\t2020-01-01T00:00:00.000000Z\t10
@@ -1333,9 +3923,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             3\t2020-01-01T12:00:00.000000Z\tnull
                             4\t2020-01-01T18:00:00.000000Z\tnull
                             100\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -1401,29 +3989,29 @@ public class ParquetWriteTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
             // Verify new O3 rows have correct symbol values.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x IN (9, 10) ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ts
                             9\t2020-01-01T00:30:00.000000Z\ta
                             10\t2020-01-01T01:30:00.000000Z\tb
-                            """,
-                    "SELECT * FROM x WHERE x IN (9, 10) ORDER BY ts"
-            );
+                            """);
 
             // Read from the copied row group (RG1) to exercise the symbol
             // null chunk. Before the fix, the null chunk used Plain encoding
             // which the symbol decoder does not support, causing a decode error.
             // Old rows have no symbol data -> NULL (empty).
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x >= 5 AND x <= 8 ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ts
                             5\t2020-01-01T04:00:00.000000Z\t
                             6\t2020-01-01T05:00:00.000000Z\t
                             7\t2020-01-01T06:00:00.000000Z\t
                             8\t2020-01-01T07:00:00.000000Z\t
-                            """,
-                    "SELECT * FROM x WHERE x >= 5 AND x <= 8 ORDER BY ts"
-            );
+                            """);
         });
     }
 
@@ -1469,8 +4057,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ta\tb
                             1\t2020-01-01T00:00:00.000000Z\tnull\t
                             5\t2020-01-01T03:00:00.000000Z\t1.5\thello
@@ -1479,9 +4070,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             3\t2020-01-01T12:00:00.000000Z\tnull\t
                             4\t2020-01-01T18:00:00.000000Z\tnull\t
                             100\t2020-01-02T00:00:00.000000Z\tnull\t
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -1554,17 +4143,26 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         .append(":00.000000Z\t").append(i)
                         .append("\t[[null,null,null],[null,null,null],[null,null,null]]\n");
             }
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 4: Convert to parquet (column_top=100 for arr)
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 5: Convert back to native
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 6: Insert more rows with array data
             sb = new StringBuilder();
@@ -1586,12 +4184,18 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         .append(":00.000000Z\t").append(i)
                         .append("\t[[null,null,null],[null,null,null],[null,null,null]]\n");
             }
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 7: Convert to parquet (column_top = 0 now)
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expectedSb.toString(), "SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts");
+            assertQuery("SELECT * FROM x WHERE ts >= '2020-01-01' AND ts < '2020-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedSb.toString());
 
             // Step 8: O3 insert into the parquet partition
             // Insert rows with timestamps that fall BEFORE the existing max,
@@ -1610,41 +4214,41 @@ public class ParquetWriteTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
             // Spot-check specific array values that should NOT be null
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 100")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T01:40:00.000000Z\t100\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 100"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 149")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T02:29:00.000000Z\t149\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 149"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 150")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T02:30:00.000000Z\t150\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 150"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 1002")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T02:15:30.000000Z\t1002\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 1002"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 1000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:30.000000Z\t1000\t[[42.0,43.0]]
-                            """,
-                    "SELECT * FROM x WHERE x = 1000"
-            );
+                            """);
         });
     }
 
@@ -1768,43 +4372,43 @@ public class ParquetWriteTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
             // Check that array values are correct for rows after column_top
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 700")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:23:20.000000Z\t700\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 700"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 899")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:29:58.000000Z\t899\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 899"
-            );
-            assertSql(
-                    """
+                            """);
+            assertQuery("SELECT * FROM x WHERE x = 900")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:30:00.000000Z\t900\t[[null,null,null],[null,null,null],[null,null,null]]
-                            """,
-                    "SELECT * FROM x WHERE x = 900"
-            );
+                            """);
             // Rows before column_top should be null
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 0")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:00.000000Z\t0\tnull
-                            """,
-                    "SELECT * FROM x WHERE x = 0"
-            );
+                            """);
             // O3 rows should have their values
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x WHERE x = 10000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
                             ts\tx\ta
                             2020-01-01T00:00:01.000000Z\t10000\t[[0.0]]
-                            """,
-                    "SELECT * FROM x WHERE x = 10000"
-            );
+                            """);
         });
     }
 
@@ -1857,12 +4461,20 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T06:00:00.000000Z\t7\t[[null]]
                     """;
 
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert to parquet
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // O3 insert into the parquet partition → triggers Rust O3 updater
             execute(
@@ -1886,7 +4498,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     """;
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expectedAfterO3, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expectedAfterO3);
         });
     }
 
@@ -1925,8 +4541,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             ts
                             2020-01-01T00:00:00.000000Z
                             2020-01-01T03:00:00.000000Z
@@ -1934,9 +4553,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             2020-01-01T12:00:00.000000Z
                             2020-01-01T18:00:00.000000Z
                             2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2008,9 +4625,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
 
             // Round 2: O3 insert against the rewritten parquet file.
-            // timestampIndex=2, timestampParquetIdx=1 — they now differ.
-            // With the bug, row group stat lookup reads parquet column 2
-            // ('b', LONG) with type TIMESTAMP → type mismatch → table suspended.
+            // timestampIndex=2, timestampParquetIdx=1 -- they now differ.
+            // The row group stat lookup must use timestampParquetIdx, not
+            // timestampIndex; reading parquet column 2 ('b', LONG) as TIMESTAMP
+            // would produce a type mismatch and suspend the table.
             execute(
                     """
                             INSERT INTO x(x, b, ts) VALUES
@@ -2025,8 +4643,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\tb
                             10\t2020-01-01T00:00:00.000000Z\tnull
                             20\t2020-01-01T01:00:00.000000Z\tnull
@@ -2045,9 +4666,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             110\t2020-01-01T10:00:00.000000Z\tnull
                             120\t2020-01-01T11:00:00.000000Z\tnull
                             9999\t2020-01-02T00:00:00.000000Z\tnull
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2106,8 +4725,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             2\t2020-01-01T01:00:00.000000Z
@@ -2124,9 +4746,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             11\t2020-01-01T10:00:00.000000Z
                             12\t2020-01-01T11:00:00.000000Z
                             1000\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2193,8 +4813,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ts
                             1\t2020-01-01T00:00:00.000000Z\t
                             13\t2020-01-01T00:30:00.000000Z\tnew
@@ -2210,9 +4833,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             11\t2020-01-01T10:00:00.000000Z\tghi
                             12\t2020-01-01T11:00:00.000000Z\tjkl
                             100\t2020-01-02T00:00:00.000000Z\t
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2271,27 +4892,46 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     2020-01-01T07:00:00.000000Z\t8\t[[3.0,4.0]]
                     """;
 
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert to parquet (encodes with column_top=4)
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
-            // Convert back to native — decoder materializes ALL rows.
-            // Without the fix, column_top stays at 4 in ColumnVersionWriter.
+            // Convert back to native -- decoder materializes ALL rows, so
+            // the native files contain every row. CONVERT PARTITION TO NATIVE
+            // must zero column_top in ColumnVersionWriter; a stale column_top
+            // of 4 would cause the subsequent re-encode to skip the first 4
+            // rows of the native file.
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
-            // Convert to parquet again — with the stale column_top, the
-            // encoder would read from offset 0 in the native file but skip 4
-            // rows, shifting DOUBLE[][] data by 4 positions.
+            // Re-encode to parquet. A stale column_top of 4 would make the
+            // encoder read from offset 0 in the native file but skip the
+            // first 4 rows, shifting DOUBLE[][] data by 4 positions.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -2346,14 +4986,22 @@ public class ParquetWriteTest extends AbstractCairoTest {
                     """;
 
             // Verify data before conversion
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert to parquet
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
             // Verify data in parquet format
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
 
             // Convert back to native
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
@@ -2362,7 +5010,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
             // Verify data after converting back to native
-            assertSql(expected, "SELECT * FROM x");
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -2398,24 +5050,25 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            // Convert back to native — this is the operation that was failing
-            // because the conversion used parquet sequential indices instead of
-            // table column IDs for file naming.
+            // Convert back to native. The conversion must use table column IDs
+            // (not parquet sequential indices) for native file naming; otherwise
+            // the rewritten partition cannot be opened against the table metadata.
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             v\ts\tts
                             foo\ta\t2020-01-01T00:00:00.000000Z
                             bar\tb\t2020-01-01T01:00:00.000000Z
                             baz\ta\t2020-01-01T02:00:00.000000Z
                             qux\tc\t2020-01-01T03:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
 
             // Case 2: convert to parquet again, then remove a column AFTER
             // conversion, then convert back. The parquet contains the column
@@ -2431,16 +5084,17 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             v\tts
                             foo\t2020-01-01T00:00:00.000000Z
                             bar\t2020-01-01T01:00:00.000000Z
                             baz\t2020-01-01T02:00:00.000000Z
                             qux\t2020-01-01T03:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
 
             // Case 3: convert to parquet, then rename a VARCHAR column, then convert back.
             // The parquet stores the old column name but openPartition expects the new name.
@@ -2455,16 +5109,17 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             v_renamed\tts
                             foo\t2020-01-01T00:00:00.000000Z
                             bar\t2020-01-01T01:00:00.000000Z
                             baz\t2020-01-01T02:00:00.000000Z
                             qux\t2020-01-01T03:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2501,8 +5156,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Parquet partition returns NULLs for the missing column.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ty
                             1\t2020-01-01T00:00:00.000000Z\tnull
                             2\t2020-01-01T06:00:00.000000Z\tnull
@@ -2510,9 +5168,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             4\t2020-01-01T18:00:00.000000Z\tnull
                             100\t2020-01-02T00:00:00.000000Z\tnull
                             5\t2020-01-02T06:00:00.000000Z\t1.5
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2580,8 +5236,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             long versionAfterRewrite = getPartitionNameTxn(partitionTs);
             Assert.assertNotEquals("partition version should change on REWRITE", versionAfterUpdate, versionAfterRewrite);
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\ts\tv\tts
                             1\ta\tfoo\t2020-01-01T00:00:00.000000Z
                             9\tb\tmno\t2020-01-01T00:30:00.000000Z
@@ -2596,9 +5255,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\tc\tghi\t2020-01-01T06:00:00.000000Z
                             8\tb\tjkl\t2020-01-01T07:00:00.000000Z
                             100\td\tend\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2705,8 +5362,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             // After successful retry, data should be correct.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             9\t2020-01-01T00:30:00.000000Z
@@ -2721,9 +5381,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\t2020-01-01T06:00:00.000000Z
                             8\t2020-01-01T07:00:00.000000Z
                             100\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2790,8 +5448,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
 
             // After successful retry, data should be correct.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             5\t2020-01-01T03:00:00.000000Z
@@ -2799,9 +5460,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             3\t2020-01-01T12:00:00.000000Z
                             4\t2020-01-01T18:00:00.000000Z
                             100\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2890,8 +5549,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
                 }
             }
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts
                             1\t2020-01-01T00:00:00.000000Z
                             9\t2020-01-01T00:30:00.000000Z
@@ -2906,9 +5568,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\t2020-01-01T06:00:00.000000Z
                             8\t2020-01-01T07:00:00.000000Z
                             100\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -2956,8 +5616,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             long versionAfterRewrite = getPartitionNameTxn(partitionTs);
             Assert.assertNotEquals("partition version should change on REWRITE", versionBeforeO3, versionAfterRewrite);
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\ts\tv\tts
                             1\ta\tfoo\t2020-01-01T00:00:00.000000Z
                             5\tb\tabc\t2020-01-01T03:00:00.000000Z
@@ -2967,9 +5630,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\tc\tghi\t2020-01-01T15:00:00.000000Z
                             4\tc\tqux\t2020-01-01T18:00:00.000000Z
                             100\td\tend\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
@@ -3035,8 +5696,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             long versionAfterRewrite = getPartitionNameTxn(partitionTs);
             Assert.assertNotEquals("partition version should change on REWRITE", versionAfterUpdate, versionAfterRewrite);
 
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\ts\tv\tts
                             1\ta\tfoo\t2020-01-01T00:00:00.000000Z
                             9\tb\tmno\t2020-01-01T00:30:00.000000Z
@@ -3051,27 +5715,24 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             7\tc\tghi\t2020-01-01T06:00:00.000000Z
                             8\tb\tjkl\t2020-01-01T07:00:00.000000Z
                             100\td\tend\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
+                            """);
         });
     }
 
     @Test
     public void testRewriteWithColumnTop() throws Exception {
-        // Regression test: after a rewrite-mode O3 merge on a partition with
-        // column_top > 0, stale column_top values in the Parquet QDB metadata
-        // caused the decoder to skip row groups that now contain actual data.
-        // The fix zeroes column_top in the rewritten file so the decoder reads
-        // the (null) pages instead of skipping them.
+        // After a rewrite-mode O3 merge on a partition with column_top > 0,
+        // the rewritten Parquet QDB metadata must zero column_top so the
+        // decoder reads the (null) pages for the new column instead of
+        // skipping the row groups that now hold actual data.
         //
         // Steps:
         // 1. Create table, insert rows, add a new column (column_top > 0).
         // 2. Insert more rows with the new column populated.
-        // 3. Convert to Parquet (single row group → rewrite is guaranteed).
+        // 3. Convert to Parquet (single row group => rewrite is guaranteed).
         // 4. O3 insert into the Parquet partition, triggering REWRITE.
-        // 5. Read back all data — without the fix, the decoder would return
-        //    wrong results for the new column in copied row group regions.
+        // 5. Read back all data -- the new column must materialize correctly
+        //    in the copied row group regions.
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -3131,8 +5792,11 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Verify all data is correct. Without the column_top fix, the
             // decoder would see stale column_top and skip pages for 's',
             // returning incorrect NULL values for rows that have actual data.
-            assertSql(
-                    """
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
                             x\tts\ts
                             1\t2020-01-01T00:00:00.000000Z\t
                             2\t2020-01-01T06:00:00.000000Z\t
@@ -3142,15 +5806,405 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             5\t2020-01-01T20:00:00.000000Z\thello
                             6\t2020-01-01T22:00:00.000000Z\tworld
                             100\t2020-01-02T00:00:00.000000Z\t
-                            """,
-                    "SELECT * FROM x"
+                            """);
+        });
+    }
+
+    @Test
+    public void testRollbackDataTruncateFailureStillSuspends() throws Exception {
+        // M1 regression guard, symmetric with testRollbackFsyncFailureStillSuspends.
+        // The rollback opens data.parquet via TableUtils.openRW to truncate it back
+        // to the pre-merge size; openRW throws on an FS fault. The fix swallows it so
+        // o3BumpErrorCount still runs and the table suspends. Without the swallow the
+        // throw escapes the catch before o3BumpErrorCount and the failed update would
+        // commit as a success. This injects the openRW fault on the rollback path.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        AtomicBoolean armed = new AtomicBoolean(false);
+        AtomicInteger openROCount = new AtomicInteger(0);
+        // Set when the 2nd data.parquet openRO fails (the update is about to roll
+        // back). The rollback's data.parquet truncate openRW is the next such call.
+        AtomicBoolean rollingBack = new AtomicBoolean(false);
+        AtomicInteger dataTruncateFailures = new AtomicInteger(0);
+        FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
+                    // 2nd openRO (updateParquetIndexes) fails: the in-place update
+                    // rolls back, after updateFileMetadata grew _pm.
+                    if (openROCount.incrementAndGet() == 2) {
+                        rollingBack.set(true);
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // Fail only the rollback's data.parquet truncate openRW, exactly once.
+                if (Utf8s.endsWithAscii(name, "data.parquet") && rollingBack.compareAndSet(true, false)) {
+                    dataTruncateFailures.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
             );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+
+            armed.set(true);
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+            armed.set(false);
+
+            // The rollback truncate openRW fault fired, yet the table still
+            // suspended: the swallowed exception did not skip o3BumpErrorCount.
+            Assert.assertEquals("rollback data.parquet truncate fault must have fired once", 1, dataTruncateFailures.get());
+            Assert.assertTrue(
+                    "table must suspend despite the rollback data.parquet truncate failure",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+
+            // Recovery still works once the fault is disarmed: the retried update
+            // overwrites the dead tail from the committed head.
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n11\n");
+        });
+    }
+
+    @Test
+    public void testRollbackFsyncFailureStillSuspends() throws Exception {
+        // C2 regression guard. The rollback fsync of the leftover _pm tail
+        // (ff.fsyncAndClose) can throw; the fix swallows it so o3BumpErrorCount
+        // still runs and the table suspends. Without the swallow, the failed
+        // update would commit as a success. This injects the fault and checks it.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        AtomicBoolean armed = new AtomicBoolean(false);
+        AtomicInteger openROCount = new AtomicInteger(0);
+        // Set when the 2nd data.parquet openRO fails (the update is about to
+        // roll back). The rollback's _pm fsyncAndClose is the next such call.
+        AtomicBoolean rollingBack = new AtomicBoolean(false);
+        AtomicInteger rollbackFsyncFailures = new AtomicInteger(0);
+        FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
+            @Override
+            public void fsyncAndClose(long fd) {
+                if (rollingBack.compareAndSet(true, false)) {
+                    // Mirror the real fsyncAndClose: close the fd even on fsync
+                    // failure (so it never leaks), then throw -- the exact hazard
+                    // C2 guards against.
+                    rollbackFsyncFailures.incrementAndGet();
+                    super.close(fd);
+                    throw CairoException.critical(5).put("injected _pm rollback fsync failure");
+                }
+                super.fsyncAndClose(fd);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
+                    // 2nd openRO (updateParquetIndexes) fails: the in-place update
+                    // rolls back, after updateFileMetadata grew _pm.
+                    if (openROCount.incrementAndGet() == 2) {
+                        rollingBack.set(true);
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+
+            armed.set(true);
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+            armed.set(false);
+
+            // The rollback fsync fault fired, yet the table still suspended: the
+            // swallowed exception did not skip o3BumpErrorCount.
+            Assert.assertEquals("rollback fsync fault must have fired once", 1, rollbackFsyncFailures.get());
+            Assert.assertTrue(
+                    "table must suspend despite the rollback fsync failure",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+
+            // Recovery still works once the fault is disarmed: the retried update
+            // overwrites the dead tail from the committed head.
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n11\n");
+        });
+    }
+
+    @Test
+    public void testUpdateRollbackDoesNotTruncateParquetMeta() throws Exception {
+        // Headline of the _pm SIGBUS change: an in-place parquet O3 update that
+        // fails after updateFileMetadata grew _pm must NOT truncate _pm on
+        // rollback. Truncating pages out from under a concurrent header-mapping
+        // reader's mmap is the SIGBUS hazard. The header is patched only by
+        // commitParquetMeta after the index build, so this failure leaves it at
+        // the committed head with the grown bytes as an invisible dead tail; the
+        // retried update overwrites that tail from the committed head.
+        //
+        // Force in-place (update) mode: 2 row groups + permissive rewrite
+        // thresholds. The injected failure is the 2nd data.parquet openRO, the
+        // mapRO inside updateParquetIndexes -- after updateFileMetadata, before
+        // commitParquetMeta.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+        AtomicBoolean armed = new AtomicBoolean(false);
+        FilesFacade dodgyFacade = getFilesFacade(armed);
+
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T01:00:00.000Z'),
+                            (3, '2020-01-01T02:00:00.000Z'),
+                            (4, '2020-01-01T03:00:00.000Z'),
+                            (5, '2020-01-01T04:00:00.000Z'),
+                            (6, '2020-01-01T05:00:00.000Z'),
+                            (7, '2020-01-01T06:00:00.000Z'),
+                            (8, '2020-01-01T07:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(x, ts) VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            // 8 rows / row-group-size 4 → 2 row groups: the O3 stays in update mode.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName("x");
+            File tableDir = new File(root, tableToken.getDirName());
+            final long parquetMetaSizeBefore = parquetMetaLength(tableDir);
+            Assert.assertTrue(parquetMetaSizeBefore > 0);
+
+            // Arm the failure and run an in-place O3 update (merges into rg0).
+            armed.set(true);
+            execute(
+                    """
+                            INSERT INTO x(x, ts) VALUES
+                            (9, '2020-01-01T00:30:00.000Z'),
+                            (10, '2020-01-01T01:30:00.000Z')
+                            """
+            );
+            drainWalQueue();
+            armed.set(false);
+
+            // The update failed and suspended the table.
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // In-place mode left no new partition directory, and the rollback
+            // left _pm GROWN (the orphaned dead tail) rather than truncated back
+            // to the committed size -- the old code truncated here.
+            Assert.assertEquals("in-place update must not create a new dir", 1, countPartitionDirs(tableDir));
+            final long parquetMetaSizeAfterFailure = parquetMetaLength(tableDir);
+            Assert.assertTrue(
+                    "_pm must not be truncated on rollback [before=" + parquetMetaSizeBefore + ", after=" + parquetMetaSizeAfterFailure + "]",
+                    parquetMetaSizeAfterFailure > parquetMetaSizeBefore
+            );
+
+            // The committed snapshot is still readable: the header was never
+            // patched (no SIGBUS; resolves the pre-update footer).
+            assertQuery("SELECT count() FROM x WHERE ts < '2020-01-02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n8\n");
+
+            // Recover: the re-applied update overwrites the dead tail from the
+            // committed head (the header still points there).
+            execute("ALTER TABLE x RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertQuery("SELECT * FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            x\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            9\t2020-01-01T00:30:00.000000Z
+                            2\t2020-01-01T01:00:00.000000Z
+                            10\t2020-01-01T01:30:00.000000Z
+                            3\t2020-01-01T02:00:00.000000Z
+                            4\t2020-01-01T03:00:00.000000Z
+                            5\t2020-01-01T04:00:00.000000Z
+                            6\t2020-01-01T05:00:00.000000Z
+                            7\t2020-01-01T06:00:00.000000Z
+                            8\t2020-01-01T07:00:00.000000Z
+                            100\t2020-01-02T00:00:00.000000Z
+                            """);
         });
     }
 
     private static int countPartitionDirs(File tableDir) {
-        String[] dirs = tableDir.list((dir, name) -> name.startsWith("2020-01-01"));
+        String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
         return dirs != null ? dirs.length : 0;
+    }
+
+    /**
+     * Rewrites the committed {@code _pm} of the 2020-01-01 partition into the
+     * crash-window "dirty ahead" state: appends an orphaned dead footer past the
+     * committed footer at N, then publishes a header (offset 0) that points at the
+     * grown size M. Models commitParquetMeta having published the header before a
+     * crash skipped the {@code _txn} commit. {@code _txn} still records the
+     * committed parquet size, so resolveFooter walks back from M to N. Returns M.
+     * Callers must release every reader/writer first so no live mmap is mapped at
+     * the old size. Reads and writes via {@link ByteOrder#nativeOrder()} to match
+     * the native order used by Unsafe and the Rust writer.
+     */
+    private static long makeParquetMetaDirtyAhead(File tableDir) throws IOException {
+        final File pm = parquetMetaFile(tableDir);
+        final byte[] committed = java.nio.file.Files.readAllBytes(pm.toPath());
+        final int committedHead = committed.length; // N: committed _pm size
+        final ByteBuffer in = ByteBuffer.wrap(committed).order(ByteOrder.nativeOrder());
+
+        // Locate the committed footer C from its trailer (last 4 bytes hold the
+        // footer length). Fixed-position fields, robust to optional feature bytes.
+        final int footerLength = in.getInt(committedHead - Integer.BYTES);
+        final int footerOffset = committedHead - Integer.BYTES - footerLength;
+        Assert.assertEquals("committed footer must carry two row groups", 2, in.getInt(footerOffset + 12));
+        final long parquetFooterOffset = in.getLong(footerOffset);
+        final int parquetFooterLength = in.getInt(footerOffset + 8);
+        final int rowGroupBlock0 = in.getInt(footerOffset + 40); // C's first row group block
+
+        // Dead footer C': fixed(40) + 1 rg entry(4) + CRC(4) + trailer(4) = 52.
+        // prev points back to C; its derived parquet size differs from the
+        // committed token so resolveFooter walks past C' to C. C' is never the
+        // resolved footer, so its CRC is left blank (the walk does not read it).
+        final int deadFooterBytes = 52;
+        final int dirtyLen = committedHead + deadFooterBytes; // M
+        final byte[] out = java.util.Arrays.copyOf(committed, dirtyLen);
+        final ByteBuffer dead = ByteBuffer.wrap(out).order(ByteOrder.nativeOrder());
+        dead.putLong(committedHead, parquetFooterOffset);         // parquet_footer_offset
+        dead.putInt(committedHead + 8, parquetFooterLength + 64); // parquet_footer_length -> derived size != token
+        dead.putInt(committedHead + 12, 1);                       // row_group_count (fewer than C's two)
+        dead.putLong(committedHead + 16, 0L);                     // unused_bytes
+        dead.putLong(committedHead + 24, committedHead);          // prev_parquet_meta_file_size -> C
+        dead.putLong(committedHead + 32, 0L);                     // footer_feature_flags
+        dead.putInt(committedHead + 40, rowGroupBlock0);          // reuse C's first row group block
+        dead.putInt(committedHead + 44, 0);                       // CRC placeholder
+        dead.putInt(committedHead + 48, 48);                      // trailer: footer length sans trailer
+
+        // Publish the dirty-ahead header: _pm now physically spans [0, M).
+        dead.putLong(0, dirtyLen);
+
+        java.nio.file.Files.write(pm.toPath(), out);
+        return dirtyLen;
+    }
+
+    private static File parquetMetaFile(File tableDir) {
+        String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
+        Assert.assertNotNull("no 2020-01-01 partition dir found", dirs);
+        Assert.assertEquals("expected exactly one 2020-01-01 partition dir", 1, dirs.length);
+        File pm = new File(new File(tableDir, dirs[0]), "_pm");
+        Assert.assertTrue("_pm must exist: " + pm, pm.exists());
+        return pm;
+    }
+
+    private static long parquetMetaHeaderSize(File tableDir) throws IOException {
+        byte[] pm = java.nio.file.Files.readAllBytes(parquetMetaFile(tableDir).toPath());
+        return ByteBuffer.wrap(pm).order(ByteOrder.nativeOrder()).getLong(0);
+    }
+
+    private static long parquetMetaLength(File tableDir) {
+        return parquetMetaFile(tableDir).length();
     }
 
     private static @NotNull FilesFacade getFilesFacade(AtomicBoolean armed) {
@@ -3171,14 +6225,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
         };
     }
 
-    private void assertPmAllNullChunkUsesZeroPointers(
-            String tableName,
-            String fixedColumnName,
-            int fixedColumnType,
-            String varColumnName,
-            int varColumnType
-    ) {
-        try (TableReader reader = getReader(tableName)) {
+    private void assertPmAllNullChunkUsesZeroPointers() {
+        try (TableReader reader = getReader("x")) {
             for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
                 if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
                     continue;
@@ -3190,15 +6238,15 @@ public class ParquetWriteTest extends AbstractCairoTest {
                         RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                         DirectIntList parquetColumns = new DirectIntList(4, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)
                 ) {
-                    final int fixedColumnIndex = decoder.metadata().getColumnIndex(fixedColumnName);
-                    final int varColumnIndex = decoder.metadata().getColumnIndex(varColumnName);
-                    Assert.assertTrue(fixedColumnName + " should exist in parquet metadata", fixedColumnIndex >= 0);
-                    Assert.assertTrue(varColumnName + " should exist in parquet metadata", varColumnIndex >= 0);
+                    final int fixedColumnIndex = decoder.metadata().getColumnIndex("n");
+                    final int varColumnIndex = decoder.metadata().getColumnIndex("v");
+                    Assert.assertTrue("n" + " should exist in parquet metadata", fixedColumnIndex >= 0);
+                    Assert.assertTrue("v" + " should exist in parquet metadata", varColumnIndex >= 0);
 
                     parquetColumns.add(fixedColumnIndex);
-                    parquetColumns.add(fixedColumnType);
+                    parquetColumns.add(ColumnType.LONG);
                     parquetColumns.add(varColumnIndex);
-                    parquetColumns.add(varColumnType);
+                    parquetColumns.add(ColumnType.VARCHAR_SLICE);
 
                     final int rowGroupSize = (int) decoder.metadata().getRowGroupSize(0);
                     decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, 0, 0, rowGroupSize);
@@ -3216,9 +6264,250 @@ public class ParquetWriteTest extends AbstractCairoTest {
         Assert.fail("should find parquet partition");
     }
 
+    // DEBUG helper: copies the on-disk data.parquet for a partition out to an absolute
+    // path so it can be inspected with third-party tools (pyarrow/duckdb/parquet-tools).
+    private void dumpParquetPartition(String tableName, String partitionDayPrefix, String dstPath) throws Exception {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        File tableDir = new File(engine.getConfiguration().getDbRoot().toString(), tableToken.getDirName());
+        File[] dirs = tableDir.listFiles((dir, name) ->
+                name.equals(partitionDayPrefix) || name.startsWith(partitionDayPrefix + "."));
+        File srcFile = null;
+        if (dirs != null) {
+            for (File d : dirs) {
+                File p = new File(d, "data.parquet");
+                if (p.exists()) {
+                    srcFile = p;
+                    break;
+                }
+            }
+        }
+        if (srcFile == null) {
+            String listing = dirs == null ? "<none>" : java.util.Arrays.toString(dirs);
+            Assert.fail("data.parquet not found for " + partitionDayPrefix + " under " + tableDir + ", partition dirs: " + listing);
+        }
+        File dst = new File(dstPath);
+        //noinspection ResultOfMethodCallIgnored
+        dst.getParentFile().mkdirs();
+        java.nio.file.Files.copy(srcFile.toPath(), dst.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        System.out.println("[DUMP] " + srcFile.getAbsolutePath() + " -> " + dst.getAbsolutePath() + " size=" + srcFile.length());
+    }
+
     private long getPartitionNameTxn(long partitionTimestamp) {
         try (TableReader reader = getReader("x")) {
             return reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
         }
+    }
+
+    private void testConvertAllToType(String targetType, String columnDefsSql, String[] cols, String mergeValue) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x AS (SELECT\n" + columnDefsSql
+                            + ",\ntimestamp_sequence('2020-01-01', 3_600_000_000L) ts"
+                            + "\nFROM long_sequence(1000)) TIMESTAMP(ts) PARTITION BY MONTH WAL"
+            );
+            drainWalQueue();
+
+            execute("CREATE TABLE y AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY MONTH WAL");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01'");
+            drainWalQueue();
+
+            for (String col : cols) {
+                execute("ALTER TABLE x ALTER COLUMN " + col + " TYPE " + targetType);
+                execute("ALTER TABLE y ALTER COLUMN " + col + " TYPE " + targetType);
+            }
+            drainWalQueue();
+
+            // Read path: compare parquet-backed table x against native reference table y.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
+            }
+
+            // O3 merge: insert a row into the parquet partition to trigger merge.
+            StringBuilder sb = new StringBuilder("INSERT INTO %s(");
+            for (int i = 0; i < cols.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(cols[i]);
+            }
+            sb.append(", ts) VALUES (");
+            for (int i = 0; i < cols.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(mergeValue);
+            }
+            sb.append(", '2020-01-15T12:00:00.000Z')");
+            String mergeInsert = sb.toString();
+
+            execute(String.format(mergeInsert, "x"));
+            execute(String.format(mergeInsert, "y"));
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            // Compare after O3 merge.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
+            }
+        });
+    }
+
+    private void testConvertFixedToVar(String varType) throws Exception {
+        assertMemoryLeak(() -> {
+            // Generate 1000 random rows of all fixed types.
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT
+                                    rnd_boolean() v_bool,
+                                    rnd_byte() v_byte,
+                                    rnd_short() v_short,
+                                    rnd_char() v_char,
+                                    rnd_int(0, 1_000_000, 4) v_int,
+                                    rnd_long(0, 1_000_000_000L, 4) v_long,
+                                    rnd_float(4) v_float,
+                                    rnd_double(4) v_double,
+                                    rnd_date(
+                                        to_date('2000', 'yyyy'),
+                                        to_date('2025', 'yyyy'), 4
+                                    ) v_date,
+                                    rnd_timestamp(
+                                        to_timestamp('2000', 'yyyy'),
+                                        to_timestamp('2025', 'yyyy'), 4
+                                    ) v_ts,
+                                    rnd_ipv4() v_ipv4,
+                                    rnd_uuid4(4) v_uuid,
+                                    rnd_long(
+                                        946_684_800_000_000_000L,
+                                        1_609_459_200_000_000_000L, 4
+                                    )::TIMESTAMP_NS v_tsns,
+                                    timestamp_sequence('2020-01-01', 3_600_000_000L) ts
+                                FROM long_sequence(1000)
+                            ) TIMESTAMP(ts) PARTITION BY MONTH WAL
+                            """
+            );
+
+            drainWalQueue();
+
+            // Copy to a reference table that stays native throughout.
+            execute("CREATE TABLE y AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY MONTH WAL");
+            drainWalQueue();
+
+            // Convert the first partition to parquet (2020-01, ~744 rows).
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01'");
+            drainWalQueue();
+
+            // ALTER all fixed columns to the target var type on both tables.
+            String[] cols = {
+                    "v_bool", "v_byte", "v_short", "v_char", "v_int", "v_long",
+                    "v_float", "v_double", "v_date", "v_ts", "v_ipv4", "v_uuid", "v_tsns"
+            };
+            for (String col : cols) {
+                execute("ALTER TABLE x ALTER COLUMN " + col + " TYPE " + varType);
+                execute("ALTER TABLE y ALTER COLUMN " + col + " TYPE " + varType);
+            }
+            drainWalQueue();
+
+            // Read path: compare parquet-backed table x against native reference table y.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
+            }
+
+            // O3 merge: insert a row into the parquet partition to trigger merge.
+            String mergeInsert = "INSERT INTO %s(v_bool, v_byte, v_short, v_char, v_int, v_long,"
+                    + " v_float, v_double, v_date, v_ts, v_ipv4, v_uuid, v_tsns, ts)"
+                    + " VALUES ('true', '99', '999', 'X', '999', '999', '9.9', '9.9',"
+                    + " '2020-07-01', '2020-07-01', '5.5.5.5', '55555555-5555-5555-5555-555555555555',"
+                    + " '2020-07-01', '2020-01-15T12:00:00.000Z')";
+            execute(String.format(mergeInsert, "x"));
+            execute(String.format(mergeInsert, "y"));
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            // Compare after O3 merge.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
+            }
+        });
+    }
+
+    private void testConvertVarToAllFixed(String varType) throws Exception {
+        assertMemoryLeak(() -> {
+            // Generate 1000 random rows. Each column stores string representations
+            // of the target fixed type, so we use casts like rnd_int(...)::VARCHAR.
+            execute(
+                    "CREATE TABLE x AS (\n"
+                            + "    SELECT\n"
+                            + "        rnd_int(0, 1_000_000, 4)::" + varType + " v_int,\n"
+                            + "        rnd_long(0, 1_000_000_000L, 4)::" + varType + " v_long,\n"
+                            + "        rnd_float(4)::" + varType + " v_float,\n"
+                            + "        rnd_double(4)::" + varType + " v_double,\n"
+                            + "        rnd_short()::" + varType + " v_short,\n"
+                            + "        rnd_byte()::" + varType + " v_byte,\n"
+                            + "        rnd_date(\n"
+                            + "            to_date('2000', 'yyyy'),\n"
+                            + "            to_date('2025', 'yyyy'), 4\n"
+                            + "        )::" + varType + " v_date,\n"
+                            + "        rnd_timestamp(\n"
+                            + "            to_timestamp('2000', 'yyyy'),\n"
+                            + "            to_timestamp('2025', 'yyyy'), 4\n"
+                            + "        )::" + varType + " v_ts,\n"
+                            + "        timestamp_sequence('2020-01-01', 3_600_000_000L) ts\n"
+                            + "    FROM long_sequence(1000)\n"
+                            + ") TIMESTAMP(ts) PARTITION BY MONTH WAL"
+            );
+            drainWalQueue();
+
+            // Copy to a reference table that stays in the same format.
+            execute("CREATE TABLE y AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY MONTH WAL");
+            drainWalQueue();
+
+            // Convert the first partition to parquet (2020-01, ~744 rows).
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01'");
+            drainWalQueue();
+
+            // ALTER all var columns to their target fixed types on both tables.
+            String[] colsAndTypes = {
+                    "v_int", "INT",
+                    "v_long", "LONG",
+                    "v_float", "FLOAT",
+                    "v_double", "DOUBLE",
+                    "v_short", "SHORT",
+                    "v_byte", "BYTE",
+                    "v_date", "DATE",
+                    "v_ts", "TIMESTAMP",
+            };
+            for (int i = 0; i < colsAndTypes.length; i += 2) {
+                execute("ALTER TABLE x ALTER COLUMN " + colsAndTypes[i] + " TYPE " + colsAndTypes[i + 1]);
+                execute("ALTER TABLE y ALTER COLUMN " + colsAndTypes[i] + " TYPE " + colsAndTypes[i + 1]);
+            }
+            drainWalQueue();
+
+            // Read path: compare parquet-backed table x against native reference table y.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
+            }
+
+            // O3 merge: insert a row into the parquet partition to trigger merge.
+            String mergeInsert = "INSERT INTO %s(v_int, v_long, v_float, v_double, v_short, v_byte, v_date, v_ts, ts)"
+                    + " VALUES (999, 999, 9.9, 9.9, 999, 99, '2020-07-01T00:00:00.000Z',"
+                    + " '2020-07-01T00:00:00.000000Z', '2020-01-15T12:00:00.000Z')";
+            execute(String.format(mergeInsert, "x"));
+            execute(String.format(mergeInsert, "y"));
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            // Compare after O3 merge.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
+            }
+        });
     }
 }

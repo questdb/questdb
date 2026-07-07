@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
@@ -47,7 +48,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Override
     public void setUp() {
-        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        LogFactory.enableGuaranteedLogging(QueryProgress.class, ApplyWal2TableJob.class);
         super.setUp();
         capture.start();
     }
@@ -56,7 +57,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         capture.stop();
         super.tearDown();
-        LogFactory.disableGuaranteedLogging(QueryProgress.class);
+        LogFactory.disableGuaranteedLogging(QueryProgress.class, ApplyWal2TableJob.class);
     }
 
     @Test
@@ -105,11 +106,13 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                 assertTrue(engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl().isReadyToProcess());
 
                 try {
-                    // cannot use assertQuery, because it clears CairoEngine - this clears all seqTxnTrackers
-                    // and we lose information about memory pressure
-                    assertQueryFullFatNoLeakCheck("count\n" +
-                                    expectedRowCount + "\n",
-                            "select count() from x", null, false, true, false);
+                    // .noLeakCheck() keeps CairoEngine intact - the leak-checked path would clear it and
+                    // with it all seqTxnTrackers, losing the memory-pressure information this test asserts
+                    assertQuery("select count() from x")
+                            .noRandomAccess()
+                            .expectSize()
+                            .noLeakCheck()
+                            .returns("count\n" + expectedRowCount + "\n");
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
@@ -178,7 +181,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
         // during ALTER ADD INDEX. The default budget would absorb the
         // whole 200_000-row partition and never fire.
         node1.getConfigurationOverrides().setProperty(
-                PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 1L * 1024L * 1024L);
+                PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 1024L * 1024L);
         // 96 MiB RSS limit: large enough for create+insert and the post-fix
         // indexing path (which holds at most ~1 MiB of spill at a time);
         // far too small for the unbounded pre-fix path (which would peak
@@ -195,7 +198,11 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             drainWalQueue();
             execute("alter table t alter column sym add index type posting");
             drainWalQueue();
-            assertSql("count\n200000\n", "select count() from t where sym = 'A' or sym = 'B' or sym = 'C' or sym = 'D' or sym = 'E' or sym = 'F' or sym = 'G' or sym = 'H' or sym = 'I' or sym = 'J'");
+            assertQuery("select count() from t where sym = 'A' or sym = 'B' or sym = 'C' or sym = 'D' or sym = 'E' or sym = 'F' or sym = 'G' or sym = 'H' or sym = 'I' or sym = 'J'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n200000\n");
         });
     }
 

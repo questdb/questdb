@@ -138,7 +138,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || Numbers.isNull(destValue.getDouble(valueIndex + 1))) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putDouble(valueIndex + 1, srcVal);
         }

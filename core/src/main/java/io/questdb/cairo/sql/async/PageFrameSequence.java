@@ -47,6 +47,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -84,6 +85,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private PageFrameMemoryRecord localRecord;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
+    // Per-query native memory tracker captured from the owning SqlExecutionContext
+    // at workload start. Null when no per-query limit is configured. Workers read
+    // this off the task via task.getFrameSequence().getMemoryTracker() to charge
+    // their allocations to the active workload.
+    private MemoryTracker memoryTracker;
     private boolean readyToDispatch;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private int shard;
@@ -244,6 +250,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return id;
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public PageFrameAddressCache getPageFrameAddressCache() {
         return frameAddressCache;
     }
@@ -364,6 +374,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             int order
     ) throws SqlException {
         sqlExecutionContext = executionContext;
+        memoryTracker = executionContext.getMemoryTracker();
         startTime = clock.getTicks();
         uninterruptible = executionContext.isUninterruptible();
 
@@ -427,6 +438,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
         readyToDispatch = false;
+        // Drop the borrowed tracker reference; the provider owns the native block.
+        memoryTracker = null;
         frameRowCounts.clear();
         atom.clear();
         Misc.free(frameAddressCache);

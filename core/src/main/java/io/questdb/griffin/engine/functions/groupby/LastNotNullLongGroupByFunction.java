@@ -135,7 +135,7 @@ public class LastNotNullLongGroupByFunction extends FirstLongGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId) {
+        if (srcRowId > destRowId || destValue.getLong(valueIndex + 1) == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcVal);
         }

@@ -26,13 +26,14 @@ package io.questdb.std.datetime.microtime;
 
 
 import io.questdb.cairo.TimestampDateFormatFactory;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.datetime.DateFormat;
 
 import java.util.function.Function;
 
 public class MicrosFormatFactory implements TimestampDateFormatFactory {
-    private final static ThreadLocal<MicrosFormatCompiler> tlCompiler = ThreadLocal.withInitial(MicrosFormatCompiler::new);
+    private final static CarrierLocal<MicrosFormatCompiler> tlCompiler = CarrierLocal.withInitial(MicrosFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = MicrosFormatFactory::map;
     public static MicrosFormatFactory INSTANCE = new MicrosFormatFactory();
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
