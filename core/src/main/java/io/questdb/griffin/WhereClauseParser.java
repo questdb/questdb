@@ -124,8 +124,10 @@ public final class WhereClauseParser implements Mutable {
     private final ObjList<Function> tmpFunctions = new ObjList<>();
     private boolean allKeyExcludedValuesAreKnown = true;
     private boolean allKeyValuesAreKnown = true;
-    // Transient node pool for the current extract() pass, used to rebuild a residual
-    // dateadd predicate when an and_offset pushdown cannot be fully represented.
+    // Query-lifetime node pool passed in by the caller (the compiler's sqlNodePool). Used to rebuild
+    // a residual dateadd predicate when an and_offset pushdown cannot be fully represented. The nodes
+    // it produces are spliced into the query model's where-clause AST, so they must be allocated from
+    // the same pool that owns that AST rather than a parser-local pool cleared on the next pass.
     private ObjectPool<ExpressionNode> expressionNodePool;
     private boolean isConstFunction;
     private boolean noIndex;
@@ -172,7 +174,8 @@ public final class WhereClauseParser implements Mutable {
             @NotNull SqlExecutionContext executionContext,
             boolean isKeyColumnSuppressed,
             @NotNull TableReader reader,
-            boolean noIndex
+            boolean noIndex,
+            @NotNull ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
         clearKeys();
         clearExcludedKeys();

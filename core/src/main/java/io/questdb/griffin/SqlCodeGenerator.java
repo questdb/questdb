@@ -8624,7 +8624,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             executionContext,
                                             false,
                                             reader,
-                                            false
+                                            false,
+                                            expressionNodePool
                                     );
                                     if (distinctIntrinsic.intrinsicValue == IntrinsicModel.FALSE || distinctIntrinsic.filter != null ||
                                             distinctIntrinsic.keyColumn != null || distinctIntrinsic.keyExcludedValueFuncs.size() > 0) {
@@ -10267,7 +10268,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext,
                         isKeyColumnSuppressed,
                         reader,
-                        SqlHints.hasNoIndexHint(model)
+                        SqlHints.hasNoIndexHint(model),
+                        expressionNodePool
                 );
             } else {
                 intrinsicModel = whereClauseParser.getEmpty(
