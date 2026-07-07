@@ -4490,6 +4490,13 @@ public class SqlParser {
                     if (Chars.indexOf(unquotedColName, '.') == -1) {
                         colName = GenericLexer.immutableOf(unquotedColName);
                     } else {
+                        // A dotted name is re-wrapped in double quotes to keep its dots as content; an
+                        // embedded double quote would break that quote parity (isQuoteProtectedAlias and
+                        // Chars.indexOfLastUnquoted toggle on '"'), leaking a malformed name or, for a JSON
+                        // COLUMNS key, silently matching nothing. Reject it cleanly instead.
+                        if (Chars.indexOf(unquotedColName, '"') != -1) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "dotted UNNEST column name cannot contain a double quote");
+                        }
                         final CharacterStoreEntry colNameEntry = characterStore.newEntry();
                         colNameEntry.put('"').put(unquotedColName).put('"');
                         colName = colNameEntry.toImmutable();
@@ -4573,6 +4580,11 @@ public class SqlParser {
                 if (Chars.indexOf(unquotedAlias, '.') == -1) {
                     aliasName = GenericLexer.immutableOf(unquotedAlias);
                 } else {
+                    // see the COLUMNS field-name note: an embedded double quote breaks the protective
+                    // re-wrap, so reject a dotted alias that carries one rather than leak a malformed name.
+                    if (Chars.indexOf(unquotedAlias, '"') != -1) {
+                        throw SqlException.$(aliasPos, "dotted UNNEST column alias cannot contain a double quote");
+                    }
                     final CharacterStoreEntry aliasEntry = characterStore.newEntry();
                     aliasEntry.put('"').put(unquotedAlias).put('"');
                     aliasName = aliasEntry.toImmutable();

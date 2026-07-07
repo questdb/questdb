@@ -193,9 +193,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 listColumnFilter.clear();
                 for (int i = 0, size = orderBy.size(); i < size; i++) {
                     ExpressionNode tok = orderBy.getQuick(i);
-                    // Resolve through SqlUtil so a compiler-protected alias (dotted or operator
-                    // token) is unquoted, matching toOrderIndices in the else branch and every
-                    // other window factory; a bare metadata lookup would miss it and add(0) would
+                    // Defensive, not currently exercised: this streaming fast path (empty chainTypes)
+                    // is reached today only when the window ORDER BY is a dismissable designated-timestamp
+                    // order, whose token arrives as a clean column name, so no protected alias reaches the
+                    // strip below - no query drives it and it is not covered by a test. It is kept for
+                    // parity with toOrderIndices (the else branch) and every other window factory, which
+                    // all unquote a compiler-protected alias (dotted or operator token) through SqlUtil:
+                    // were one ever to reach here, a bare metadata lookup would miss it and add(0) would
                     // corrupt the sort key.
                     int index = SqlUtil.getColumnIndexQuiet(metadata, tok.token);
                     if (index < 0) {

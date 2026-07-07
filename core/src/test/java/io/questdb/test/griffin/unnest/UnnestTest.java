@@ -304,6 +304,21 @@ public class UnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDottedColumnAliasWithEmbeddedQuoteRejected() throws Exception {
+        // A dotted UNNEST alias is re-wrapped in protective double quotes; an embedded double quote
+        // would break that quote parity and leak a malformed display name, so the parser must reject
+        // it cleanly rather than surface a doubled-quote name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT ARRAY[1.0, 2.0] arr FROM long_sequence(1))");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.arr) u(\"a\"\"b.c\")",
+                    33,
+                    "dotted UNNEST column alias cannot contain a double quote"
+            );
+        });
+    }
+
+    @Test
     public void testEmptyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT ARRAY[]::DOUBLE[] arr FROM long_sequence(1))");

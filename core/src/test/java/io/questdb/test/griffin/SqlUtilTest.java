@@ -282,6 +282,27 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasSeqSizeDigitBoundaryUnderTruncation() {
+        // The dedup suffix reserves seqSize chars from a truncated alias, so crossing the 9 -> 10
+        // sequence boundary (seqSize 2 -> 3) shrinks the retained content by one. This is the only
+        // regime where seqSize affects the output, and it exercises the integer digit-count that
+        // replaced Math.log10 (which rounds wrong at exact powers of ten). At maxLength 6 the taken
+        // set forces the loop past sequence 9: abcdef, abcd_2..abcd_9 are occupied, so the next
+        // candidate must be abc_10 - "abc" (3 chars) + "_10" (3 chars) = 6, the truncated content
+        // one char shorter than the abcd_N (seqSize 2) candidates.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(16);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+        aliasMap.put("abcdef", null);
+        for (int i = 2; i <= 9; i++) {
+            aliasMap.put("abcd_" + i, null);
+        }
+        CharSequence alias = SqlUtil.createExprColumnAlias(store, "abcdef", aliasMap, seqMap, 6, false);
+        Assert.assertEquals("abc_10", alias.toString());
+        Assert.assertEquals(6, alias.length());
+    }
+
+    @Test
     public void testExprColumnAliasSimpleCase() {
         CharacterStore store = new CharacterStore(32, 1);
         LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);

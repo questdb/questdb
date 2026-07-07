@@ -259,6 +259,160 @@ public class SqlUtil {
     }
 
     /**
+     * Creates a unique column alias with O(1) amortized complexity by tracking the next sequence
+     * number for each base alias in the provided map.
+     *
+     * @param store                character store for creating the alias string
+     * @param base                 base name for the alias
+     * @param indexOfDot           index of the last dot in base, or -1 if none
+     * @param aliasToColumnMap     set of existing aliases to check for uniqueness
+     * @param nextAliasSequenceMap map tracking next sequence number for each base alias (updated in place)
+     * @param nonLiteral           whether this is a non-literal expression
+     * @return unique alias
+     */
+    public static CharSequence createColumnAlias(
+            CharacterStore store,
+            CharSequence base,
+            int indexOfDot,
+            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
+            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
+            boolean nonLiteral
+    ) {
+        final boolean containsDisallowed = disallowedAliases.contains(base);
+        final boolean disallowed = nonLiteral && containsDisallowed;
+
+        // A quote-protected base carries its dedup suffix inside the quotes and re-derives
+        // whether the quotes are still needed from the final content (see the loop below): a
+        // dotted alias stays protected ("a.b" -> "a.b1", stripping to a clean a.b1) while an
+        // operator token sheds the quotes once the suffix makes it a plain identifier ("in" ->
+        // in1). Putting the suffix after the quotes ("a.b"1) would fail isQuoteProtectedAlias
+        // and leak them into the result set metadata.
+        final boolean quoteProtected = isQuoteProtectedAlias(base);
+
+        // early exit for simple cases: return the base verbatim (preserving its object identity,
+        // which the wildcard '*' passthrough and other callers rely on) when it carries no
+        // result-set name collision. A base whose toColumnName display name matches an already-taken
+        // alias in the OTHER representation must instead run the dedup loop below, which forces a
+        // suffix:
+        //  - a quote-protected "in" and a bare in both surface as in (check the bare interior);
+        //  - a bare operator token (in, *, and, ...) and a protective-quoted "in" both surface as in
+        //    (check that "<base>" sibling).
+        if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
+            if (quoteProtected) {
+                if (aliasToColumnMap.excludes(base, 1, base.length() - 1)) {
+                    return base;
+                }
+            } else if (!containsDisallowed) {
+                return base;
+            } else {
+                final CharacterStoreEntry siblingEntry = store.newEntry();
+                siblingEntry.put('"').put(base).put('"');
+                if (aliasToColumnMap.excludes(siblingEntry.toImmutable())) {
+                    return base;
+                }
+            }
+        }
+
+        // Resolve the dedup content: the [contentLo, contentHi) slice of base reused for every
+        // candidate, or the "column" placeholder (contentLo < 0) for empty/numeric/disallowed
+        // bases. A quote-protected base keys on its bare interior so the sequence counter is
+        // shared whether or not a given candidate re-emits the protective quotes.
+        final int contentLo;
+        final int contentHi;
+        final CharacterStoreEntry baseEntry = store.newEntry();
+        if (indexOfDot == -1) {
+            if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NULL) {
+                contentLo = -1;
+                contentHi = -1;
+                baseEntry.put("column");
+            } else if (quoteProtected) {
+                contentLo = 1;
+                contentHi = base.length() - 1;
+                baseEntry.put(base, contentLo, contentHi);
+            } else {
+                contentLo = 0;
+                contentHi = base.length();
+                baseEntry.put(base);
+            }
+        } else if (indexOfDot + 1 == base.length()) {
+            contentLo = -1;
+            contentHi = -1;
+            baseEntry.put("column");
+        } else {
+            contentLo = indexOfDot + 1;
+            contentHi = base.length();
+            baseEntry.put(base, contentLo, contentHi);
+        }
+        final CharSequence seqKey = baseEntry.toImmutable();
+
+        // Look up the starting sequence for this base alias
+        int sequence = nextAliasSequenceMap.get(seqKey);
+        if (sequence == -1) {
+            sequence = 0;
+        }
+
+        // The content slice [contentLo, contentHi) is fixed for the whole loop (createColumnAlias
+        // never truncates), so its dot / operator-token classification is loop-invariant - compute it
+        // once here rather than re-scanning per dedup candidate. contentHasDot is the "deduped" form
+        // (a dotted interior always needs quotes); contentNeedsQuotingWhenFresh adds the operator-token
+        // case that a dedup suffix later sheds.
+        final boolean contentHasDot = contentLo >= 0 && Chars.indexOfLastUnquoted(base, '.', contentLo, contentHi) > -1;
+        final boolean contentNeedsQuotingWhenFresh = contentHasDot
+                || (contentLo >= 0 && disallowedAliases.contains(base, contentLo, contentHi));
+
+        // A bare candidate that is itself quoting-worthy (an operator token; a dotted base reduces
+        // to its dot-free tail, so it never surfaces dotted here) shares a display name with a
+        // protective-quoted "<name>" sibling. Precompute that sibling once so the loop can force a
+        // dedup suffix when it is already taken. It lives in its own store region, ahead of the
+        // reused candidate entry, so the loop's trimTo never disturbs it.
+        CharSequence bareQuotedSibling = null;
+        if (!quoteProtected && contentNeedsQuotingWhenFresh) {
+            final CharacterStoreEntry siblingEntry = store.newEntry();
+            siblingEntry.put('"').put(base, contentLo, contentHi).put('"');
+            bareQuotedSibling = siblingEntry.toImmutable();
+        }
+
+        // Reuse one store entry across dedup candidates: trimTo(entryStart) rewinds it each
+        // iteration so rejected candidates do not accumulate in the store. seqKey (and any sibling
+        // probe) live in earlier entries and are left untouched.
+        final CharacterStoreEntry entry = store.newEntry();
+        final int entryStart = entry.length();
+
+        while (true) {
+            final boolean deduped = sequence > 0;
+            // Re-emit the protective quotes per candidate only while the final content still
+            // needs them: a dotted interior always does; an operator token only until a dedup
+            // suffix makes it a plain identifier (so "a.b" -> "a.b1", while "in" stays quoted
+            // at sequence 0 to collide with the stored "in", then surfaces as bare in1).
+            final boolean emitQuote = quoteProtected && (deduped ? contentHasDot : contentNeedsQuotingWhenFresh);
+            entry.trimTo(entryStart);
+            if (emitQuote) {
+                entry.put('"');
+            }
+            if (contentLo >= 0) {
+                entry.put(base, contentLo, contentHi);
+            } else {
+                entry.put("column");
+            }
+            if (deduped) {
+                entry.put(sequence);
+            }
+            if (emitQuote) {
+                entry.put('"');
+            }
+            sequence++;
+            final CharSequence alias = entry.toImmutable();
+            // Only the un-suffixed candidate can share a display name with the "<name>" sibling; a
+            // suffixed in1 is a distinct display name that has no protected sibling.
+            if (isAliasNameAvailable(aliasToColumnMap, alias, emitQuote, deduped ? null : bareQuotedSibling)) {
+                // Update the sequence tracker for next time
+                nextAliasSequenceMap.put(seqKey, sequence);
+                return alias;
+            }
+        }
+    }
+
+    /**
      * Creates a unique column alias for expressions with O(1) amortized complexity by tracking
      * the next sequence number for each base alias in the provided map.
      */
@@ -1808,160 +1962,6 @@ public class SqlUtil {
             return takenAliases.excludes(alias, 1, alias.length() - 1);
         }
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
-    }
-
-    /**
-     * Creates a unique column alias with O(1) amortized complexity by tracking the next sequence
-     * number for each base alias in the provided map.
-     *
-     * @param store                character store for creating the alias string
-     * @param base                 base name for the alias
-     * @param indexOfDot           index of the last dot in base, or -1 if none
-     * @param aliasToColumnMap     set of existing aliases to check for uniqueness
-     * @param nextAliasSequenceMap map tracking next sequence number for each base alias (updated in place)
-     * @param nonLiteral           whether this is a non-literal expression
-     * @return unique alias
-     */
-    public static CharSequence createColumnAlias(
-            CharacterStore store,
-            CharSequence base,
-            int indexOfDot,
-            AbstractLowerCaseCharSequenceHashSet aliasToColumnMap,
-            LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
-            boolean nonLiteral
-    ) {
-        final boolean containsDisallowed = disallowedAliases.contains(base);
-        final boolean disallowed = nonLiteral && containsDisallowed;
-
-        // A quote-protected base carries its dedup suffix inside the quotes and re-derives
-        // whether the quotes are still needed from the final content (see the loop below): a
-        // dotted alias stays protected ("a.b" -> "a.b1", stripping to a clean a.b1) while an
-        // operator token sheds the quotes once the suffix makes it a plain identifier ("in" ->
-        // in1). Putting the suffix after the quotes ("a.b"1) would fail isQuoteProtectedAlias
-        // and leak them into the result set metadata.
-        final boolean quoteProtected = isQuoteProtectedAlias(base);
-
-        // early exit for simple cases: return the base verbatim (preserving its object identity,
-        // which the wildcard '*' passthrough and other callers rely on) when it carries no
-        // result-set name collision. A base whose toColumnName display name matches an already-taken
-        // alias in the OTHER representation must instead run the dedup loop below, which forces a
-        // suffix:
-        //  - a quote-protected "in" and a bare in both surface as in (check the bare interior);
-        //  - a bare operator token (in, *, and, ...) and a protective-quoted "in" both surface as in
-        //    (check that "<base>" sibling).
-        if (indexOfDot == -1 && !disallowed && aliasToColumnMap.excludes(base)) {
-            if (quoteProtected) {
-                if (aliasToColumnMap.excludes(base, 1, base.length() - 1)) {
-                    return base;
-                }
-            } else if (!containsDisallowed) {
-                return base;
-            } else {
-                final CharacterStoreEntry siblingEntry = store.newEntry();
-                siblingEntry.put('"').put(base).put('"');
-                if (aliasToColumnMap.excludes(siblingEntry.toImmutable())) {
-                    return base;
-                }
-            }
-        }
-
-        // Resolve the dedup content: the [contentLo, contentHi) slice of base reused for every
-        // candidate, or the "column" placeholder (contentLo < 0) for empty/numeric/disallowed
-        // bases. A quote-protected base keys on its bare interior so the sequence counter is
-        // shared whether or not a given candidate re-emits the protective quotes.
-        final int contentLo;
-        final int contentHi;
-        final CharacterStoreEntry baseEntry = store.newEntry();
-        if (indexOfDot == -1) {
-            if (disallowed || Numbers.parseIntQuiet(base) != Numbers.INT_NULL) {
-                contentLo = -1;
-                contentHi = -1;
-                baseEntry.put("column");
-            } else if (quoteProtected) {
-                contentLo = 1;
-                contentHi = base.length() - 1;
-                baseEntry.put(base, contentLo, contentHi);
-            } else {
-                contentLo = 0;
-                contentHi = base.length();
-                baseEntry.put(base);
-            }
-        } else if (indexOfDot + 1 == base.length()) {
-            contentLo = -1;
-            contentHi = -1;
-            baseEntry.put("column");
-        } else {
-            contentLo = indexOfDot + 1;
-            contentHi = base.length();
-            baseEntry.put(base, contentLo, contentHi);
-        }
-        final CharSequence seqKey = baseEntry.toImmutable();
-
-        // Look up the starting sequence for this base alias
-        int sequence = nextAliasSequenceMap.get(seqKey);
-        if (sequence == -1) {
-            sequence = 0;
-        }
-
-        // The content slice [contentLo, contentHi) is fixed for the whole loop (createColumnAlias
-        // never truncates), so its dot / operator-token classification is loop-invariant - compute it
-        // once here rather than re-scanning per dedup candidate. contentHasDot is the "deduped" form
-        // (a dotted interior always needs quotes); contentNeedsQuotingWhenFresh adds the operator-token
-        // case that a dedup suffix later sheds.
-        final boolean contentHasDot = contentLo >= 0 && Chars.indexOfLastUnquoted(base, '.', contentLo, contentHi) > -1;
-        final boolean contentNeedsQuotingWhenFresh = contentHasDot
-                || (contentLo >= 0 && disallowedAliases.contains(base, contentLo, contentHi));
-
-        // A bare candidate that is itself quoting-worthy (an operator token; a dotted base reduces
-        // to its dot-free tail, so it never surfaces dotted here) shares a display name with a
-        // protective-quoted "<name>" sibling. Precompute that sibling once so the loop can force a
-        // dedup suffix when it is already taken. It lives in its own store region, ahead of the
-        // reused candidate entry, so the loop's trimTo never disturbs it.
-        CharSequence bareQuotedSibling = null;
-        if (!quoteProtected && contentNeedsQuotingWhenFresh) {
-            final CharacterStoreEntry siblingEntry = store.newEntry();
-            siblingEntry.put('"').put(base, contentLo, contentHi).put('"');
-            bareQuotedSibling = siblingEntry.toImmutable();
-        }
-
-        // Reuse one store entry across dedup candidates: trimTo(entryStart) rewinds it each
-        // iteration so rejected candidates do not accumulate in the store. seqKey (and any sibling
-        // probe) live in earlier entries and are left untouched.
-        final CharacterStoreEntry entry = store.newEntry();
-        final int entryStart = entry.length();
-
-        while (true) {
-            final boolean deduped = sequence > 0;
-            // Re-emit the protective quotes per candidate only while the final content still
-            // needs them: a dotted interior always does; an operator token only until a dedup
-            // suffix makes it a plain identifier (so "a.b" -> "a.b1", while "in" stays quoted
-            // at sequence 0 to collide with the stored "in", then surfaces as bare in1).
-            final boolean emitQuote = quoteProtected && (deduped ? contentHasDot : contentNeedsQuotingWhenFresh);
-            entry.trimTo(entryStart);
-            if (emitQuote) {
-                entry.put('"');
-            }
-            if (contentLo >= 0) {
-                entry.put(base, contentLo, contentHi);
-            } else {
-                entry.put("column");
-            }
-            if (deduped) {
-                entry.put(sequence);
-            }
-            if (emitQuote) {
-                entry.put('"');
-            }
-            sequence++;
-            final CharSequence alias = entry.toImmutable();
-            // Only the un-suffixed candidate can share a display name with the "<name>" sibling; a
-            // suffixed in1 is a distinct display name that has no protected sibling.
-            if (isAliasNameAvailable(aliasToColumnMap, alias, emitQuote, deduped ? null : bareQuotedSibling)) {
-                // Update the sequence tracker for next time
-                nextAliasSequenceMap.put(seqKey, sequence);
-                return alias;
-            }
-        }
     }
 
     static QueryColumn nextColumn(

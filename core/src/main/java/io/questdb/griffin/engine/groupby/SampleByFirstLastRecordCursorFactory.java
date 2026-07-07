@@ -262,6 +262,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 } else {
                     throw SqlException.$(ast.position, "expected first() or last() functions but got ").put(ast.token);
                 }
+                // Defensive uniformity, not reachable with a protected token: ast.rhs.token names a
+                // physical page-frame column here, which arrives unquoted, so getColumnIndex's
+                // protected-alias strip-retry never fires - no test drives it through this path.
                 int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
                 queryToFrameColumnMapping[i] = underlyingColIndex;
 

@@ -1104,6 +1104,21 @@ public class JsonUnnestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnsDottedFieldNameWithEmbeddedQuoteRejected() throws Exception {
+        // A dotted COLUMNS field name is re-wrapped in protective double quotes; an embedded double
+        // quote would break that quote parity and silently match no JSON key (returning NULL), so the
+        // parser must reject it cleanly instead of leaking a malformed extraction key.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (payload VARCHAR)");
+            assertException(
+                    "SELECT * FROM t, UNNEST(t.payload COLUMNS(\"a\"\"b.c\" DOUBLE)) u",
+                    42,
+                    "dotted UNNEST column name cannot contain a double quote"
+            );
+        });
+    }
+
+    @Test
     public void testColumnsKeywordAsColumnNameRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (payload VARCHAR)");

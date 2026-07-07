@@ -1428,6 +1428,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
+        // Vector aggregation runs over base-table page frames, so every ast.rhs.token below names a
+        // physical column (unquoted). getColumnIndex's protected-alias strip-retry is defensive
+        // uniformity here, not reachable with a protected token, and is not exercised by a test.
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
             columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
@@ -11332,7 +11335,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int latestByColumnCount = latestBy.size();
         if (latestByColumnCount > 0) {
             // validate the latest by against the current reader
-            // first check if column is valid
+            // first check if column is valid. LATEST BY names physical reader columns (unquoted), so
+            // getColumnIndexQuiet's protected-alias strip-retry is defensive uniformity, not reachable
+            // with a protected token and not covered by a test.
             for (int i = 0; i < latestByColumnCount; i++) {
                 final ExpressionNode latestByNode = latestBy.getQuick(i);
                 final int index = SqlUtil.getColumnIndexQuiet(myMeta, latestByNode.token);
