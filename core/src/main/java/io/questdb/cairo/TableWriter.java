@@ -2739,9 +2739,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put("]; parquet partitions are read-only (e.g. converted by a TO PARQUET storage policy), restrict the UPDATE to native partitions");
         }
 
-        // Non-WAL stamps 0, the cleared "no version" word, so a stale version cannot
-        // outlive the bytes it identifies.
-        txWriter.setPartitionSeqTxn(partitionIndex, walApplySeqTxn > 0 ? walApplySeqTxn : 0);
+        // A WAL data apply (UPDATE, O3 merge) carries the txn in walApplySeqTxn; a structural
+        // WAL apply (ALTER COLUMN TYPE rewrite) leaves it unset but has the seqTxn in getSeqTxn().
+        // Non-WAL stamps 0, the cleared "no version" word, so a stale version cannot outlive the
+        // bytes it identifies.
+        final long dataChangeSeqTxn = walApplySeqTxn > 0
+                ? walApplySeqTxn
+                : (tableToken.isWal() ? txWriter.getSeqTxn() : 0);
+        txWriter.setPartitionSeqTxn(partitionIndex, dataChangeSeqTxn);
         txWriter.bumpPartitionTableVersion();
     }
 

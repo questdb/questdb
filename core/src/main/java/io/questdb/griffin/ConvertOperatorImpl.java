@@ -223,6 +223,11 @@ public class ConvertOperatorImpl implements Closeable {
             // Case 1: chained conversion (e.g. INT -> STRING -> DATE) where parquet stores an
             //         older type - convert so the two-step path matches native behavior.
             // Case 2: target type is Symbol - symbol maps cannot be built from parquet.
+            // Case 3: the partition has a remote copy (REMOTE) - the lazy replacingIndex decode is
+            //         a local-only facility, so the remote parquet still maps the new column index
+            //         to a missing field id and a remote read decodes the column as NULL. Convert
+            //         to native so the rewrite below materialises the new type and the manager
+            //         re-uploads the corrected bytes.
             //
             // A dedup-key conversion that crosses the fixed vs var/symbol boundary is NOT a
             // trigger. O3PartitionJob.mergeRowGroup materialises the parquet decode buffer into
@@ -239,41 +244,48 @@ public class ConvertOperatorImpl implements Closeable {
             boolean hasPriorConversion = tableWriter.getMetadata()
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
-            if (hasPriorConversion || isTargetSymbol) {
-                boolean hasAnyPartitionConverted = false;
-                for (int pi = 0, pn = tableWriter.getPartitionCount(); pi < pn; pi++) {
-                    if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
-                        continue;
-                    }
-                    int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
-                    if (!ColumnType.isUndefined(parquetColType)
-                            && (isTargetSymbol
-                            || !isParquetStorageCompatible(parquetColType, existingType))) {
-                        long pts = tableWriter.getPartitionTimestamp(pi);
-                        LOG.info()
-                                .$("converting parquet partition to native before type change [partition=").$ts(pts)
-                                .$(", column=").$safe(columnName)
-                                .$(", targetType=").$(ColumnType.nameOf(newType))
-                                .I$();
-                        tableWriter.convertPartitionParquetToNative(pts, false);
-                        hasAnyPartitionConverted = true;
-                    } else {
-                        long pts = tableWriter.getPartitionTimestamp(pi);
-                        LOG.debug()
-                                .$("skipping parquet partition conversion [partition=").$ts(pts)
-                                .$(", column=").$safe(columnName)
-                                .$(", parquetType=").$(ColumnType.nameOf(parquetColType)).$('(').$(parquetColType).$(')')
-                                .$(", existingType=").$(ColumnType.nameOf(existingType)).$('(').$(existingType).$(')')
-                                .$(", targetType=").$(ColumnType.nameOf(newType)).$('(').$(newType).$(')')
-                                .$(", reason=").$(ColumnType.isUndefined(parquetColType)
-                                        ? "column not stored in parquet, column top covers all rows"
-                                        : "parquet storage is compatible with existing type, lazy decode handles conversion")
-                                .I$();
-                    }
+            boolean hasAnyPartitionConverted = false;
+            for (int pi = 0, pn = tableWriter.getPartitionCount(); pi < pn; pi++) {
+                if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
+                    continue;
                 }
-                if (hasAnyPartitionConverted) {
-                    tableWriter.commitPendingParquetToNativeConversions();
+                // A remote copy makes lazy decode unsafe; force the conversion regardless of the
+                // symbol/chained triggers. The bit read is cheap, so it also gates the parquet
+                // metadata read below for the common non-remote, non-symbol, non-chained partition.
+                boolean isRemoteParquet = tableWriter.getTxWriter().isPartitionRemote(pi);
+                if (!hasPriorConversion && !isTargetSymbol && !isRemoteParquet) {
+                    continue;
                 }
+                int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
+                if (!ColumnType.isUndefined(parquetColType)
+                        && (isTargetSymbol
+                        || isRemoteParquet
+                        || !isParquetStorageCompatible(parquetColType, existingType))) {
+                    long pts = tableWriter.getPartitionTimestamp(pi);
+                    LOG.info()
+                            .$("converting parquet partition to native before type change [partition=").$ts(pts)
+                            .$(", column=").$safe(columnName)
+                            .$(", targetType=").$(ColumnType.nameOf(newType))
+                            .$(", remote=").$(isRemoteParquet)
+                            .I$();
+                    tableWriter.convertPartitionParquetToNative(pts, false);
+                    hasAnyPartitionConverted = true;
+                } else {
+                    long pts = tableWriter.getPartitionTimestamp(pi);
+                    LOG.debug()
+                            .$("skipping parquet partition conversion [partition=").$ts(pts)
+                            .$(", column=").$safe(columnName)
+                            .$(", parquetType=").$(ColumnType.nameOf(parquetColType)).$('(').$(parquetColType).$(')')
+                            .$(", existingType=").$(ColumnType.nameOf(existingType)).$('(').$(existingType).$(')')
+                            .$(", targetType=").$(ColumnType.nameOf(newType)).$('(').$(newType).$(')')
+                            .$(", reason=").$(ColumnType.isUndefined(parquetColType)
+                                    ? "column not stored in parquet, column top covers all rows"
+                                    : "parquet storage is compatible with existing type, lazy decode handles conversion")
+                            .I$();
+                }
+            }
+            if (hasAnyPartitionConverted) {
+                tableWriter.commitPendingParquetToNativeConversions();
             }
 
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
@@ -345,6 +357,12 @@ public class ConvertOperatorImpl implements Closeable {
                                 ) {
                                     queueCount++;
                                 }
+
+                                // The rewrite replaces the partition's bytes under a new column
+                                // index, so any remote copy is stale: stamp the ALTER's seqTxn and
+                                // clear REMOTE / staged parquet, exactly as the UPDATE path does
+                                // (UpdateOperatorImpl.markPartitionDataChanged).
+                                tableWriter.markPartitionDataChanged(partitionIndex);
                             }
 
                             long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
