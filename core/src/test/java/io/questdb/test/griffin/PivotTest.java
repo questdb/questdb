@@ -365,6 +365,39 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotDottedValueTruncatedToOperatorTokenDedups() throws Exception {
+        // Regression (createExprColumnAlias quote-path dedup gap): at a small generated-alias max size,
+        // a dotted pivot value ('in .x') truncates past its dot and its residual 'in ' trims back to the
+        // operator token 'in', colliding on the display name with a sibling value 'in'. The dedup must
+        // key on the trimmed content and yield distinct, quote-free column names; before the fix the
+        // second column surfaced as a second bare 'in', so the projection metadata build threw
+        // "Duplicate column [name=in]" and the (otherwise valid) PIVOT failed to compile.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, 6);
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'in .x', 20),
+                        ('B', 'in', 30),
+                        ('B', 'in .x', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'in .x') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	i_2
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotDottedValueWithTrailingSpace() throws Exception {
         // A dotted pivot value with a trailing space ('FNCL 2.5 ') surfaces a clean column name with
         // no bare trailing space (an interop hazard over PG / HTTP / CSV) and dedups against the

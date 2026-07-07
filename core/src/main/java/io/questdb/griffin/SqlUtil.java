@@ -571,31 +571,36 @@ public class SqlUtil {
             final int len = Math.min(truncatedLen, maxLength - seqSize - (quote ? 1 : 0));
             int contentLen = Math.max(0, len - (quote ? 2 : 0));
 
-            // Decide whether the protective quotes wrap this candidate BEFORE the space-trim
-            // below, so the trim can key on the final bare-ness. Emit the quotes only when the
-            // content still needs them: truncation may have dropped the discriminating dot, and
-            // a dedup suffix turns an operator token into a plain identifier; in both cases the
-            // bare name is unambiguous, so keeping the quotes would only leak them into
-            // result-set metadata (see toColumnName). The dot check reuses the cached position; the
-            // operator-token lookup is reached only for the un-suffixed candidate (sequence == 1).
-            final boolean deduped = sequence > 1;
-            final boolean contentHasDot = firstContentDot >= 0 && firstContentDot < start + contentLen;
-            final boolean emitQuote = quote && contentLen > 0
-                    && (contentHasDot || (!deduped && disallowedAliases.contains(base, start, start + contentLen)));
-
-            // Trim trailing spaces so a display name never ends in a bare space, matching the
-            // non-dotted early-exit check and the operator-token path ('in ' -> in). This runs
-            // regardless of emitQuote: a quote-protected candidate carries the dot that forced the
-            // quotes, and trailing spaces sit after it, so the trim never reaches the dot - the
-            // content stays protected and strips to a clean name (the pivot value 'FNCL 2.5 ' -> the
-            // column FNCL 2.5, not a bare 'FNCL 2.5 ' with a leaked trailing space that is an interop
-            // hazard over PG / HTTP / CSV). A sibling value 'FNCL 2.5' then dedups it (FNCL 2.5 /
-            // FNCL 2.5_2) via the collision check below, instead of two columns differing only by a
-            // space. An all-space slice trims to nothing and falls through to the "column" placeholder.
+            // Trim trailing spaces FIRST, so a display name never ends in a bare space (matching the
+            // non-dotted early-exit check and the operator-token path 'in ' -> in) AND so the quote
+            // decision below keys on the final trimmed content. A quote-protected candidate carries
+            // the dot that forced the quotes, and trailing spaces sit after it, so the trim never
+            // reaches the dot - the content stays protected and strips to a clean name (the pivot
+            // value 'FNCL 2.5 ' -> the column FNCL 2.5, not a bare 'FNCL 2.5 ' with a leaked trailing
+            // space that is an interop hazard over PG / HTTP / CSV). A sibling value 'FNCL 2.5' then
+            // dedups it (FNCL 2.5 / FNCL 2.5_2) via the collision check below, instead of two columns
+            // differing only by a space. An all-space slice trims to nothing and falls through to the
+            // "column" placeholder.
             if (contentLen > 0 && base.charAt(start + contentLen - 1) == ' ') {
                 final int lastNonSpace = Chars.lastIndexOfDifferent(base, start, start + contentLen, ' ') - start;
                 contentLen = lastNonSpace >= 0 ? lastNonSpace + 1 : 0;
             }
+
+            // Decide whether the protective quotes wrap this candidate AFTER the trim above, so the
+            // operator-token check keys on the FINAL trimmed content. A base such as 'in .x' truncated
+            // past its dot leaves 'in ', whose trailing space trims back to the operator token 'in';
+            // that must re-quote ("in") and then dedup against a sibling "in", not surface as a bare
+            // 'in' duplicating the sibling's display name (deciding emitQuote on the pre-trim 'in '
+            // slice, which is not a disallowed alias, would wrongly leave it bare). Emit the quotes
+            // only when the content still needs them: truncation may have dropped the discriminating
+            // dot, and a dedup suffix turns an operator token into a plain identifier; in both cases
+            // the bare name is unambiguous, so keeping the quotes would only leak them into result-set
+            // metadata (see toColumnName). contentHasDot is trim-invariant (a dot is never a trailing
+            // space); only the operator-token lookup, reached for the un-suffixed candidate, changes.
+            final boolean deduped = sequence > 1;
+            final boolean contentHasDot = firstContentDot >= 0 && firstContentDot < start + contentLen;
+            final boolean emitQuote = quote && contentLen > 0
+                    && (contentHasDot || (!deduped && disallowedAliases.contains(base, start, start + contentLen)));
 
             // No usable content survived: an empty base, truncation plus the quote reservation,
             // or an all-space slice. Emit a "column" placeholder (matching createColumnAlias) so

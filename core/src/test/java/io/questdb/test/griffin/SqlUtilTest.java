@@ -191,6 +191,33 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasDottedTruncatedTrailingSpaceOperatorTokenDedups() {
+        // Regression: a quote-protected dotted base ('in .x') whose maxLength truncation drops the
+        // discriminating dot leaves a trailing-space slice ('in ') that trims back to the operator
+        // token 'in'. The quote decision must key on the TRIMMED content, or the un-suffixed candidate
+        // surfaces a bare 'in' that duplicates a sibling value 'in' (both display 'in' via toColumnName),
+        // so the projection metadata build throws "Duplicate column [name=in]". This is the quote==true
+        // counterpart of testExprColumnAliasOperatorTokenTrailingSpaceDedups (the !quote path the earlier
+        // fix covered); deciding emitQuote before the space-trim left this variant open.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        // sibling value 'in' surfaces the protective-quoted "in" (display name in)
+        CharSequence first = SqlUtil.createExprColumnAlias(store, "in", aliasMap, seqMap, 6, true);
+        Assert.assertEquals("\"in\"", first.toString());
+        Assert.assertEquals("in", SqlUtil.toColumnName(first));
+        aliasMap.put(first.toString(), null);
+
+        // 'in .x' truncated at maxLength 6 drops the dot; the residual 'in ' trims to the operator
+        // token 'in', which must re-quote and dedup - never a second bare 'in' colliding with the sibling.
+        CharSequence second = SqlUtil.createExprColumnAlias(store, "in .x", aliasMap, seqMap, 6, true);
+        Assert.assertNotEquals("in", SqlUtil.toColumnName(second));
+        Assert.assertEquals("i_2", second.toString());
+        Assert.assertEquals("i_2", SqlUtil.toColumnName(second));
+    }
+
+    @Test
     public void testExprColumnAliasDuplicates() {
         CharacterStore store = new CharacterStore(32, 1);
         LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
