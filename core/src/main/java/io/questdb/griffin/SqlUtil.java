@@ -1810,7 +1810,7 @@ public class SqlUtil {
      * @param nonLiteral           whether this is a non-literal expression
      * @return unique alias
      */
-    static CharSequence createColumnAlias(
+    public static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,
             int indexOfDot,

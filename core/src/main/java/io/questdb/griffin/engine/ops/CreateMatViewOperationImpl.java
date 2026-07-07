@@ -427,7 +427,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     if (timestampModel == null) {
                         throw SqlException.position(selectTextPosition)
                                 .put("TIMESTAMP column does not exist or not present in select list [name=")
-                                .put(queryColumn.getName()).put(']');
+                                .put(SqlUtil.toColumnName(queryColumn.getName())).put(']');
                     }
                 }
             }
@@ -453,7 +453,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
                     final CreateTableColumnModel columnModel = createColumnModelMap.get(SqlUtil.toColumnName(column.getName()));
                     if (columnModel == null) {
-                        throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
+                        throw SqlException.$(0, "missing column [name=").put(SqlUtil.toColumnName(column.getName())).put(']');
                     }
                     copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
                 }
