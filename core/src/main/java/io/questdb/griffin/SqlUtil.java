@@ -287,10 +287,22 @@ public class SqlUtil {
                 ? !Chars.isDoubleQuoted(base) && (indexOfDot > -1 || disallowedAliases.contains(base))
                 : indexOfDot > -1 && disallowedAliases.contains(base, indexOfDot + 1, base.length());
 
-        // early exit for simple cases
+        // early exit for simple cases. A bare operator-token base (in, and, ...) shares its
+        // toColumnName display name with an already-taken protective-quoted "<token>" sibling
+        // (both surface as the bare token), so returning it verbatim here would push a duplicate
+        // result-set column name to the projection-metadata build. Take the fast path only when
+        // that sibling is also free; otherwise fall through to the dedup loop, which suffixes it
+        // (in -> in_2) via bareQuotedSibling. Mirrors createColumnAlias's early-exit.
         if (!prefixedLiteral && !quote && aliasToColumnMap.excludes(base)
                 && baseLen > 0 && baseLen <= maxLength && base.charAt(baseLen - 1) != ' ') {
-            return base;
+            if (!disallowedAliases.contains(base)) {
+                return base;
+            }
+            final CharacterStoreEntry siblingEntry = store.newEntry();
+            siblingEntry.put('"').put(base).put('"');
+            if (aliasToColumnMap.excludes(siblingEntry.toImmutable())) {
+                return base;
+            }
         }
 
         final int start = prefixedLiteral ? indexOfDot + 1 : 0;

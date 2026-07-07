@@ -163,6 +163,35 @@ public class ColumnAliasExpressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQualifiedThenBareOperatorTokenColumnDedups() throws Exception {
+        // Regression (alias-expression feature on, the production default): a column named after an
+        // operator token, referenced qualified and then bare in the same projection, used to throw
+        // "duplicate column [name=in]" under DISTINCT / GROUP BY. The createExprColumnAlias early-exit
+        // returned the bare `in` without checking its already-taken protective-quoted "in" sibling
+        // (both surface as in via toColumnName), so two columns displayed `in` and the projection
+        // metadata build rejected the duplicate. The columns must now dedup cleanly to in / in_2.
+        // Fails without the SqlUtil early-exit fix. Covers the flag-on path the rest of the suite
+        // (DefaultTestCairoConfiguration returns false) does not exercise.
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, \"in\" INT)");
+            execute("INSERT INTO x VALUES (1, 10)");
+
+            // DISTINCT reaches the projection-metadata build before the wildcard re-dedup safety net
+            assertQuery("SELECT DISTINCT x.\"in\", \"in\" FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("in\tin_2\n10\t10\n");
+
+            // implicit GROUP BY (non-aggregate keys + count) hits the same path
+            assertQuery("SELECT x.\"in\", \"in\", count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("in\tin_2\tcount()\n10\t10\t1\n");
+        });
+    }
+
+    @Test
     public void testMultiParams() throws Exception {
         assertGeneratedColumnEqual(
                 "replace(a, 'a', 'b')\n",

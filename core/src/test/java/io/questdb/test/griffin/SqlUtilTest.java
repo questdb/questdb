@@ -81,6 +81,33 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasBareOperatorTokenAfterQuotedSiblingDedups() {
+        // Regression: the createExprColumnAlias early-exit returned a bare operator-token base
+        // verbatim when only its RAW form was free, missing the display-name collision with an
+        // already-taken protective-quoted "<token>" sibling ("in" and bare in both surface as in
+        // via toColumnName). A qualified x."in" (aliased "in") followed by a bare "in" (base in,
+        // nonLiteral=false) then produced two columns both displaying `in`, so DISTINCT / GROUP BY /
+        // SAMPLE BY threw "duplicate column [name=in]". The early-exit must check the sibling and
+        // fall through to the dedup loop, mirroring createColumnAlias.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        // a sibling column already surfaced the protective-quoted "in" (display name in)
+        aliasMap.put("\"in\"", null);
+
+        // the bare operator-token literal reference must not reuse the display name in
+        CharSequence alias = SqlUtil.createExprColumnAlias(store, "in", aliasMap, seqMap, 64, false);
+        Assert.assertEquals("in_2", alias.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(alias));
+        Assert.assertEquals("in_2", SqlUtil.toColumnName(alias));
+
+        // an ordinary (non-token) base whose raw form is free still returns verbatim, by identity
+        CharSequence plain = "plain";
+        Assert.assertSame(plain, SqlUtil.createExprColumnAlias(store, plain, aliasMap, seqMap, 64, false));
+    }
+
+    @Test
     public void testExprColumnAliasDedupManyCollisions() {
         // Drives the dedup loop through many collisions in a single call. The candidate store
         // entry is rewound (trimTo) and rebuilt each iteration, so the sequence numbering must
