@@ -558,6 +558,34 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableColumnTypeChangedTwiceKeepsColumnOrder() throws Exception {
+        // After two ALTER COLUMN TYPE on the same column, the new column's replacingIndex
+        // points at its immediate predecessor (the intermediate column), not the chain
+        // root. hydrateTable() must derive the catalogue position from the chain root
+        // (getOriginalWriterIndex()), otherwise the twice-converted column jumps to the
+        // end of table_columns()/information_schema.columns while SELECT * (reader
+        // metadata) still keeps it in place.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (ts TIMESTAMP, foo VARCHAR, bah SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            drainWalQueue();
+
+            execute("ALTER TABLE y ALTER COLUMN foo TYPE STRING");
+            drainWalQueue();
+
+            execute("ALTER TABLE y ALTER COLUMN foo TYPE INT");
+            drainWalQueue();
+
+            assertCairoMetadata("""
+                    MetadataCache [tableCount=1]
+                    \tCairoTable [name=y, id=1, directoryName=y~1, hasDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=3]
+                    \t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=0, parquetEncoding=Default, parquetCompression=Default, writerIndex=0]
+                    \t\tCairoColumn [name=foo, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, indexType=NONE, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=4]
+                    \t\tCairoColumn [name=bah, position=2, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, indexType=NONE, indexBlockCapacity=256, parquetEncoding=Default, parquetCompression=Default, writerIndex=2]
+                    """);
+        });
+    }
+
+    @Test
     public void testAlterTableDedupDisable() throws Exception {
         assertMemoryLeak(() -> {
 

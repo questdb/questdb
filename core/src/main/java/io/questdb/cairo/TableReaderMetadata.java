@@ -343,6 +343,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int columnType = TableUtils.getColumnType(mem, writerIndex);
 
             if (columnType > -1) {
+                int origWriterIndex = TableUtils.getReplacingChainHead(mem, writerIndex, columnCount);
                 String colName = Chars.toString(name);
                 TableReaderMetadataColumn colMeta = new TableReaderMetadataColumn(
                         colName,
@@ -356,7 +357,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         denseSymbolIndex,
                         stableIndex,
                         TableUtils.isSymbolCached(mem, writerIndex),
-                        TableUtils.getSymbolCapacity(mem, writerIndex)
+                        TableUtils.getSymbolCapacity(mem, writerIndex),
+                        origWriterIndex
                 );
                 colMeta.setReplicaOnlyIndex(TableUtils.isColumnReplicaOnlyIndex(mem, writerIndex));
                 colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(mem, writerIndex) : 0);
@@ -422,6 +424,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
             int symbolCapacity = TableUtils.getSymbolCapacity(newMetaMem, writerIndex);
+            int origWriterIndex = TableUtils.getReplacingChainHead(newMetaMem, writerIndex, columnCount);
             TableReaderMetadataColumn existing = null;
             String newName;
 
@@ -474,7 +477,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             denseSymbolIndex,
                             stableIndex,
                             symbolIsCached,
-                            symbolCapacity
+                            symbolCapacity,
+                            origWriterIndex
                     );
                     newColMeta.setReplicaOnlyIndex(replicaOnly);
                     columnMetadata.setQuick(outIndex, newColMeta);

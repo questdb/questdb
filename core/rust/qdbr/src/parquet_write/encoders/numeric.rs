@@ -71,9 +71,11 @@ pub trait StatsUpdater<T, const UNSIGNED: bool> {
     fn update_stats(&mut self, v: T);
 }
 
-impl StatsUpdater<i32, false> for MaxMin<i32> {
+// Signed ordering is the default for every native type. Only IPv4 (stored as
+// i32 but logically UINT_32) overrides this with the unsigned impl below.
+impl<T: Copy + NativeType> StatsUpdater<T, false> for MaxMin<T> {
     #[inline]
-    fn update_stats(&mut self, v: i32) {
+    fn update_stats(&mut self, v: T) {
         self.update(v);
     }
 }
@@ -82,13 +84,6 @@ impl StatsUpdater<i32, true> for MaxMin<i32> {
     #[inline]
     fn update_stats(&mut self, v: i32) {
         self.update_unsigned(v);
-    }
-}
-
-impl<const UNSIGNED: bool> StatsUpdater<i64, UNSIGNED> for MaxMin<i64> {
-    #[inline]
-    fn update_stats(&mut self, v: i64) {
-        self.update(v);
     }
 }
 
@@ -107,7 +102,14 @@ where
     F: Fn(&[T], usize, Vec<u8>) -> Vec<u8>,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
     let num_rows = column_top + slice.len();
     let mut null_count = 0;
     let write_stats = options.write_statistics;
@@ -216,7 +218,14 @@ where
     P: NativeType,
     T: Default + num_traits::AsPrimitive<P> + Debug,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "notnull encoder requires Required repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let statistics = match (options.write_statistics, bloom_hashes) {
         (true, Some(h)) => {
@@ -575,7 +584,14 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
     encoding: Encoding,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "delta_binary_packed nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
     let num_rows = column_top + slice.len();
 
     let mut buffer = vec![];

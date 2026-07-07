@@ -314,13 +314,18 @@ fn encode_simd_all_nulls_partition() {
     );
 }
 
+// Byte/Short/Char carry no in-band null sentinel but use Optional repetition so
+// column-top rows can be marked NULL via def-level=0. Production routes these
+// tags to encode_int_nullable; data values never report null. See
+// parquet_write/schema.rs and parquet_write/encode.rs.
 #[test]
 fn encode_int_notnull_byte_widening() {
     let data: Vec<i8> = vec![1, 2, 3, 4, 5, -1, -2, 127, -128];
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
-    let pages = encode_int_notnull::<i8, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-        .expect("encode");
+    let pages =
+        encode_int_nullable::<i8, i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, enc) = v2_header(&pages[0]);
     assert_eq!(num_values, 9);
@@ -333,8 +338,9 @@ fn encode_int_notnull_short_widening() {
     let data: Vec<i16> = (0..100i16).collect();
     let col = make_column_with_top("col", ColumnTypeTag::Short, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Short);
-    let pages = encode_int_notnull::<i16, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-        .expect("encode");
+    let pages =
+        encode_int_nullable::<i16, i32, false>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, num_nulls, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 100);
@@ -346,8 +352,9 @@ fn encode_int_notnull_char_widening() {
     let data: Vec<u16> = (0..100u16).collect();
     let col = make_column_with_top("col", ColumnTypeTag::Char, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Char);
-    let pages = encode_int_notnull::<u16, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-        .expect("encode");
+    let pages =
+        encode_int_nullable::<u16, i32, true>(&[col], 0, data.len(), &pt, write_options(), None)
+            .expect("encode");
     assert_eq!(pages.len(), 1);
     let (num_values, _, _) = v2_header(&pages[0]);
     assert_eq!(num_values, 100);
@@ -1119,11 +1126,13 @@ fn encode_int_notnull_with_column_top() {
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 2, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
     // last_partition_end = column_top + data.len() = 5
-    let pages =
-        encode_int_notnull::<i8, i32>(&[col], 0, 5, &pt, write_options(), None).expect("encode");
+    let pages = encode_int_nullable::<i8, i32, false>(&[col], 0, 5, &pt, write_options(), None)
+        .expect("encode");
     assert_eq!(pages.len(), 1);
-    let (num_values, _, _) = v2_header(&pages[0]);
-    assert_eq!(num_values, 5); // 2 column-top defaults + 3 data
+    let (num_values, num_nulls, _) = v2_header(&pages[0]);
+    assert_eq!(num_values, 5);
+    // Column-top rows are encoded as parquet NULL (def-level=0).
+    assert_eq!(num_nulls, 2);
 }
 
 #[test]
@@ -1132,7 +1141,7 @@ fn encode_int_notnull_with_bloom() {
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
     let bloom = Arc::new(Mutex::new(HashSet::<u64>::new()));
-    let pages = encode_int_notnull::<i8, i32>(
+    let pages = encode_int_nullable::<i8, i32, false>(
         &[col],
         0,
         data.len(),
@@ -1152,8 +1161,8 @@ fn encode_int_notnull_no_stats() {
     let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
     let pt = primitive_type_for(ColumnTypeTag::Byte);
     let opts = WriteOptions { write_statistics: false, ..write_options() };
-    let pages =
-        encode_int_notnull::<i8, i32>(&[col], 0, data.len(), &pt, opts, None).expect("encode");
+    let pages = encode_int_nullable::<i8, i32, false>(&[col], 0, data.len(), &pt, opts, None)
+        .expect("encode");
     assert_eq!(pages.len(), 1);
 }
 

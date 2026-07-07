@@ -59,6 +59,11 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     }
 
     @Override
+    public byte getColumnIndexType(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexType();
+    }
+
+    @Override
     public TableColumnMetadata getColumnMetadata(int index) {
         return columnMetadata.getQuick(index);
     }
@@ -81,6 +86,10 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     @Override
     public RecordMetadata getMetadata(int columnIndex) {
         return getColumnMetadata(columnIndex).getMetadata();
+    }
+
+    public int getOriginalWriterIndex(int columnIndex) {
+        return getColumnMetadata(columnIndex).getOriginalWriterIndex();
     }
 
     @Override
