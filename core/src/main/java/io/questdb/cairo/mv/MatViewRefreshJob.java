@@ -520,11 +520,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // so the finalize->unlock race window stays narrow -- narrow, not empty: finalize's own enqueue
         // feeds the queue sibling workers are polling, so a sibling can dequeue the re-enqueued task and
         // defer against this still-held latch before the unlock below (the self-fed variant of the
-        // lost-update window; enqueueing after the unlock would remove that variant and is a candidate
-        // shape for a txn-gating follow-up). An OOM thrown between finalize's clear and its
-        // enqueue still drops the deferral outright (marker cleared, no task queued: the view reads healthy
-        // while stale); enqueue-before-clear would be no better -- a second worker could dequeue and swallow
-        // the task against the still-set marker -- and under OOM the process is lost anyway.
+        // lost-update window; enqueueing after the unlock would remove that variant). An OOM thrown between
+        // finalize's clear and its enqueue still drops the deferral outright (marker cleared, no task queued:
+        // the view reads healthy while stale); enqueue-before-clear would be no better -- a second worker
+        // could dequeue and swallow the task against the still-set marker -- and under OOM the process is
+        // lost anyway.
         try {
             finalizeDeferredInvalidation(engine, stateStore, viewToken, viewState);
         } finally {
@@ -954,7 +954,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // view invalid (cascading to dependents) -- a spurious-looking valid->invalid flip under the
             // "UPDATE then REFRESH FULL" race. It is conservatively safe (invalid is visible, REFRESH ... FULL
             // recovers it) and better than dropping finalize, which re-exposes the silent frozen-pending freeze
-            // across the whole pump. finalize is reason-blind; gating on the trigger txn is a possible follow-up.
+            // across the whole pump. finalize is reason-blind, not txn-aware, so it cannot tell a deferral
+            // this rebuild already covered from a genuinely newer one.
             finalizeAndUnlock(viewToken, viewState, true);
         }
 
