@@ -1577,4 +1577,360 @@ public class LatestByTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    // Regression: indexed LATEST ON PARTITION BY <symbol> with a residual filter on a second column
+    // routes through the index-backed filtered cursor. The bitmap index cursor already returns
+    // frame-relative row ids, so the cursor must NOT subtract partitionLo again. When the matched
+    // row lands in a page frame with partitionLo > 0 (i.e. a partition large enough to span several
+    // page frames), the double subtraction positioned the record partitionLo rows too early and
+    // returned a neighbouring row, often belonging to a different partition-by key. Small page
+    // frames are forced here so the single partition splits and partitionLo becomes > 0.
+    @Test
+    public void testLatestByValueIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // Latest 'g2' row on venue 'v1' is the deep ordinal x=198 (px=198), in a frame with partitionLo>0.
+                assertQuery("select sym, px from tk " +
+                        "where sym = 'g2' and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByValuesIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // IN-list drives the multi-value filtered index cursor. Latest per key on venue 'v1':
+                // g1 -> x=197 (px=197), g2 -> x=198 (px=198); both deep, so partitionLo>0.
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2') and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same fix via the deferred path: a bind-variable key value is a runtime constant, so the query
+    // routes through LatestByValueDeferredIndexedFilteredRecordCursorFactory, which delegates to the
+    // same LatestByValueIndexedFilteredRecordCursor.
+    @Test
+    public void testLatestByValueDeferredIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                bindVariableService.clear();
+                bindVariableService.setStr("targetSym", "g2");
+                assertQuery("select sym, px from tk " +
+                        "where sym = :targetSym and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same fix with a column top: 'px' is added after the first batch, so it has columnTop > 0. The
+    // matched row sits in a deep page frame (partitionLo > 0) in the post-ALTER region, exercising the
+    // interaction between the (fixed) frame-relative positioning and columnTop handling.
+    @Test
+    public void testLatestByValueIndexedFilteredColumnTopAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                // First batch (ordinals 1..100), no px column yet.
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(100);"
+                );
+                execute("alter table tk add column px double");
+                // Second batch (ordinals 101..200) with px set; 100 % 4 == 0 and 100 % 5 == 0 keep the cycles aligned.
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || ((x + 100) % 4),\n" +
+                                "  case when (x + 100) % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  ((x + 100) * 1_000_000)::" + timestampType.getTypeName() + ",\n" +
+                                "  (x + 100)::double\n" +
+                                "from long_sequence(100);"
+                );
+                // Latest 'g2'/'v1' overall is ordinal 198 (post-ALTER, px=198), deep => partitionLo>0, px columnTop=100.
+                assertQuery("select sym, px from tk " +
+                        "where sym = 'g2' and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestBySubQueryIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in (select list('g1', 'g2') from long_sequence(2)) and venue = 'v1' " +
+                        "latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Coverage for a not-found element in an indexed IN-list combined with the split-frame setup.
+    // 'zzz' is absent from the symbol table, so it resolves to VALUE_NOT_FOUND and is never added to
+    // deferredSymbolKeys. keyCount must therefore stay at the count of resolvable keys (g1, g2) so the
+    // early exit (found.size() < keyCount) still fires; otherwise the cursor would full-scan. Small page
+    // frames force partitionLo > 0 on the matched (deep) rows.
+    @Test
+    public void testLatestByValuesIndexedFilteredWithNotFoundKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // 'zzz' is not in the symbol table: it must not inflate keyCount nor change the result.
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', 'zzz') and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same as above but with a NULL element in the IN-list. Unlike the not-found 'zzz' case, the NULL
+    // constant resolves to SymbolTable.VALUE_IS_NULL (not VALUE_NOT_FOUND), and toIndexKey(VALUE_IS_NULL)
+    // == 0, so it is added to symbolKeys as the null bucket (index key 0). The sym column contains no
+    // nulls, so key 0 matches nothing and the result is still (g1, g2). Verifies a NULL key in the
+    // IN-list does not corrupt the row positioning under the split-frame setup.
+    @Test
+    public void testLatestByValuesIndexedFilteredWithNullKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', null) and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same coverage for the non-filtered indexed cursor (LatestByValuesIndexedRecordCursor): no residual
+    // filter, an indexed IN-list with a not-found element, under the split-frame setup.
+    @Test
+    public void testLatestByValuesIndexedWithNotFoundKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', 'zzz') latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedDuplicateDeferredKeyDoesNotFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            // Fail to open the older partition; the test then fails loudly if the duplicate deferred key
+            // makes the cursor scan it after the only unique key was already found in the latest partition.
+            ff = failOpenForPartition("1970-01-01");
+
+            executeWithRewriteTimestamp(
+                    "create table tk (sym symbol index, px double, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    insert into tk values
+                    ('a', 1.0, '1970-01-01T00:00:00.000000Z'),
+                    ('a', 2.0, '1970-01-02T00:00:00.000000Z')
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+
+            assertQuery("select sym, px from tk where sym in ('a', :sym) latest on ts partition by sym")
+                    .expectSize()
+                    .returns("""
+                            sym\tpx
+                            a\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedFilteredDuplicateDeferredKeyDoesNotFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            // Fail to open the older partition; the test then fails loudly if the duplicate deferred key
+            // makes the cursor scan it after the only unique key already passed the residual filter.
+            ff = failOpenForPartition("1970-01-01");
+
+            executeWithRewriteTimestamp(
+                    "create table tk (sym symbol index, venue symbol, px double, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    insert into tk values
+                    ('a', 'v1', 1.0, '1970-01-01T00:00:00.000000Z'),
+                    ('a', 'v1', 2.0, '1970-01-02T00:00:00.000000Z')
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+
+            assertQuery("select sym, px from tk " +
+                    "where sym in ('a', :sym) and venue = 'v1' latest on ts partition by sym")
+                    .expectSize()
+                    .returns("""
+                            sym\tpx
+                            a\t2.0
+                            """);
+        });
+    }
+
+    // A FilesFacade whose openRO fails for any file under the named partition. Used to prove an indexed
+    // LATEST ON cursor short-circuits before opening (and thus reading) an older partition once every key
+    // has already been resolved in a newer one.
+    private static TestFilesFacadeImpl failOpenForPartition(String partition) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, partition)) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+    }
 }
