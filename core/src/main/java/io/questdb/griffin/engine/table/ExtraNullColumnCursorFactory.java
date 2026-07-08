@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.DataSource;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -335,6 +336,45 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         @Override
         public int getColumnCount() {
             return columnCount;
+        }
+
+        @Override
+        public byte getColumnSource(int columnIndex) {
+            // Below the split columns delegate 1:1 to the base (so a covered base
+            // column still reports COVERED and drives the worker covered-decode
+            // arm); the synthetic null-padding columns above the split are DIRECT.
+            return columnIndex < columnSplit ? baseFrame.getColumnSource(columnIndex) : DataSource.DIRECT;
+        }
+
+        @Override
+        public int getCoveredIncludeIndex(int columnIndex) {
+            // Per-column: below the split delegate to the base; synthetic null
+            // columns above the split have no sidecar include index.
+            return columnIndex < columnSplit ? baseFrame.getCoveredIncludeIndex(columnIndex) : -1;
+        }
+
+        @Override
+        public int[] getCoveredIncludeIndices() {
+            // Per-frame set of sidecar columns to decode -- pass through to base.
+            return baseFrame.getCoveredIncludeIndices();
+        }
+
+        @Override
+        public int getCoveredKey() {
+            // Per-frame resolved WHERE symbol key -- pass through to base.
+            return baseFrame.getCoveredKey();
+        }
+
+        @Override
+        public long getCoveredRowHi() {
+            // Per-frame base row range -- pass through to base.
+            return baseFrame.getCoveredRowHi();
+        }
+
+        @Override
+        public long getCoveredRowLo() {
+            // Per-frame base row range -- pass through to base.
+            return baseFrame.getCoveredRowLo();
         }
 
         @Override

@@ -84,7 +84,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     // types of set operations between this and union model
     int SET_OPERATION_UNION_ALL = 0;
     int SHOW_COLUMNS = 2;
-    int SHOW_CREATE_LIVE_VIEW = 18;
+    int SHOW_CREATE_DATABASE = 18;
+    int SHOW_CREATE_LIVE_VIEW = 19;
     int SHOW_CREATE_MAT_VIEW = 15;
     int SHOW_CREATE_TABLE = 14;
     int SHOW_CREATE_VIEW = 17;
@@ -401,6 +402,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ObjList<QueryModelWrapper> getSharedRefs();
 
+    int getShowCreateDatabaseInclude();
+
     int getShowKind();
 
     int getTableId();
@@ -634,6 +637,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setSelectTranslation(boolean isSelectTranslation);
 
     void setSetOperationType(int setOperationType);
+
+    void setShowCreateDatabaseInclude(int includeMask);
 
     void setShowKind(int showKind);
 

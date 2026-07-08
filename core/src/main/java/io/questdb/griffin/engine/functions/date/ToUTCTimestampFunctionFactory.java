@@ -33,9 +33,11 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -108,7 +110,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         throw SqlException.$(timezonePos, "timezone must not be null");
     }
 
-    private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction {
+    private static class ConstRulesFunc extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final Function timestampFunc;
         private final TimeZoneRules tzRules;
 
@@ -134,6 +136,16 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
             final long timestamp = timestampFunc.getTimestamp(rec);
             final long offset = tzRules.getLocalOffset(timestamp);
             return timestamp - offset;
+        }
+
+        @Override
+        public Function getTimestampArg() {
+            return timestampFunc;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            return MonotonicTimestampFunction.invertZoneOffsetShift(io, tzRules, timestampDriver, 1);
         }
     }
 
