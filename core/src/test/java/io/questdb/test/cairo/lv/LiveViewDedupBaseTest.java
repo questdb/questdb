@@ -233,6 +233,77 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAppliedBaseDrainDefersOnApplyLagInsteadOfDeadlocking() throws Exception {
+        // Cooperative apply-lag handoff on the coupled dedup path (regression for
+        // M-1). When the base sequencer head advances past the applied reader, the
+        // drainAppliedBase gate must NOT block-spin in waitForApply waiting for the
+        // apply: on the single-threaded refresh/drain model the same worker has to
+        // advance that apply, so spinning deadlocks (and with the flush clock frozen
+        // the retry budget never trips); with a live clock a sustained-lag streak
+        // instead ticks the flush-retry budget to exhaustion and durably invalidates
+        // the view. ensureBaseApplied now peeks the applied seqTxn BEFORE pinning the
+        // scan reader and throws a cooperative signal that unwinds the cycle untouched
+        // - no watermark advance, no retry-budget tick, no invalidation - and the next
+        // tick converges once the base apply lands.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Seed and fully refresh an initial row so the coupled path has an
+                // established frontier and watermarks.
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 10, '2026-01-01T00:00:01.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                final long latestSeenBefore = instance.getLatestSeenTs();
+                final int retryBefore = instance.getFlushRetryCount();
+
+                // Commit a second row to the base sequencer but do NOT apply it
+                // (skip drainWalQueue): the sequencer head advances past the applied
+                // reader, so isRangeProvablyClean fails and the coupled
+                // drainAppliedBase gate observes the apply lag. Advance the clock past
+                // FLUSH EVERY so the flush-due gate lets this cycle reach the drain.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('b', 20, '2026-01-01T00:00:02.000000Z')");
+
+                // With the old block-spin this drain never returns (the frozen clock
+                // keeps the retry budget from tripping). It must return, and it must
+                // leave the view exactly as it was.
+                drainJob(job);
+
+                Assert.assertFalse("apply lag must not invalidate the coupled view", instance.isInvalid());
+                Assert.assertEquals("watermark must not advance on apply lag",
+                        processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals("frontier must not advance on apply lag",
+                        latestSeenBefore, instance.getLatestSeenTs());
+                Assert.assertEquals("apply lag must not tick the flush-retry budget",
+                        retryBefore, instance.getFlushRetryCount());
+
+                // Apply the base commit, then let the next tick converge the drain.
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must stay valid after the drain converges", instance.isInvalid());
+            }
+            // Both rows land in ts order with a gapless row_number sequence.
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\trn\n" +
+                            "a\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
+                            "b\t20\t2026-01-01T00:00:02.000000Z\t2\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testBaseTruncateFreezesDerivedPrefix() throws Exception {
         // A base TRUNCATE below the frontier is a data-shaped non-DATA commit
         // (walId>0, isDataType=false): the WAL-E walk excludes it from batchMinTs, so

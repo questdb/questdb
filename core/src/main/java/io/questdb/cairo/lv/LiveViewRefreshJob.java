@@ -635,19 +635,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Cooperative apply-lag gate for the drain-triggered O3 replay path. Peeks at
-     * the base table's applied seqTxn and throws {@link LiveViewApplyLagException}
-     * when {@code ApplyWal2TableJob} has not yet applied up to {@code advanceTo}.
+     * Cooperative apply-lag gate for the drain-triggered refresh paths that read
+     * the applied base: the raw-WAL O3 replay ({@link #incrementalRefresh} /
+     * {@link #finishLeadRefresh}) and the coupled dedup applied-base drain
+     * ({@link #drainAppliedBase}). Peeks at the base table's applied seqTxn and
+     * throws {@link LiveViewApplyLagException} when {@code ApplyWal2TableJob} has
+     * not yet applied up to {@code advanceTo}.
      * <p>
      * Callers invoke this BEFORE any destructive replay work (head {@code .cp}
      * retirement, window-state reset, the REPLACE_RANGE commit, discarding the
-     * in-RAM lead), so the throw unwinds to {@link #refreshInstance} with no
-     * durable change and no reader-visible tier shrink; the next fallback scan
-     * re-triggers the view once apply catches up. The base applied seqTxn only
-     * advances on the global {@code ApplyWal2TableJob}, so block-spinning inside
-     * {@link #waitForApply} instead starves this refresh worker and, on the
-     * single-threaded refresh/drain model the fuzz harness drives, deadlocks
-     * outright (the same thread that must advance the apply is the one spinning).
+     * in-RAM lead) or before pinning the applied-base scan reader, so the throw
+     * unwinds to {@link #refreshInstance} with no durable change and no
+     * reader-visible tier shrink; the next fallback scan re-triggers the view once
+     * apply catches up. The base applied seqTxn only advances on the global
+     * {@code ApplyWal2TableJob}, so block-spinning inside {@link #waitForApply}
+     * instead starves this refresh worker and, on the single-threaded
+     * refresh/drain model the fuzz harness drives, deadlocks outright (the same
+     * thread that must advance the apply is the one spinning).
      * <p>
      * The remaining {@link #waitForApply} callers (restart restore, backfill
      * sweep, replay-to-applied) always target a seqTxn the base has already
@@ -929,14 +933,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Coupled, applied-reader refresh cycle for a live view whose base table has
      * DEDUP keys. Sibling of the raw-WAL {@link #drainBaseWal} / {@link #incrementalRefresh}
      * pair: instead of appending the pre-dedup WAL stream, it reads the applied,
-     * post-dedup base via a {@code waitForApply}-pinned {@link TableReader} and routes
-     * any timestamp-overlap batch through {@link #o3Replay}. The proven non-dedup
-     * {@code drainBaseWal} bytecode is left untouched.
+     * post-dedup base via a {@link TableReader} pinned behind the cooperative
+     * {@link #ensureBaseApplied} apply-lag gate and routes any timestamp-overlap batch
+     * through {@link #o3Replay}. The proven non-dedup {@code drainBaseWal} bytecode is
+     * left untouched.
      * <p>
      * Each cycle:
      * <ol>
-     *     <li>Pin the applied base snapshot ({@code waitForApply}, throws on apply lag)
-     *     and fix {@code effectiveSeqTxn = reader.getSeqTxn()} - the reader may sit past
+     *     <li>Gate on base apply ({@link #ensureBaseApplied}, defers cooperatively on
+     *     apply lag) before pinning the applied base snapshot, then fix
+     *     {@code effectiveSeqTxn = reader.getSeqTxn()} - the reader may sit past
      *     {@code toSeqTxn} if apply raced ahead. Both the overlap walk and the forward
      *     scan bound to this same point so no unexamined seqTxn slips past the cheap
      *     append.</li>
@@ -976,10 +982,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .put("live view requires a designated timestamp [view=").put(viewName).put(']');
         }
 
-        // Pin the applied (post-dedup) base snapshot. waitForApply blocks then throws
-        // once base apply lag exceeds the flush-retry budget, surfacing the lag rather
-        // than silently stalling (the coupling the non-dedup raw-WAL path avoids).
-        TableReader reader = waitForApply(baseToken, toSeqTxn);
+        // Cooperative apply-lag gate before pinning the applied (post-dedup) base
+        // snapshot (see ensureBaseApplied): peek the base's applied seqTxn and defer
+        // this cycle by throwing LiveViewApplyLagException when ApplyWal2TableJob has
+        // not reached toSeqTxn yet, rather than block-spinning in waitForApply. This
+        // coupled dedup drain runs on the same single refresh/drain worker that has
+        // to advance the base apply, so a blocking wait starves that worker for the
+        // whole flush-retry budget and, on the single-threaded refresh/drain model,
+        // deadlocks outright; a sustained-lag streak also drives the flush-retry
+        // budget to exhaustion and spuriously invalidates the view - the exact
+        // coupling the non-dedup raw-WAL O3 gate already avoids. (waitForApply threw
+        // a plain CairoException that handleRefreshFailure counts as a refresh fault,
+        // so the cooperative deferral never reached this path.) The gate sits before
+        // any destructive work, so the unwind leaves the view untouched and the next
+        // fallback scan retries once the apply lands. apply is monotone, so the
+        // reader opened next observes at least the applied seqTxn just checked.
+        ensureBaseApplied(baseToken, toSeqTxn);
+        TableReader reader = engine.getReader(baseToken);
         try {
             // reader.getSeqTxn() may run past toSeqTxn if ApplyWal2TableJob raced
             // ahead. Fix the effective applied point from the reader and bound BOTH the
