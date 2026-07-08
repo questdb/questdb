@@ -179,14 +179,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
-        if (closed) {
-            // close() drains the disconnect queue once and never again; enqueuing now would
-            // strand this checked-out context (e.g. a parked sleep() unwinding at shutdown),
-            // which no close() sweep can see. Free it directly instead.
-            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
-            return;
-        }
-        final long cursor = bullyUntilClosed(disconnectPubSeq);
+        // A negative cursor means the dispatcher is closed -- either up front, or close() flipped
+        // it during the bully loop (bullyUntilClosed only returns < 0 when closed). close() drains
+        // the disconnect queue once and never again, so enqueuing now would strand this checked-out
+        // context (e.g. a parked sleep() unwinding at shutdown), which no close() sweep can see.
+        // Free it directly instead.
+        final long cursor = closed ? -1 : bullyUntilClosed(disconnectPubSeq);
         if (cursor < 0) {
             assert closed;
             doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
@@ -241,14 +239,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void registerChannel(C context, int operation) {
-        if (closed) {
-            // Same as disconnect(): the interest queue was swept once by close(), so
-            // re-registering would strand this checked-out context (e.g. a parked sleep()
-            // re-arming at shutdown). Disconnect it directly instead of leaking its socket.
-            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
-            return;
-        }
-        final long cursor = bullyUntilClosed(interestPubSeq);
+        // Same as disconnect(): a negative cursor means the dispatcher is closed (up front, or
+        // close() flipped it mid-bully). The interest queue was swept once by close(), so
+        // re-registering would strand this checked-out context (e.g. a parked sleep() re-arming
+        // at shutdown). Disconnect it directly instead of leaking its socket.
+        final long cursor = closed ? -1 : bullyUntilClosed(interestPubSeq);
         if (cursor < 0) {
             assert closed;
             doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);

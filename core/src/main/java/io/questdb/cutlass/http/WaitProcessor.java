@@ -82,13 +82,26 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
     public void close() {
         // Free every parked retry so its socket fd is released. A retry can sit in any of
         // three stages at shutdown: the inbound queue, the rerun priority queue, or the
-        // outbound queue awaiting a worker's runReruns(). close() runs after the worker pool
-        // has halted, so nothing else will drain them -- an out-queue retry would otherwise
-        // strand its checked-out HttpConnectionContext.
+        // outbound queue awaiting a worker's runReruns(). Nothing else drains these once the
+        // worker pool has halted -- an out-queue retry would otherwise strand its checked-out
+        // HttpConnectionContext.
         processInQueue();
-        Retry retry;
-        while ((retry = getNextRerun()) != null) {
-            Misc.free(retry);
+        // Drain the out queue directly, not via getNextRerun(): that helper returns null on a
+        // -2 (lost the slot to a worker still draining past the halt timeout), which would end
+        // this drain early and strand the rest. Mirror processInQueue()'s -2 retry instead.
+        while (true) {
+            long cursor = outSubSequence.next();
+            if (cursor < -1) {
+                Os.pause();
+                continue;
+            }
+            if (cursor < 0) {
+                break;
+            }
+            RetryHolder retryHolder = outQueue.get(cursor);
+            Misc.free(retryHolder.retry);
+            retryHolder.retry = null;
+            outSubSequence.done(cursor);
         }
         for (int i = 0, n = nextRerun.size(); i < n; i++) {
             Misc.free(nextRerun.poll());
