@@ -477,6 +477,13 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         if (context == null || context.invalid()) {
             return;
         }
+        if (!context.tryDisconnect()) {
+            // A concurrent caller already claimed this context -- e.g. close()'s pendingHeartbeats
+            // sweep racing a worker's post-close disconnect()/registerChannel() of a context that is
+            // still tracked in pendingHeartbeats. The winner frees it once; a second free here would
+            // double-close the fd (fd-aliasing) and double-free the context's native buffers.
+            return;
+        }
 
         final long fd = context.getFd();
         LOG.info()

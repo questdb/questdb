@@ -74,15 +74,25 @@ public class IODispatcherCloseParkedContextTest {
 
     @Test
     public void testCloseFreesParkedContextOnDisconnect() throws Exception {
-        assertParkedContextFreedAfterClose(false);
+        assertParkedContextFreedAfterClose(false, 1);
     }
 
     @Test
     public void testCloseFreesParkedContextOnRegisterChannel() throws Exception {
-        assertParkedContextFreedAfterClose(true);
+        assertParkedContextFreedAfterClose(true, 1);
     }
 
-    private void assertParkedContextFreedAfterClose(boolean reRegisterInsteadOfDisconnect) throws Exception {
+    @Test
+    public void testDoubleDisconnectAfterCloseFreesContextOnce() throws Exception {
+        assertParkedContextFreedAfterClose(false, 2);
+    }
+
+    @Test
+    public void testDoubleRegisterChannelAfterCloseFreesContextOnce() throws Exception {
+        assertParkedContextFreedAfterClose(true, 2);
+    }
+
+    private void assertParkedContextFreedAfterClose(boolean reRegisterInsteadOfDisconnect, int terminalCalls) throws Exception {
         assertMemoryLeak(() -> {
             final AtomicInteger accepted = new AtomicInteger();
             final AtomicReference<TestContext> parked = new AtomicReference<>();
@@ -136,14 +146,22 @@ public class IODispatcherCloseParkedContextTest {
                 dispatcher.close();
                 dispatcherClosed = true;
 
-                // The context's terminal step once it unwinds at shutdown. On a closed
-                // dispatcher both paths must free it; before the fix they silently dropped
-                // it and its socket leaked.
-                if (reRegisterInsteadOfDisconnect) {
-                    dispatcher.registerChannel(parked.get(), IOOperation.READ);
-                } else {
-                    dispatcher.disconnect(parked.get(), IODispatcher.DISCONNECT_REASON_TEST);
+                // The context's terminal step once it unwinds at shutdown. On a closed dispatcher
+                // both paths must free it; before the fix they silently dropped it and its socket
+                // leaked. A second call (terminalCalls == 2) stands in for a real concurrent
+                // close()-sweep reaching the same context: doDisconnect() must free it exactly once,
+                // never double-close the fd or double-free the buffers.
+                for (int i = 0; i < terminalCalls; i++) {
+                    if (reRegisterInsteadOfDisconnect) {
+                        dispatcher.registerChannel(parked.get(), IOOperation.READ);
+                    } else {
+                        dispatcher.disconnect(parked.get(), IODispatcher.DISCONNECT_REASON_TEST);
+                    }
                 }
+
+                // Counted once at accept(); after the free the count is balanced, and a redundant
+                // terminal call must not drive it negative.
+                Assert.assertEquals(0, dispatcher.getConnectionCount());
             } finally {
                 if (!dispatcherClosed) {
                     dispatcher.close();
