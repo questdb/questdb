@@ -56,9 +56,15 @@ import static org.junit.Assert.assertTrue;
 public class MatViewExpireRowsTest extends AbstractCairoTest {
 
     // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returnsOnce() so the suite's calls keep working.
+    // builder (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
+    // calculate-size and variable-column cross-checks run against these deterministic projections. The suite
+    // asserts a heterogeneous mix of query shapes (count(), ORDER BY, LATEST ON, table_partitions(...), window
+    // reads over a factory-rewritten read path), so the per-query factory-property pins are inferred rather
+    // than fixed: sizeMayVary() keeps the size-vs-iteration cross-check while not pinning determinability, and
+    // inferRandomAccess()/inferTimestamp() adopt each factory's own capability. The calculate-size cross-check
+    // that returnsOnce skipped (the point of C1) still runs for every call.
     private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 
     @Before

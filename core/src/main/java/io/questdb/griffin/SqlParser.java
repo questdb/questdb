@@ -3415,23 +3415,10 @@ public class SqlParser {
                 throw errUnexpected(lexer, tok);
             }
 
-            // Row-expiry read filter on the UPDATE target: an UPDATE must not touch logically-expired
-            // rows, so AND the keep-filter into the WHERE. (Unlike a SELECT reference, an UPDATE target
-            // cannot be wrapped in a sub-query — it needs row ids — so we extend the WHERE instead.)
-            final ExpressionNode updateTarget = nestedModel.getTableNameExpr();
-            if (rowExpiryReadFilterEnabled && updateTarget != null && updateTarget.type == ExpressionNode.LITERAL
-                    && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()) {
-                final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(updateTarget.token));
-                final String predicate;
-                if (tt != null && !tt.isView() && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
-                        && (predicate = lookupExpiryPredicate(tt)) != null) {
-                    nestedModel.setWhereClause(andKeepFilter(
-                            nestedModel.getWhereClause(),
-                            buildKeepFilterNode(predicate, expiryTimestampColumnName, sqlParserCallback, decls)
-                    ));
-                }
-            }
-
+            // No row-expiry read filter is applied to an UPDATE target: the read filter is
+            // materialized-view-only (isMatView()), and a materialized view cannot be the target of an
+            // UPDATE (rejected downstream with "cannot modify materialized view"). Plain tables never carry
+            // an expiry policy (rejected at CREATE/ALTER), so there is nothing to AND into the WHERE here.
             updateQueryModel.setNestedModel(fromModel);
         }
         return updateQueryModel;

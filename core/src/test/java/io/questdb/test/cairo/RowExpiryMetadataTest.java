@@ -265,8 +265,6 @@ public class RowExpiryMetadataTest extends AbstractCairoTest {
         });
     }
 
-    // ---- helpers ----
-
     // Patches a non-empty expiry policy (predicate string + cleanup interval) onto the trailing section of an
     // object's _meta, in place. The CREATE path already wrote an empty policy there (META_FORMAT_MINOR_VERSION
     // == EXPIRE_ROWS), so this overwrites it. The write OFFSET is found by mirroring getMetaExpiryPolicyOffset

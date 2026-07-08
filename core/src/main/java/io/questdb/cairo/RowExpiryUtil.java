@@ -46,8 +46,9 @@ import io.questdb.std.str.StringSink;
  *         window functions (e.g. {@code v < max(v) OVER (PARTITION BY k)}).</li>
  * </ul>
  * The sentinel cannot occur in a real predicate, so a legacy raw predicate always decodes as a scalar WHEN
- * (backward compatible). Scalar WHEN is the only mode usable on a plain table — every other mode is
- * passthrough-materialized-view-only.
+ * (backward compatible). EXPIRE ROWS is a materialized-view-only feature: a plain table uses TTL, and
+ * EXPIRE ROWS on a plain CREATE TABLE / CTAS / LIKE is rejected for every mode (scalar WHEN included). The
+ * read filter is likewise applied only to materialized views ({@code isMatView()}).
  */
 public final class RowExpiryUtil {
 

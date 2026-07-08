@@ -51,12 +51,15 @@ import java.util.Random;
 public class RowExpiryFuzzTest extends AbstractCairoTest {
 
     // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returnsOnce() so the suite's calls keep working.
+    // builder (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
+    // calculate-size and variable-column cross-checks run against the quiesced (deterministic) oracle data.
+    // sizeMayVary() keeps the size-vs-iteration cross-check without pinning determinability, and
+    // inferRandomAccess()/inferTimestamp() adopt each heterogeneous factory's own capability.
     private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 
-    private static final long BASE_TS = 1704067200000000L;   // 2024-01-01T00:00:00Z
+    private static final long BASE_TS = 1_704_067_200_000_000L;   // 2024-01-01T00:00:00Z
     private static final int NUM_KEYS = 4;
     private static final int ROWS = 40;
     private static final long STEP = 21_600_000_000L;        // 6h -> ROWS rows span ROWS/4 days (partitions)

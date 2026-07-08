@@ -62,10 +62,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *     of the final base data, and the view must answer a battery of query shapes identically to that keep-set
  *     expressed independently as {@code LATEST ON}.</li>
  *     <li>{@link #testConcurrentCleanup()} additionally runs {@link RowExpiryCleanupJob} CONCURRENTLY with the
- *     fuzz (the worst case for the cleanup concurrency gate). It asserts robustness only -- no suspended table,
- *     no worker error, no leak, the view stays queryable and keeps the keep-latest "one row per key" shape --
- *     not an exact read-set, because a cleanup commit racing an O3 back-fill is a documented best-effort window
- *     that can drop a row (recoverable by a full refresh), which a strict equality check would flag flakily.</li>
+ *     fuzz (the worst case for the cleanup concurrency gate) and holds to the SAME exact read-set equality as
+ *     the quiescent path: cleanup and the refresh job are mutually exclusive per view (both take
+ *     {@code MatViewState#tryLock()}, see {@link RowExpiryCleanupJob#cleanupTable}), so a back-fill can never
+ *     be dropped between cleanup's survivor scan and its REPLACE_RANGE commit. It also checks no suspended
+ *     table, no worker error, no leak, and that the view stays queryable in the keep-latest "one row per key"
+ *     shape.</li>
  * </ul>
  * keep-latest (one row per key) is used so the post-fuzz comparison has a deterministic row order; the
  * single-threaded {@code RowExpiryFuzzTest} covers the other modes against an independent in-Java oracle.
@@ -73,9 +75,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
 
     // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returnsOnce() so the suite's calls keep working.
+    // builder (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
+    // calculate-size and variable-column cross-checks run against the quiesced (deterministic) oracle data.
+    // sizeMayVary() keeps the size-vs-iteration cross-check without pinning determinability, and
+    // inferRandomAccess()/inferTimestamp() adopt each heterogeneous factory's own capability.
     private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 
     @Test
@@ -268,7 +273,7 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         final ObjList<Thread> jobs = new ObjList<>();
         final int refreshJobCount = 1 + rnd.nextInt(3);
         for (int i = 0; i < refreshJobCount; i++) {
-            jobs.add(startRefreshJob(i, stop, rnd));
+            jobs.add(startRefreshJob(i, stop, errors, rnd));
         }
         jobs.add(startViewQueryJob(view, stop, errors, rnd));
         if (concurrentCleanup) {
@@ -343,7 +348,7 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         return th;
     }
 
-    private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
+    private Thread startRefreshJob(int workerId, AtomicBoolean stop, ConcurrentLinkedQueue<Throwable> errors, Rnd outsideRnd) {
         final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         final Thread th = new Thread(() -> {
             try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine, 0)) {
@@ -358,6 +363,9 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
                     } while (refreshJob.run());
                 }
             } catch (Throwable throwable) {
+                // Surface a refresh failure (e.g. an -ea assertion under concurrency) to the main thread
+                // instead of only logging it, otherwise a masked failure passes the run.
+                errors.add(throwable);
                 LOG.error().$("refresh job failed: ").$(throwable).$();
             } finally {
                 Path.clearThreadLocals();

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -49,8 +50,8 @@ import org.junit.Test;
  */
 public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
-    private static final long JAN_10 = 1704844800000000L; // 2024-01-10T00:00:00Z
-    private static final long JAN_25 = 1706140800000000L; // 2024-01-25T00:00:00Z
+    private static final long JAN_10 = 1_704_844_800_000_000L; // 2024-01-10T00:00:00Z
+    private static final long JAN_25 = 1_706_140_800_000_000L; // 2024-01-25T00:00:00Z
 
     @Before
     public void setUp() {
@@ -252,10 +253,92 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         });
     }
 
-    // ----- helpers -----
+    @Test
+    public void testCleanupWithStalePredicateDuringUnappliedDropExpireSurvives() throws Exception {
+        assertConcurrentPolicyChangeKeepsRows("alter materialized view mv drop expire", null);
+    }
 
+    @Test
+    public void testCleanupWithStalePredicateDuringUnappliedSetExpireLooseningSurvives() throws Exception {
+        // Loosen so every previously-expired row is kept by the new policy: the read filter keeps rows for
+        // which the predicate is false, and ts < 2024-01-01 is false for all three rows (all >= 2024-01-01).
+        assertConcurrentPolicyChangeKeepsRows(
+                "alter materialized view mv set expire rows when ts < '2024-01-01T00:00:00.000000Z'",
+                "ts < '2024-01-01T00:00:00.000000Z'"
+        );
+    }
+
+    // M1/M6 DETERMINISTIC data-loss guard (non-fuzz): a cleanup sweep that snapshotted a now-STALE (stricter)
+    // predicate must not physically delete rows the CURRENT (loosened / dropped) policy keeps. TableWriter's
+    // policy-change apply path does not take the MatViewState lock the sweep holds, so a policy change can
+    // apply mid-sweep; the sequencer-txn gate on every destructive commit (incl. the bounds-DROP fast path,
+    // see RowExpiryCleanupJob) is what prevents the wipe. As in testDeterministicBackfillBetweenScanAndCommit-
+    // Survives, there is no in-job hook to pause between the survivor scan and the destructive commit, so we
+    // reproduce the gate's precondition DETERMINISTICALLY: the policy change is left COMMITTED-BUT-NOT-APPLIED
+    // (its sequencer txn is published but not applied, so writerTxn < seqTxn). Cleanup with the stale strict
+    // predicate MUST defer (reclaim nothing); after the change is applied, every row the new policy keeps must
+    // still be physically present. The instruction-level scan-vs-commit interleave with the writer caught up is
+    // exercised probabilistically by MatViewRowExpiryFuzzTest.
+    private void assertConcurrentPolicyChangeKeepsRows(String policyChangeSql, String loosenedPredicateOrNullForDrop) throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('OLD1', 1.0, '2024-01-05T00:00:00.000000Z')," + // ts < now() -> strict-expired (non-active, bounds-DROP eligible)
+                    "('OLD2', 2.0, '2024-01-08T00:00:00.000000Z')," + // ts < now() -> strict-expired (non-active, bounds-DROP eligible)
+                    "('NEW', 3.0, '2024-01-20T00:00:00.000000Z')");   // active partition
+            drainWalAndMatViewQueues();
+            // A scalar "ts < now()" strict policy routes cleanup through the bounds-DROP fast path.
+            execute("create materialized view mv as (select * from base) expire rows when ts < now()");
+            drainWalAndMatViewQueues();
+
+            // Under the strict policy the two old partitions are expired; only NEW is visible.
+            assertSql("sym\nNEW\n", "select sym from mv order by sym");
+            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String stalePredicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                stalePredicate = m.getExpiryPredicate();
+            }
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertEquals("precondition: view fully applied", tracker.getSeqTxn(), tracker.getWriterTxn());
+
+            // Apply the policy change to the view's sequencer but DO NOT apply it (no drain) -> writerTxn < seqTxn.
+            execute(policyChangeSql);
+            Assert.assertTrue(
+                    "precondition: policy change must be committed-but-not-applied (writerTxn < seqTxn)",
+                    tracker.getWriterTxn() < tracker.getSeqTxn()
+            );
+
+            // Cleanup with the STALE strict predicate must defer: the writer is not caught up, so no destructive
+            // commit (bounds-DROP included) fires and nothing the loosened/dropped policy keeps can be wiped.
+            final boolean reclaimed;
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                reclaimed = job.cleanupTable(token, stalePredicate);
+            }
+            Assert.assertFalse("cleanup must defer while a policy change is committed-but-not-applied", reclaimed);
+
+            // Apply the policy change. No partition may have been reclaimed, and every row the new policy keeps
+            // (all three under both the loosened threshold and DROP EXPIRE) must be present and visible.
+            drainWalAndMatViewQueues();
+            if (loosenedPredicateOrNullForDrop == null) {
+                Assert.assertNull("DROP EXPIRE must clear the policy", expiryPredicate("mv"));
+            } else {
+                Assert.assertEquals(loosenedPredicateOrNullForDrop, expiryPredicate("mv"));
+            }
+            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertSql("sym\nNEW\nOLD1\nOLD2\n", "select sym from mv order by sym");
+        });
+    }
+
+    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion builder
+    // (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
+    // calculate-size and variable-column cross-checks run against these deterministic projections.
+    // sizeMayVary() keeps the size-vs-iteration cross-check without pinning determinability, and
+    // inferRandomAccess()/inferTimestamp() adopt each heterogeneous factory's own capability.
     private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 
     private String expiryPredicate(String name) {

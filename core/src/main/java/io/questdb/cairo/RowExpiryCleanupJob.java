@@ -347,6 +347,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             selectSql = "SELECT * FROM \"" + tableName + "\"" + tail;
         }
 
+        // DEFERRED (review M4/M5, best-effort background-job cost only — reads stay correct regardless):
+        //   M4 - the keep-latest/window REPLACE recomputes the global LATEST ON / window over the whole view
+        //        per affected partition (the range predicate sits outside the global sub-query, so it cannot
+        //        be pushed down). The one-pass survivor bucketing below already amortises CLASSIFICATION to a
+        //        single scan; only the survivor-SELECT for the REPLACE itself is not yet bucketed.
+        //   M5 - a value-based scalar WHEN (e.g. "v < 2.0") has no bounds fast path and is not one-pass, so
+        //        every non-active partition is count()-scanned every sweep with no per-partition version/txn
+        //        change-detection to skip unchanged partitions.
+        // Both are pure throughput optimisations left for a follow-up; correctness is unaffected.
         // One-pass classification (keep-latest/window): scan the keep-query's surviving timestamps over the
         // whole non-active range exactly once and bucket them into partitions, so each partition's survivor
         // count is known without a per-partition keep-query execution. Only when the table is caught up.
@@ -385,11 +394,20 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         if (walWriter == null) {
                             walWriter = engine.getWalWriter(tableToken);
                         }
-                        walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
-                        expectedSeqTxn++; // our commit advanced the sequencer by exactly one txn
-                        workDone = true;
-                        LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
-                                .$(", partitionTs=").$ts(floorTs).I$();
+                        // Gate on the sequencer txn exactly like the scan-DROP path below: a concurrent write
+                        // OR a policy change (ALTER SET/DROP EXPIRE is not serialised against this sweep) advances
+                        // the seqTxn, so deferring here prevents wiping a range the CURRENT (possibly loosened)
+                        // policy would keep.
+                        if (txnTracker == null || txnTracker.getSeqTxn() == expectedSeqTxn) {
+                            walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
+                            expectedSeqTxn++; // our commit advanced the sequencer by exactly one txn
+                            workDone = true;
+                            LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
+                                    .$(", partitionTs=").$ts(floorTs).I$();
+                        } else {
+                            LOG.info().$("deferred expired-rows partition wipe; table changed concurrently [table=")
+                                    .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
+                        }
                     } else if (racyOpsAllowed && boundsAction == ACTION_UNKNOWN) {
                         final int action;
                         if (onePass) {
@@ -741,7 +759,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // An empty survivor set is a legitimate fully-expired partition: the gate proves nothing was
         // back-filled into the range, so it is committed as a pure-delete REPLACE_RANGE (DROP PARTITION via
         // SQL is rejected for materialized views).
-        if (txnTracker.getSeqTxn() != expectedSeqTxn) {
+        if (txnTracker != null && txnTracker.getSeqTxn() != expectedSeqTxn) {
             walWriter.rollback();
             LOG.info().$("deferred expired-rows compaction; table changed concurrently [table=").$safe(tableName)
                     .$(", partitionTs=").$ts(floorTs).I$();

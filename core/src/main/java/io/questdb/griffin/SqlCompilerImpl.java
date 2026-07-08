@@ -5531,10 +5531,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Validates a CREATE MATERIALIZED VIEW EXPIRE ROWS policy before the view exists. EXPIRE ROWS requires a
-     * passthrough (non-aggregating) view for EVERY mode (checked first). The relative KEEP LATEST / window
-     * modes additionally require their key/value columns to resolve against the view's columns (with a
-     * designated timestamp present); a scalar WHEN predicate is then validated structurally.
+     * Validates a CREATE MATERIALIZED VIEW EXPIRE ROWS policy before the view exists. EXPIRE ROWS is allowed
+     * on an aggregating (non-passthrough) view too — advisory only, so it logs a warning rather than
+     * rejecting (a later refresh may regenerate reclaimed rows; reads stay correct via the authoritative
+     * read filter). The relative KEEP LATEST / window modes additionally require their key/value columns to
+     * resolve against the view's columns (with a designated timestamp present); a scalar WHEN predicate is
+     * then validated structurally. Only a plain CREATE TABLE / CTAS / LIKE EXPIRE ROWS is rejected outright.
      */
     private void validateCreateMatViewExpiryPolicy(
             SqlExecutionContext executionContext,
@@ -5601,7 +5603,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     /**
      * Validates the body of an ALTER ... SET EXPIRE ROWS relative/window policy (KEEP LATEST / KEEP
-     * HIGHEST|LOWEST / window WHEN): the target must be a passthrough materialized view, and the policy must
+     * HIGHEST|LOWEST / window WHEN): the target must be a materialized view (aggregating views are allowed
+     * with an advisory warning, emitted by the caller {@code alterTableSetExpire}), and the policy must
      * resolve against its columns. (ALTER ... SET EXPIRE on a base table is rejected earlier in the grammar,
      * so this only runs for materialized-view targets.)
      */
@@ -5612,7 +5615,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             String predicate,
             int position
     ) throws SqlException {
-        // The passthrough-only check is enforced for ALL modes by the caller (alterTableSetExpire).
+        // The mat-view target check (and the aggregating-view advisory) is handled for ALL modes by the
+        // caller (alterTableSetExpire); this only resolves the relative policy's columns.
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             validateKeepLatestColumns(tableMetadata, predicate, position);
         } else {
@@ -5749,15 +5753,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Fast-path support for the row-expiry cleanup job. If {@code predicate} is {@code <ts> < T} or
-     * {@code <ts> <= T} on the (micros) designated timestamp, where {@code T} references no column, returns
-     * {@code T} as epoch micros — so the cleanup can classify a whole partition from its
-     * {@code [floor, nextFloor)} bounds (entirely below T -> all expired -> DROP; entirely above ->
-     * SKIP) without a per-row survivor scan. Returns {@link Numbers#LONG_NULL} for any other shape (custom
-     * or compound predicate, timestamp on the right, non-micros timestamp, non-constant T) or on any
-     * parse/bind/eval issue, which makes the caller fall back to the scan — so this is purely an
-     * optimisation and never affects correctness. The caller must have initialised {@code now()} on the
-     * execution context first.
+     * Fast-path support for the row-expiry cleanup job. If {@code predicate} is {@code <ts> < T} /
+     * {@code <ts> <= T} or the symmetric {@code T > <ts>} / {@code T >= <ts>} on the (micros) designated
+     * timestamp, where {@code T} references no column, returns {@code T} as epoch micros — so the cleanup
+     * can classify a whole partition from its {@code [floor, nextFloor)} bounds (entirely below T -> all
+     * expired -> DROP; entirely above -> SKIP) without a per-row survivor scan. Returns
+     * {@link Numbers#LONG_NULL} for any other shape (custom or compound predicate, a {@code T < ts} /
+     * {@code ts > T} "keep-old" shape, non-constant T) or on any parse/bind/eval issue, which makes the
+     * caller fall back to the scan — so this is purely an optimisation and never affects correctness.
+     * <p>
+     * Only a micros ({@link ColumnType#TIMESTAMP}) designated timestamp is fast-pathed: the returned value
+     * is compared directly against partition floors, and a nanosecond timestamp's floors would be in nanos
+     * while a {@code now()}-based threshold is micros — mixing the two would misclassify partitions. A
+     * nanosecond timestamp therefore falls back to the (always-correct) survivor scan.
      */
     @Override
     public long expiryTimestampThresholdMicros(
@@ -5779,13 +5787,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             lexer.of(predicate);
             final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
             if (node == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
-                    || !(Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))
-                    || node.lhs == null || node.rhs == null
-                    || node.lhs.type != ExpressionNode.LITERAL || !Chars.equals(node.lhs.token, timestampColumn)
-                    || exprReferencesColumn(node.rhs)) {
+                    || node.lhs == null || node.rhs == null) {
                 return Numbers.LONG_NULL;
             }
-            f = functionParser.parseFunction(node.rhs, metadata, executionContext);
+            // Accept both the canonical "<ts> < T | <ts> <= T" (timestamp on the left) and the equivalent
+            // symmetric "T > <ts> | T >= <ts>" (timestamp on the right). Both mean "expire everything below
+            // T"; the threshold node is the side that is NOT the timestamp column. A "T < <ts>" / "<ts> > T"
+            // ("expire recent, keep old") shape is deliberately NOT accepted here: its DROP direction is the
+            // opposite of the partition-bounds fast path.
+            final boolean tsOnLeft = node.lhs.type == ExpressionNode.LITERAL && Chars.equals(node.lhs.token, timestampColumn);
+            final boolean tsOnRight = node.rhs.type == ExpressionNode.LITERAL && Chars.equals(node.rhs.token, timestampColumn);
+            final ExpressionNode thresholdNode;
+            if (tsOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
+                thresholdNode = node.rhs;
+            } else if (tsOnRight && (Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
+                thresholdNode = node.lhs;
+            } else {
+                return Numbers.LONG_NULL;
+            }
+            if (exprReferencesColumn(thresholdNode)) {
+                return Numbers.LONG_NULL;
+            }
+            f = functionParser.parseFunction(thresholdNode, metadata, executionContext);
             if (f == null || f.getType() != ColumnType.TIMESTAMP || !(f.isConstant() || f.isRuntimeConstant())) {
                 return Numbers.LONG_NULL;
             }

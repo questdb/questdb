@@ -47,9 +47,12 @@ import org.junit.Test;
 public class RowExpiryKeepLatestTest extends AbstractCairoTest {
 
     // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returnsOnce() so the suite's calls keep working.
+    // builder (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
+    // calculate-size and variable-column cross-checks run against these deterministic projections.
+    // sizeMayVary() keeps the size-vs-iteration cross-check without pinning determinability, and
+    // inferRandomAccess()/inferTimestamp() adopt each heterogeneous factory's own capability.
     private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 
     @Before
