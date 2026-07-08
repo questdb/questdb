@@ -616,6 +616,19 @@ QuestDB has migrated SQL test assertions to the fluent `AbstractCairoTest.assert
 
 Present ONLY verified findings (false positives are excluded). Structure as:
 
+### Severity classification (strict — how a finding is filed is itself a review decision)
+
+Misclassifying a real defect as "Minor" or "Moderate" is a review failure on par with missing it. Classify by the WORST reachable consequence, not by how small the code change is or how small today's data is. When in doubt, classify UP.
+
+- **Critical (blocking).** Anything that touches correctness, data integrity, resource safety, or performance/IO on a reachable path:
+  - any confirmed bug — logic error, off-by-one, wrong operator, NULL/sentinel mishandling, race, deadlock, leak, panic, undefined behavior — no matter how "small" or how narrow the trigger;
+  - **any performance / algorithmic / IO inefficiency on a data path or a reachable hot/compile path.** This explicitly includes reading more than needed: reading 2 columns when 1 suffices, opening a partition/page/file that need not be opened, an extra pass over data, O(n) where O(1)/O(log n) exists, redundant recomputation or re-parsing, per-row allocation, unnecessary copies/conversions, a linear scan where a hash/index lookup exists. **IO amplification is Critical by default** — it is real disk/SSD/network/page-cache cost multiplied across every row and every query, exactly the class of defect this database exists to avoid;
+  - every UNTESTED row that the Step 2.6 gate marks Critical.
+- **Moderate.** ONLY issues you have positively verified cannot affect a result, cannot leak, and cannot cost measurable IO/CPU on any reachable path — pure readability, non-hot-path structure, test-code maintainability that does not weaken an assertion, missing docs on non-obvious behavior. A finding is Moderate only if you can write one sentence stating why it is behaviorally and performance-wise inert. If you cannot write that sentence, it is Critical, not Moderate.
+- **Minor.** Pure cosmetics with zero behavioral and zero performance dimension: member ordering, naming, formatting, comment wording. **Performance, IO, correctness, resource, and concurrency findings are NEVER Minor.** Feeling tempted to file a performance or IO issue as Minor is the signal that it is actually Critical.
+
+A performance/IO finding may be downgraded from Critical to Moderate ONLY with an explicit, verified justification that the path is genuinely cold AND structurally bounded by a small constant (e.g. runs once at startup over column-count items) — state the bound. "The saving seems small", "tables are small today", "negligible at this scale", "only fires occasionally" are NOT valid downgrades (see Step 3b.8). There is no valid downgrade at all for a confirmed correctness or resource bug.
+
 ### Critical
 Issues that must be fixed before merge. Each must include:
 - Exact file path and line numbers (including out-of-diff files)
@@ -625,10 +638,10 @@ Issues that must be fixed before merge. Each must include:
 - Suggested fix, written to be applied in THIS PR — never "address in a follow-up PR" or "file a ticket". A pulled-in pre-existing fix becomes a behavioral change like any other: it gets its own coverage-map row and needs its own regression test
 
 ### Moderate
-Issues worth addressing but not blocking.
+Issues worth addressing that, per the severity rubric above, provably do NOT touch correctness, safety, or performance/IO. Each must carry the one-sentence justification for why it is behaviorally and performance-wise inert — a Moderate without that justification is a mis-filed Critical.
 
 ### Minor
-Style nits and suggestions.
+Pure cosmetics only (member ordering, naming, formatting, comment wording). If a finding here has any performance, IO, correctness, resource, or concurrency dimension, it is mis-filed — move it to Critical.
 
 ### Downgraded (false positives)
 Findings from the initial review that were dismissed after source code verification. For each, state:
@@ -640,6 +653,7 @@ Render the full Step 2.6 coverage map: one row per behavioral change with its te
 
 ### Summary
 - One-line verdict: approve, request changes, or needs discussion
+- **Correctness & performance gate (hard rule):** the verdict cannot be "approve" while ANY confirmed finding — in-diff, out-of-diff, or pre-existing — that affects correctness, data integrity, resource safety, concurrency, or performance/IO on a reachable path remains open. This software ships to spacecraft: the standard is ZERO known bugs and ZERO known performance/IO inefficiencies or regressions, not "an acceptable number of them". "A few Moderate items, then approve" is itself a review failure — before approving, re-audit every Moderate and Minor item against the severity rubric and confirm none is a mis-filed correctness or performance defect. If even one such finding stands, the verdict is "request changes". Only genuinely cosmetic (Minor) items may remain open under an "approve".
 - **Test gate (hard rule):** the verdict cannot be "approve" while (a) any UNTESTED Critical row remains in the Step 2.6 coverage map, (b) the PR claims a fix but has no regression test with a verified failure link, or (c) new user-visible behavior ships without tests on its error and NULL paths. If the PR changes production code and adds zero tests, the verdict is "request changes" unless every behavioral delta is verified "no behavioral change" — and that justification must be stated explicitly here.
 - State the coverage-map totals: behavioral changes total, tested, UNTESTED (e.g., "coverage map: 12 behavioral changes, 9 tested, 3 UNTESTED") — the totals must match the rendered Coverage map section row-for-row
 - Highlight any regressions or tradeoffs

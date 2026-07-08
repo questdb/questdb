@@ -6625,8 +6625,8 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 appender.beginColumnarWrite(rowCount);
                 try {
                     appender.putStringToBooleanColumn(0, wireFormat.cursor, rowCount);
-                    fail("Expected CairoException");
-                } catch (CairoException e) {
+                    fail("Expected QwpParseException");
+                } catch (QwpParseException e) {
                     assertTrue(e.getMessage().contains("cannot parse boolean from string [value=x, column=value]"));
                 }
                 appender.cancelColumnarWrite();
@@ -6654,8 +6654,8 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
                 appender.beginColumnarWrite(rowCount);
                 try {
                     appender.putStringToDecimalColumn(0, wireFormat.cursor, rowCount, columnType);
-                    fail("Expected CairoException");
-                } catch (CairoException e) {
+                    fail("Expected QwpParseException");
+                } catch (QwpParseException e) {
                     assertTrue(e.getMessage().contains("cannot parse decimal from string"));
                 }
                 appender.cancelColumnarWrite();
