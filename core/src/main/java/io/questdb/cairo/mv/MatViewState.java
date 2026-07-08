@@ -598,7 +598,10 @@ public class MatViewState implements QuietCloseable {
 
     public void markAsPendingInvalidation(String invalidationReason) {
         // A null reason means the caller wants the reschedule sentinel; route it through the
-        // keep-strongest CAS so it cannot demote a reason-bearing deferral.
+        // keep-strongest CAS so it cannot demote a reason-bearing deferral. Passing null for a
+        // real invalidation would freeze the view silently rather than fail fast (finalize never
+        // mints from the sentinel), which is why every invalidation defer site asserts a
+        // non-null reason.
         if (invalidationReason == null) {
             markAsPendingInvalidation();
             return;

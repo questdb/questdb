@@ -960,7 +960,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // A base invalidation that defers after resetInvalidState() cleared the marker (i.e. during the
             // full-table pump, which snapshots the base at lock time) sets pending again; finalize it here so
             // the view does not end frozen-pending. Without this, the lone lock-holding path that skips
-            // finalize is fullRefresh, and that window is the entire pump -- far wider than a tight race.
+            // finalize is fullRefresh, and that window is the entire pump -- far wider than the
+            // finalize-to-unlock gap the other holders retain.
             //
             // Tradeoff: if this full refresh won the lock race, its snapshot already incorporated the base
             // change and rebuilt the view, yet finalize still re-enqueues the deferral force=true and ends the
