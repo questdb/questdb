@@ -10072,9 +10072,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctionsA = generateCastFunctions(executionContext, mergeMetadata, metadataA, positionA);
                             castFunctionsB = generateCastFunctions(executionContext, mergeMetadata, metadataB, positionB);
                         } else {
-                            final GenericRecordMetadata copy = GenericRecordMetadata.copyOfSansTimestamp(metadataA);
-                            copy.setTimestampIndex(metadataA.getTimestampIndex());
-                            mergeMetadata = copy;
+                            mergeMetadata = GenericRecordMetadata.copyOfNew(metadataA);
                         }
                         return generateMergeUnionAllFactory(
                                 model,

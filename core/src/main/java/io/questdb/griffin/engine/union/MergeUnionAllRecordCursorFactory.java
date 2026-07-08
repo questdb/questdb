@@ -84,6 +84,7 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
         sink.child(factoryB);
     }
 
+    @Override
     protected CharSequence getOperation() {
         return "Union All Merge";
     }

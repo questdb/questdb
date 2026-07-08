@@ -43,6 +43,8 @@ class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRan
     private boolean isStarted;
     private Record recordA;
     private Record recordB;
+    private long tsA;
+    private long tsB;
 
     public MergeUnionAllRecordCursor(
             ObjList<Function> castFunctionsA,
@@ -62,11 +64,13 @@ class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRan
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        // Counts row by row rather than summing the branches' O(frames) fast size path (as concat
-        // UnionAllRecordCursor does): the merge reads one row ahead from each branch, so delegating to
-        // cursorA.calculateSize() + cursorB.calculateSize() would miscount the buffered rows. Only reached
-        // when a branch's size() is unknown (e.g. a filtered branch). Cancellation still fires at the
-        // branches' page-frame boundaries through cursorA/cursorB.hasNext().
+        // Once iteration has started, one row is buffered per
+        // branch and summing branch sizes would double-count them, so fall back to draining.
+        if (!isStarted) {
+            cursorA.calculateSize(circuitBreaker, counter);
+            cursorB.calculateSize(circuitBreaker, counter);
+            return;
+        }
         while (hasNext()) {
             counter.inc();
         }
@@ -82,16 +86,24 @@ class MergeUnionAllRecordCursor extends AbstractSetRecordCursor implements NoRan
         if (!isStarted) {
             hasPendingA = cursorA.hasNext();
             hasPendingB = cursorB.hasNext();
+            if (hasPendingA && hasPendingB) {
+                tsA = recordA.getLong(timestampIndex);
+                tsB = recordB.getLong(timestampIndex);
+            }
             isStarted = true;
         } else if (isLastA) {
             hasPendingA = cursorA.hasNext();
+            if (hasPendingA && hasPendingB) {
+                tsA = recordA.getLong(timestampIndex);
+            }
         } else {
             hasPendingB = cursorB.hasNext();
+            if (hasPendingA && hasPendingB) {
+                tsB = recordB.getLong(timestampIndex);
+            }
         }
 
         if (hasPendingA && hasPendingB) {
-            final long tsA = recordA.getLong(timestampIndex);
-            final long tsB = recordB.getLong(timestampIndex);
             isLastA = isAscending ? tsA <= tsB : tsA >= tsB;
         } else if (hasPendingA) {
             isLastA = true;

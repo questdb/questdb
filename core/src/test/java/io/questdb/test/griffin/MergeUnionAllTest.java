@@ -24,10 +24,48 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.union.MergeUnionAllRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class MergeUnionAllTest extends AbstractCairoTest {
+
+    @Test
+    public void testCalculateSizeHonorsCircuitBreaker() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("create table b (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into a values (10.0, 1), (30.0, 3)");
+            execute("insert into b values (20.0, 2), (40.0, 4)");
+            try (RecordCursorFactory factory = select(
+                    "((select * from a where px > 0.0) union all (select * from b where px > 0.0)) order by ts")) {
+                Assert.assertTrue(factory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory);
+                final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+                final SqlExecutionCircuitBreaker original = context.getCircuitBreaker();
+                final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+                context.with(breaker);
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    breaker.cancel();
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    try {
+                        cursor.calculateSize(breaker, counter);
+                        Assert.fail("expected query cancellation");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isCancellation());
+                    }
+                } finally {
+                    context.with(original);
+                }
+            }
+        });
+    }
 
     @Test
     public void testCastRequiredMergeWidensNonTimestampColumn() throws Exception {
@@ -124,7 +162,7 @@ public class MergeUnionAllTest extends AbstractCairoTest {
             execute("insert into b values (22.0, 2), (10.0, 1)");
             assertQuery("select px from ((select * from a) union all (select * from b)) order by ts desc")
                     .withPlanContaining("Union All Merge", "order: [ts desc]")
-                    .withPlanNotContaining("Sort")
+                    .withPlanNotContaining("Encode sort")
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
@@ -161,6 +199,37 @@ public class MergeUnionAllTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyBranchMerges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("create table b (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into a values (10.0, 1), (30.0, 3)");
+
+            // first branch is empty
+            assertQuery("select px from ((select * from b) union all (select * from a)) order by ts desc")
+                    .withPlanContaining("Union All Merge")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            px
+                            30.0
+                            10.0
+                            """);
+
+            // second branch is empty
+            assertQuery("select px from ((select * from a) union all (select * from b)) order by ts")
+                    .withPlanContaining("Union All Merge")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            px
+                            10.0
+                            30.0
+                            """);
+        });
+    }
+
+    @Test
     public void testExplicitOrderByTsMergesAndElidesSort() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
@@ -169,7 +238,7 @@ public class MergeUnionAllTest extends AbstractCairoTest {
             execute("insert into b values (20.0, 2), (40.0, 4)");
             assertQuery("select px from ((select * from a) union all (select * from b)) order by ts")
                     .withPlanContaining("Union All Merge", "order: [ts asc]")
-                    .withPlanNotContaining("Sort")
+                    .withPlanNotContaining("Encode sort")
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
@@ -192,7 +261,7 @@ public class MergeUnionAllTest extends AbstractCairoTest {
             execute("insert into b values (20.0, 2), (40.0, 4)");
             assertQuery("select px from ((select * from a where px > 15.0) union all (select * from b)) order by ts")
                     .withPlanContaining("Union All Merge")
-                    .withPlanNotContaining("Sort")
+                    .withPlanNotContaining("Encode sort")
                     .noRandomAccess()
                     .sizeMayVary()
                     .returns("""
@@ -227,6 +296,49 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                             30.0
                             20.0
                             10.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitInBranchPreservesResultSet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("create table b (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into a values (10.0, 1), (40.0, 4)");
+            execute("insert into b values (20.0, 2), (30.0, 3), (50.0, 5), (60.0, 6)");
+            assertQuery("select px from ((select * from a) union all (select * from b limit 3)) order by ts desc")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            px
+                            50.0
+                            40.0
+                            30.0
+                            20.0
+                            10.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testMergePreservesDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table a (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("create table b (px double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into a values (10.0, 1), (30.0, 3)");
+            execute("insert into b values (20.0, 2), (40.0, 4)");
+            assertQuery("select ts, px from ((select * from a) union all (select * from b)) order by ts")
+                    .withPlanContaining("Union All Merge")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tpx
+                            1970-01-01T00:00:00.000001Z\t10.0
+                            1970-01-01T00:00:00.000002Z\t20.0
+                            1970-01-01T00:00:00.000003Z\t30.0
+                            1970-01-01T00:00:00.000004Z\t40.0
                             """);
         });
     }
