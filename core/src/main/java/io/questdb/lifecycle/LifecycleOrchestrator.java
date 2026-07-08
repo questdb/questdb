@@ -95,7 +95,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // observer is its own cancel flag; the reverse-topo stop loop that reaches the component's
     // stop() -> cancel signalling runs only AFTER the join, so without this hook the join burns
     // its full budget first. The enterprise overlay installs a restore-cancel signaller here.
-    // The hook must be a pure flag write / signal -- resource teardown belongs in stop().
+    // The hook MUST NOT BLOCK: it runs unbounded on the close thread AHEAD of the bounded join,
+    // so the boundedness of close() rests on the hook being a pure atomic flag write / signal.
+    // Resource teardown belongs in stop().
     @Nullable
     private volatile Runnable preJoinCancelHook;
     // Runs after the executor drain but before the reverse-topo stop loop. ServerMain installs
@@ -226,9 +228,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 // STARTING is included so a SIGTERM that arrives while a long-running start
                 // is in flight (e.g. BackupRestoreEnvelope mid-PITR-restore, which can run for
                 // minutes) still routes through the component's stop() method. The component's
-                // stop() is the only path that invokes restore-cancel signalling (after the
-                // pre-join hook above has already signalled once), and without this the 30s
-                // SIGTERM window hangs until SIGKILL. The transition table permits
+                // stop() re-signals restore-cancel (the pre-join hook above is the primary
+                // signaller and has already fired once), and without this the 30s SIGTERM
+                // window hangs until SIGKILL. The transition table permits
                 // STARTING -> STOPPING for this case.
                 //
                 // SWITCHING is included for the same reason: a SIGTERM that arrives while an
@@ -329,8 +331,10 @@ public class LifecycleOrchestrator implements QuietCloseable {
      * Installs a hook that {@link #close()} runs after the executor drain and BEFORE the bounded
      * boot-thread join, mirroring {@link #setPreStopHook(Runnable)}. The enterprise overlay
      * installs a restore-cancel signaller so a SIGTERM landing during a long PITR restore spends
-     * the join budget unwinding the restore instead of waiting it out. The hook must be prompt
-     * and must not free resources (that belongs in the component's stop()).
+     * the join budget unwinding the restore instead of waiting it out. The hook MUST NOT block:
+     * it runs unbounded on the close thread ahead of the bounded join, so the boundedness of
+     * close() rests on the hook being a pure atomic signal. It must not free resources either
+     * (that belongs in the component's stop()).
      */
     public void setPreJoinCancelHook(@Nullable Runnable hook) {
         this.preJoinCancelHook = hook;
