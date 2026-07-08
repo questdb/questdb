@@ -71,9 +71,11 @@ pub trait StatsUpdater<T, const UNSIGNED: bool> {
     fn update_stats(&mut self, v: T);
 }
 
-impl StatsUpdater<i32, false> for MaxMin<i32> {
+// Signed ordering is the default for every native type. Only IPv4 (stored as
+// i32 but logically UINT_32) overrides this with the unsigned impl below.
+impl<T: Copy + NativeType> StatsUpdater<T, false> for MaxMin<T> {
     #[inline]
-    fn update_stats(&mut self, v: i32) {
+    fn update_stats(&mut self, v: T) {
         self.update(v);
     }
 }
@@ -82,13 +84,6 @@ impl StatsUpdater<i32, true> for MaxMin<i32> {
     #[inline]
     fn update_stats(&mut self, v: i32) {
         self.update_unsigned(v);
-    }
-}
-
-impl<const UNSIGNED: bool> StatsUpdater<i64, UNSIGNED> for MaxMin<i64> {
-    #[inline]
-    fn update_stats(&mut self, v: i64) {
-        self.update(v);
     }
 }
 
