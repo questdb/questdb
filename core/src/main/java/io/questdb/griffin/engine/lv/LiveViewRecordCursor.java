@@ -266,6 +266,31 @@ public class LiveViewRecordCursor implements RecordCursor {
         return routingEligible;
     }
 
+    /**
+     * Reports whether the pinned in-mem slot is stamped with an LV-table seqTxn
+     * strictly NEWER than the disk cursor's snapshot - i.e. the disk reader was
+     * opened before the flush that produced the slot. Serving such a read would
+     * disengage the fence (slot seqTxn != disk seqTxn) and route disk-only against
+     * a STALE, smaller disk snapshot: a live view would then appear to shrink
+     * relative to an earlier read that already reflected the flush's rows (the
+     * un-flushed lead the earlier read served vanishes without the flushed rows
+     * replacing it). {@link LiveViewRecordCursorFactory#getCursor} re-opens the
+     * disk cursor against a fresh snapshot while this holds; the slot's flush is
+     * already applied (the flush stamps the slot only after applyWalDirect), so a
+     * re-opened reader observes at least the slot's seqTxn and the retry converges.
+     */
+    boolean isSlotNewerThanDisk() {
+        if (pinnedSlot == null) {
+            return false;
+        }
+        final long slotSeqTxn = pinnedSlot.lvSeqTxn();
+        if (slotSeqTxn == Numbers.LONG_NULL) {
+            return false;
+        }
+        final long diskSeqTxn = diskReaderSeqTxn(diskCursor);
+        return diskSeqTxn != Numbers.LONG_NULL && slotSeqTxn > diskSeqTxn;
+    }
+
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         if (routingEligible && symbolCache != null && symbolCache.isSymbolColumn(columnIndex)) {

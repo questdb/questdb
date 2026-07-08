@@ -635,6 +635,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Cooperative apply-lag gate for the drain-triggered O3 replay path. Peeks at
+     * the base table's applied seqTxn and throws {@link LiveViewApplyLagException}
+     * when {@code ApplyWal2TableJob} has not yet applied up to {@code advanceTo}.
+     * <p>
+     * Callers invoke this BEFORE any destructive replay work (head {@code .cp}
+     * retirement, window-state reset, the REPLACE_RANGE commit, discarding the
+     * in-RAM lead), so the throw unwinds to {@link #refreshInstance} with no
+     * durable change and no reader-visible tier shrink; the next fallback scan
+     * re-triggers the view once apply catches up. The base applied seqTxn only
+     * advances on the global {@code ApplyWal2TableJob}, so block-spinning inside
+     * {@link #waitForApply} instead starves this refresh worker and, on the
+     * single-threaded refresh/drain model the fuzz harness drives, deadlocks
+     * outright (the same thread that must advance the apply is the one spinning).
+     * <p>
+     * The remaining {@link #waitForApply} callers (restart restore, backfill
+     * sweep, replay-to-applied) always target a seqTxn the base has already
+     * applied - the LV consumed it before - so they never lag; the base
+     * metadata-drift recovery keeps the blocking wait because its replay must
+     * complete atomically within one recovery attempt.
+     */
+    private void ensureBaseApplied(TableToken baseToken, long advanceTo) {
+        try (TableReader reader = engine.getReader(baseToken)) {
+            final long appliedSeqTxn = reader.getSeqTxn();
+            if (appliedSeqTxn < advanceTo) {
+                throw LiveViewApplyLagException.instance(baseToken, advanceTo, appliedSeqTxn);
+            }
+        }
+    }
+
+    /**
      * Returns a {@link RecordToRowCopier} for the live view, compiling a fresh one when
      * the cached one's metadata version is out of sync with the WAL writer.
      */
@@ -774,6 +804,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long o3LateRowTs = drainResult.o3LateRowTs;
         long o3SeqTxn = drainResult.o3SeqTxn;
         if (o3Detected) {
+            // Gate on base apply before the replay: o3Replay reads the applied
+            // base at o3SeqTxn, so if ApplyWal2TableJob has not caught up,
+            // ensureBaseApplied unwinds cooperatively (no watermark advance) and
+            // the next tick retries once apply lands, rather than block-spinning in
+            // the downstream waitForApply (which deadlocks the single-threaded
+            // drain). drainBaseWal already rolled back this cycle's draft on O3
+            // detect, so the unwind leaves no durable or reader-visible change.
+            ensureBaseApplied(baseToken, o3SeqTxn);
             // The replay path opens its own WalWriter and TableReader on the
             // base, drives the ts-sorted re-execution, commits a single
             // REPLACE_RANGE block, applies inline, and advances the LV
@@ -1561,6 +1599,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (onLeadO3Detected(instance, windowFactory, baseToken, advanceTo)) {
                 return;
             }
+            // Gate on base apply BEFORE discarding the lead. o3Replay reads the
+            // applied base at o3SeqTxn; if ApplyWal2TableJob has not caught up,
+            // ensureBaseApplied unwinds cooperatively with the lead still published
+            // (no reader-visible shrink) and the next fallback tick retries once
+            // apply lands. Block-spinning in the downstream waitForApply instead
+            // would starve this worker and deadlock the single-threaded drain.
+            ensureBaseApplied(baseToken, drainResult.o3SeqTxn);
             // Discard the in-RAM lead and recompute. o3Replay re-feeds base data
             // in ts order (the lead's base rows are retained because
             // lvConsumedSeqTxn only advances at flush), rewrites disk, and rebuilds
@@ -4885,6 +4930,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (attempted) {
                     instance.recordRefreshSuccess();
                 }
+            } catch (LiveViewApplyLagException e) {
+                // Cooperative apply-lag handoff: this cycle's O3 replay needs the
+                // base applied to a seqTxn ApplyWal2TableJob has not reached yet.
+                // ensureBaseApplied threw before any destructive replay work, so
+                // the view is untouched - no watermark advance, no failure
+                // accounting, no invalidation. Leave invalidationReason null and
+                // return through the finally; the next fallback scan retries this
+                // view (head > processedTo still holds) once the apply catches up.
+                // Not counting this toward the flush-retry budget is deliberate:
+                // apply lag is transient and self-heals, unlike a refresh fault.
+                LOG.debug().$("live view O3 replay deferred, base apply lag [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", base=").$safe(e.getBaseTableName())
+                        .$(", advanceTo=").$(e.getTargetSeqTxn())
+                        .$(", appliedSeqTxn=").$(e.getAppliedSeqTxn()).I$();
             } catch (Throwable t) {
                 invalidationReason = handleRefreshFailure(instance, t, leadReconstruction);
             }

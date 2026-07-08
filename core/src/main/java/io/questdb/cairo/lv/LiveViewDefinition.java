@@ -457,7 +457,7 @@ public class LiveViewDefinition {
         return anchorSpec;
     }
 
-    public boolean getBackfillRequested() {
+    public boolean isBackfillRequested() {
         return backfillRequested;
     }
 

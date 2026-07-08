@@ -59,6 +59,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -2293,7 +2294,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertNotNull(instance);
             Assert.assertTrue(
                     "BACKFILL clause must round-trip to definition",
-                    instance.getDefinition().getBackfillRequested()
+                    instance.getDefinition().isBackfillRequested()
             );
             Assert.assertEquals(
                     "BACKFILL CREATE must persist BACKFILLING state",
@@ -3117,6 +3118,143 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertEquals(1L, published.getLong(0, 2));
             Assert.assertEquals(2L, published.getLong(1, 2));
 
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3ReplayDefersOnBaseApplyLagInsteadOfDeadlocking() throws Exception {
+        // Cooperative apply-lag handoff (regression for the LiveViewFuzzTest
+        // waitForApply self-deadlock). When a lead refresh detects an O3 base
+        // commit whose seqTxn ApplyWal2TableJob has not applied yet, the O3
+        // replay must NOT block-spin in waitForApply waiting for the apply: on
+        // the single-threaded drain model the same thread has to advance that
+        // apply, so spinning deadlocks (and, with the flush clock frozen, the
+        // retry budget never trips). Instead ensureBaseApplied throws a
+        // cooperative signal that unwinds the cycle untouched - no watermark
+        // advance, no lead discard, no invalidation - and the next tick retries
+        // once the base apply lands, converging on the correct result.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Establish the in-RAM lead and the O3 detection watermark from
+                // three strictly in-order rows. Pin lastFlushTimeUs to the frozen
+                // clock so FLUSH EVERY does not fire this cycle - the lead stays
+                // in RAM, so the apply-lag path below has a real lead to preserve.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000010Z', 1), " +
+                        "('2026-06-01T00:00:00.000020Z', 2), " +
+                        "('2026-06-01T00:00:00.000030Z', 3)");
+                drainWalQueue();
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+                Assert.assertEquals("lead must accumulate in RAM", 3L, instance.getLeadRowCount());
+
+                final long leadBefore = instance.getLeadRowCount();
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                final long refreshedBefore = instance.getRefreshedUpToSeqTxn();
+                final long latestSeenBefore = instance.getLatestSeenTs();
+
+                // Commit an out-of-order row BELOW the frontier but do NOT apply
+                // it to the base table (skip drainWalQueue): the base sequencer
+                // head advances while the applied base reader lags the O3 seqTxn.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000005Z', 4)");
+
+                // The refresh detects the O3 commit and takes the replay path,
+                // whose ensureBaseApplied gate observes the apply lag and unwinds
+                // cooperatively. With the old block-spin this call never returns
+                // (the frozen clock keeps the retry budget from tripping). It must
+                // return, and it must leave the view exactly as it was.
+                drainJob(job);
+
+                Assert.assertFalse("apply lag must not invalidate the view", instance.isInvalid());
+                Assert.assertEquals("lead must survive the deferred replay", leadBefore, instance.getLeadRowCount());
+                Assert.assertEquals("watermark must not advance on apply lag", processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals("refresh cursor must not advance on apply lag", refreshedBefore, instance.getRefreshedUpToSeqTxn());
+                Assert.assertEquals("O3 detection watermark must roll back on apply lag", latestSeenBefore, instance.getLatestSeenTs());
+
+                // Apply the base commit, then let the next tick converge the replay.
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must stay valid after the replay converges", instance.isInvalid());
+            }
+
+            // The O3 row lands in ts order with a gapless row_number sequence.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tx\trn\n" +
+                    "2026-06-01T00:00:00.000005Z\t4\t1\n" +
+                    "2026-06-01T00:00:00.000010Z\t1\t2\n" +
+                    "2026-06-01T00:00:00.000020Z\t2\t3\n" +
+                    "2026-06-01T00:00:00.000030Z\t3\t4\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testReadReopensDiskWhenSlotAdvancesDuringCursorOpen() throws Exception {
+        // Regression for the reader-visible view shrink (LiveViewFuzzTest
+        // reader-vs-refresh). A cursor opens its disk (LV-table) snapshot before it
+        // pins the tier slot; a flush landing in that window advances the on-disk
+        // tier and republishes the slot with the newer seqTxn, so the disk snapshot
+        // ends up OLDER than the pinned slot. The seqTxn fence then disengages
+        // (slot seqTxn != disk seqTxn) and the read serves disk-only against the
+        // stale, smaller snapshot - dropping the un-flushed lead an earlier read
+        // already showed, so the live view appears to shrink. The factory must
+        // re-open the disk against a fresh snapshot when the slot is newer than the
+        // disk. This test injects that exact flush through a one-shot hook that runs
+        // between the disk open and the slot pin.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Flush an initial two rows so the LV table and the published slot
+                // sit at a stable seqTxn (call it S1).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000010Z', 1), ('2026-06-01T00:00:00.000020Z', 2)");
+                drainWalQueue();
+                setCurrentMicros(currentMicros + 1_000_000);
+                drainJob(job);
+                drainWalQueue();
+
+                // Stage two more base rows but refresh them into the LV only from
+                // inside the hook - i.e. AFTER the reader opens its disk cursor at S1
+                // and BEFORE it pins the slot. The flush advances the LV table and
+                // republishes the slot to S2, so the reader's disk snapshot (S1) is
+                // now older than the pinned slot (S2).
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-06-01T00:00:00.000030Z', 3), ('2026-06-01T00:00:00.000040Z', 4)");
+                drainWalQueue();
+
+                try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                    LiveViewRecordCursorFactory.setOnDiskCursorOpenedHook(() -> {
+                        setCurrentMicros(currentMicros + 1_000_000);
+                        drainJob(job);
+                        drainWalQueue();
+                    });
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        long count = 0;
+                        while (cursor.hasNext()) {
+                            count++;
+                        }
+                        // With the staleness retry the read re-opens against the fresh
+                        // S2 disk and returns all four rows. Without it the fence
+                        // disengages to the stale S1 snapshot and the read returns only
+                        // the pre-flush two.
+                        Assert.assertEquals("read must reflect the flush that landed during cursor open", 4L, count);
+                    } finally {
+                        LiveViewRecordCursorFactory.setOnDiskCursorOpenedHook(null);
+                    }
+                }
+            }
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -4947,7 +5085,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertNotNull(instance);
             Assert.assertFalse(
                     "backfillRequested defaults to false when BACKFILL is omitted",
-                    instance.getDefinition().getBackfillRequested()
+                    instance.getDefinition().isBackfillRequested()
             );
             Assert.assertEquals(
                     "backfillState defaults to ACTIVE when BACKFILL is omitted",
@@ -4968,7 +5106,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertNotNull("live view must be re-registered after restart", reloaded);
             Assert.assertFalse(
                     "backfillRequested must round-trip via _lv",
-                    reloaded.getDefinition().getBackfillRequested()
+                    reloaded.getDefinition().isBackfillRequested()
             );
             Assert.assertEquals(
                     "backfillState must round-trip via _lv.s",

@@ -95,10 +95,6 @@ public class CreateLiveViewOperation implements Operation {
         return anchorSpec;
     }
 
-    public boolean getBackfillRequested() {
-        return backfillRequested;
-    }
-
     public String getBaseTableName() {
         return baseTableName;
     }
@@ -147,6 +143,10 @@ public class CreateLiveViewOperation implements Operation {
 
     public int getViewNamePosition() {
         return viewNamePosition;
+    }
+
+    public boolean isBackfillRequested() {
+        return backfillRequested;
     }
 
     public boolean isIgnoreIfExists() {

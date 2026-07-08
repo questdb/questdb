@@ -1239,7 +1239,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // below it is rejected. An empty base falls back to the CREATE moment.
         final long createMomentLowerBound = ColumnType.getTimestampDriver(baseTimestampType)
                 .fromMicros(configuration.getMicrosecondClock().getTicks());
-        if (op.getBackfillRequested()) {
+        if (op.isBackfillRequested()) {
             try (TableReader baseReader = getReader(baseTableToken)) {
                 viewLowerBoundTimestamp = baseReader.size() == 0
                         ? createMomentLowerBound
@@ -1351,7 +1351,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // and start incremental consumption at head + 1 once the sweep completes.
         final long baseHeadSeqTxn = tableSequencerAPI.getTxnTracker(baseTableToken).getWriterTxn();
         final long subscribeFromSeqTxn = baseHeadSeqTxn + 1;
-        final boolean backfillRequested = op.getBackfillRequested();
+        final boolean backfillRequested = op.isBackfillRequested();
         final byte backfillState = backfillRequested
                 ? LiveViewState.BACKFILL_STATE_BACKFILLING
                 : LiveViewState.BACKFILL_STATE_ACTIVE;

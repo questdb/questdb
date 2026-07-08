@@ -158,7 +158,7 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                 inMemoryValue = def.getInMemoryInterval();
                 inMemoryUnit = def.getInMemoryIntervalUnit();
                 partitionBy = def.getPartitionBy();
-                backfillRequested = def.getBackfillRequested();
+                backfillRequested = def.isBackfillRequested();
             } catch (CairoException e) {
                 throw SqlException.$(tokenPosition, "could not read live view definition [view=").put(viewToken)
                         .put(", msg=").put(e)

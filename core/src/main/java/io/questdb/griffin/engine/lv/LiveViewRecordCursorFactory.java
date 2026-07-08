@@ -37,6 +37,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Live-view read path. Wraps the standard
@@ -64,6 +65,18 @@ import io.questdb.std.Misc;
  * is negligible.
  */
 public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
+    // Bound on the disk-open / slot-pin staleness retry (see getCursor). One
+    // retry suffices in practice - a re-opened reader observes the already-applied
+    // flush - so this is a wide safety margin against a pathological flush storm,
+    // not an expected iteration count.
+    private static final int MAX_STALE_DISK_RETRIES = 8;
+    // Test-only, single-shot hook run right after the disk cursor is opened but
+    // before the tier slot is pinned. Lets a test deterministically inject a flush
+    // into that exact window - the disk-open / slot-pin race that leaves the disk
+    // snapshot older than the republished slot - to exercise the staleness retry in
+    // getCursor. Production never sets it; the null check is a single per-query read.
+    @TestOnly
+    private static volatile Runnable onDiskCursorOpenedHook;
     private final RecordCursorFactory base;
     private final CairoEngine engine;
     // Static, query-shape eligibility for lead routing, surfaced as the
@@ -89,17 +102,59 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
+        // seam routing assumes the disk scan yields rows in ascending timestamp
+        // order. The LV table has a designated timestamp, so a forward scan is
+        // ascending; backward / index scans are not, and the cursor must fall back
+        // to disk-only for them.
+        final boolean diskScanAscending = base.getScanDirection() == SCAN_DIRECTION_FORWARD;
+        // Staleness retry against the disk-open / slot-pin race. The disk cursor is
+        // opened before the slot is pinned; a flush landing in that window advances
+        // the on-disk tier and republishes the slot with the newer seqTxn, leaving
+        // the disk snapshot OLDER than the pinned slot. The fence then disengages
+        // (slot seqTxn != disk seqTxn) and serves disk-only against the stale, smaller
+        // snapshot, so a live view appears to shrink relative to an earlier read that
+        // already reflected the flush. Re-open against a fresh disk snapshot when the
+        // slot is newer than the disk; the slot's flush is already applied, so a fresh
+        // reader observes at least the slot's seqTxn. Bounded so a pathological flush
+        // storm still returns (at worst disk-only, one flush stale) instead of spinning.
+        for (int attempt = 0; ; attempt++) {
+            LiveViewRecordCursor cursor = openBoundCursor(executionContext, instance, diskScanAscending);
+            if (attempt >= MAX_STALE_DISK_RETRIES || !cursor.isSlotNewerThanDisk()) {
+                return cursor;
+            }
+            // Fully closes this attempt: releases the slot pin and closes the disk
+            // cursor. The next attempt re-opens both against a fresh snapshot.
+            Misc.free(cursor);
+        }
+    }
+
+    /**
+     * Test-only: arms a single-shot hook that fires inside {@link #getCursor}
+     * right after the disk cursor is opened and before the tier slot is pinned.
+     * Used to deterministically reproduce the disk-open / slot-pin flush race the
+     * staleness retry guards against. Production never calls this.
+     */
+    @TestOnly
+    public static void setOnDiskCursorOpenedHook(Runnable hook) {
+        onDiskCursorOpenedHook = hook;
+    }
+
+    private LiveViewRecordCursor openBoundCursor(
+            SqlExecutionContext executionContext,
+            LiveViewInstance instance,
+            boolean diskScanAscending
+    ) throws SqlException {
         RecordCursor diskCursor = base.getCursor(executionContext);
-        final LiveViewInstance instance;
-        final boolean diskScanAscending;
         final LiveViewRecordCursor cursor;
         try {
-            instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
-            // seam routing assumes the disk scan yields rows in ascending
-            // timestamp order. The LV table has a designated timestamp, so a
-            // forward scan is ascending; backward / index scans are not, and the
-            // cursor must fall back to disk-only for them.
-            diskScanAscending = base.getScanDirection() == SCAN_DIRECTION_FORWARD;
+            final Runnable hook = onDiskCursorOpenedHook;
+            if (hook != null) {
+                // Single-shot: clear before running so the staleness retry's second
+                // disk open does not re-fire it.
+                onDiskCursorOpenedHook = null;
+                hook.run();
+            }
             cursor = new LiveViewRecordCursor();
         } catch (Throwable t) {
             // Nothing owns diskCursor yet (of() has not run), so free it here.
