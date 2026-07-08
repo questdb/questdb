@@ -80,7 +80,16 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
 
     @Override
     public void close() {
-        processInQueue(); // Process incoming queue to close all contexts
+        // Free every parked retry so its socket fd is released. A retry can sit in any of
+        // three stages at shutdown: the inbound queue, the rerun priority queue, or the
+        // outbound queue awaiting a worker's runReruns(). close() runs after the worker pool
+        // has halted, so nothing else will drain them -- an out-queue retry would otherwise
+        // strand its checked-out HttpConnectionContext.
+        processInQueue();
+        Retry retry;
+        while ((retry = getNextRerun()) != null) {
+            Misc.free(retry);
+        }
         for (int i = 0, n = nextRerun.size(); i < n; i++) {
             Misc.free(nextRerun.poll());
         }
