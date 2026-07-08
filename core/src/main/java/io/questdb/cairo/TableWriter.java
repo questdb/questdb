@@ -12976,7 +12976,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
-                if (!(indexers.getQuick(colIdx) instanceof SymbolColumnIndexer indexer)) {
+                // On a skipping primary a replica-only POSTING column has no wired indexer,
+                // so indexers can be shorter than columnCount; guard the get with
+                // colIdx >= indexers.size() like the fast-lag / O3 posting-seal paths.
+                if (colIdx >= indexers.size()
+                        || !(indexers.getQuick(colIdx) instanceof SymbolColumnIndexer indexer)) {
                     continue;
                 }
                 if (parquetAddr == 0) {
