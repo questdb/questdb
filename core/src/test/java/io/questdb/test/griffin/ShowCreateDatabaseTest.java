@@ -234,7 +234,7 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(
                 "SHOW CREATE WAREHOUSE",
                 12,
-                "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'DATABASE'"
+                "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'LIVE VIEW' or 'DATABASE'"
         ));
     }
 
