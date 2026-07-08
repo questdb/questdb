@@ -108,8 +108,8 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
 
     @Test
     public void testSleepAbortedWhenClientClosesConnection() throws Exception {
-        // Windows still peeks (masked by JDBC's Terminate byte); FIN-behind-data
-        // detection is Linux/macOS only for now.
+        // The Windows probe still peeks and cannot see the FIN behind JDBC's
+        // buffered Terminate byte; detecting that needs FD_CLOSE, a follow-up.
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             // Runtime resource-pin bug: a parked sleep() does not observe a clean
