@@ -66,6 +66,8 @@ pub fn array_to_page_v1(
                 .flatten()
                 .min_by(|x, y| ord_binary(x, y))
                 .cloned(),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
         } as &dyn Statistics;
         Some(serialize_statistics(statistics))
     } else {

@@ -2021,10 +2021,21 @@ public final class TestUtils {
             path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash();
-            if (ff.exists(path.$()) && !Files.rmdir(path, true)) {
-                StringSink dir = new StringSink();
-                dir.put(path.$());
-                Assert.fail("Test dir " + dir + " cleanup error: " + Os.errno());
+            // Eager deletion (haltOnFail=false): some tests intentionally leave background worker threads
+            // running into teardown -- e.g. BackupTest.testBackupShutdownTimeout forces a backup-shutdown
+            // timeout that abandons its native upload/compression threads, "relying on process shutdown". Those
+            // threads race this cleanup and delete tree entries concurrently. haltOnFail=true aborts on the
+            // first already-gone entry (a benign "does not exist", errno 2/3 on Windows) and leaves the rest of
+            // the tree behind; eager mode keeps deleting and only fails if the root cannot ultimately be emptied.
+            if (ff.exists(path.$()) && !Files.rmdir(path, false)) {
+                final int errno = Os.errno();
+                // The racing deleter may have removed the root from under us -- treat "does not exist" as success.
+                // A genuine leak (an open file handle) instead leaves the root non-empty and still surfaces here.
+                if (errno != CairoException.ERRNO_FILE_DOES_NOT_EXIST && errno != CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN) {
+                    StringSink dir = new StringSink();
+                    dir.put(path.$());
+                    Assert.fail("Test dir " + dir + " cleanup error: " + errno);
+                }
             }
 
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
