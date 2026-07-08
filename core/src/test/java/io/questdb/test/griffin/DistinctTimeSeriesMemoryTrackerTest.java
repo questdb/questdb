@@ -134,6 +134,28 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
                         "1970-01-01T00:00:06.000000Z\t0\n");
     }
 
+    @Test
+    public void testExplicitTimestampRedesignationSurvivesDistinct() throws Exception {
+        // An explicit timestamp() on the subquery must survive DISTINCT here specifically:
+        // DistinctTimeSeriesRecordCursor's dedup fast path reads its row-adjacency decision
+        // directly off the factory's own timestampIndex, so generateSelectDistinct has to apply
+        // an explicit redesignation BEFORE choosing this factory, not just relabel metadata
+        // after the fact -- otherwise the fast path would silently key off the wrong column.
+        assertQuery("SELECT DISTINCT * FROM (SELECT * FROM tab) timestamp(ts2)")
+                .ddl(
+                        "CREATE TABLE tab (ts TIMESTAMP, ts2 TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY",
+                        "INSERT INTO tab VALUES ('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:01.000000Z', 1)",
+                        "INSERT INTO tab VALUES ('2024-01-01T00:01:00.000000Z', '2024-01-01T00:01:01.000000Z', 2)"
+                )
+                .timestamp("ts2")
+                .withPlanContaining("DistinctTimeSeries")
+                .returns("""
+                        ts\tts2\tv
+                        2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t1
+                        2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t2
+                        """);
+    }
+
     private static void assertBreach(String sql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);

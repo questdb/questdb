@@ -8049,8 +8049,10 @@ public class SqlOptimiser implements Mutable {
                 // move model attributes to the wrapper
                 wrapperModel.setAlias(model.getAlias());
                 wrapperModel.setTimestamp(model.getTimestamp());
+                wrapperModel.setExplicitTimestamp(model.isExplicitTimestamp());
                 wrapperNested.setAlias(model.getAlias());
                 wrapperNested.setTimestamp(model.getTimestamp());
+                wrapperNested.setExplicitTimestamp(model.isExplicitTimestamp());
 
                 // before dispatching our rewrite, make sure our sub-query has also been re-written
                 // the immediate "nested" model is part of the "distinct" pair or model, we skip rewriting that

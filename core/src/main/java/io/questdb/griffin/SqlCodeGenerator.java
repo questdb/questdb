@@ -7385,15 +7385,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return applyExplicitTimestamp(model, generateSubQuery(model, executionContext));
     }
 
-    // A bare "(subquery) timestamp(col)" FROM-item adds no projection of its own, so it's
-    // generated via generateSubQuery() above, which returns the nested factory unchanged.
-    // That silently drops an explicit timestamp() redesignation whenever it names a column
-    // other than the nested factory's own designated timestamp -- e.g. redesignating a
-    // SAMPLE BY result to a first()/last() aggregate column instead of the bucket-boundary
-    // column. Every downstream consumer (joins, LATEST ON, ordering) would then keep reading
-    // the nested factory's original timestamp column instead of the one the user asked for.
-    // Relabel metadata here, the same way generateSelectChoose() already does for models
-    // that DO add a projection of their own.
+    // generateNoSelect (above) and generateSelectDistinct build their factory either as a bare
+    // passthrough of their nested subquery's factory, or from metadata derived from it, without
+    // otherwise consulting the model's own explicit timestamp() redesignation -- unlike
+    // generateSelectChoose, which already does. That silently drops a redesignation to a column
+    // other than the nested factory's own designated timestamp -- e.g. a SAMPLE BY result
+    // re-timestamped to a first()/last() aggregate column instead of the bucket-boundary column
+    // -- so every downstream consumer (joins, LATEST ON, ordering, DISTINCT) would then keep
+    // reading the original timestamp column instead of the one the user asked for.
+    //
+    // Known gap: generateSelectGroupBy has the same defect for its general keyed-GROUP-BY path
+    // (notably the DISTINCT-to-GROUP-BY rewrite over more than one column, see rewriteDistinct in
+    // SqlOptimiser) but is deliberately NOT wired up here. A blanket post-generateSelect() wrap
+    // looked like the obvious central fix -- a no-op for arms like generateSelectChoose that
+    // already apply their own model's explicit timestamp -- but proved unsafe in practice: it
+    // corrupted row-by-row random access on an ASOF JOIN whose master was a SAMPLE BY subquery,
+    // because generateSelectGroupBy's SAMPLE BY path (generateSampleBy) already handles its own
+    // timestamp correctly and does not tolerate a second relabeling wrap over its join-adjacent,
+    // cursor-stateful output. Narrowing the wrap to generateSelectGroupBy's non-SAMPLE-BY branches
+    // still touched unrelated nested GROUP BY subqueries (e.g. the count_distinct() inside this
+    // same ASOF JOIN's master) and reproduced the same corruption. Call this method individually,
+    // per call site, only where verified safe -- do not add a blanket call without re-verifying
+    // against a query with a join-backed or otherwise cursor-stateful nested GROUP BY/SAMPLE BY.
     private RecordCursorFactory applyExplicitTimestamp(
             IQueryModel model,
             RecordCursorFactory factory
@@ -8536,7 +8549,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectDistinct(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        // Explicit timestamp must be applied BEFORE the random-access/timestamp check just below:
+        // DistinctTimeSeriesRecordCursor's dedup fast path keys its row-adjacency decision directly
+        // off this factory's own timestampIndex, so choosing that branch (and which column feeds
+        // it) has to already reflect any timestamp() redesignation -- applying it only after this
+        // method returns (as generateSelect()'s central call does for other arms) would be too late.
+        final RecordCursorFactory factory = applyExplicitTimestamp(model, generateSubQuery(model, executionContext));
         try {
             if (factory.recordCursorSupportsRandomAccess() && factory.getMetadata().getTimestampIndex() != -1) {
                 return new DistinctTimeSeriesRecordCursorFactory(
