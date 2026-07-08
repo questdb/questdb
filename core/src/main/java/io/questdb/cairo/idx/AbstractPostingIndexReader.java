@@ -804,6 +804,17 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return frozen;
     }
 
+    /**
+     * True iff the sparse-gen sidecar prefix-sum memo has a built row for {@code gen}. Exposed so a
+     * test can assert {@link #populateCacheForKey} primes the memo single-threaded before the freeze
+     * (the C1 parallel-decode invariant): a covered sparse gen that a frozen worker will decode must
+     * be primed here, otherwise the worker would build the memo lazily and race.
+     */
+    @TestOnly
+    public boolean isSidecarGenPrimedForTesting(int gen) {
+        return sidecarPrefixSum.isPrimed(gen);
+    }
+
     @TestOnly
     public void setGenLookupCacheBudget(long budget) {
         genLookup.setCacheMemoryBudget(budget);
@@ -3162,6 +3173,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 Arrays.fill(perGen, null);
             }
             version = -1;
+        }
+
+        @TestOnly
+        boolean isPrimed(int gen) {
+            return perGen != null && gen >= 0 && gen < perGen.length && perGen[gen] != null;
         }
 
         /**
