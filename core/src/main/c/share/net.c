@@ -35,8 +35,17 @@
 #include "net.h"
 #include <netdb.h>
 #include "sysutil.h"
+#include <poll.h>
+#include <stdint.h>
 #ifndef __APPLE__
 #include <sys/un.h>
+#endif
+#ifdef __APPLE__
+#include <sys/event.h>
+#include <sys/time.h>
+#endif
+#ifndef POLLRDHUP
+#define POLLRDHUP 0x2000
 #endif
 
 jint handleEintrInConnect(jint fd, int result);
@@ -217,6 +226,40 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
     ssize_t res;
     RESTARTABLE(recv((int) fd, &c, 1, 0), res);
     return (jboolean) (res < 1);
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
+        (JNIEnv *e, jclass cl, jint fd) {
+#if defined(__APPLE__)
+    int kq = kqueue();
+    if (kq < 0) {
+        return JNI_FALSE;
+    }
+    struct kevent change;
+    EV_SET(&change, (uintptr_t) fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+    struct kevent event;
+    struct timespec immediate = {0, 0};
+    int n = kevent(kq, &change, 1, &event, 1, &immediate);
+    jboolean disconnected = (jboolean) (n > 0 && (event.flags & EV_EOF) != 0);
+    close(kq);
+    return disconnected;
+#elif defined(__linux__)
+    struct pollfd pfd;
+    pfd.fd = (int) fd;
+    pfd.events = POLLRDHUP;
+    pfd.revents = 0;
+    int n;
+    RESTARTABLE(poll(&pfd, 1, 0), n);
+    return (jboolean) (n > 0 && (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR | POLLNVAL)) != 0);
+#else
+    char c;
+    ssize_t n;
+    RESTARTABLE(recv((int) fd, &c, 1, MSG_PEEK), n);
+    if (n == 0) {
+        return JNI_TRUE;
+    }
+    return (jboolean) (n < 0 && errno != EWOULDBLOCK);
+#endif
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking

@@ -302,6 +302,16 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
     return (jboolean) (recv((SOCKET) fd, (char *) &c, 1, 0) < 1);
 }
 
+JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
+        (JNIEnv *e, jclass cl, jint fd) {
+    char c;
+    const int n = recv((SOCKET) fd, (char *) &c, 1, MSG_PEEK);
+    if (n == 0) {
+        return JNI_TRUE;
+    }
+    return (jboolean) (n < 0 && WSAGetLastError() != WSAEWOULDBLOCK);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
         (JNIEnv *e, jclass cl, jint fd, jlong addr, jint len) {
     const int n = send((SOCKET) fd, (const char *) addr, len, 0);

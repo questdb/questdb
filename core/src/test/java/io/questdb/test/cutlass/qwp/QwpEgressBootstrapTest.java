@@ -1565,6 +1565,56 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         });
     }
 
+    @Test
+    public void testSleepAbortedByQueryTimeout() throws Exception {
+        // Regression: a query over egress must honour query.timeout. Today egress
+        // builds the execution context with a null circuit breaker, which
+        // SqlExecutionContextImpl.with(...) maps to NOOP_CIRCUIT_BREAKER, so the query
+        // never consults query.timeout (nor the connection probe). With query.timeout=1s
+        // and a 100ms wake interval, sleep(3) MUST abort near ~1s; the NOOP breaker
+        // currently lets it run the full ~3s, so this test stays red until egress wires
+        // an fd-backed breaker like PG/HTTP.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startServerWithRetry(
+                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "1s",
+                    PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100"
+            )) {
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+
+                    final boolean[] errored = {false};
+                    final long t0 = System.currentTimeMillis();
+                    client.execute("sleep(3)", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            errored[0] = true;
+                        }
+                    });
+                    final long elapsed = System.currentTimeMillis() - t0;
+
+                    Assert.assertTrue(
+                            "egress sleep(3) took " + elapsed + " ms; query.timeout=1s must abort it near ~1s. "
+                                    + "It ran the full duration because egress uses a NOOP circuit breaker (errored="
+                                    + errored[0] + ").",
+                            elapsed < 2_000
+                    );
+                    Assert.assertTrue(
+                            "egress sleep(3) completed without an error; query.timeout must surface as a query error",
+                            errored[0]
+                    );
+                }
+            }
+        });
+    }
+
     /**
      * Back-pressure / resume state machine. Streams ~100 000 8-byte rows (~800 KB) while
      * the client handler deliberately sleeps between batches. The server's TCP send

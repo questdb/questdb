@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -1063,12 +1064,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     .$(", sqlLen=").$(decoder.sql.length()).I$();
 
             SqlExecutionContextImpl sqlCtx = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            circuitBreaker.resetTimer();
             sqlCtx.with(
                     context.getSecurityContext(),
                     state.getBindVariableService(),
                     null,
                     context.getFd(),
-                    null
+                    circuitBreaker.of(context.getFd())
             );
             sqlCtx.initNow();
 
