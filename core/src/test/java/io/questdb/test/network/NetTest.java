@@ -119,6 +119,58 @@ public class NetTest {
     }
 
     @Test
+    public void testIsPeerDisconnected() {
+        long acceptFd = Net.socketTcp(true);
+        Assert.assertTrue(acceptFd > 0);
+        int port = assertCanBind(acceptFd);
+        Net.listen(acceptFd, 1024);
+        long sockAddr = Net.sockaddr("127.0.0.1", port);
+        try {
+            // Idle, both ends open: no hangup on any platform.
+            long clientFd = Net.socketTcp(true);
+            TestUtils.assertConnect(clientFd, sockAddr);
+            long serverFd = Net.accept(acceptFd);
+            Net.configureNonBlocking(serverFd);
+            Assert.assertFalse(Net.isPeerDisconnected(serverFd));
+            Net.close(clientFd);
+            Net.close(serverFd);
+
+            // FIN behind a buffered byte: the whole point of the probe. Linux poll
+            // and macOS kqueue report the peer's FIN even with the byte still
+            // buffered; the Windows peek fallback returns the byte and stays masked.
+            clientFd = Net.socketTcp(true);
+            TestUtils.assertConnect(clientFd, sockAddr);
+            serverFd = Net.accept(acceptFd);
+            Net.configureNonBlocking(serverFd);
+            long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.getUnsafe().putByte(buf, (byte) 'x');
+            Assert.assertEquals(1, Net.send(clientFd, buf, 1));
+            Net.shutdown(clientFd, Net.SHUT_WR);
+            if (Os.isWindows()) {
+                Assert.assertFalse(Net.isPeerDisconnected(serverFd));
+            } else {
+                awaitPeerDisconnected(serverFd);
+            }
+            Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+            Net.close(clientFd);
+            Net.close(serverFd);
+
+            // Bare FIN, empty buffer: detected on every platform.
+            clientFd = Net.socketTcp(true);
+            TestUtils.assertConnect(clientFd, sockAddr);
+            serverFd = Net.accept(acceptFd);
+            Net.configureNonBlocking(serverFd);
+            Net.shutdown(clientFd, Net.SHUT_WR);
+            awaitPeerDisconnected(serverFd);
+            Net.close(clientFd);
+            Net.close(serverFd);
+        } finally {
+            Net.freeSockAddr(sockAddr);
+            Net.close(acceptFd);
+        }
+    }
+
+    @Test
     public void testLeakyAddrInfo() throws Exception {
         NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
         boolean leakDetected = false;
@@ -352,6 +404,16 @@ public class NetTest {
         }
         Assert.assertTrue(bound);
         return port;
+    }
+
+    private void awaitPeerDisconnected(long fd) {
+        for (int i = 0; i < 1000; i++) {
+            if (Net.isPeerDisconnected(fd)) {
+                return;
+            }
+            Os.sleep(5);
+        }
+        Assert.fail("peer disconnect was not detected");
     }
 
     private void bindAcceptConnectClose() throws InterruptedException, BrokenBarrierException {

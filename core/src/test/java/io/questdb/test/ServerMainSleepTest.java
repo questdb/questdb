@@ -125,6 +125,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
             // when the timeout trips.
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "8s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
             }})) {
                 serverMain.start();
 
@@ -208,12 +209,13 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
     public void testSleepAbortedWhenHttpClientClosesConnection() throws Exception {
         // HTTP counterpart to testSleepAbortedWhenClientClosesConnection. Unlike PG,
         // an HTTP client closes with a bare FIN (no protocol "goodbye" byte), so the
-        // breaker's recv(MSG_PEEK) on the next wake sees EOF and aborts the parked
-        // sleep within a wake interval. HTTP is therefore NOT masked; this test locks
-        // in that prompt detection.
+        // breaker's connection probe on the next wake sees the hangup and aborts the
+        // parked sleep within a wake interval -- detected by the old peek probe too, so
+        // HTTP is NOT masked; this test locks in that prompt detection.
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
                 put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s");
+                put(PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100");
             }})) {
                 serverMain.start();
 

@@ -40,7 +40,7 @@
 #ifndef __APPLE__
 #include <sys/un.h>
 #endif
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/event.h>
 #include <sys/time.h>
 #endif
@@ -230,7 +230,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
         (JNIEnv *e, jclass cl, jint fd) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__FreeBSD__)
     int kq = kqueue();
     if (kq < 0) {
         return JNI_FALSE;
@@ -240,7 +240,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
     struct kevent event;
     struct timespec immediate = {0, 0};
     int n = kevent(kq, &change, 1, &event, 1, &immediate);
-    jboolean disconnected = (jboolean) (n > 0 && (event.flags & EV_EOF) != 0);
+    jboolean disconnected = (jboolean) (n > 0 && (event.flags & (EV_EOF | EV_ERROR)) != 0);
     close(kq);
     return disconnected;
 #elif defined(__linux__)
