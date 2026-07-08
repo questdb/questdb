@@ -12701,5 +12701,7 @@ public class SqlOptimiser implements Mutable {
         orderedGroupByFunctions.add("last_not_null");
         orderedGroupByFunctions.add("string_agg");
         orderedGroupByFunctions.add("haversine_dist_deg");
+        orderedGroupByFunctions.add("array_agg");
+        orderedGroupByFunctions.add("sparkline");
     }
 }

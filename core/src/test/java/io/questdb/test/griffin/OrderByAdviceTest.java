@@ -32,6 +32,28 @@ import org.junit.Test;
 public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
+    public void testArrayAggPreservesOrderByAdvice() throws Exception {
+        execute("create table nums (val double, seq int)");
+        execute("""
+                insert into nums values
+                (1.0, 1),
+                (4.0, 4),
+                (2.0, 2),
+                (3.0, 3)
+                """);
+
+        assertQuery("select array_agg(val) arr from (select * from nums order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("GroupBy", "Encode sort light", "keys: [seq]")
+                .returns("""
+                        arr
+                        [1.0,2.0,3.0,4.0]
+                        """);
+    }
+
+    @Test
     public void testCreateDesignatedTimestampFromMultipleOrderBy() throws Exception {
         assertQuery("select * from x order by t, a")
                 .ddl("create table x as (" +
@@ -813,6 +835,28 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         1326447242\t1970-01-01T00:00:00.006000Z
                         1548800833\t1970-01-01T00:00:00.002000Z
                         1868723706\t1970-01-01T00:00:00.008000Z
+                        """);
+    }
+
+    @Test
+    public void testSparklinePreservesOrderByAdvice() throws Exception {
+        execute("create table series (val double, seq int)");
+        execute("""
+                insert into series values
+                (0.0, 1),
+                (3.0, 4),
+                (1.0, 2),
+                (2.0, 3)
+                """);
+
+        assertQuery("select sparkline(val) spark from (select * from series order by seq)")
+                .ddl(null)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("GroupBy", "Encode sort light", "keys: [seq]")
+                .returns("""
+                        spark
+                        ▁▃▅█
                         """);
     }
 
