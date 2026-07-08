@@ -62,6 +62,11 @@ public class LeadLagWindowFunctionFactoryHelper {
     // call falls back to the cached path, whose own MemoryARW page/page-count limits provide an
     // independent backstop.
     public static final long MAX_STREAMING_LAG_OFFSET = 65_536L;
+    // Upper bound on the LEAD offset accepted by streaming dispatch. The deferred-emit cursor packs
+    // one pending-bit per lookahead slot into a single long, so the ring capacity (offset + 1) must
+    // fit in 64 bits, i.e. offset <= 63. Distinct from MAX_STREAMING_LAG_OFFSET, which is a
+    // memory-reservation guard rather than a bit-mask capacity limit.
+    public static final int MAX_STREAMING_LEAD_OFFSET = 63;
 
     static Function newInstance(int position,
                                 ObjList<Function> args,
@@ -364,13 +369,6 @@ public class LeadLagWindowFunctionFactoryHelper {
             nullStreamingFields();
         }
 
-        // Default no-op; streaming subclasses override to set their closed-but-non-null fields
-        // (map, memory) to null so their lazy-alloc gate fires on the next computeNext. Without
-        // this hook every streaming subclass would need its own close()/reset() override pair just
-        // to perform the nulling.
-        protected void nullStreamingFields() {
-        }
-
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -403,6 +401,13 @@ public class LeadLagWindowFunctionFactoryHelper {
                                                 long startOffset,
                                                 long firstIdx,
                                                 Record record);
+
+        // Default no-op; streaming subclasses override to set their closed-but-non-null fields
+        // (map, memory) to null so their lazy-alloc gate fires on the next computeNext. Without
+        // this hook every streaming subclass would need its own close()/reset() override pair just
+        // to perform the nulling.
+        protected void nullStreamingFields() {
+        }
     }
 
     abstract static class BaseLeadFunction extends BaseWindowFunction implements Reopenable {
@@ -473,11 +478,6 @@ public class LeadLagWindowFunctionFactoryHelper {
             nullStreamingFields();
         }
 
-        // Default no-op; the streaming non-partitioned LEAD subclass overrides to null `buffer`
-        // so its lazy-alloc gate fires on reuse.
-        protected void nullStreamingFields() {
-        }
-
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -502,6 +502,11 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         protected abstract boolean doPass1(Record record, long recordOffset, WindowSPI spi);
+
+        // Default no-op; the streaming non-partitioned LEAD subclass overrides to null `buffer`
+        // so its lazy-alloc gate fires on reuse.
+        protected void nullStreamingFields() {
+        }
     }
 
     abstract static class BaseLeadLagCurrentRow extends BaseWindowFunction {
@@ -631,11 +636,6 @@ public class LeadLagWindowFunctionFactoryHelper {
             nullStreamingFields();
         }
 
-        // Default no-op; partitioned streaming LEAD subclasses override to null `map` and
-        // `memory` after super freed them.
-        protected void nullStreamingFields() {
-        }
-
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
@@ -670,6 +670,11 @@ public class LeadLagWindowFunctionFactoryHelper {
                                            Record record,
                                            long recordOffset,
                                            WindowSPI spi);
+
+        // Default no-op; partitioned streaming LEAD subclasses override to null `map` and
+        // `memory` after super freed them.
+        protected void nullStreamingFields() {
+        }
     }
 
     static {

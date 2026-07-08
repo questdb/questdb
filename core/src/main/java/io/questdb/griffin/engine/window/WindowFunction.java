@@ -355,6 +355,24 @@ public interface WindowFunction extends Function {
     void setColumnIndex(int columnIndex);
 
     /**
+     * Binds the per-query native memory tracker on this function's tracker-aware
+     * state (e.g. a per-partition map). The owning window cursor calls this before
+     * reopen() at cursor start, so the state allocates against the bound tracker and
+     * frees against it at cursor close. A null tracker degrades to global-only
+     * accounting. Default no-op for functions with no tracker-aware state.
+     * <p>
+     * Coverage limitation: ROWS-frame functions bind only their per-partition map,
+     * not the per-partition ring buffers that hold the sliding-window values. Those
+     * buffers stay global-only. A single ROWS frame is bounded by the frame literal,
+     * but under PARTITION BY ... ROWS the total ring-buffer memory scales with the
+     * partition cardinality and is not charged to the per-query counter; the bound
+     * per-partition map is only a partial backstop. RANGE-frame functions bind their
+     * tracker-aware state and are not affected.
+     */
+    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
+    /**
      * Back-fills a deferred window slot with this function's value, computed from the supplied source row.
      * <p>
      * Called by the streaming deferred-emit executor when a previously-buffered pending slot's lookahead
@@ -403,24 +421,6 @@ public interface WindowFunction extends Function {
      */
     default void streamingPass1(Record record, long recordOffset, WindowSPI spi, long partitionStateAddr) {
         pass1(record, recordOffset, spi);
-    }
-
-    /**
-     * Binds the per-query native memory tracker on this function's tracker-aware
-     * state (e.g. a per-partition map). The owning window cursor calls this before
-     * reopen() at cursor start, so the state allocates against the bound tracker and
-     * frees against it at cursor close. A null tracker degrades to global-only
-     * accounting. Default no-op for functions with no tracker-aware state.
-     * <p>
-     * Coverage limitation: ROWS-frame functions bind only their per-partition map,
-     * not the per-partition ring buffers that hold the sliding-window values. Those
-     * buffers stay global-only. A single ROWS frame is bounded by the frame literal,
-     * but under PARTITION BY ... ROWS the total ring-buffer memory scales with the
-     * partition cardinality and is not charged to the per-query counter; the bound
-     * per-partition map is only a partial backstop. RANGE-frame functions bind their
-     * tracker-aware state and are not affected.
-     */
-    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
     }
 
     enum Pass1ScanDirection {

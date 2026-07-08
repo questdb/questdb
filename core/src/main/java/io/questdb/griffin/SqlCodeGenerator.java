@@ -9530,11 +9530,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // swapped direction.
                             int swappedDir = dir == ORDER_ASC ? ORDER_DESC : ORDER_ASC;
                             final ExpressionNode overOrderByNode = ac.getOrderBy().getQuick(0);
-                            boolean wouldDismissAfterSwap = orderHash.size() < 2
+                            boolean isDismissedAfterSwap = orderHash.size() < 2
                                     || (base.followedOrderByAdvice()
                                     && Chars.equalsIgnoreCase(overOrderByNode.token, orderHash.keys().get(0))
                                     && orderHash.get(overOrderByNode.token) == swappedDir);
-                            if (wouldDismissAfterSwap) {
+                            if (isDismissedAfterSwap) {
                                 CharSequence newToken = null;
                                 if (Chars.equalsIgnoreCase("lag", ast.token)) {
                                     newToken = "lead";
@@ -9705,9 +9705,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Phase 6 deferred-emit dispatch: at least one positive-lookahead window function, base
                 // random access, and (ringCapacity * leadCount) <= 64 so the cursor's per-slot LEAD
                 // pending-bit mask fits in one long. All window function values must be 8-byte
-                // fixed-width types (Long/Double/Date/Timestamp/Int/Float/Decimal<=64).
+                // fixed-width types; the accepted tags are exactly LONG/DOUBLE/DATE/TIMESTAMP (see
+                // the loop below for why INT/FLOAT/DECIMAL never reach here).
                 final int ringCap = maxLookahead + 1;
-                boolean allWindowsAreFit8Bytes = true;
+                boolean areAllWindowsFit8Bytes = true;
                 if (lookaheadFunctionCount >= 1) {
                     for (int i = 0, n = functions.size(); i < n; i++) {
                         Function f = functions.getQuick(i);
@@ -9725,7 +9726,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     || tag == ColumnType.DOUBLE
                                     || tag == ColumnType.DATE
                                     || tag == ColumnType.TIMESTAMP)) {
-                                allWindowsAreFit8Bytes = false;
+                                areAllWindowsFit8Bytes = false;
                                 break;
                             }
                         }
@@ -9749,11 +9750,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // semantics, otherwise their slots share the wrong partition state and produce
                 // wrong values. Compare every window column's PARTITION BY against the first
                 // column's; bail to cached on any divergence.
-                boolean allWindowsShareSamePartitionBy = true;
+                boolean doAllWindowsShareSamePartitionBy = true;
                 if (lookaheadFunctionCount >= 1) {
                     ObjList<ExpressionNode> sharedPartitionBy = null;
                     boolean isSharedInitialised = false;
-                    for (int i = 0, n = columns.size(); i < n && allWindowsShareSamePartitionBy; i++) {
+                    for (int i = 0, n = columns.size(); i < n && doAllWindowsShareSamePartitionBy; i++) {
                         QueryColumn qc = columns.getQuick(i);
                         if (!qc.isWindowExpression()) {
                             continue;
@@ -9765,23 +9766,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             continue;
                         }
                         if (sharedPartitionBy.size() != pb.size()) {
-                            allWindowsShareSamePartitionBy = false;
+                            doAllWindowsShareSamePartitionBy = false;
                             break;
                         }
                         for (int j = 0, m = pb.size(); j < m; j++) {
                             if (!ExpressionNode.compareNodesExact(sharedPartitionBy.getQuick(j), pb.getQuick(j))) {
-                                allWindowsShareSamePartitionBy = false;
+                                doAllWindowsShareSamePartitionBy = false;
                                 break;
                             }
                         }
                     }
                 }
                 if (lookaheadFunctionCount >= 1
-                        && allWindowsAreFit8Bytes
+                        && areAllWindowsFit8Bytes
                         && (long) ringCap * lookaheadFunctionCount <= 64
                         && base.recordCursorSupportsRandomAccess()
                         && isStreamingDispatchEligible
-                        && allWindowsShareSamePartitionBy) {
+                        && doAllWindowsShareSamePartitionBy) {
                     // The lookahead window function has already parsed its PARTITION BY clause in the
                     // first pass above. Reuse those Function instances directly for the cursor's
                     // partition record instead of parsing the same expressions a second time. The

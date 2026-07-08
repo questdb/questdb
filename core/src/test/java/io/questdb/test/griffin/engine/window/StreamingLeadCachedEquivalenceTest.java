@@ -54,7 +54,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
     @Test
     public void testQ1MixedNoOrder() throws Exception {
         assertEquivalent(
-                "select x, ts, lag(x, 1) over () as l, lead(x, 1) over () as ld from t"
+                "select x, ts, lag(x, 1) over () as l, lead(x, 1) over () as ld from t",
+                false
         );
     }
 
@@ -64,7 +65,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, " +
                         "lag(x, 1) over (order by ts asc) as l1, " +
                         "lag(x, 3) over (order by ts asc) as l3 " +
-                        "from t"
+                        "from t",
+                false
         );
     }
 
@@ -74,7 +76,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, " +
                         "lag(x, 1) over (order by ts desc) as l, " +
                         "lead(x, 1) over (order by ts desc) as ld " +
-                        "from t order by ts desc"
+                        "from t order by ts desc",
+                false
         );
     }
 
@@ -84,7 +87,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, " +
                         "lag(x, 1) over (order by ts asc) as l, " +
                         "lead(x, 1) over (order by ts asc) as ld " +
-                        "from t"
+                        "from t",
+                false
         );
     }
 
@@ -94,7 +98,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, " +
                         "lag(x, 1) over (order by ts desc) as l, " +
                         "lead(x, 1) over (order by ts desc) as ld " +
-                        "from t"
+                        "from t",
+                true
         );
     }
 
@@ -104,7 +109,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, sym, " +
                         "lag(x, 1) over (partition by sym) as l, " +
                         "lead(x, 1) over (partition by sym) as ld " +
-                        "from t"
+                        "from t",
+                false
         );
     }
 
@@ -114,7 +120,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, sym, " +
                         "lag(x, 1) over (partition by sym order by ts asc) as l, " +
                         "lead(x, 1) over (partition by sym order by ts asc) as ld " +
-                        "from t"
+                        "from t",
+                false
         );
     }
 
@@ -124,7 +131,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, sym, " +
                         "lag(x, 1) over (partition by sym order by ts desc) as l, " +
                         "lead(x, 1) over (partition by sym order by ts desc) as ld " +
-                        "from t"
+                        "from t",
+                true
         );
     }
 
@@ -134,7 +142,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, " +
                         "lag(x, 1) over (order by ts desc) as l, " +
                         "lead(x, 1) over (order by ts asc) as ld " +
-                        "from t"
+                        "from t",
+                true
         );
     }
 
@@ -144,7 +153,8 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, sym, " +
                         "lag(x, 1) over (partition by sym order by ts desc) as l, " +
                         "lead(x, 1) over (partition by sym order by ts asc) as ld " +
-                        "from t"
+                        "from t",
+                true
         );
     }
 
@@ -154,29 +164,31 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
                 "select x, ts, " +
                         "lead(x, 1) over (order by ts asc) as l1, " +
                         "lead(x, 3) over (order by ts asc) as l3 " +
-                        "from t"
+                        "from t",
+                true
         );
     }
 
     @Test
     public void testS1LeadNoPartition() throws Exception {
-        assertEquivalent("select x, ts, lead(x, 1) over () as lx from t");
+        assertEquivalent("select x, ts, lead(x, 1) over () as lx from t", true);
     }
 
     @Test
     public void testS2LagDescNoPartition() throws Exception {
-        assertEquivalent("select x, ts, lag(x, 1) over (order by ts desc) as lx from t");
+        assertEquivalent("select x, ts, lag(x, 1) over (order by ts desc) as lx from t", true);
     }
 
     @Test
     public void testS3LeadPartitioned() throws Exception {
-        assertEquivalent("select x, ts, sym, lead(x, 1) over (partition by sym) as lx from t");
+        assertEquivalent("select x, ts, sym, lead(x, 1) over (partition by sym) as lx from t", true);
     }
 
     @Test
     public void testS4LagDescPartitioned() throws Exception {
         assertEquivalent(
-                "select x, ts, sym, lag(x, 1) over (partition by sym order by ts desc) as lx from t"
+                "select x, ts, sym, lag(x, 1) over (partition by sym order by ts desc) as lx from t",
+                true
         );
     }
 
@@ -185,7 +197,7 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
      * both outputs, sorts the data rows, and asserts equality. The header line (column names) is
      * compared verbatim before sorting.
      */
-    private void assertEquivalent(String querySql) throws Exception {
+    private void assertEquivalent(String querySql, boolean expectDeferredEmit) throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             execute(SEED_T);
@@ -197,6 +209,17 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
             StringSink streamingSink = new StringSink();
             setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
             printSql(querySql, streamingSink);
+
+            // Independent routing signal (flag on): the sorted-multiset comparison below still
+            // passes if the dispatch gate silently regressed to cached, since both paths are
+            // correct. Assert the plan actually routes as intended — shapes that should stream must
+            // contain the DeferredEmitWindow node; shapes that intentionally stay on cached (or use
+            // the immediate-emit WindowRecordCursorFactory, e.g. dual-LAG) must not.
+            if (expectDeferredEmit) {
+                assertQuery(querySql).noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+            } else {
+                assertQuery(querySql).noLeakCheck().assertsPlanNotContaining("DeferredEmitWindow");
+            }
 
             String[] cachedLines = splitLines(cachedSink.toString());
             String[] streamingLines = splitLines(streamingSink.toString());

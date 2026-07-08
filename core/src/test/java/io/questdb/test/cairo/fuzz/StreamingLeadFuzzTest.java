@@ -323,7 +323,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                             "x::int, " +
                             "x::float, " +
                             "x::double, " +
-                            "(1700_000_000_000L + x)::date, " +
+                            "(1_700_000_000_000L + x)::date, " +
                             "('v' || x)::varchar, " +
                             "'s' || x, " +
                             "('S' || (x % 3))::symbol, " +

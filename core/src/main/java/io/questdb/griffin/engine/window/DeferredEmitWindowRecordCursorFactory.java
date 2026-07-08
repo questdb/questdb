@@ -50,6 +50,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -57,6 +58,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -94,6 +96,14 @@ import java.util.Arrays;
  * (5 base longs: slotsByteOffset, ringHead, ringTail, ringCount, pendingFilled, plus 3 longs per LAG
  * function). The cursor enforces the runtime partition cardinality cap from
  * {@code cairo.sql.window.streaming.max.partitions}.
+ * <p>
+ * Memory bound: pending native memory is {@code O(partitions × (maxLookahead + Σ lag_offsets))}, not
+ * {@code O(partitions × maxLookahead)} — each streaming LAG eagerly reserves an {@code offset}-sized
+ * ring per partition on top of the LEAD lookahead slots. The two caps
+ * {@code cairo.sql.window.streaming.max.partitions} and the per-function {@code offset} limit multiply,
+ * so the worst-case reservation is their product times 8 bytes per LAG. This is not a regression over
+ * the cached LAG (which caps neither offset nor partition count), but the interaction is multiplicative
+ * and should be sized accordingly when raising either cap.
  */
 public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -255,6 +265,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
         this.partitionMap = partitionMap;
+        // Start the map closed so its backing is allocated only after of() binds the per-query
+        // MemoryTracker, then reopen()ed under it and close()d at cursor close — symmetric on the
+        // per-query counter. Mirrors the lazy-open pattern in BasePartitionedWindowFunction.
+        if (partitionMap != null) {
+            partitionMap.close();
+        }
         this.maxPartitions = maxPartitions;
         this.cursor = new DeferredEmitWindowRecordCursor();
     }
@@ -297,20 +313,20 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         sink.type("DeferredEmitWindow");
         // Emit LAG functions first, then LEAD functions, in column order within each group.
         sink.attr("functions").val('[');
-        boolean first = true;
+        boolean isFirst = true;
         for (int i = 0, n = lagFunctions.size(); i < n; i++) {
-            if (!first) {
+            if (!isFirst) {
                 sink.val(',');
             }
             sink.val(lagFunctions.getQuick(i));
-            first = false;
+            isFirst = false;
         }
         for (int i = 0, n = leadFunctions.size(); i < n; i++) {
-            if (!first) {
+            if (!isFirst) {
                 sink.val(',');
             }
             sink.val(leadFunctions.getQuick(i));
-            first = false;
+            isFirst = false;
         }
         sink.val(']');
         sink.attr("maxLookahead").val(maxLookahead);
@@ -380,7 +396,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         private final OutputRecord outputRecord = new OutputRecord();
         // For no-partition mode this is the only partition state; for partition mode it's a scratch
         // copy holding the looked-up Map value during processBaseRow.
-        private final long[] singlePartitionState = new long[5];
+        private final long[] singlePartitionState = new long[PARTITION_VALUE_BASE_LONGS];
         private RecordCursor baseCursor;
         private Record baseRecordForEmit;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -416,7 +432,9 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             flushMapCursor = null;
             resetFunctions();
             if (partitionMap != null) {
-                partitionMap.clear();
+                // Free (not just clear) so the per-query MemoryTracker bound in of() is decremented
+                // symmetrically; of() reopen()s the backing on the next execution.
+                partitionMap.close();
             }
             clearState();
         }
@@ -445,12 +463,16 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(columnIndex);
+            // Output metadata is in SELECT-list order with window columns interspersed; a base
+            // column sitting after a window column has output index != base index. Resolve via the
+            // function list (a passthrough SYMBOL column is a SymbolColumn carrying the base index),
+            // matching AbstractVirtualFunctionRecordCursor. Delegating the output index to baseCursor
+            // would return the wrong symbol table.
+            return (SymbolTable) functions.getQuick(columnIndex);
         }
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
             while (true) {
                 if (pendingEmitSlotOffset != -1L) {
                     bindOutputToSlot(outputRecord, pendingEmitSlotOffset);
@@ -458,6 +480,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     return true;
                 }
                 if (!isFlushPhase) {
+                    // Check the breaker on every drained base row, not once per outer call: a large
+                    // ingest drain (many base rows before a row becomes emittable) would otherwise
+                    // delay cancellation until the next emit.
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     if (baseCursor.hasNext()) {
                         processBaseRow(baseCursor.getRecord());
                         continue;
@@ -477,7 +503,8 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return baseCursor.newSymbolTable(columnIndex);
+            // See getSymbolTable: resolve via the function list, not the base cursor's output index.
+            return ((SymbolFunction) functions.getQuick(columnIndex)).newSymbolTable();
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -500,6 +527,14 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // baseCursor.
             this.baseRecordForEmit = baseCursor.getRecordB();
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            // Bind the per-query memory tracker on the two native structures that grow with the
+            // input (the partition-state map and the pending-slot ring) so their allocations count
+            // against the per-query limit, not just global RSS. Mirrors WindowRecordCursorFactory
+            // wiring setMemoryTracker on each cached window function's map. Both must be bound BEFORE
+            // any allocation so the per-query counter is symmetric: pendingMem's prealloc jumpTo and
+            // the map's reopen() both charge the bound tracker, and close() frees against it.
+            // partitionMap is null in non-partitioned mode.
+            final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
             if (pendingMem == null) {
                 // Page size = one partition's slice. In non-partitioned mode there is exactly one
                 // page; in partitioned mode each new partition extends pendingMem by one page via
@@ -510,6 +545,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 // does not allocate beyond what the cap permits.
                 final long pageBytes = Math.max(16L, (long) slotBytes * ringCapacity);
                 pendingMem = Vm.getCARWInstance(pageBytes, Integer.MAX_VALUE, MemoryTag.NATIVE_WINDOW_PENDING);
+                pendingMem.setMemoryTracker(memoryTracker);
                 if (partitionByRecord != null && maxPartitions > 1) {
                     final long prealloc = Math.min(PENDING_MEM_PREALLOC_PARTITIONS, maxPartitions) * pageBytes;
                     pendingMem.jumpTo(prealloc);
@@ -519,9 +555,14 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     // routed through getAddress() before then would dereference 0.
                     pendingBaseAddr = pendingMem.getPageAddress(0);
                 }
+            } else {
+                pendingMem.setMemoryTracker(memoryTracker);
             }
             if (partitionMap != null) {
-                partitionMap.clear();
+                // Bind first, then reopen so the backing allocates under the tracker. reopen() is a
+                // no-op if the map is already open (idempotent), and close() at cursor close frees it.
+                partitionMap.setMemoryTracker(memoryTracker);
+                partitionMap.reopen();
             }
             clearState();
             resetSinglePartitionStateIfNonPartitioned();
@@ -552,9 +593,9 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 // leave streaming/cached window functions in their post-close state.
                 reopenFunctions();
             }
-            if (partitionMap != null) {
-                partitionMap.clear();
-            }
+            // partitionMap is intentionally left closed here: close() freed it and the of() that
+            // always follows reopen() binds the per-query tracker before reopen()ing the backing.
+            // Touching a closed map here (clear() memsets a null base) would crash.
             clearState();
             // Match the partition-state reset done by of() and toTop(). pendingMem may be null at
             // this point (close freed it), so cannot jumpTo() here; the of() call that follows
@@ -842,8 +883,8 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         private void reopenFunctions() {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 Function f = functions.getQuick(i);
-                if (f instanceof Reopenable) {
-                    ((Reopenable) f).reopen();
+                if (f instanceof Reopenable r) {
+                    r.reopen();
                 }
             }
         }

@@ -106,7 +106,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             offset = offsetFunc.getLong(null);
             if (offset <= 0) return null;
         }
-        if (offset > 63) return null;
+        if (offset > LeadLagWindowFunctionFactoryHelper.MAX_STREAMING_LEAD_OFFSET) return null;
 
         Function defaultValue = null;
         if (args.size() == 3) {

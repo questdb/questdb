@@ -610,7 +610,7 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "(1, 'C', 4000), (2, 'C', 5000), " +
                             "(1, 'D', 6000), (2, 'D', 7000), " +
                             "(1, 'E', 8000), (2, 'E', 9000), " +
-                            "(1, 'F', 10000), (2, 'F', 11000)"
+                            "(1, 'F', 10_000), (2, 'F', 11_000)"
             );
 
             try {
@@ -1203,6 +1203,59 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             """,
                     "select x, v, lead(x, 1) over () as lx from t",
                     null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolTableResolvedByOutputIndexNotBaseIndex() throws Exception {
+        // Regression for the C1 symbol-table blocker: when a SYMBOL column is projected AFTER a
+        // window column, its output index is greater than its index in the deferred-emit cursor's
+        // base (which does not carry the window columns). The cursor must resolve getSymbolTable /
+        // newSymbolTable through its function list (a passthrough SYMBOL is a SymbolColumn carrying
+        // the correct base index), not by forwarding the output index to the base cursor.
+        //
+        // The trigger must be a DIRECT symbol-table consumer over the window output — ORDER BY on a
+        // SYMBOL uses SortKeyEncoder -> cursor.getSymbolTable(outputIndex). Wrapping the window query
+        // in a subquery inserts a SelectedRecord projection that remaps the index and hides the bug,
+        // which is why the equivalence/print tests (getSymA path) all missed it. Before the fix, the
+        // ORDER BY below forwards output index 2 to a 2-column base cursor and throws
+        // (IndexOutOfBounds under -ea; wrong-symbol/CCE otherwise).
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 'A', 0), (20, 'B', 1000), (30, 'A', 2000), (40, 'B', 3000), (50, 'A', 4000)");
+
+            // sym is output index 2 (after the window column lx@1) but is absent from the base cursor.
+            final String q = "select x, lead(x, 1) over () as lx, sym from t";
+
+            // Prove it actually streams (flag on); a silent fallback to cached would resolve symbols
+            // correctly and mask a regression of this fix.
+            assertQuery(q).noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+
+            // Direct ORDER BY sym -> SortKeyEncoder.getSymbolTable(2) on the deferred-emit cursor.
+            assertQueryNoLeakCheck(
+                    "x\tlx\tsym\n" +
+                            "10\t20\tA\n" +
+                            "30\t40\tA\n" +
+                            "50\tnull\tA\n" +
+                            "20\t30\tB\n" +
+                            "40\t50\tB\n",
+                    q + " order by sym, x",
+                    null, true, true
+            );
+
+            // Two window columns push the symbol to output index 3 (base index 1); larger shift.
+            final String q2 = "select x, lead(x, 1) over () as lx, lead(x, 2) over () as lx2, sym from t";
+            assertQuery(q2).noLeakCheck().assertsPlanContaining("DeferredEmitWindow");
+            assertQueryNoLeakCheck(
+                    "x\tlx\tlx2\tsym\n" +
+                            "10\t20\t30\tA\n" +
+                            "30\t40\t50\tA\n" +
+                            "50\tnull\tnull\tA\n" +
+                            "20\t30\t40\tB\n" +
+                            "40\t50\tnull\tB\n",
+                    q2 + " order by sym, x",
+                    null, true, true
             );
         });
     }

@@ -87,10 +87,12 @@ import java.util.stream.Stream;
  * </ul>
  * <p>
  * <h3>Mixed-function shapes (Phase 6 candidates)</h3>
- * Each Q-prefixed shape corresponds to a row of the mixed-LAG-LEAD plan probe table. All currently
- * route through {@link CachedWindowRecordCursorFactory} under both {@code STREAMING} and
- * {@code CACHED} paths because the cursor doesn't yet support mixed functions; the benchmark
- * establishes a baseline that Phase 6 would improve.
+ * Each Q-prefixed shape corresponds to a row of the mixed-LAG-LEAD plan probe table. With the flag
+ * on, the shape's routing follows the {@link #expectedFactory()} heuristic: shapes where Phase 4
+ * normalisation fires or every window function is positive-lookahead stream via
+ * {@link DeferredEmitWindowRecordCursorFactory}; the rest stay on
+ * {@link CachedWindowRecordCursorFactory} because cached's natural-scan path is already optimal.
+ * See {@link #expectedFactory()} for the authoritative per-shape mapping.
  * <ul>
  *   <li>{@code Q1_MIXED_NO_ORDER} — {@code LAG(x,1) OVER () + LEAD(x,1) OVER ()}.
  *       Cached, no sort trees.</li>
