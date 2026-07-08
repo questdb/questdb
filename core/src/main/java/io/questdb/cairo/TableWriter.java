@@ -293,6 +293,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int pathRootSize;
     private final int pathSize;
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
+    // Old parquet dirs left behind by ALTER COLUMN TYPE re-encodes, to remove after the ALTER
+    // commits. Two longs per entry: [partitionTimestamp, oldPartitionNameTxn].
+    private final LongList pendingParquetReencodes = new LongList();
     // Pending parquet->native conversions awaiting a single batched commit.
     // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
     private final LongList pendingParquetToNativeConversions = new LongList();
@@ -1278,6 +1281,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             clearTodoAndCommitMetaStructureVersion();
+            // The parquet re-encodes are now durable (committed above with the new metadata).
+            // Remove the old parquet directories they replaced.
+            cleanupParquetReencodedOldDirs();
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken).$(", column=").$safe(columnName)
                     .$(", error=").$(th).I$();
@@ -3173,6 +3179,64 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
     }
 
+    /**
+     * Re-encodes one parquet partition so its on-disk bytes carry the ALTER-ed column's new
+     * type. Called per partition from
+     * {@link io.questdb.griffin.ConvertOperatorImpl} during ALTER COLUMN TYPE, before the new
+     * type reaches metadata - hence the explicit {@code overrideColumnIndex} / {@code newType}.
+     * It writes a fresh txn-named directory and updates in-memory {@code txWriter} state, but
+     * does not commit: the surrounding ALTER's structure-version commit persists it atomically
+     * with the new {@code _meta}, and {@link #cleanupParquetReencodedOldDirs()} removes the
+     * old directories afterwards. A no-op when the column is not stored in this
+     * partition's parquet file (its rows are all NULL there regardless of type).
+     */
+    public void rewriteParquetPartitionWithConversions(long partitionTimestamp, int overrideColumnIndex, int newType) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0 || !txWriter.isPartitionParquet(partitionIndex)) {
+            return;
+        }
+
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long partitionRowCount = getPartitionSize(partitionIndex);
+
+        final O3Basket o3Basket = o3BasketPool.next();
+        o3Basket.checkCapacity(configuration, metadata.getColumnCount(), metadata.getColumnCount());
+        final long newParquetSize = O3PartitionJob.rewriteParquetPartition(
+                path.trimTo(pathSize),
+                timestampType,
+                partitionBy,
+                partitionTimestamp,
+                partitionNameTxn,
+                getTxn(),
+                this,
+                o3Basket,
+                overrideColumnIndex,
+                newType
+        );
+        if (newParquetSize < 0) {
+            // Column not stored in this partition's parquet - nothing was re-encoded.
+            return;
+        }
+
+        // Publish in-memory exactly as the O3 parquet-rewrite sink consumer does
+        // (o3ConsumePartitionUpdateSink): bump the partition name txn to the new directory,
+        // record the new file size, zero all column tops (every column is materialised from
+        // row 0 now), and bump the partition table version so readers fully reconcile. The
+        // commit is deferred to the ALTER's structure-version barrier so it lands atomically
+        // with the new _meta; cleanupParquetReencodedOldDirs() removes the old directories.
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
+        txWriter.setPartitionParquetFormat(partitionTimestamp, newParquetSize);
+        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, true);
+        txWriter.bumpPartitionTableVersion();
+
+        pendingParquetReencodes.add(partitionTimestamp);
+        pendingParquetReencodes.add(partitionNameTxn);
+    }
+
     @Override
     public void rollback() {
         checkDistressed();
@@ -4792,6 +4856,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // transaction log is either not required or pending
         activeColumns = columns;
         activeNullSetters = nullSetters;
+    }
+
+    // Best-effort removal of the old parquet directories that ALTER COLUMN TYPE re-encodes
+    // replaced. Runs after the ALTER's structure-version commit has made the new txn
+    // directories durable, so a failure here does not roll back the (already committed) type
+    // change - it only leaves an old directory behind, which the next purge reclaims.
+    private void cleanupParquetReencodedOldDirs() {
+        if (pendingParquetReencodes.size() == 0) {
+            return;
+        }
+        try {
+            for (int i = 0, n = pendingParquetReencodes.size(); i < n; i += 2) {
+                final long pts = pendingParquetReencodes.getQuick(i);
+                final long oldNameTxn = pendingParquetReencodes.getQuick(i + 1);
+                safeDeletePartitionDir(pts, oldNameTxn);
+            }
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        } finally {
+            pendingParquetReencodes.clear();
+        }
     }
 
     private void clearTodoAndCommitMeta() {

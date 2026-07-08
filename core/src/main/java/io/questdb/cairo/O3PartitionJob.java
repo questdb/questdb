@@ -576,7 +576,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                 metadataPosition,
                                                 ctx.getActiveToDecodeIdx(columnCount),
                                                 ctx.getActiveColIndices(columnCount),
-                                                ctx
+                                                ctx,
+                                                -1,
+                                                ColumnType.UNDEFINED
                                         );
                                     } else if (hasSchemaChange) {
                                         copyRowGroupWithNullColumns(
@@ -3755,6 +3757,292 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
+     * Re-encodes one committed parquet partition into a fresh {@code txn}-named directory,
+     * applying the current column types so the on-disk parquet bytes match the new schema
+     * after an {@code ALTER COLUMN TYPE}.
+     * <p>
+     * The re-encode runs before the new column type reaches table metadata, so the caller
+     * passes {@code overrideColumnIndex}/{@code overrideColumnType} to substitute the new
+     * type for the column being converted; every other column keeps its metadata type.
+     * Structurally this is the {@code COPY_ROW_GROUP_SLICE} rewrite arm of
+     * {@link #processParquetPartition} run over every row group with no O3 merge. It runs
+     * synchronously on the writer thread and borrows the carrier-local
+     * {@link O3ParquetMergeContext}; that is safe because the writer holds the table lock,
+     * so no concurrent O3 job shares this thread's context.
+     * <p>
+     * Returns the new parquet data-file size, or {@code -1} when the override column is not
+     * stored in this partition's parquet file (it was added after the partition became
+     * parquet, so its rows are all NULL and there is nothing to re-encode). The caller
+     * commits the new {@code txn} directory into {@code txWriter}; on failure this method
+     * removes the half-written directory and rethrows.
+     */
+    static long rewriteParquetPartition(
+            Path pathToTable,
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long txn,
+            TableWriter tableWriter,
+            O3Basket o3Basket,
+            int overrideColumnIndex,
+            int overrideColumnType
+    ) {
+        final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
+        Path path = Path.getThreadLocal(pathToTable);
+        setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+
+        final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
+        final long parquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
+        final long newPartitionSize = tableWriter.getPartitionSize(partitionIndex);
+        final CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
+        final FilesFacade ff = tableWriter.getFilesFacade();
+        final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
+        ctx.clear();
+        final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder();
+        final RowGroupBuffers rowGroupBuffers = ctx.getRowGroupBuffers();
+        final DirectIntList parquetColumns = ctx.getParquetColumns();
+        final ParquetMetaFileReader parquetMetaReader = ctx.getParquetMetaReader();
+        final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
+        long parquetSize = parquetFileSize;
+        long newParquetSize = -1;
+        boolean newDirCreated = false;
+        boolean updaterBound = false;
+        try {
+            int parquetNameLen = path.size();
+            int partitionDirLen = parquetNameLen - TableUtils.PARQUET_PARTITION_NAME.length() - 1;
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+
+            ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (parquetMetaReader.getAddr() == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0)
+                        .put("_pm tail does not match current parquet file size [path=").put(path)
+                        .put(", parquetFileSize=").put(parquetFileSize).put(']');
+            }
+            parquetSize = parquetMetaReader.getParquetFileSize();
+            path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+
+            long parquetAddr = 0;
+            try {
+                parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                partitionDecoder.of(
+                        parquetMetaReader,
+                        parquetAddr,
+                        parquetSize,
+                        MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER
+                );
+                final ParquetMetaFileReader parquetMeta = partitionDecoder.metadata();
+                final int parquetColumnCount = parquetMeta.getColumnCount();
+                final int rowGroupCount = parquetMeta.getRowGroupCount();
+                assert rowGroupCount > 0;
+
+                final int columnCount = tableWriterMetadata.getColumnCount();
+                final IntIntHashMap parquetColIdToIdx = ctx.getParquetColIdToIdx();
+                for (int i = 0; i < parquetColumnCount; i++) {
+                    parquetColIdToIdx.put(partitionDecoder.metadata().getColumnId(i), i);
+                }
+                final IntList tableToParquetIdx = ctx.getTableToParquetIdx(columnCount);
+                for (int i = 0; i < columnCount; i++) {
+                    if (tableWriterMetadata.getColumnType(i) < 0) {
+                        tableToParquetIdx.setQuick(i, -1);
+                        continue;
+                    }
+                    final int origWriterIndex = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
+                    tableToParquetIdx.setQuick(i, parquetColIdToIdx.get(origWriterIndex));
+                }
+
+                // Nothing stored for the converted column here (added after the partition
+                // became parquet): its rows are all NULL regardless of type, so skip.
+                if (tableToParquetIdx.getQuick(overrideColumnIndex) < 0) {
+                    return -1;
+                }
+
+                final int timestampIndex = tableWriterMetadata.getTimestampIndex();
+                assert ColumnType.isTimestamp(tableWriterMetadata.getColumnType(timestampIndex));
+
+                final int compressionCodec = cairoConfiguration.getPartitionEncoderParquetCompressionCodec();
+                final int compressionLevel = cairoConfiguration.getPartitionEncoderParquetCompressionLevel();
+                final int rowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
+                assert rowGroupSize >= 4;
+                final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
+                final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
+                final boolean rawArrayEncoding = cairoConfiguration.isPartitionEncoderParquetRawArrayEncoding();
+                final double bloomFilterFpp = cairoConfiguration.getPartitionEncoderParquetBloomFilterFpp();
+                final double minCompressionRatio = cairoConfiguration.getPartitionEncoderParquetMinCompressionRatio();
+
+                // Two distinct OS fds are required: one RO on the committed source file, one
+                // RW on a fresh empty file in the new txn directory. writeFileSize == 0 makes
+                // Rust treat the write side as a fresh sequential append (is_rewrite).
+                final int opts = cairoConfiguration.getWriterFileOpenOpts();
+                int readerFdOs = -1, writerFdOs = -1, parquetMetaFdOs = -1;
+                long readerFd = -1, writerFd = -1, parquetMetaFd = -1;
+                try {
+                    readerFd = TableUtils.openRONoCache(ff, path.$(), LOG);
+                    readerFdOs = Files.detach(readerFd);
+                    readerFd = -1;
+
+                    Path newPath = Path.getThreadLocal2(pathToTable);
+                    setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                    ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
+                    newDirCreated = true;
+                    newPath.concat(PARQUET_PARTITION_NAME).$();
+                    writerFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
+                    writerFdOs = Files.detach(writerFd);
+                    writerFd = -1;
+
+                    newPath.parent().concat(PARQUET_METADATA_FILE_NAME).$();
+                    parquetMetaFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
+                    parquetMetaFdOs = Files.detach(parquetMetaFd);
+                    parquetMetaFd = -1;
+                } catch (Throwable e) {
+                    O3Utils.close(ff, readerFd);
+                    if (readerFdOs != -1) {
+                        Files.closeDetached(readerFdOs);
+                    }
+                    O3Utils.close(ff, writerFd);
+                    if (writerFdOs != -1) {
+                        Files.closeDetached(writerFdOs);
+                    }
+                    O3Utils.close(ff, parquetMetaFd);
+                    if (parquetMetaFdOs != -1) {
+                        Files.closeDetached(parquetMetaFdOs);
+                    }
+                    throw e;
+                }
+
+                // partitionUpdater.of() transfers fd ownership to Rust; close() releases them.
+                partitionUpdater.of(
+                        path.$(),
+                        readerFdOs,
+                        parquetSize,
+                        writerFdOs,
+                        0, // writeFileSize == 0 -> fresh rewrite
+                        timestampIndex,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rawArrayEncoding,
+                        rowGroupSize,
+                        dataPageSize,
+                        bloomFilterFpp,
+                        minCompressionRatio,
+                        parquetMetaFdOs,
+                        0, // parse anchor (fresh file)
+                        parquetMetaReader.getFileSize(),
+                        parquetFileSize
+                );
+                updaterBound = true;
+
+                // Stamp the new footer with the target schema (the converted column carries
+                // overrideColumnType, which is not yet in metadata).
+                final String tableName = tableWriter.getTableToken().getTableName();
+                final PartitionDescriptor schemaDesc = ctx.getChunkDescriptor();
+                schemaDesc.of(tableName, 0, timestampIndex);
+                for (int i = 0; i < columnCount; i++) {
+                    int colType = i == overrideColumnIndex ? overrideColumnType : tableWriterMetadata.getColumnType(i);
+                    if (colType < 0) {
+                        continue;
+                    }
+                    if (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag()) {
+                        colType |= PARQUET_SYMBOL_NOT_NULL_HINT;
+                    }
+                    final int colId = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
+                    final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(i).getParquetEncodingConfig();
+                    schemaDesc.addColumn(tableWriterMetadata.getColumnName(i), colType, colId, 0, parquetEncodingConfig);
+                }
+                partitionUpdater.setTargetSchema(schemaDesc);
+                schemaDesc.clear();
+
+                LOG.info().$("parquet partition re-encode [table=").$(tableWriter.getTableToken())
+                        .$(", partition=").$ts(partitionTimestamp)
+                        .$(", rowGroups=").$(rowGroupCount)
+                        .$(", fileSize=").$size(parquetSize)
+                        .I$();
+
+                final PartitionDescriptor chunkDescriptor = ctx.getChunkDescriptor();
+                for (int rg = 0; rg < rowGroupCount; rg++) {
+                    rewriteParquetRowGroupWithConversions(
+                            partitionDecoder,
+                            chunkDescriptor,
+                            partitionUpdater,
+                            rowGroupBuffers,
+                            parquetColumns,
+                            rg,
+                            tableWriter,
+                            tableWriterMetadata,
+                            tableToParquetIdx,
+                            timestampIndex,
+                            rg,
+                            ctx.getActiveToDecodeIdx(columnCount),
+                            ctx.getActiveColIndices(columnCount),
+                            ctx,
+                            overrideColumnIndex,
+                            overrideColumnType
+                    );
+                }
+
+                newParquetSize = partitionUpdater.updateFileMetadata();
+                final long newParquetMetaFileSize = partitionUpdater.getResultParquetMetaFileSize();
+
+                // Rebuild .k/.pk symbol indexes against the freshly written file.
+                path.of(pathToTable);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
+                updateParquetIndexes(
+                        partitionBy,
+                        partitionTimestamp,
+                        tableWriter,
+                        txn,
+                        o3Basket,
+                        newPartitionSize,
+                        newParquetSize,
+                        newParquetMetaFileSize,
+                        pathToTable,
+                        path,
+                        ff,
+                        partitionDecoder,
+                        tableWriterMetadata,
+                        parquetColumns,
+                        rowGroupBuffers,
+                        true
+                );
+
+                // Publish the new _pm last (header patch + fsync), after the index build.
+                partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
+            } finally {
+                if (parquetAddr != 0) {
+                    ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
+            }
+        } catch (Throwable th) {
+            LOG.error().$("parquet partition re-encode error [table=").$(tableWriter.getTableToken())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", e=").$(th)
+                    .I$();
+            // Release the Rust-owned fds before removing the half-written directory so the
+            // rmdir is not blocked by open handles (Windows).
+            if (updaterBound) {
+                partitionUpdater.close();
+            }
+            if (newDirCreated) {
+                Path newPath = Path.getThreadLocal2(pathToTable);
+                setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                if (!ff.rmdir(newPath.slash())) {
+                    LOG.error().$("could not remove new partition directory after failed re-encode [path=").$(newPath).I$();
+                }
+            }
+            throw th;
+        } finally {
+            ctx.releaseResources();
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+        return newParquetSize;
+    }
+
+    /**
      * Decodes a parquet row group, applies type conversions for columns that
      * have been ALTER-ed, and writes the result as a new row group via
      * addRowGroup(). This is used instead of copyRowGroupWithNullColumns()
@@ -3776,7 +4064,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int metadataPosition,
             IntList activeToDecodeIdx,
             IntList activeColIndices,
-            O3ParquetMergeContext ctx
+            O3ParquetMergeContext ctx,
+            int overrideColumnIndex,
+            int overrideColumnType
     ) {
         // Phase 1: Build the decode list with correct decode types for each column.
         parquetColumns.clear();
@@ -3786,7 +4076,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         int activeColCount = 0;
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int columnType = tableWriterMetadata.getColumnType(columnIndex);
+            // The ALTER COLUMN TYPE re-encode runs before the new column type reaches metadata,
+            // so it substitutes overrideColumnType for the column being converted. O3 callers
+            // pass overrideColumnIndex = -1 and read the type straight from metadata.
+            int columnType = columnIndex == overrideColumnIndex
+                    ? overrideColumnType
+                    : tableWriterMetadata.getColumnType(columnIndex);
             if (columnType < 0) {
                 continue;
             }
@@ -3824,7 +4119,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         try {
             for (int ai = 0; ai < activeColCount; ai++) {
                 int columnIndex = activeColIndices.getQuick(ai);
-                int columnType = tableWriterMetadata.getColumnType(columnIndex);
+                int columnType = columnIndex == overrideColumnIndex
+                        ? overrideColumnType
+                        : tableWriterMetadata.getColumnType(columnIndex);
                 int decodeIdx = activeToDecodeIdx.getQuick(ai);
                 final String columnName = tableWriterMetadata.getColumnName(columnIndex);
                 final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();

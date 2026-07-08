@@ -279,22 +279,41 @@ public class ConvertOperatorImpl implements Closeable {
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
                 if (asyncProcessingErrorCount.get() == 0) {
                     if (tableWriter.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
-                        // Parquet partitions are not converted here (the parquet decoder handles
-                        // on-the-fly type conversion via the replacingIndex chain). However, we
-                        // still propagate the column top from existingColIndex to columnIndex so
-                        // that if the parquet is later converted to native (e.g. by a chained
-                        // ALTER TYPE pre-pass), the native reader finds the data at the correct
-                        // row offsets.
                         final long parquetPts = tableWriter.getPartitionTimestamp(partitionIndex);
-                        final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, existingColIndex);
-                        if (parquetColTop != tableWriter.getColumnTop(parquetPts, columnIndex, -1)) {
-                            long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
-                                    ? parquetPts
-                                    : TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                            columnVersionWriter.upsertColumnTop(
-                                    partTs, columnIndex,
-                                    parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex)
-                            );
+                        try {
+                            // Re-encode the parquet partition so its on-disk bytes carry the new
+                            // column type. This runs before the new type reaches metadata, so the
+                            // new type is passed explicitly. It is a no-op when the column is not
+                            // stored in this partition's parquet (added after the partition became
+                            // parquet, so its rows are all NULL regardless of type). The commit is
+                            // deferred to the ALTER's structure-version barrier, so it lands
+                            // atomically with the new metadata, like the native conversions above.
+                            tableWriter.rewriteParquetPartitionWithConversions(parquetPts, existingColIndex, newType);
+
+                            // Propagate the column top from existingColIndex to columnIndex. A
+                            // re-encoded partition has every column materialised from row 0 (top 0);
+                            // a partition whose column was not re-encoded keeps its column top, so the
+                            // new column index still describes the correct row offsets - and if that
+                            // partition is later converted to native the reader finds the data there.
+                            final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, existingColIndex);
+                            if (parquetColTop != tableWriter.getColumnTop(parquetPts, columnIndex, -1)) {
+                                long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
+                                        ? parquetPts
+                                        : TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                                columnVersionWriter.upsertColumnTop(
+                                        partTs, columnIndex,
+                                        parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex)
+                                );
+                            }
+                        } catch (Throwable th) {
+                            LOG.error().$("error re-encoding parquet partition [at=").$(tableWriter.getTableToken())
+                                    .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                                    .$(", to=").$(ColumnType.nameOf(newType))
+                                    .$(", error=").$(th).I$();
+                            asyncProcessingErrorCount.incrementAndGet();
+                            // Drain in-flight async native conversions so we exit at a known state.
+                            consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, false);
+                            throw th;
                         }
                         continue;
                     }

@@ -26,16 +26,24 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Tests lazy column type conversion on parquet partitions.
@@ -1861,22 +1869,19 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN val TYPE LONG");
             drainWalQueue();
 
-            // Before O3: parquet still stores the column as INT, the lazy decoder
-            // converts to LONG on the fly.
+            // The ALTER re-encodes the parquet partition in place, so the file already
+            // stores the column as LONG.
             try (TableWriter writer = getWriter("pt")) {
                 Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
                 int colIdx = writer.getMetadata().getColumnIndex("val");
-                Assert.assertEquals(ColumnType.INT, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
+                Assert.assertEquals(ColumnType.LONG, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
             }
 
             // O3 row lands at 00:00:02, between the existing 00:00:01 and 00:00:03.
             execute("INSERT INTO pt VALUES (99, '2024-01-01T00:00:02.000000Z')");
             drainWalQueue();
 
-            // After the merge: partition is still parquet, but the parquet file
-            // has been rewritten with the new LONG type for val. hasSchemaChange
-            // in O3PartitionJob forces this rewrite when the partition has
-            // type-converted columns and new rows land on it.
+            // The merge into an already-LONG parquet partition keeps it parquet and LONG.
             try (TableWriter writer = getWriter("pt")) {
                 Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
                 int colIdx = writer.getMetadata().getColumnIndex("val");
@@ -1892,6 +1897,302 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                             null\t2024-01-01T00:00:05.000000Z
                             """);
         });
+    }
+
+    @Test
+    public void testAlterChainedConversionStaysParquet() throws Exception {
+        // INT -> STRING -> INT. Each ALTER re-encodes the parquet in place, keeping the stored
+        // type in sync with metadata, so the chained conversion never falls back to the
+        // parquet->native pre-pass.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO pt VALUES
+                        (10, '2024-01-01T00:00:01.000000Z'),
+                        (20, '2024-01-01T00:00:02.000000Z'),
+                        (NULL, '2024-01-01T00:00:03.000000Z')""");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE STRING");
+                drainWalQueue();
+                assertParquetColumnTag("pt", "v", ColumnType.STRING);
+
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE INT");
+                drainWalQueue();
+                assertParquetColumnTag("pt", "v", ColumnType.INT);
+
+                assertQuery("SELECT v, ts FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                        """
+                                v\tts
+                                10\t2024-01-01T00:00:01.000000Z
+                                20\t2024-01-01T00:00:02.000000Z
+                                null\t2024-01-01T00:00:03.000000Z
+                                """);
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterParquetFooterFixedToFixed() throws Exception {
+        assertAlterReencodesParquet("INT", "LONG", ColumnType.LONG,
+                "(10, '2024-01-01T00:00:01.000000Z'), (20, '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");
+    }
+
+    @Test
+    public void testAlterParquetFooterFixedToString() throws Exception {
+        assertAlterReencodesParquet("INT", "STRING", ColumnType.STRING,
+                "(10, '2024-01-01T00:00:01.000000Z'), (20, '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");
+    }
+
+    @Test
+    public void testAlterParquetFooterFixedToVarchar() throws Exception {
+        assertAlterReencodesParquet("INT", "VARCHAR", ColumnType.VARCHAR,
+                "(10, '2024-01-01T00:00:01.000000Z'), (20, '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");
+    }
+
+    @Test
+    public void testAlterParquetFooterStringToVarchar() throws Exception {
+        assertAlterReencodesParquet("STRING", "VARCHAR", ColumnType.VARCHAR,
+                "('alpha', '2024-01-01T00:00:01.000000Z'), ('beta', '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");
+    }
+
+    @Test
+    public void testAlterParquetFooterSymbolToFixed() throws Exception {
+        assertAlterReencodesParquet("SYMBOL", "INT", ColumnType.INT,
+                "('10', '2024-01-01T00:00:01.000000Z'), ('20', '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");
+    }
+
+    @Test
+    public void testAlterParquetFooterSymbolToVarchar() throws Exception {
+        assertAlterReencodesParquet("SYMBOL", "VARCHAR", ColumnType.VARCHAR,
+                "('x', '2024-01-01T00:00:01.000000Z'), ('yy', '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");
+    }
+
+    @Test
+    public void testAlterParquetFooterVarcharToFixed() throws Exception {
+        assertAlterReencodesParquet("VARCHAR", "LONG", ColumnType.LONG,
+                "('10', '2024-01-01T00:00:01.000000Z'), ('20', '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");
+    }
+
+    @Test
+    public void testAlterParquetReencodeFailureRollsBackAndRecovers() throws Exception {
+        // Fail the re-encode's writer-file open (after the source parquet + _pm are mmapped
+        // and the new txn directory is created). The ALTER must roll back cleanly -
+        // no native-memory or fd leak (assertMemoryLeak), the committed parquet left intact at
+        // the old type, the half-written directory removed - and recover once the fault clears.
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final AtomicInteger writerOpenFailures = new AtomicInteger(0);
+        final FilesFacade dodgyFacade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet") && writerOpenFailures.incrementAndGet() == 1) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(dodgyFacade, () -> {
+            execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pt VALUES (10, '2024-01-01T00:00:01.000000Z'), (20, '2024-01-01T00:00:02.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("pt");
+
+            armed.set(true);
+            execute("ALTER TABLE pt ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+            armed.set(false);
+
+            // The re-encode failed; the table suspended and the committed parquet is still INT.
+            Assert.assertEquals(1, writerOpenFailures.get());
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt));
+            assertParquetColumnTag("pt", "v", ColumnType.INT);
+
+            // With the fault gone, the retried ALTER re-encodes the partition to LONG.
+            execute("ALTER TABLE pt RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+            assertParquetColumnTag("pt", "v", ColumnType.LONG);
+
+            assertQuery("SELECT v, ts FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            v\tts
+                            10\t2024-01-01T00:00:01.000000Z
+                            20\t2024-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterReencodesAllParquetPartitions() throws Exception {
+        // ALTER over a table with several parquet partitions re-encodes every one of them.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO pt VALUES
+                        (1, '2024-01-01T00:00:00.000000Z'),
+                        (2, '2024-01-02T00:00:00.000000Z'),
+                        (3, '2024-01-03T00:00:00.000000Z'),
+                        (4, '2024-01-04T00:00:00.000000Z')""");
+                drainWalQueue();
+                // Convert the first three; leave the active (last) partition native.
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02', '2024-01-03'");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE LONG");
+                drainWalQueue();
+
+                try (TableWriter writer = getWriter("pt")) {
+                    Assert.assertEquals(4, writer.getPartitionCount());
+                    int colIdx = writer.getMetadata().getColumnIndex("v");
+                    for (int i = 0; i < 3; i++) {
+                        Assert.assertEquals("partition " + i, PartitionFormat.PARQUET, writer.getPartitionFormat(i));
+                        Assert.assertEquals("partition " + i, ColumnType.LONG, ColumnType.tagOf(writer.getParquetColumnType(i, colIdx)));
+                    }
+                    // The native active partition is converted through the normal native path.
+                    Assert.assertEquals(PartitionFormat.NATIVE, writer.getPartitionFormat(3));
+                }
+
+                assertQuery("SELECT v, ts FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                        """
+                                v\tts
+                                1\t2024-01-01T00:00:00.000000Z
+                                2\t2024-01-02T00:00:00.000000Z
+                                3\t2024-01-03T00:00:00.000000Z
+                                4\t2024-01-04T00:00:00.000000Z
+                                """);
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterSkipsParquetPartitionWhereColumnAbsent() throws Exception {
+        // A column added after a partition became parquet is not stored in that partition's
+        // parquet file, so the re-encode skips it (its rows are all NULL regardless of type).
+        // A later partition that does store the column is re-encoded.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO pt VALUES (1, '2024-01-01T00:00:00.000000Z')");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                // Add w after 2024-01-01 is already parquet: its parquet file has no w column.
+                execute("ALTER TABLE pt ADD COLUMN w INT");
+                execute("INSERT INTO pt VALUES (2, '2024-01-02T00:00:00.000000Z', 100)");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt ALTER COLUMN w TYPE LONG");
+                drainWalQueue();
+
+                try (TableWriter writer = getWriter("pt")) {
+                    int wIdx = writer.getMetadata().getColumnIndex("w");
+                    // 2024-01-01: w absent from parquet -> not re-encoded, still undefined there.
+                    Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
+                    Assert.assertTrue(ColumnType.isUndefined(writer.getParquetColumnType(0, wIdx)));
+                    // 2024-01-02: w present -> re-encoded to LONG.
+                    Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(1));
+                    Assert.assertEquals(ColumnType.LONG, ColumnType.tagOf(writer.getParquetColumnType(1, wIdx)));
+                }
+
+                assertQuery("SELECT v, w, ts FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                        """
+                                v\tw\tts
+                                1\tnull\t2024-01-01T00:00:00.000000Z
+                                2\t100\t2024-01-02T00:00:00.000000Z
+                                """);
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTargetSymbolConvertsParquetToNative() throws Exception {
+        // A SYMBOL target cannot be built from parquet, so the pre-pass converts the partition
+        // to native first; the parquet re-encode does not apply here.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO pt VALUES
+                        (10, '2024-01-01T00:00:01.000000Z'),
+                        (20, '2024-01-01T00:00:02.000000Z'),
+                        (NULL, '2024-01-01T00:00:03.000000Z')""");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE SYMBOL");
+                drainWalQueue();
+
+                try (TableWriter writer = getWriter("pt")) {
+                    Assert.assertEquals(PartitionFormat.NATIVE, writer.getPartitionFormat(0));
+                }
+
+                assertQuery("SELECT v, ts FROM pt ORDER BY ts").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                        """
+                                v\tts
+                                10\t2024-01-01T00:00:01.000000Z
+                                20\t2024-01-01T00:00:02.000000Z
+                                \t2024-01-01T00:00:03.000000Z
+                                """);
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    // Creates a native reference table nt and a parquet table pt with identical data, converts
+    // pt's single partition to parquet, then ALTERs column v on both. Asserts pt's partition
+    // stays PARQUET with the footer physically carrying expectedDstTag right after the ALTER
+    // (before any O3), and that pt reads back exactly the native conversion result.
+    private void assertAlterReencodesParquet(String srcColType, String dstColType, int expectedDstTag, String insertValues) throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (v " + srcColType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (v " + srcColType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO nt VALUES " + insertValues);
+                execute("INSERT INTO pt VALUES " + insertValues);
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                execute("ALTER TABLE nt ALTER COLUMN v TYPE " + dstColType);
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE " + dstColType);
+                drainWalQueue();
+
+                // pt's partition stays parquet and its footer physically carries the new type.
+                assertParquetColumnTag("pt", "v", expectedDstTag);
+
+                // Values read straight from the re-encoded parquet match the native conversion.
+                assertSqlCursors("SELECT v, ts FROM nt ORDER BY ts", "SELECT v, ts FROM pt ORDER BY ts");
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
+    }
+
+    private void assertParquetColumnTag(String tableName, String columnName, int expectedTag) {
+        try (TableWriter writer = getWriter(tableName)) {
+            Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
+            int colIdx = writer.getMetadata().getColumnIndex(columnName);
+            Assert.assertEquals(expectedTag, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
+        }
     }
 
     /**
@@ -1975,32 +2276,15 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins the contract that the pool's {@code sourceColumnTypes}
-     * {@link io.questdb.std.IntList} must not be aliased between Record A and Record B.
-     * The package-private {@code init(...)} overload in
-     * {@link io.questdb.cairo.sql.PageFrameMemoryRecord} (around line 1499) takes the
-     * list by reference; navigating Record B via {@code recordAt} to a partition whose
-     * parquet schema does NOT need conversion rebuilds {@code sourceColumnTypes} in
-     * place (see {@code PageFrameMemoryPool.openParquet} at the
-     * {@code setAll(readParquetColumnCount, -1)} call). If Record A keeps the same
-     * reference, its view of the conversion mapping is clobbered while it is still
-     * anchored at a partition that needs INT-&gt;STRING lazy conversion, and reads
-     * return raw INT bytes interpreted as native STRING storage -- garbage.
+     * Record A and Record B must keep independent state when navigating between parquet
+     * partitions. Both partitions below store the column as STRING - 2024-01-01 is re-encoded
+     * in place by the ALTER, 2024-01-02 is written natively as STRING - so neither needs
+     * read-time conversion. The test interleaves Record A iteration with a Record B
+     * {@code recordAt(...)} on the other frame and asserts each record still reads its own row.
      * <p>
-     * Setup:
-     * <ul>
-     *   <li>Partition 2024-01-01: inserted while column {@code val} is INT, converted to
-     *       parquet (parquet physical type = INT32). After the ALTER, the table schema
-     *       says STRING, so this partition needs lazy INT-&gt;STRING conversion.</li>
-     *   <li>Partition 2024-01-02: inserted AFTER the ALTER, so {@code val} is already
-     *       stored natively as STRING; then converted to parquet (parquet stores STRING).
-     *       This partition does NOT need any conversion -- {@code sourceColumnTypes[val]==-1}.</li>
-     * </ul>
-     * Trigger: iterate the cursor to land Record A on partition 2024-01-01, then call
-     * {@code recordAt(recordB, rowIdInPartition_2024_01_02)} to navigate Record B to the
-     * other partition. Re-reading Record A's {@code getStrA(val)} must still return the
-     * INT value as a string; a shared-reference implementation would return garbage
-     * or throw.
+     * Re-encoding 2024-01-01 at ALTER time means neither frame needs a read-time
+     * {@code sourceColumnTypes} conversion, so this no longer sets up the mixed conversion
+     * state its name suggests - it now covers only cross-frame Record A/B independence.
      */
     @Test
     public void testRecordABMixedConversionStatesAcrossPartitions() throws Exception {
@@ -2008,14 +2292,14 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             try {
                 execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-                // Partition 2024-01-01: val stored as INT in parquet (conversion needed after ALTER).
+                // Partition 2024-01-01: val stored as INT in parquet.
                 execute("INSERT INTO pt VALUES (42, '2024-01-01T00:00:00.000000Z')");
                 drainWalQueue();
                 execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
                 drainWalQueue();
 
-                // Schema change: val is now STRING. Partition 2024-01-01 still stores INT
-                // in its parquet file; reads must lazy-convert INT->STRING.
+                // Schema change: val becomes STRING. The ALTER re-encodes partition
+                // 2024-01-01's parquet to STRING in place.
                 execute("ALTER TABLE pt ALTER COLUMN val TYPE STRING");
                 drainWalQueue();
 
@@ -2031,10 +2315,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                         "val\tts\n42\t2024-01-01T00:00:00.000000Z\nhello-from-p2\t2024-01-02T00:00:00.000000Z\n");
 
                 // Now manually drive the cursor so we can interleave Record A iteration with
-                // a Record B recordAt() on a different frame. This exercises the case where
-                // the pool's sourceColumnTypes is rebuilt for a non-converting partition
-                // while Record A is still pointing at the converting one; each record must
-                // retain its own conversion mapping.
+                // a Record B recordAt() on a different frame. Each record must retain its own
+                // per-frame state across the two parquet partitions.
                 try (
                         RecordCursorFactory factory = select("SELECT val FROM pt ORDER BY ts");
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -3810,10 +4092,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN k TYPE " + dstKeyType);
             drainWalQueue();
 
-            // The crossing ALTER on a dedup key no longer eagerly materialises the parquet
-            // partition to native: ConvertOperatorImpl has no dedup-key pre-pass. The partition
-            // stays lazy parquet (still storing the source-typed key), and the O3 merge below
-            // converts it on the fly. Confirm it really stayed parquet.
+            // The crossing ALTER on a dedup key re-encodes the parquet partition to the new key
+            // type in place (still parquet format, not converted to native - there is no
+            // dedup-key pre-pass). The O3 merge below then dedups against the already-converted
+            // key. Confirm it stayed parquet.
             try (TableWriter writer = getWriter("pt")) {
                 Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
             }
