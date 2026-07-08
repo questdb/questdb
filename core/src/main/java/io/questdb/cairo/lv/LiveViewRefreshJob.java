@@ -598,7 +598,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     projectedMeta,
                     spec.partitionColumnNames,
                     fn,
-                    anchoredFunctions
+                    anchoredFunctions,
+                    isAnchorMonotoneWithBaseOrder(anchorNode, projectedMeta)
             );
             // Commit the anchor Function and window together, only after the full
             // machinery builds. A failure before this point must not leave a
@@ -632,6 +633,81 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             base = base.getBaseFactory();
         }
         return base.getMetadata();
+    }
+
+    /**
+     * Determines whether the anchor expression is provably monotone with the base
+     * scan order, which is the enabling condition for frontier-gated anchor-map
+     * compaction (see {@link LiveViewWindow}). During incremental refresh the base
+     * page-frame cursor emits rows in ascending designated-timestamp order, so an
+     * anchor that reads only that column advances monotonically with the stream and
+     * the sweep may safely evict partitions two buckets behind. An anchor that reads
+     * any other column - a non-designated TIMESTAMP is the dangerous case - can dip
+     * back into an already-evicted bucket, resetting the accumulator and silently
+     * undercounting; such anchors must keep every partition.
+     * <p>
+     * The check is deliberately conservative: it requires the projected metadata to
+     * have a designated timestamp, every column the anchor references to be that
+     * timestamp, and at least one such reference to exist. A false negative only
+     * forgoes compaction (more resident memory, still correct); a false positive
+     * would drop live state, so anything it cannot prove monotone opts out. The
+     * runtime latch in {@link LiveViewWindow} remains a backstop for a
+     * monotone-looking anchor whose values decrease at runtime.
+     */
+    private static boolean isAnchorMonotoneWithBaseOrder(ExpressionNode anchorNode, RecordMetadata projectedMeta) {
+        final int tsIndex = projectedMeta.getTimestampIndex();
+        if (tsIndex < 0) {
+            return false;
+        }
+        final int[] tsRefCount = new int[]{0};
+        if (!anchorReferencesOnlyDesignatedTimestamp(anchorNode, projectedMeta, tsIndex, tsRefCount)) {
+            return false;
+        }
+        return tsRefCount[0] > 0;
+    }
+
+    /**
+     * Recursive worker for {@link #isAnchorMonotoneWithBaseOrder}. Walks the anchor
+     * expression tree and returns {@code false} as soon as it finds a column
+     * reference that is not the designated timestamp (or a literal it cannot resolve
+     * to a base column). Column references are {@link ExpressionNode#LITERAL} nodes;
+     * function names are {@code FUNCTION}, and stride/offset arguments are
+     * {@code CONSTANT}, so neither is mistaken for a column. Accumulates the count of
+     * designated-timestamp references into {@code tsRefCount}.
+     */
+    private static boolean anchorReferencesOnlyDesignatedTimestamp(
+            ExpressionNode node,
+            RecordMetadata projectedMeta,
+            int tsIndex,
+            int[] tsRefCount
+    ) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            if (node.token == null) {
+                return false;
+            }
+            final int idx = projectedMeta.getColumnIndexQuiet(node.token);
+            if (idx != tsIndex) {
+                // A foreign base column, or a literal that does not resolve to a
+                // base column at all: cannot prove monotonicity.
+                return false;
+            }
+            tsRefCount[0]++;
+            return true;
+        }
+        // paramCount <= 2 stores children in lhs/rhs; > 2 stores them in args.
+        if (node.paramCount > 2) {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                if (!anchorReferencesOnlyDesignatedTimestamp(node.args.getQuick(i), projectedMeta, tsIndex, tsRefCount)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return anchorReferencesOnlyDesignatedTimestamp(node.lhs, projectedMeta, tsIndex, tsRefCount)
+                && anchorReferencesOnlyDesignatedTimestamp(node.rhs, projectedMeta, tsIndex, tsRefCount);
     }
 
     /**

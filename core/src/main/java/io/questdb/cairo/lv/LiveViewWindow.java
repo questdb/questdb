@@ -107,6 +107,13 @@ public class LiveViewWindow implements QuietCloseable {
     // per bucket boundary rather than per row.
     private final int compactThreshold;
     private final ObjList<WindowFunction> functions;
+    // True only when the anchor expression is provably monotone with the base
+    // scan order (it derives solely from the base's designated timestamp, which
+    // the incremental-refresh cursor emits in ascending order). Computed once at
+    // build() time and used to gate frontier compaction preventively: an anchor
+    // that reads any other column (for example a non-designated TIMESTAMP) can
+    // dip back into an already-evicted bucket, so it must keep every partition.
+    private final boolean isAnchorMonotone;
     // Static reference to the anchor map's key-column types. Held so compact()
     // can allocate a replacement Map with the same shape without re-deriving
     // it from build()-time inputs.
@@ -117,14 +124,18 @@ public class LiveViewWindow implements QuietCloseable {
     // Frontier-gated compaction state. All mutated only on the refresh-worker
     // thread (processRow / compact / restore / toTop); not volatile.
     //
-    // compactionViable starts true only for a monotone-in-time anchor (TIMESTAMP
-    // return type) and latches to false the moment an in-WAL-order row produces an
-    // anchor value below the running maximum (or a NULL). A behind-frontier
-    // partition is safe to drop only when the anchor advances monotonically with
-    // the WAL stream: the partition's next in-order row then necessarily lands in a
-    // new bucket and resets anyway, and any late (out-of-order) row routes through
-    // O3 replay, which rebuilds state. Event-style anchors (a flag toggling back to
-    // an earlier value) break that guarantee, so they keep all partitions.
+    // compactionViable starts true only when the anchor is provably monotone with
+    // the base scan order (isAnchorMonotone, decided at build() time) AND has a
+    // TIMESTAMP return type. It latches to false the moment an in-WAL-order row
+    // produces an anchor value below the running maximum (or a NULL). A
+    // behind-frontier partition is safe to drop only when the anchor advances
+    // monotonically with the WAL stream: the partition's next in-order row then
+    // necessarily lands in a new bucket and resets anyway, and any late
+    // (out-of-order) row routes through O3 replay, which rebuilds state.
+    // Event-style anchors (a flag toggling back to an earlier value) break that
+    // guarantee, so they keep all partitions. The build()-time gate is the primary
+    // guard; the runtime latch is a backstop for a monotone-looking anchor that
+    // nonetheless produces a decrease at runtime.
     private boolean compactionViable;
     private boolean frontierInitialized;
     private long lastCompactedFrontier = Long.MIN_VALUE;
@@ -149,7 +160,8 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull ColumnTypes partitionKeyTypes,
             @NotNull Map anchorMap,
             @NotNull RecordSink partitionKeySink,
-            @NotNull ObjList<WindowFunction> functions
+            @NotNull ObjList<WindowFunction> functions,
+            boolean isAnchorMonotone
     ) {
         this.cairoConfiguration = cairoConfiguration;
         this.windowName = windowName;
@@ -159,15 +171,18 @@ public class LiveViewWindow implements QuietCloseable {
         this.anchorMap = anchorMap;
         this.partitionKeySink = partitionKeySink;
         this.functions = functions;
+        this.isAnchorMonotone = isAnchorMonotone;
         this.compactThreshold = cairoConfiguration.getLiveViewPartitionCompactThreshold();
         // Frontier compaction is sound only when the anchor advances monotonically
         // with the WAL stream. A TIMESTAMP anchor derived from the ascending
         // designated timestamp (DAILY sugar, calendar-period timestamp_floor) gives
         // that; LONG/INT anchors (session ids, event flags) cannot be assumed
-        // monotone, so they opt out structurally and the runtime latch never has to
-        // catch them. A non-monotone TIMESTAMP anchor (e.g. a non-designated ts
-        // column) still trips the runtime latch in trackFrontier.
-        this.compactionViable = ColumnType.tagOf(anchorValueType) == ColumnType.TIMESTAMP;
+        // monotone, so they opt out structurally. A non-monotone TIMESTAMP anchor
+        // (e.g. a non-designated ts column) is caught preventively by
+        // isAnchorMonotone here - the runtime latch in trackFrontier alone cannot,
+        // because it fires only AFTER a decrease is seen and an eviction may already
+        // have dropped a partition that a later dip row revisits (silent undercount).
+        this.compactionViable = isAnchorMonotone && ColumnType.tagOf(anchorValueType) == ColumnType.TIMESTAMP;
     }
 
     /**
@@ -191,6 +206,12 @@ public class LiveViewWindow implements QuietCloseable {
      *     <li>any partition column is not present in {@code projectedMetadata}.</li>
      *     <li>the anchor expression's return type is not TIMESTAMP, LONG, or INT.</li>
      * </ul>
+     * <p>
+     * {@code isAnchorMonotone} is the caller's determination (see
+     * {@code LiveViewRefreshJob.isAnchorMonotoneWithBaseOrder}) that the anchor
+     * derives solely from the base's designated timestamp, and so advances
+     * monotonically with the incremental-refresh scan order. It gates frontier
+     * compaction: only a monotone anchor may evict behind-frontier partitions.
      */
     public static LiveViewWindow build(
             @NotNull CairoConfiguration configuration,
@@ -199,7 +220,8 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull RecordMetadata projectedMetadata,
             @NotNull ObjList<String> partitionColumnNames,
             @NotNull Function anchorExpression,
-            @NotNull ObjList<WindowFunction> functions
+            @NotNull ObjList<WindowFunction> functions,
+            boolean isAnchorMonotone
     ) {
         int n = partitionColumnNames.size();
         if (n == 0) {
@@ -263,7 +285,7 @@ public class LiveViewWindow implements QuietCloseable {
                     .put("ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(returnType));
         }
-        return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions);
+        return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions, isAnchorMonotone);
     }
 
     @Override
@@ -674,7 +696,7 @@ public class LiveViewWindow implements QuietCloseable {
         maxAnchorValue = 0;
         prevFrontier = Long.MIN_VALUE;
         lastCompactedFrontier = Long.MIN_VALUE;
-        compactionViable = ColumnType.tagOf(anchorValueType) == ColumnType.TIMESTAMP;
+        compactionViable = isAnchorMonotone && ColumnType.tagOf(anchorValueType) == ColumnType.TIMESTAMP;
     }
 
     private long readAnchorValue(Record record) {

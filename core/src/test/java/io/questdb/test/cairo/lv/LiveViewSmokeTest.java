@@ -10722,6 +10722,72 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonMonotoneTimestampAnchorNeverCompacts() throws Exception {
+        // A TIMESTAMP anchor that reads a NON-designated timestamp column is not
+        // monotone with the base scan order: rows arrive in designated-ts (ts)
+        // order, but the anchor value (bucket of ts2) can dip back into an earlier
+        // bucket a partition already left. Frontier compaction must stay disabled
+        // for such an anchor. The reactive trackFrontier latch alone is insufficient
+        // -- it fires only after it sees a decrease, by which point a monotone-ts2
+        // prefix may already have evicted a partition, and a later dip row for that
+        // partition would restart its accumulator from zero (silent undercount).
+        //
+        // The prefix (rows for sym 1..4, ts2 strictly ascending across four daily
+        // buckets, threshold 2) is exactly the shape that drives compaction for a
+        // monotone anchor; the dip row (sym 1, ts2 back to the first bucket) is the
+        // revisit. With the build-time gate, compaction never runs, every partition
+        // is retained, and the dip continues sym 1's running sum (100 + 7 = 107)
+        // rather than resetting it to 7.
+        //
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, ts2 TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, ts2, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts2))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Rows arrive in ts order. ts2 climbs one daily bucket per partition
+                // (day1..day4). For a monotone anchor this advances the frontier past
+                // two buckets and evicts sym 1 (day1) then sym 2 (day2). The dip row
+                // for sym 1 puts ts2 back in day1 -- the same bucket its first row was
+                // in, so its running sum must continue.
+                execute("INSERT INTO base (ts, ts2, x, sym) VALUES " +
+                        "('2026-08-10T01:00:00.000000Z', '2026-08-01T00:00:00.000000Z', 100, 1), " +
+                        "('2026-08-10T02:00:00.000000Z', '2026-08-02T00:00:00.000000Z', 10, 2), " +
+                        "('2026-08-10T03:00:00.000000Z', '2026-08-03T00:00:00.000000Z', 20, 3), " +
+                        "('2026-08-10T04:00:00.000000Z', '2026-08-04T00:00:00.000000Z', 30, 4), " +
+                        "('2026-08-10T05:00:00.000000Z', '2026-08-01T00:00:00.000000Z', 7, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull("anchor window must be built after refresh", window);
+                Assert.assertEquals(
+                        "non-monotone TIMESTAMP anchor must never compact: all 4 partitions retained",
+                        4L,
+                        window.getAnchorMapSize()
+                );
+
+                // sym 1's dip row (ts2 in the first bucket, same as its first row)
+                // continues the running sum: 100 + 7 = 107, not a reset to 7.
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                        "2026-08-10T01:00:00.000000Z\t1\t100.0\n" +
+                        "2026-08-10T02:00:00.000000Z\t2\t10.0\n" +
+                        "2026-08-10T03:00:00.000000Z\t3\t20.0\n" +
+                        "2026-08-10T04:00:00.000000Z\t4\t30.0\n" +
+                        "2026-08-10T05:00:00.000000Z\t1\t107.0\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCrossCycleAnchorMapPreserved() throws Exception {
         // A second refresh cycle that hits no anchor crossings
         // must not wipe the anchor map populated by the first cycle. Before
