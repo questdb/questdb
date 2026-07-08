@@ -640,21 +640,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Determines whether the anchor expression is provably monotone with the base
-     * scan order, which is the enabling condition for frontier-gated anchor-map
-     * compaction (see {@link LiveViewWindow}). During incremental refresh the base
-     * page-frame cursor emits rows in ascending designated-timestamp order, so an
-     * anchor that reads only that column advances monotonically with the stream and
-     * the sweep may safely evict partitions two buckets behind. An anchor that reads
-     * any other column - a non-designated TIMESTAMP is the dangerous case - can dip
-     * back into an already-evicted bucket, resetting the accumulator and silently
-     * undercounting; such anchors must keep every partition.
+     * Determines whether the anchor expression is provably monotone non-decreasing
+     * with the base scan order, which is the enabling condition for frontier-gated
+     * anchor-map compaction (see {@link LiveViewWindow}). During incremental refresh
+     * the base page-frame cursor emits rows in ascending designated-timestamp order,
+     * so an anchor that never dips below a value it has already produced advances with
+     * the stream and the sweep may safely evict partitions two buckets behind the
+     * frontier. An anchor that can dip back - into an already-evicted bucket - resets
+     * the accumulator and silently undercounts; such anchors must keep every
+     * partition.
      * <p>
-     * The check is deliberately conservative: it requires the projected metadata to
-     * have a designated timestamp, every column the anchor references to be that
-     * timestamp, and at least one such reference to exist. A false negative only
-     * forgoes compaction (more resident memory, still correct); a false positive
-     * would drop live state, so anything it cannot prove monotone opts out. The
+     * The check is an allowlist of expression forms provably monotone non-decreasing
+     * in the ascending designated timestamp (see {@link #isProvablyMonotoneAnchor}):
+     * the bare designated timestamp column, a two-argument {@code timestamp_floor} /
+     * {@code date_trunc} (the pure UTC floor), or a constant-stride {@code dateadd},
+     * each composable over another such form.
+     * <p>
+     * It is deliberately conservative because the failure modes are asymmetric: a
+     * false negative only forgoes compaction (more resident memory, still correct),
+     * whereas a false positive drops live state a later dip row revisits (silent
+     * undercount). So it inspects the wrapping FUNCTIONS, not merely the column
+     * references - a non-monotone function of the designated timestamp reads only that
+     * column yet is not monotone (e.g. {@code dateadd('d', hour(ts), ts)} climbs
+     * intra-day then dips ~23 days at each midnight; {@code to_timezone} dips an hour
+     * at DST fall-back), so a column-identity check alone would wrongly enable
+     * compaction. The three-argument (from-offset) and timezone-aware floor variants
+     * are excluded even though some are monotone: a sub-day timezone floor dips at DST
+     * fall-back, so they forgo compaction rather than risk a false positive, and
+     * {@code instanceof MonotonicTimestampFunction} is not a sound gate either -
+     * {@code to_timezone} implements it (for interval pruning) despite that dip. The
      * runtime latch in {@link LiveViewWindow} remains a backstop for a
      * monotone-looking anchor whose values decrease at runtime.
      */
@@ -663,64 +677,135 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (tsIndex < 0) {
             return false;
         }
-        final int[] tsRefCount = new int[]{0};
-        if (!anchorReferencesOnlyDesignatedTimestamp(anchorNode, projectedMeta, tsIndex, tsRefCount)) {
-            return false;
-        }
-        return tsRefCount[0] > 0;
+        return isProvablyMonotoneAnchor(anchorNode, projectedMeta, tsIndex);
     }
 
     /**
-     * Recursive worker for {@link #isAnchorMonotoneWithBaseOrder}. Walks the anchor
-     * expression tree and returns {@code false} as soon as it finds a column
-     * reference that is not the designated timestamp (or a literal it cannot resolve
-     * to a base column). Column references are {@link ExpressionNode#LITERAL} nodes;
-     * function names are {@code FUNCTION}, and stride/offset arguments are
-     * {@code CONSTANT}, so neither is mistaken for a column. Accumulates the count of
-     * designated-timestamp references into {@code tsRefCount}.
+     * Returns {@code true} when {@code node} and its entire subtree carry no reference
+     * to a base column - every leaf is a constant, or a literal that does not resolve
+     * to a projected column. Used to confirm that a monotone-preserving function's
+     * non-timestamp arguments (the stride, unit, offset) are constant, so the function
+     * applies a fixed transform to every row rather than a row-dependent one. A
+     * null-token literal reads as a reference (returns {@code false}), the safe
+     * direction: an unresolvable leaf forgoes compaction instead of assuming it is a
+     * constant.
      */
-    private static boolean anchorReferencesOnlyDesignatedTimestamp(
-            ExpressionNode node,
-            RecordMetadata projectedMeta,
-            int tsIndex,
-            int[] tsRefCount
-    ) {
+    private static boolean containsNoColumnReference(ExpressionNode node, RecordMetadata projectedMeta) {
         if (node == null) {
             return true;
         }
         if (node.type == ExpressionNode.LITERAL) {
-            if (node.token == null) {
-                return false;
-            }
-            final int idx = projectedMeta.getColumnIndexQuiet(node.token);
-            if (idx != tsIndex) {
-                // A foreign base column, or a literal that does not resolve to a
-                // base column at all: cannot prove monotonicity.
-                return false;
-            }
-            tsRefCount[0]++;
-            return true;
+            return node.token != null && projectedMeta.getColumnIndexQuiet(node.token) < 0;
         }
         // paramCount <= 2 stores children in lhs/rhs; > 2 stores them in args.
         if (node.paramCount > 2) {
             for (int i = 0, n = node.args.size(); i < n; i++) {
-                if (!anchorReferencesOnlyDesignatedTimestamp(node.args.getQuick(i), projectedMeta, tsIndex, tsRefCount)) {
+                if (!containsNoColumnReference(node.args.getQuick(i), projectedMeta)) {
                     return false;
                 }
             }
             return true;
         }
-        return anchorReferencesOnlyDesignatedTimestamp(node.lhs, projectedMeta, tsIndex, tsRefCount)
-                && anchorReferencesOnlyDesignatedTimestamp(node.rhs, projectedMeta, tsIndex, tsRefCount);
+        return containsNoColumnReference(node.lhs, projectedMeta)
+                && containsNoColumnReference(node.rhs, projectedMeta);
+    }
+
+    /**
+     * Confirms an allowlisted monotone-preserving call has exactly one argument that
+     * is itself a monotone form (the timestamp carrier) while every other argument is
+     * a constant (carries no column reference). This is order-agnostic across the
+     * child slots, so it does not depend on which of {@code lhs}/{@code rhs} holds the
+     * timestamp. A variable stride such as {@code hour(ts)} carries a column reference,
+     * so it fails the constant check and the call is rejected.
+     */
+    private static boolean hasSingleMonotoneArgRestConstant(ExpressionNode node, RecordMetadata projectedMeta, int tsIndex) {
+        int monotoneArgs = 0;
+        // paramCount <= 2 stores children in lhs/rhs; > 2 stores them in args.
+        if (node.paramCount > 2) {
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                final ExpressionNode arg = node.args.getQuick(i);
+                if (isProvablyMonotoneAnchor(arg, projectedMeta, tsIndex)) {
+                    monotoneArgs++;
+                } else if (!containsNoColumnReference(arg, projectedMeta)) {
+                    return false;
+                }
+            }
+        } else {
+            for (int i = 0; i < 2; i++) {
+                final ExpressionNode arg = i == 0 ? node.lhs : node.rhs;
+                if (arg == null) {
+                    continue;
+                }
+                if (isProvablyMonotoneAnchor(arg, projectedMeta, tsIndex)) {
+                    monotoneArgs++;
+                } else if (!containsNoColumnReference(arg, projectedMeta)) {
+                    return false;
+                }
+            }
+        }
+        return monotoneArgs == 1;
+    }
+
+    /**
+     * Recursive worker for {@link #isAnchorMonotoneWithBaseOrder}. Returns
+     * {@code true} only for expression forms provably monotone non-decreasing in the
+     * ascending designated timestamp:
+     * <ul>
+     *     <li>the designated-timestamp column itself (strictly increasing);</li>
+     *     <li>a two-argument {@code timestamp_floor} / {@code date_trunc} - the pure
+     *     UTC floor, monotone non-decreasing - whose timestamp argument is itself a
+     *     monotone form and whose stride argument is constant. The three- and
+     *     five-argument (from-offset / timezone) overloads are excluded because a
+     *     sub-day timezone floor dips at DST fall-back;</li>
+     *     <li>a three-argument {@code dateadd} whose period and stride are constant
+     *     (a fixed offset applied to every row) and whose timestamp argument is a
+     *     monotone form. A variable stride is not monotone and is rejected because
+     *     the stride argument then carries a column reference.</li>
+     * </ul>
+     * Any other function, operator, or column reference returns {@code false}.
+     */
+    private static boolean isProvablyMonotoneAnchor(ExpressionNode node, RecordMetadata projectedMeta, int tsIndex) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            // The lone monotone leaf is the designated timestamp column, which the
+            // incremental scan emits in ascending order. Any other column - a
+            // non-designated TIMESTAMP is the dangerous case - can dip backward.
+            return node.token != null && projectedMeta.getColumnIndexQuiet(node.token) == tsIndex;
+        }
+        if (node.type != ExpressionNode.FUNCTION || node.token == null) {
+            return false;
+        }
+        if (node.paramCount == 2
+                && (Chars.equalsIgnoreCase(node.token, "timestamp_floor")
+                || Chars.equalsIgnoreCase(node.token, "date_trunc"))) {
+            return hasSingleMonotoneArgRestConstant(node, projectedMeta, tsIndex);
+        }
+        if (node.paramCount == 3 && Chars.equalsIgnoreCase(node.token, "dateadd")) {
+            return hasSingleMonotoneArgRestConstant(node, projectedMeta, tsIndex);
+        }
+        return false;
     }
 
     /**
      * Cooperative apply-lag gate for the drain-triggered refresh paths that read
      * the applied base: the raw-WAL O3 replay ({@link #incrementalRefresh} /
      * {@link #finishLeadRefresh}) and the coupled dedup applied-base drain
-     * ({@link #drainAppliedBase}). Peeks at the base table's applied seqTxn and
-     * throws {@link LiveViewApplyLagException} when {@code ApplyWal2TableJob} has
-     * not yet applied up to {@code advanceTo}.
+     * ({@link #drainAppliedBase}). Peeks at the base table's applied seqTxn -- the
+     * {@link SeqTxnTracker}'s writer txn, an O(1) in-memory read -- and throws
+     * {@link LiveViewApplyLagException} when
+     * {@code ApplyWal2TableJob} has not yet applied up to {@code advanceTo}.
+     * <p>
+     * The tracker's writer txn is the applied point: {@code ApplyWal2TableJob}
+     * bumps it (updateWriterTxns) only AFTER the durable {@code _txn} commit, so it
+     * never exceeds a freshly opened reader's {@code getSeqTxn()}. Reading it instead
+     * of opening a {@code TableReader} keeps this hot, per-gated-cycle check off the
+     * base's shared {@code TxnScoreboard} - a pooled reader checkout does an atomic
+     * acquireTxn contended with the WAL-apply writer and every query reader, plus a
+     * purge-schedule on close - at the cost of at most a benign extra defer while the
+     * tracker momentarily lags the just-committed {@code _txn}. A cold tracker reads
+     * {@code -1}, which defers (the safe direction) until apply warms it.
      * <p>
      * Callers invoke this BEFORE any destructive replay work (head {@code .cp}
      * retirement, window-state reset, the REPLACE_RANGE commit, discarding the
@@ -740,11 +825,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * complete atomically within one recovery attempt.
      */
     private void ensureBaseApplied(TableToken baseToken, long advanceTo) {
-        try (TableReader reader = engine.getReader(baseToken)) {
-            final long appliedSeqTxn = reader.getSeqTxn();
-            if (appliedSeqTxn < advanceTo) {
-                throw LiveViewApplyLagException.instance(baseToken, advanceTo, appliedSeqTxn);
-            }
+        final long appliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+        if (appliedSeqTxn < advanceTo) {
+            throw LiveViewApplyLagException.instance(baseToken, advanceTo, appliedSeqTxn);
         }
     }
 

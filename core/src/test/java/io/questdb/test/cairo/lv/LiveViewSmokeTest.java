@@ -10793,6 +10793,71 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonMonotoneTimestampFunctionAnchorNeverCompacts() throws Exception {
+        // A TIMESTAMP anchor that is a non-MONOTONE FUNCTION of the DESIGNATED
+        // timestamp is the sibling hole to testNonMonotoneTimestampAnchorNeverCompacts:
+        // every column reference resolves to ts, so a column-identity check would wave
+        // it through, yet the value can dip backward. dateadd('d', hour(ts), ts) climbs
+        // intra-day (each hour adds a day) then drops ~23 days at midnight when hour(ts)
+        // resets to 0. Wrapping it in timestamp_floor('1d', ...) yields clean day
+        // buckets while preserving the midnight dip. Compaction must stay disabled:
+        // the anchor gate has to inspect the wrapping functions, not just the columns.
+        //
+        // Anchors floor(dateadd('d', hour(ts), ts)):
+        //   sym 1 ts 08-10T02:00 (hour 2) -> 08-12  <- seeded first
+        //   sym 2 ts 08-10T03:00 (hour 3) -> 08-13
+        //   sym 3 ts 08-10T04:00 (hour 4) -> 08-14
+        //   sym 4 ts 08-10T05:00 (hour 5) -> 08-15  frontier
+        //   sym 1 ts 08-12T00:00 (hour 0) -> 08-12  <- dip revisits sym 1's bucket
+        // With threshold 2, a monotone anchor evicts 08-12 (3 buckets behind 08-15) once
+        // the frontier passes it, so the dip row would restart sym 1's sum at 7. With the
+        // build-time gate every partition is retained and the same-bucket dip continues
+        // it: 100 + 7 = 107.
+        //
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', dateadd('d', hour(ts), ts)))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-10T02:00:00.000000Z', 100, 1), " +
+                        "('2026-08-10T03:00:00.000000Z', 10, 2), " +
+                        "('2026-08-10T04:00:00.000000Z', 20, 3), " +
+                        "('2026-08-10T05:00:00.000000Z', 30, 4), " +
+                        "('2026-08-12T00:00:00.000000Z', 7, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull("anchor window must be built after refresh", window);
+                Assert.assertEquals(
+                        "non-monotone TIMESTAMP-function anchor must never compact: all 4 partitions retained",
+                        4L,
+                        window.getAnchorMapSize()
+                );
+
+                // sym 1's dip row (same 08-12 bucket as its first row) continues the
+                // running sum: 100 + 7 = 107, not a reset to 7.
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                        "2026-08-10T02:00:00.000000Z\t1\t100.0\n" +
+                        "2026-08-10T03:00:00.000000Z\t2\t10.0\n" +
+                        "2026-08-10T04:00:00.000000Z\t3\t20.0\n" +
+                        "2026-08-10T05:00:00.000000Z\t4\t30.0\n" +
+                        "2026-08-12T00:00:00.000000Z\t1\t107.0\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCrossCycleAnchorMapPreserved() throws Exception {
         // A second refresh cycle that hits no anchor crossings
         // must not wipe the anchor map populated by the first cycle. Before
