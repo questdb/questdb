@@ -335,7 +335,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             SqlExecutionContext executionContext,
             ObjList<TableToken> out
     ) {
-        final MatViewDefinition definition = engine.getMatViewGraph().getViewDefinition(matView);
+        final MatViewDefinition definition = engine.getDependentViewGraph().getViewDefinition(matView);
         if (definition == null) {
             return;
         }
