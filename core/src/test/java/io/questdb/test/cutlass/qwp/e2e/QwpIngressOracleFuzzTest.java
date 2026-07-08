@@ -438,19 +438,18 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOraclePoisonRowsEscalateToPoisonTerminal() throws Exception {
+    public void testOraclePoisonRowsFailFastAsTerminal() throws Exception {
         // Pin down the per-frame error contract under NACK policy v2 (there
         // is no drop policy -- a deterministically rejected frame can never
         // be silently skipped):
         //   1. Frame-drop atomicity: a NACKed frame is atomically not
         //      applied -- no row from the poisoned chunk lands, including
         //      the well-formed rows sitting next to the bad one.
-        //   2. The rejection reaches the async SenderErrorHandler (an
-        //      informational WRITE_ERROR strike, then the poison-frame
-        //      detector's TERMINAL PROTOCOL_VIOLATION escalation --
-        //      max_frame_rejections=1 makes it immediate) and the next
-        //      producer-thread call throws the latched terminal: the stream
-        //      halts loudly, it does not drain silently.
+        //   2. The rejection reaches the async SenderErrorHandler as a
+        //      deterministic terminal SCHEMA_MISMATCH (the decimal overflow
+        //      is permanent, so the client latches TERMINAL on the first NACK,
+        //      no replay) and the next producer-thread call throws the latched
+        //      terminal: the stream halts loudly, it does not drain silently.
         //   3. Watermark purity: every row flushed before the poisoned
         //      chunk lands exactly per the oracle -- acks never cross a
         //      rejected frame, and the halt does not disturb settled data.
@@ -514,8 +513,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         QwpRow row = generateRow(genRnd, id, ts);
                         if (r == badRow) {
                             // hh=1 forces the unscaled value past 2^192 ~ 6.3e57,
-                            // well past DECIMAL(50,6)'s 10^50 cap: a WRITE_ERROR
-                            // NACK deterministic under byte-identical replay.
+                            // well past DECIMAL(50,6)'s 10^50 cap: a deterministic
+                            // terminal SCHEMA_MISMATCH overflow.
                             row.setDecimal256("dec256", 1L, 0L, 0L, 0L, 6);
                         }
                         // every id of the poisoned chunk must stay absent,
@@ -552,11 +551,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                     final String mySfDir = sfDirs[pp];
                     producers[p] = new Thread(() -> {
                         try {
-                            // Generous error_inbox_capacity so the strike +
-                            // terminal notifications can't be dropped;
-                            // max_frame_rejections=1 escalates the first
-                            // rejection straight to the poison terminal
-                            // instead of reconnect-replaying the frame.
+                            // Generous error_inbox_capacity so the terminal
+                            // notification can't be dropped. The overflow is a
+                            // terminal SCHEMA_MISMATCH latched on the first NACK,
+                            // so the frame is never reconnect-replayed.
                             String connect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                     + ";initial_connect_retry=true"
                                     + ";reconnect_max_duration_millis=120000"
@@ -592,8 +590,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                         // before flush()'s own error poll runs
                                     }
                                     SenderError terminal = terminalFut.get(120, TimeUnit.SECONDS);
-                                    if (terminal.getCategory() != SenderError.Category.PROTOCOL_VIOLATION) {
-                                        throw new AssertionError("expected PROTOCOL_VIOLATION poison terminal, got " + terminal);
+                                    if (terminal.getCategory() != SenderError.Category.SCHEMA_MISMATCH) {
+                                        throw new AssertionError("expected SCHEMA_MISMATCH terminal, got " + terminal);
                                     }
                                     String tMsg = terminal.getServerMessage();
                                     if (tMsg == null || !tMsg.contains("overflows DECIMAL(50,6)")) {
@@ -603,10 +601,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                     // producer loudly on its next call
                                     try {
                                         sender.flush();
-                                        throw new AssertionError("flush() after the poison terminal latched must throw");
+                                        throw new AssertionError("flush() after the terminal latched must throw");
                                     } catch (LineSenderServerException e) {
-                                        if (e.getServerError().getCategory() != SenderError.Category.PROTOCOL_VIOLATION) {
-                                            throw new AssertionError("expected the poison terminal from flush()", e);
+                                        if (e.getServerError().getCategory() != SenderError.Category.SCHEMA_MISMATCH) {
+                                            throw new AssertionError("expected the SCHEMA_MISMATCH terminal from flush()", e);
                                         }
                                     }
                                 }
@@ -654,14 +652,14 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 }
 
                 // (c) Async error notifications: each poisoned producer saw
-                // the informational WRITE_ERROR strike and the poison
-                // terminal (>= 2 dispatches). Inequality tolerates extra
-                // informational strikes if a chunk splits across frames.
+                // the terminal SCHEMA_MISMATCH dispatch (>= 1). The overflow
+                // is terminal on the first NACK, so there is no preceding
+                // informational retriable strike.
                 long observed = errorHandlerCalls.get();
-                if (observed < 2L * poisonedProducers) {
+                if (observed < poisonedProducers) {
                     throw new AssertionError("error handler fired " + observed
-                            + " times, expected at least " + (2L * poisonedProducers)
-                            + " (strike + terminal per poisoned producer)");
+                            + " times, expected at least " + poisonedProducers
+                            + " (terminal per poisoned producer)");
                 }
                 LOG.info().$("poison test: poisoned producers=").$(poisonedProducers)
                         .$(" handler calls=").$(observed).$();
@@ -686,7 +684,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 // residue under the generous purge cap, so retention is
                 // proven functionally: a fresh sender on the same slot must
                 // recover the frame, replay it byte-identically, and latch
-                // the same deterministic poison terminal again. A client
+                // the same deterministic SCHEMA_MISMATCH terminal again. A client
                 // bug that purges the NACKed frame's slot leaves nothing to
                 // replay and times out below. Producer 0 is always
                 // poisoned, so this check fires in every run. Client-side
@@ -714,8 +712,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                 + ": the SF slot no longer holds the rejected frame -- the terminal must"
                                 + " preserve the only replayable copy on disk", e);
                     }
-                    if (replayTerminal.getCategory() != SenderError.Category.PROTOCOL_VIOLATION) {
-                        throw new AssertionError("replayed poison frame: expected PROTOCOL_VIOLATION terminal, got " + replayTerminal);
+                    if (replayTerminal.getCategory() != SenderError.Category.SCHEMA_MISMATCH) {
+                        throw new AssertionError("replayed frame: expected SCHEMA_MISMATCH terminal, got " + replayTerminal);
                     }
                     String rMsg = replayTerminal.getServerMessage();
                     if (rMsg == null || !rMsg.contains("overflows DECIMAL(50,6)")) {
@@ -1265,8 +1263,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         //   DECIMAL(50,6) (max ~10^50, ~167 bits) -> hh=0, hl up to ~10^10
         //                                            plus full 64-bit lh, ll
         // The server rejects out-of-range values per binary frame with a
-        // WRITE_ERROR NACK; testOraclePoisonRowsEscalateToPoisonTerminal
-        // pins the client-side escalation contract.
+        // terminal SCHEMA_MISMATCH NACK; testOraclePoisonRowsFailFastAsTerminal
+        // pins the client-side fail-fast contract.
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) {
             setSignedDecimal64(row, "dec64", id * 10_000_007L + 13L, 3, rnd.nextBoolean());
         }
