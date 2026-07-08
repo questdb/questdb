@@ -68,10 +68,12 @@ public class WorkloadMemoryTrackerTest extends AbstractCairoTest {
         // so they survive the per-test override reset; the provider reads them live.
         node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 512 * 1024L);
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 512 * 1024L);
-        // Drop the per-retry backoff sleep: a per-query breach is deterministic
-        // across the refresh's step-reduction retries, so the sleeps only slow the
-        // test down before the refresh gives up and invalidates the view.
-        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 0);
+        // A mat view refresh OOM is now a transient, deferred/retried failure (view_status
+        // "retrying"), capped at cairo.mat.view.refresh.busy.retry.limit consecutive attempts
+        // before the view is invalidated. Cap the limit at 0 so the large-key-set breach
+        // invalidates on the first attempt: the failure stays deterministic and the
+        // invalidation_reason still carries the workload-tagged per-query message.
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 0);
         // alloc_tracked(l), used by the WAL tests, is dev-mode only. Setting it on the
         // node after super.setUp() keeps dev mode enabled for every test; the static
         // setProperty form does not stick across the class's tests.

@@ -407,16 +407,26 @@ mod tests {
         }
     }
 
-    // ----- encode_int_notnull: Byte / Short / Char (currently uncovered) -----
+    // ----- encode_int_nullable: Byte / Short / Char -----
+    // Byte/Short/Char carry no in-band null sentinel but use Optional repetition
+    // so column-top rows can be marked NULL via def-level=0. Production dispatch
+    // routes these tags to encode_int_nullable; the data values themselves never
+    // report null. See parquet_write/schema.rs and parquet_write/encode.rs.
 
     #[test]
     fn encode_int_notnull_byte_delta() {
         let data: Vec<i8> = (-50..50i8).collect();
         let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 0, 0);
         let pt = primitive_type_for(ColumnTypeTag::Byte);
-        let pages =
-            encode_int_notnull::<i8, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-                .expect("encode");
+        let pages = encode_int_nullable::<i8, i32, false>(
+            &[col],
+            0,
+            data.len(),
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 100);
@@ -429,9 +439,15 @@ mod tests {
         let data: Vec<i16> = (0..100i16).collect();
         let col = make_column_with_top("col", ColumnTypeTag::Short, &data, 0, 0);
         let pt = primitive_type_for(ColumnTypeTag::Short);
-        let pages =
-            encode_int_notnull::<i16, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-                .expect("encode");
+        let pages = encode_int_nullable::<i16, i32, false>(
+            &[col],
+            0,
+            data.len(),
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, _, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 100);
@@ -443,9 +459,15 @@ mod tests {
         let data: Vec<u16> = (0..100u16).collect();
         let col = make_column_with_top("col", ColumnTypeTag::Char, &data, 0, 0);
         let pt = primitive_type_for(ColumnTypeTag::Char);
-        let pages =
-            encode_int_notnull::<u16, i32>(&[col], 0, data.len(), &pt, write_options(), None)
-                .expect("encode");
+        let pages = encode_int_nullable::<u16, i32, true>(
+            &[col],
+            0,
+            data.len(),
+            &pt,
+            write_options(),
+            None,
+        )
+        .expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, _, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 100);
@@ -706,13 +728,13 @@ mod tests {
         let data: Vec<i8> = vec![5, 6, 7];
         let col = make_column_with_top("col", ColumnTypeTag::Byte, &data, 4, 0);
         let pt = primitive_type_for(ColumnTypeTag::Byte);
-        let pages = encode_int_notnull::<i8, i32>(&[col], 0, 7, &pt, write_options(), None)
+        let pages = encode_int_nullable::<i8, i32, false>(&[col], 0, 7, &pt, write_options(), None)
             .expect("encode");
         assert_eq!(pages.len(), 1);
         let (num_values, num_nulls, enc) = v2_header(&pages[0]);
         assert_eq!(num_values, 7);
-        // The notnull delta encoder fills column-top rows with default values
-        // but still reports column_top as null_count in the page header.
+        // Column-top rows are encoded as parquet NULL (def-level=0) under the
+        // nullable path; data values never report null for Byte.
         assert_eq!(num_nulls, 4);
         assert_eq!(enc, 5);
     }
@@ -725,8 +747,9 @@ mod tests {
             .map(|d| make_column_with_top("col", ColumnTypeTag::Short, d, 0, 0))
             .collect();
         let pt = primitive_type_for(ColumnTypeTag::Short);
-        let pages = encode_int_notnull::<i16, i32>(&columns, 0, 3, &pt, write_options(), None)
-            .expect("encode");
+        let pages =
+            encode_int_nullable::<i16, i32, false>(&columns, 0, 3, &pt, write_options(), None)
+                .expect("encode");
         assert_eq!(pages.len(), 2);
         for page in &pages {
             let (num_values, num_nulls, enc) = v2_header(page);
