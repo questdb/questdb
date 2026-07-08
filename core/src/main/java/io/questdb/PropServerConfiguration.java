@@ -520,8 +520,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxArrayElementCount;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
-    private final boolean sqlSymbolPatternIndexEnabled;
-    private final int sqlSymbolPatternIndexThreshold;
     private final int sqlModelPoolCapacity;
     private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
@@ -559,6 +557,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlSortValueMaxBytes;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
+    private final boolean sqlSymbolPatternIndexEnabled;
+    private final int sqlSymbolPatternIndexThreshold;
     private final int sqlTimerShardCount;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
@@ -4239,16 +4239,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isSymbolPatternIndexEnabled() {
-            return sqlSymbolPatternIndexEnabled;
-        }
-
-        @Override
-        public int getSymbolPatternIndexThreshold() {
-            return sqlSymbolPatternIndexThreshold;
-        }
-
-        @Override
         public int getMaxUncommittedRows() {
             return maxUncommittedRows;
         }
@@ -4984,6 +4974,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSymbolPatternIndexThreshold() {
+            return sqlSymbolPatternIndexThreshold;
+        }
+
+        @Override
         public long getSymbolTableMaxAllocationPageSize() {
             return symbolTableMaxAllocationPageSize;
         }
@@ -5404,6 +5399,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlWindowCachedLightEnabled() {
             return sqlWindowCachedLightEnabled;
+        }
+
+        @Override
+        public boolean isSymbolPatternIndexEnabled() {
+            return sqlSymbolPatternIndexEnabled;
         }
 
         @Override

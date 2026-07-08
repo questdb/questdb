@@ -2321,7 +2321,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private CoveringRowCursor[] keyCursors;
         private long[] keyHeads;
         // Min-heap of (keyIndex -> head row id) over the open per-key heads, used
-        // when useHeap. Kept in lockstep with keyHeads: the winning entry stays at
+        // when isHeapMerge. Kept in lockstep with keyHeads: the winning entry stays at
         // position 0 (peeked, not polled) while its covered values are read, then
         // is polled/replaced on the next hasNext() -- see the heap body there.
         private final IntLongSortedList heap = new IntLongSortedList();
@@ -2329,7 +2329,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int selectedKeyIdx = -1;
         // Whether the current merge uses the heap (multiKeys.size() > crossover).
         // Recomputed per reset; stable across a partition switch (key set fixed).
-        private boolean useHeap;
+        private boolean isHeapMerge;
 
         MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
                                int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
@@ -2357,8 +2357,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             final int n = multiKeys.size();
             while (true) {
-                if (!useHeap) {
-                    // ---- linear min-scan (small IN-lists) ----
+                if (!isHeapMerge) {
+                    // Linear min-scan (small IN-lists).
                     // Advance the cursor we emitted last; we deferred this so its
                     // covered values stayed readable until the caller consumed them.
                     if (selectedKeyIdx >= 0) {
@@ -2386,7 +2386,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         return true;
                     }
                 } else {
-                    // ---- heap k-way merge (broad key sets), deferred-advance preserved ----
+                    // Heap k-way merge (broad key sets), deferred-advance preserved.
                     // Advance the cursor we emitted last, syncing the heap with it.
                     // The emitted entry is still the heap's min (position 0): we
                     // peeked it last time without polling, and nothing else touched
@@ -2461,7 +2461,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
             // Fix the merge strategy for this scan by key count, and start with an
             // empty heap; openNextPartitionCursors() rebuilds it from primed heads.
-            useHeap = n > effectiveHeapMergeMinKeys();
+            isHeapMerge = n > effectiveHeapMergeMinKeys();
             heap.clear();
         }
 
@@ -2515,7 +2515,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                 }
                 if (any) {
-                    if (useHeap) {
+                    if (isHeapMerge) {
                         // (Re)build the heap from this partition's primed heads;
                         // NO_ROW keys are simply absent from the heap.
                         heap.clear();
@@ -2559,7 +2559,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // (covered values are copied via writeCoveredRow), so there is no deferred
         // advance: peek -> writeCoveredRow -> pollAndReplace / pollValue.
         private final IntLongSortedList heap = new IntLongSortedList();
-        private boolean useHeap;
+        private boolean isHeapMerge;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2654,10 +2654,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             while (count < rowCap) {
                 // Two keys never share a row id, so the smallest head is unique.
                 int best;
-                if (!useHeap) {
+                long bestRow = NO_ROW;
+                if (!isHeapMerge) {
                     // Linear O(N) min-scan for small N.
                     best = -1;
-                    long bestRow = NO_ROW;
                     for (int i = 0; i < n; i++) {
                         long h = mergeHeads[i];
                         if (h != NO_ROW && (best < 0 || h < bestRow)) {
@@ -2675,6 +2675,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         break;
                     }
                     best = heap.peekIndex();
+                    bestRow = mergeHeads[best];
                 }
                 if (count >= capacity) {
                     capacity = growFrameBuffers(frameAddrs, count, capacity);
@@ -2693,12 +2694,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 if (c.hasNext()) {
                     long nh = c.next();
                     mergeHeads[best] = nh;
-                    if (useHeap) {
+                    if (isHeapMerge) {
                         heap.pollAndReplace(best, nh);
                     }
                 } else {
                     mergeHeads[best] = NO_ROW;
-                    if (useHeap) {
+                    if (isHeapMerge) {
                         heap.pollValue();
                     }
                 }
@@ -2732,7 +2733,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 mergeCursors = new CoveringRowCursor[n];
                 mergeHeads = new long[n];
             }
-            useHeap = n > effectiveHeapMergeMinKeys();
+            isHeapMerge = n > effectiveHeapMergeMinKeys();
             final int partitionIndex = partFrame.getPartitionIndex();
             final long rowLo = partFrame.getRowLo();
             final long rowHi = partFrame.getRowHi();
@@ -2762,7 +2763,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     mergeHeads[i] = NO_ROW;
                 }
             }
-            if (any && useHeap) {
+            if (any && isHeapMerge) {
                 heap.clear();
                 for (int i = 0; i < n; i++) {
                     if (mergeHeads[i] != NO_ROW) {

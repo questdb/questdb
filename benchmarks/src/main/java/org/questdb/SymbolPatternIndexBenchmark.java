@@ -114,7 +114,7 @@ public class SymbolPatternIndexBenchmark {
     // Populated by probeAllPaths() after the JMH run (Fork(0) keeps engine in-process)
     private static final Map<String, String> TAKEN = new LinkedHashMap<>();
 
-    private static boolean dataReady;
+    private static boolean isDataReady;
     private static SqlExecutionContextImpl sharedCtx;
     private static CairoEngine sharedEngine;
     private static java.nio.file.Path tmpDir;
@@ -143,8 +143,8 @@ public class SymbolPatternIndexBenchmark {
         private String probePath() throws SqlException {
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
             drain(fastFactory);
-            if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0) return "index";
-            if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0) return "fallback";
+            if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0) return "index";
+            if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0) return "fallback";
             return (scenario.equals("pos_covering") || scenario.equals("covering_broad")) ? "covering" : "scan";
         }
 
@@ -185,12 +185,10 @@ public class SymbolPatternIndexBenchmark {
         }
     }
 
-    // ---------------------------------------------------------------------------
     // Shared data: built once, reused across all benchmarks / param combinations
-    // ---------------------------------------------------------------------------
 
     static synchronized void ensureData() throws Exception {
-        if (dataReady) return;
+        if (isDataReady) return;
 
         tmpDir = Files.createTempDirectory("sympat-bench");
         CairoConfiguration config = new DefaultCairoConfiguration(tmpDir.toString()) {
@@ -245,12 +243,10 @@ public class SymbolPatternIndexBenchmark {
             if (tmpDir != null) deleteDirRecursive(tmpDir.toFile());
         }));
 
-        dataReady = true;
+        isDataReady = true;
     }
 
-    // ---------------------------------------------------------------------------
     // Utility: drain all rows from a RecordCursorFactory, summing numeric columns
-    // ---------------------------------------------------------------------------
 
     static long drain(RecordCursorFactory factory) throws SqlException {
         long sum = 0;
@@ -271,9 +267,7 @@ public class SymbolPatternIndexBenchmark {
         return sum;
     }
 
-    // ---------------------------------------------------------------------------
     // Utility: recursive directory delete (verbatim from PostingIndexBenchmarkSuite)
-    // ---------------------------------------------------------------------------
 
     private static void deleteDirRecursive(File dir) {
         try {
@@ -294,11 +288,9 @@ public class SymbolPatternIndexBenchmark {
         }
     }
 
-    // ---------------------------------------------------------------------------
     // Scenario SQL: single source of truth shared by ScenarioState.setup() and
     // probeAllPaths() so the two can never drift.
     // Returns the SELECT (without the hint) for the given scenario.
-    // ---------------------------------------------------------------------------
 
     static String scenarioFastSql(String scenario) {
         String table = (scenario.equals("pos_covering") || scenario.equals("covering_broad")) ? "t_covering" : "t_bitmap";
@@ -326,10 +318,8 @@ public class SymbolPatternIndexBenchmark {
         return "select /*+ no_symbol_pattern_index no_covering */ " + proj + " from " + table + " where " + pred;
     }
 
-    // ---------------------------------------------------------------------------
     // probeAllPaths: recompute taken labels after JMH run.
     // Fork(0) keeps sharedEngine alive in-process, so we can probe directly.
-    // ---------------------------------------------------------------------------
 
     private static void probeAllPaths() throws Exception {
         if (sharedEngine == null) return;
@@ -339,9 +329,9 @@ public class SymbolPatternIndexBenchmark {
                     SymbolPatternIndexRecordCursorFactory.resetTestCounters();
                     drain(factory);
                     String label;
-                    if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0) {
+                    if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0) {
                         label = "index";
-                    } else if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0) {
+                    } else if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0) {
                         label = "fallback";
                     } else {
                         label = (scen.equals("pos_covering") || scen.equals("covering_broad")) ? "covering" : "scan";
@@ -352,9 +342,7 @@ public class SymbolPatternIndexBenchmark {
         }
     }
 
-    // ---------------------------------------------------------------------------
     // Summary: per-scenario speedup + path taken + baseline-plan disclosure
-    // ---------------------------------------------------------------------------
 
     private static void printSummary(Collection<RunResult> results) {
         Map<String, Double> fast = new HashMap<>();

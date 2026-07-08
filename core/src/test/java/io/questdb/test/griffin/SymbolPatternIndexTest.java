@@ -331,13 +331,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             // Prove the fallback branch actually fired (not just that rows are correct).
             Assert.assertTrue(
-                    "expected fallbackInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations,
-                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0
+                    "expected fallbackInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get(),
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
             );
             Assert.assertEquals(
-                    "expected indexInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
+                    "expected indexInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get(),
                     0,
-                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
             );
         });
     }
@@ -360,13 +360,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             // Prove the index branch actually fired.
             Assert.assertTrue(
-                    "expected indexInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
-                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0
+                    "expected indexInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get(),
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
             );
             Assert.assertEquals(
-                    "expected fallbackInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations,
+                    "expected fallbackInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get(),
                     0,
-                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get()
             );
         });
     }
@@ -389,13 +389,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             String actual = select("select sym, count() from t where sym not like 'A%' order by sym");
             io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             Assert.assertTrue(
-                    "expected fallbackInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations,
-                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations > 0
+                    "expected fallbackInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get(),
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
             );
             Assert.assertEquals(
-                    "expected indexInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
+                    "expected indexInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get(),
                     0,
-                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
             );
         });
     }
@@ -415,13 +415,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             String actual = select("select sym, v, ts from t where sym not like 'A%' order by ts, v");
             io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             Assert.assertTrue(
-                    "expected indexInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations,
-                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations > 0
+                    "expected indexInvocations > 0, got " + SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get(),
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
             );
             Assert.assertEquals(
-                    "expected fallbackInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations,
+                    "expected fallbackInvocations == 0, got " + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get(),
                     0,
-                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get()
             );
         });
     }

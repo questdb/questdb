@@ -388,10 +388,6 @@ public interface CairoConfiguration {
 
     int getMaxSymbolNotEqualsCount();
 
-    boolean isSymbolPatternIndexEnabled();
-
-    int getSymbolPatternIndexThreshold();
-
     int getMaxUncommittedRows();
 
     int getMetadataPoolCapacity();
@@ -863,6 +859,8 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    int getSymbolPatternIndexThreshold();
+
     long getSymbolTableMaxAllocationPageSize();
 
     long getSymbolTableMinAllocationPageSize();
@@ -1120,6 +1118,8 @@ public interface CairoConfiguration {
     boolean isSqlParquetRowGroupPruningEnabled();
 
     boolean isSqlWindowCachedLightEnabled();
+
+    boolean isSymbolPatternIndexEnabled();
 
     boolean isTableTypeConversionEnabled();
 

@@ -44,6 +44,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 /**
  * Index fast path for a {@code LIKE}/{@code ILIKE}/{@code ~} predicate (or its negation
  * {@code NOT LIKE}/{@code NOT ILIKE}/{@code !~}) on an indexed, static-symbol-table column. The provider
@@ -76,6 +78,10 @@ import org.jetbrains.annotations.TestOnly;
  * </p>
  */
 public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    @TestOnly
+    public static final AtomicLong testFallbackInvocations = new AtomicLong();
+    @TestOnly
+    public static final AtomicLong testIndexInvocations = new AtomicLong();
     private final int columnIndex;
     // reused per initRecordCursor for the negated (complement) path: every symbol key NOT matched by the
     // positive pattern, plus VALUE_IS_NULL when the column contains nulls (mirrors "NOT IN" semantics).
@@ -83,21 +89,18 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
     private final int[] cursorFactoriesIdx = new int[]{0};
     private final PageFrameRecordCursorImpl fallbackCursor;
     private final Function fallbackFilter;         // full filter (pattern AND residual)
-    private final boolean heapCursorUsed;
+    private final RowCursorFactory fallbackRowCursorFactory;
     private final PageFrameRecordCursorImpl indexCursor;
     private final int indexDirection;
+    private final boolean isHeapCursorUsed;
     // false: scan the keys the (positive) pattern matches; true: scan the complement (NOT LIKE / !~).
-    private final boolean negated;
+    private final boolean isNegated;
     private final ObjList<SymbolFunctionRowCursorFactory> perKeyFactories = new ObjList<>();
     private final SymbolKeySetProvider provider;
     private final Function providerFunction;        // == (Function) provider; the compiled POSITIVE pattern predicate
     private final Function residualFilter;          // applied on index rows (nullable)
     private final RowCursorFactory rowCursorFactory;
     private final int threshold;
-    @TestOnly
-    public static long testFallbackInvocations;
-    @TestOnly
-    public static long testIndexInvocations;
 
     public SymbolPatternIndexRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -120,7 +123,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         this.provider = (SymbolKeySetProvider) providerFunction;
         this.residualFilter = residualFilter;
         this.fallbackFilter = fallbackFilter;
-        this.negated = negated;
+        this.isNegated = negated;
         this.indexDirection = indexDirection;
         this.threshold = threshold;
         // Use the timestamp-merge heap only when the planner explicitly requested timestamp ordering.
@@ -128,17 +131,18 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         // without timestamp), Sequential is cheaper: the outer Sort node (retained because
         // followedOrderByAdvice() is false) will provide any ordering the consumer needs.
         if (orderByTimestamp) {
-            heapCursorUsed = true;
+            isHeapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
         } else {
-            heapCursorUsed = false;
+            isHeapCursorUsed = false;
             rowCursorFactory = new SequentialRowCursorFactory(perKeyFactories, cursorFactoriesIdx);
         }
         indexCursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, residualFilter);
+        fallbackRowCursorFactory = new PageFrameRowCursorFactory(partitionFrameCursorFactory.getOrder());
         fallbackCursor = new PageFrameRecordCursorImpl(
                 configuration,
                 metadata,
-                new PageFrameRowCursorFactory(partitionFrameCursorFactory.getOrder()),
+                fallbackRowCursorFactory,
                 false,
                 fallbackFilter
         );
@@ -146,7 +150,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
 
     @Override
     public int getScanDirection() {
-        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && isHeapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -168,7 +172,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         sink.type("SymbolPatternIndex");
         sink.attr("on").putColumnName(columnIndex);
         sink.child(providerFunction);
-        sink.child(rowCursorFactory);   // emits "Cursor-order scan" when !heapCursorUsed
+        sink.child(rowCursorFactory);   // emits "Cursor-order scan" when !isHeapCursorUsed
         sink.child(partitionFrameCursorFactory);
     }
 
@@ -194,6 +198,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         Misc.free(rowCursorFactory);
         Misc.free(indexCursor);
         Misc.free(fallbackCursor);
+        Misc.free(fallbackRowCursorFactory);
         Misc.freeObjList(perKeyFactories);
     }
 
@@ -210,13 +215,12 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         // "Included" count decides fast-vs-fallback: |matched| for the positive path, the complement size
         // for the negated path (computed cheaply, WITHOUT enumerating). A positive pattern never matches
         // NULL, so NULL is always in the negated complement when the column has nulls.
-        final StaticSymbolTable symTab = negated ? pageFrameCursor.getSymbolTable(columnIndex) : null;
-        final int includedCount = negated
+        final StaticSymbolTable symTab = isNegated ? pageFrameCursor.getSymbolTable(columnIndex) : null;
+        final int includedCount = isNegated
                 ? symTab.getSymbolCount() - matched.size() + (symTab.containsNullValue() ? 1 : 0)
                 : matched.size();
         if (includedCount > threshold) {
-            //noinspection AssignmentToStaticFieldFromInstanceMethod
-            testFallbackInvocations++;
+            testFallbackInvocations.incrementAndGet();
             fallbackCursor.of(pageFrameCursor, executionContext);
             if (fallbackFilter != null) {
                 fallbackFilter.init(fallbackCursor, executionContext);
@@ -228,7 +232,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         // (mirrors FilterOnExcludedValues -> "NOT IN" semantics, with the NULL key included) for the
         // negated path. VALUE_IS_NULL is mapped to index key 0 by the per-key factory's toIndexKey().
         final IntList keys;
-        if (!negated) {
+        if (!isNegated) {
             keys = matched;
         } else {
             complementKeys.clear();
@@ -259,14 +263,13 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         if (residualFilter != null) {
             residualFilter.init(indexCursor, executionContext);
         }
-        //noinspection AssignmentToStaticFieldFromInstanceMethod
-        testIndexInvocations++;
+        testIndexInvocations.incrementAndGet();
         return indexCursor;
     }
 
     @TestOnly
     public static void resetTestCounters() {
-        testIndexInvocations = 0;
-        testFallbackInvocations = 0;
+        testIndexInvocations.set(0);
+        testFallbackInvocations.set(0);
     }
 }
