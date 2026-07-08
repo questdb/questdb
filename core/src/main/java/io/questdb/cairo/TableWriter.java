@@ -8628,18 +8628,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // this is needed sometimes when split partition is fully removed in a replace commit
         int pathSize = partitionPath.size();
         try {
-            CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+            final int timestampIndex = metadata.getTimestampIndex();
+            CharSequence tsColumnName = metadata.getColumnName(timestampIndex);
+            // A zero-copy split suffix child stores its logical row 0 at file row partitionTop of the
+            // shared donor timestamp file. Scan file rows [partitionTop, partitionTop + partitionSize)
+            // so we read the child's own slice, not the donor prefix. partitionTop is 0 for a normal
+            // partition, so this stays byte-identical there.
+            final long partitionTop = getPartitionTopByTimestamp(partitionTimestamp, timestampIndex);
             final long fd = openRO(ff, dFile(partitionPath, tsColumnName, COLUMN_NAME_TXN_NONE), LOG);
             try {
-                final long mapSize = partitionSize * Long.BYTES;
+                final long mapSize = (partitionTop + partitionSize) * Long.BYTES;
                 final long addr = mapRO(ff, fd, mapSize, MemoryTag.MMAP_TABLE_WRITER);
+                final long tsAddr = addr + partitionTop * Long.BYTES;
                 try {
-                    long lastTs = Unsafe.getLong(addr + (partitionSize - 1) * Long.BYTES);
+                    long lastTs = Unsafe.getLong(tsAddr + (partitionSize - 1) * Long.BYTES);
 
                     long currentTs = lastTs - 1;
                     long row = partitionSize - 2;
                     for (; row >= 0; row--) {
-                        currentTs = Unsafe.getLong(addr + row * Long.BYTES);
+                        currentTs = Unsafe.getLong(tsAddr + row * Long.BYTES);
                         if (currentTs != lastTs) {
                             break;
                         }
@@ -8719,7 +8726,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         int insertPartitionIndex = i;
                         FrameFactory frameFactory = engine.getFrameFactory();
-                        try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize)) {
+                        // The previous piece may be a zero-copy split suffix child (partitionTop > 0) whose
+                        // column files are hardlinks of the donor's; open it at its own slice, not the donor
+                        // prefix. partitionTop is 0 for a plain partition, matching the offset-free behaviour.
+                        final long prevPartitionTop = getPartitionTopByTimestamp(prevPartitionTimestamp);
+                        try (Frame sourceFrame = frameFactory.openRO(path, prevPartitionTimestamp, metadata, columnVersionWriter, prevPartitionSize, prevPartitionTop)) {
                             // Create the source frame and then manipulate partitions in txWriter
                             // When newSplitPartitionTimestamp == partitionTimestamp it is the only way
                             // to open 2 frames to the same partition timestamp

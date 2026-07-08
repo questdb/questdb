@@ -1377,6 +1377,64 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeRemovesSplitPieceFollowingHardlinkSuffixChild() throws Exception {
+        // L2 regression. When a replace-range empties a split piece whose in-group predecessor is a
+        // zero-copy hardlink SUFFIX CHILD (partitionTop > 0), o3ConsumePartitionUpdateSink_processSplit-
+        // PartitionRemoval splits "one line" off that child. findNewSplitPartitionSizeTimestamp and the
+        // source-frame open must read the child's own slice [partitionTop, partitionTop + size), not the
+        // donor-prefix rows [0, size). Before the fix both reads hardwired offset 0 (raw mmap from 0, and
+        // the offset-free openRO overload), so the one-line split carried a donor-prefix (early) timestamp,
+        // duplicated a donor row and orphaned the child's real tail -- silent on-disk corruption that the
+        // 8708 assert did not catch. The oracle is the pre-replace content minus the removed row.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 8);
+            setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 8);
+
+            execute("create table x (id int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            // Base data on one day in three dense minute-spaced bands with empty gaps between them:
+            //   A 00:00..00:29, B 01:00..01:29, C 02:00..02:29 (gaps 00:30..00:59 and 01:30..01:59).
+            execute("insert into x select x::int, ('2020-02-04T00:00:00'::timestamp + (x - 1) * 60000000L)::timestamp from long_sequence(30)");
+            execute("insert into x select (100 + x)::int, ('2020-02-04T01:00:00'::timestamp + (x - 1) * 60000000L)::timestamp from long_sequence(30)");
+            execute("insert into x select (200 + x)::int, ('2020-02-04T02:00:00'::timestamp + (x - 1) * 60000000L)::timestamp from long_sequence(30)");
+            drainWalQueue();
+
+            // O3 row at 01:45 (in the B|C gap) hardlink-splits the day into
+            //   [donor(A+B) | middle(01:45) | childC(top>0)].
+            execute("insert into x values (901, '2020-02-04T01:45:00.000000Z')");
+            drainWalQueue();
+            assertQuery("select count() from table_partitions('x')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n3\n");
+
+            // O3 row at 00:45 (in the A|B gap) re-splits the donor prefix into
+            //   [prefix'(A) | middle2(00:45) | child2(B, top>0) | middle(01:45) | childC(top>0)].
+            // child2 is a top>0 suffix child sitting immediately before the middle(01:45) piece.
+            execute("insert into x values (902, '2020-02-04T00:45:00.000000Z')");
+            drainWalQueue();
+            assertQuery("select count() from table_partitions('x')")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n5\n");
+
+            // Oracle: everything except the row the replace-range removes, captured before the replace.
+            execute("create table expected as (select * from x where ts <> '2020-02-04T01:45:00.000000Z') timestamp(ts) partition by DAY WAL");
+
+            // Delete-only replace-range over the middle(01:45) piece. Its predecessor in the day floor is
+            // child2 (partitionTop > 0), so the removal sweep splits one line off child2 -- the buggy path.
+            commitNoRowsWithRangeReplace(tableToken, "2020-02-04T01:45:00.000000Z", "2020-02-04T01:45:00.000000Z");
+            drainWalQueue();
+
+            Assert.assertFalse("table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertSqlCursors("expected", "x");
+            assertSqlCursors("select count(*), min(ts), max(ts) from expected", "select count(*), min(ts), max(ts) from x");
+        });
+    }
+
+    @Test
     public void testReplaceRangeWithColumnAddedInMiddleOfPartition() throws Exception {
         assertMemoryLeak(() -> {
             final int partitionRowCount = 500;

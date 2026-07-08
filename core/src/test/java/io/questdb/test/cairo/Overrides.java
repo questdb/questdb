@@ -179,9 +179,11 @@ public class Overrides {
                 }
             }
             properties.setProperty(propertyPath, value);
-            changed = !Chars.equalsNc(value, existing);
+            // OR, don't assign: a later no-op setProperty must not cancel a pending rebuild
+            // signalled by an earlier call, or getConfiguration() keeps serving a stale config.
+            changed |= !Chars.equalsNc(value, existing);
         } else {
-            changed = properties.remove(propertyPath) != null;
+            changed |= properties.remove(propertyPath) != null;
         }
     }
 
