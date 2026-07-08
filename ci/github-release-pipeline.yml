@@ -134,6 +134,11 @@ stages:
     jobs:
       - job: Release
         pool: hetzner-incus
+        variables:
+          # AMI publish uses OIDC/STS temp creds; without this the AWS Toolkit
+          # requests the 900s STS minimum and the token expires mid-deploy.
+          # Request a 4h session (role MaxSessionDuration raised to match).
+          aws.rolecredential.maxduration: "14400"
         steps:
           - checkout: self
             fetchDepth: 1
