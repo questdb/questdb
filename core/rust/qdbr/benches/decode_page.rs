@@ -257,6 +257,7 @@ fn build_case_ascii(
             column_top: 0,
             format,
             ascii,
+            id: None,
         },
         row_count,
     }
