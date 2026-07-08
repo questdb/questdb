@@ -13485,10 +13485,14 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // column count) disagrees with the running function is structural
         // corruption that slipped past the CRC, not a version break. The
         // restore must treat it like any other corrupt head .cp: unlink it,
-        // clear the head metadata, and fall through to head-miss replay -
-        // WITHOUT invalidating the view. This is the counterpart to
-        // testRestoreVersionMismatchInvalidatesView, which takes the other
-        // branch (invalidate, keep the .cp) on a real compatibility break.
+        // clear the head metadata, and fall through to the inline head-miss
+        // rebuild - WITHOUT invalidating the view. The rebuild re-materialises
+        // the view over the applied base snapshot (an idempotent REPLACE_RANGE)
+        // and its follow-up flush writes a fresh head .cp, so the restore
+        // completes rather than leaving a headless, cold-accumulator view. This
+        // is the counterpart to testRestoreVersionMismatchInvalidatesView, which
+        // takes the other branch (invalidate, keep the .cp) on a real
+        // compatibility break.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -13578,14 +13582,22 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "a key-shape mismatch is corruption, not a version break - the LV must NOT be invalidated",
                     reloaded.isInvalid()
             );
-            Assert.assertEquals(
-                    "the corrupt head .cp was unlinked and head metadata cleared (head-miss routing)",
+            Assert.assertTrue(
+                    "corruption routes through the inline head-miss rebuild, which completes the restore",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            // The head-miss rebuild re-materialised the whole view over the applied
+            // base snapshot and its follow-up flush wrote a fresh head .cp, so the
+            // head metadata is a valid (non-null) head again - not the transiently
+            // cleared LONG_NULL left mid-recovery.
+            Assert.assertNotEquals(
+                    "the head-miss rebuild wrote a fresh head .cp",
                     Numbers.LONG_NULL,
                     reloaded.getHeadCheckpointLvSeqTxn()
             );
 
-            // The failed restore left the on-disk tier untouched: the LV still
-            // reads the same cumulative sums it computed before the corruption.
+            // The rebuild reproduced exactly the cumulative sums the LV held before
+            // the corruption (the intact base yields an idempotent REPLACE_RANGE).
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
                     "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
                     "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
@@ -13598,9 +13610,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     public void testRestoreCorruptHeadCheckpointReplaysFromHeadMiss() throws Exception {
         // A head .cp whose payload byte is flipped fails the CRC check on restore.
         // That is corruption, not a version break: the restore must unlink the .cp,
-        // clear the head metadata, and fall through to head-miss replay WITHOUT
-        // invalidating the view - the on-disk tier is untouched, so the LV keeps
-        // serving the rows it already materialised. Counterpart to
+        // clear the head metadata, and fall through to the inline head-miss rebuild
+        // WITHOUT invalidating the view. The rebuild re-materialises the view over
+        // the applied base snapshot (an idempotent REPLACE_RANGE that reproduces the
+        // rows already on disk) and its follow-up flush writes a fresh head .cp, so
+        // the restore completes. Counterpart to
         // testRestoreKeyShapeMismatchReplaysFromHeadMiss, which reaches the same
         // recovery via a structural key-shape mismatch rather than a CRC failure.
         assertMemoryLeak(() -> {
@@ -13665,14 +13679,22 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "a CRC failure is corruption, not a version break - the LV must NOT be invalidated",
                     reloaded.isInvalid()
             );
-            Assert.assertEquals(
-                    "the corrupt head .cp was unlinked and head metadata cleared (head-miss routing)",
+            Assert.assertTrue(
+                    "corruption routes through the inline head-miss rebuild, which completes the restore",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            // The head-miss rebuild re-materialised the whole view over the applied
+            // base snapshot and its follow-up flush wrote a fresh head .cp, so the
+            // head metadata is a valid (non-null) head again - not the transiently
+            // cleared LONG_NULL left mid-recovery.
+            Assert.assertNotEquals(
+                    "the head-miss rebuild wrote a fresh head .cp",
                     Numbers.LONG_NULL,
                     reloaded.getHeadCheckpointLvSeqTxn()
             );
 
-            // The failed restore left the on-disk tier untouched: the LV still
-            // reads the same cumulative sums it computed before the corruption.
+            // The rebuild reproduced exactly the cumulative sums the LV held before
+            // the corruption (the intact base yields an idempotent REPLACE_RANGE).
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
                     "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
                     "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
