@@ -4859,6 +4859,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 && engine.getConfiguration().getMicrosecondClock().getTicks() < deferUntilUs) {
             return;
         }
+        // Live-view WAL apply back-off: the refresh worker drives the view's OWN WAL apply
+        // inline (applyWalDirect) after committing a flushed lead or a coupled-drain batch.
+        // When that apply is backed off under memory pressure it silently no-ops at
+        // ApplyWal2TableJob's isReadyToProcess gate (returning without advancing the applied
+        // seqTxn), so committing this cycle would land rows in the LV WAL that never reach
+        // disk while the tier gets stamped as if they had - size()/count()/LIMIT would then
+        // undercount them until the pressure eased. Skip the whole cycle instead: the
+        // already-published lead stays in RAM under its valid stamp and reads stay correct,
+        // and the next tick retries once apply readiness returns (the back-off self-clears on
+        // its timeout). A healthy view - the common case - reads ready and is unaffected.
+        // Cheap guard before the latch, like the apply-lag defer above.
+        if (!engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken())
+                .getMemPressureControl().isReadyToProcess()) {
+            return;
+        }
         if (!instance.tryLockForRefresh()) {
             return;
         }

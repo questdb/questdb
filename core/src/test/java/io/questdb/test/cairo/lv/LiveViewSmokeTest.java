@@ -57,6 +57,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
@@ -3198,6 +3199,75 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "2026-06-01T00:00:00.000020Z\t2\t3\n" +
                     "2026-06-01T00:00:00.000030Z\t3\t4\n");
 
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRefreshDefersWhenLiveViewApplyBackedOff() throws Exception {
+        // The refresh worker drives the view's OWN WAL apply inline (applyWalDirect)
+        // after committing a flushed lead. When that apply is backed off under memory
+        // pressure it silently no-ops at ApplyWal2TableJob's isReadyToProcess gate, so a
+        // flush this cycle would commit rows to the LV WAL that never reach disk while the
+        // tier is stamped as if they had -- size()/count()/LIMIT would then undercount
+        // them until the pressure eased. refreshInstance must instead defer the whole
+        // cycle while the LV apply is backed off, leaving the last published lead in RAM,
+        // and converge once the pressure eases. Deleting the pre-latch readiness guard
+        // lets the backed-off cycle advance the watermark over an un-applied commit, which
+        // the watermark assertion below catches.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Fully refresh and flush a first row so the LV table exists on disk with
+                // an established watermark.
+                execute("INSERT INTO base (val, ts) VALUES (10, '2026-01-01T00:00:01.000000Z')");
+                drainWalQueue();
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+                final TableWriterPressureControl lvPressure = engine.getTableSequencerAPI()
+                        .getTxnTracker(instance.getLiveViewToken()).getMemPressureControl();
+
+                // Advance past FLUSH EVERY first, then back off the LV apply AT this frozen
+                // clock, exactly as a prior OOM apply would. Arming at the current tick makes
+                // the back-off floor (now + a randomised delay) strictly future-dated, so the
+                // deferral is deterministic regardless of the random delay.
+                setCurrentMicros(4_000_000L);
+                lvPressure.onOutOfMemory();
+                Assert.assertFalse("test setup: LV apply must be backed off", lvPressure.isReadyToProcess());
+
+                // A second base row arrives and is applied to the base. A normal cycle
+                // would drain it, flush, and inline-apply -- but the inline apply is backed
+                // off, so the cycle must defer rather than commit a row that cannot reach
+                // disk. The durable watermark must not advance.
+                execute("INSERT INTO base (val, ts) VALUES (20, '2026-01-01T00:00:02.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("a backed-off LV apply must defer the refresh, not advance the watermark",
+                        processedBefore, instance.getLastProcessedSeqTxn());
+                Assert.assertFalse("the deferral must not invalidate the view", instance.isInvalid());
+
+                // Ease the memory pressure and let the next tick converge.
+                lvPressure.onEnoughMemory();
+                setCurrentMicros(6_000_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("the view must stay valid after convergence", instance.isInvalid());
+            }
+            // Both rows land in ts order with a gapless row_number sequence.
+            assertQuery("SELECT val, ts, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("val\tts\trn\n" +
+                            "10\t2026-01-01T00:00:01.000000Z\t1\n" +
+                            "20\t2026-01-01T00:00:02.000000Z\t2\n");
             execute("DROP LIVE VIEW lv");
         });
     }

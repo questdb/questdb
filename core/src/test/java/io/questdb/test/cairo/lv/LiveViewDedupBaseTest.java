@@ -306,6 +306,87 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyLagBackOffThrottlesRedrainWithinWindow() throws Exception {
+        // The apply-lag back-off floor must THROTTLE re-draining, not just permit
+        // convergence. When a coupled dedup drain defers on base apply lag it arms a
+        // short back-off (LiveViewRefreshJob.refreshInstance); a refresh tick that
+        // enters the view inside that window must skip the whole cycle at the pre-latch
+        // guard rather than re-enter drainAppliedBase, re-observe the same lag, and burn
+        // a full window recompute every tick until apply lands. The companion
+        // testAppliedBaseDrainDefersOnApplyLagInsteadOfDeadlocking proves the
+        // cooperative unwind returns and leaves the view untouched; this proves the
+        // throttle itself engages. Because the fallback scan gates on the APPLIED base
+        // point (getWriterTxn), which does not advance during apply lag, a re-entry has
+        // to come from a fresh notification (a new committed-but-unapplied base commit);
+        // this test posts one inside the window. Deleting either the arm or the
+        // pre-latch guard fails an assertion below.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Establish the coupled frontier and watermarks with a fully applied
+                // first row.
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 10, '2026-01-01T00:00:01.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Commit a second row to the base sequencer but do NOT apply it (skip
+                // drainWalQueue): the commit posts a refresh notification, and the
+                // coupled drainAppliedBase gate then observes the apply lag. Freeze the
+                // clock at a known point past FLUSH EVERY so the flush-due gate lets this
+                // cycle reach the drain.
+                final long deferArmedAtUs = 2_000_000L;
+                final long backOffUs = 5_000L; // APPLY_LAG_DEFER_BACKOFF_US
+                setCurrentMicros(deferArmedAtUs);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('b', 20, '2026-01-01T00:00:02.000000Z')");
+                drainJob(job);
+
+                // The cooperative unwind armed the back-off floor at now + backOffUs.
+                // Deleting the arm leaves the floor LONG_NULL, so this fails.
+                Assert.assertEquals("apply-lag defer must arm a back-off floor",
+                        deferArmedAtUs + backOffUs, instance.getApplyLagDeferUntilUs());
+
+                // Step the clock forward but stay strictly INSIDE the back-off window,
+                // then commit (again without applying) a third row so its notification
+                // re-enters the view this tick. The re-entry must be throttled: the
+                // pre-latch guard skips the cycle, so the floor is left exactly where it
+                // was. Deleting the guard lets the tick re-enter the drain, re-observe
+                // the lag, and re-arm the floor to (now + backOffUs) = a strictly LATER
+                // value, so the assertion fails.
+                setCurrentMicros(deferArmedAtUs + 2_000L);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('c', 30, '2026-01-01T00:00:03.000000Z')");
+                drainJob(job);
+                Assert.assertEquals("a tick inside the back-off window must not re-drain (floor unchanged)",
+                        deferArmedAtUs + backOffUs, instance.getApplyLagDeferUntilUs());
+                Assert.assertFalse("a throttled tick must not invalidate the view", instance.isInvalid());
+
+                // Apply the base commits, step past the back-off floor, and let the next
+                // tick converge the drain.
+                drainWalQueue();
+                setCurrentMicros(deferArmedAtUs + backOffUs + 1_000_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must stay valid after the drain converges", instance.isInvalid());
+            }
+            // All three rows land in ts order with a gapless row_number sequence.
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\trn\n" +
+                            "a\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
+                            "b\t20\t2026-01-01T00:00:02.000000Z\t2\n" +
+                            "c\t30\t2026-01-01T00:00:03.000000Z\t3\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testBaseTruncateFreezesDerivedPrefix() throws Exception {
         // A base TRUNCATE below the frontier is a data-shaped non-DATA commit
         // (walId>0, isDataType=false): the WAL-E walk excludes it from batchMinTs, so
