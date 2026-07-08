@@ -49,6 +49,10 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
 
     @Override
     public void close() {
+        // Drop any outstanding covered-index decode charge before the block returns
+        // to the pool, so it recycles with used == 0. The covered buffers themselves
+        // are freed later on global-only accounting by a subsequent query.
+        reconcileCovered();
         provider.release(this);
     }
 
@@ -93,6 +97,9 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
      * native counter to {@code 0} and stores the workload-appropriate limit.
      */
     void init(long queryId, MemoryTrackerWorkload workload, long limit) {
+        // Backstop the covered-decode reconcile in case a prior owner bypassed close()
+        // (e.g. an error path that abandoned the tracker). Idempotent after close().
+        reconcileCovered();
         // A pooled tracker must come back clean: a non-zero used means a prior query released it
         // with a native allocation still bound, so that charge would misattribute to the next
         // query that recycles this block. Guard the invariant at the recycle boundary.
