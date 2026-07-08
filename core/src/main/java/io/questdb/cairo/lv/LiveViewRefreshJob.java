@@ -4277,19 +4277,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * True when {@code e} is the specific failure {@link WalTxnDetails#openWalEFile}
-     * raises when the base WAL event file the lead re-derive wants is absent: the
-     * errno is file-does-not-exist and the wrapper carries the "cannot read WAL
-     * event file" prefix. An enterprise backup/restore captures only the applied
-     * base TABLE, not the base WAL segments (a normal restart retains them via the
-     * {@code WalPurgeJob} {@code lvConsumedSeqTxn} purge clamp), so the first boot
-     * refresh's {@code drainBaseWal} hits exactly this. The narrow match keeps a
-     * genuinely corrupt WAL event file (read with errno 0) on the invalidating
-     * path rather than silently rebuilding over it.
+     * True when {@code e} is a file-does-not-exist failure raised while {@code drainBaseWal}
+     * reads the base WAL segments the lead re-derive wants. The base WAL is absent whenever the
+     * applied base TABLE outlived its WAL segments: an enterprise backup/restore captures only the
+     * TABLE, and a role migration onto a partially-uploaded object store leaves a lagging live view
+     * needing base commits whose WAL a replica purged (a replica does not hold base WAL for its live
+     * view -- it follows the replicated on-disk tier, not the base WAL) or whose upload was cut
+     * mid-segment. A missing segment can surface as any of its files -- the WAL event file
+     * ({@link WalTxnDetails#openWalEFile} "cannot read WAL event file"), a symbol map
+     * ("SymbolMap does not exist"), or a column file -- so match on the errno (file-does-not-exist)
+     * rather than a single message. Gating on {@link CairoException#isFileCannotRead()} keeps a
+     * genuinely corrupt WAL file (read with errno 0) on the invalidating path rather than silently
+     * rebuilding over it; the {@code firstCycleWithoutCheckpoint} guard at the call site narrows this
+     * to the first cycle after a checkpoint-less restore/promote, where a live primary's base WAL is
+     * present and never throws.
      */
-    private static boolean isBaseWalEventFileMissing(CairoException e) {
-        return e.isFileCannotRead()
-                && Chars.contains(e.getFlyweightMessage(), "cannot read WAL event file");
+    private static boolean isBaseWalSegmentFileMissing(CairoException e) {
+        return e.isFileCannotRead();
     }
 
     /**
@@ -4404,6 +4408,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // elapsed, so the worker idles instead of re-draining into the same stall every tick.
             if (leadOnly && deferReplicaLeadWork(instance)) {
                 continue;
+            }
+            // Promote-hydrate consistency guard (primary only). A role migration onto a
+            // partially-uploaded object store can leave a live view's durable watermark ahead of the
+            // base seqTxn that actually replicated: the ex-primary flushed + uploaded derived rows for
+            // base commits whose own base-table WAL upload lagged and was cut, and a replica applies that
+            // LIVE_VIEW_DATA -- advancing _lv.s via applyLiveViewData -- without ever holding the base
+            // beyond what replicated. The base can never reach that seqTxn (it is not in the downloaded
+            // WAL), so the view would otherwise sit active forever serving derived rows for base commits
+            // the promoted primary no longer holds. Invalidate it durably, mirroring the mat-view "view
+            // is ahead of base table and cannot be synchronized" guard in CairoEngine.loadMatViewIntoStore.
+            // Read-only replicas never invalidate (they defer forever; see onReplicaLeadRefreshFailure),
+            // and this is a strict no-op on a healthy primary, where a view never outruns the base it
+            // derives from.
+            if (!leadOnly) {
+                final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
+                if (instance.getLastProcessedSeqTxn() > baseSeqLastTxn) {
+                    LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
+                            .$(instance.getLiveViewToken())
+                            .$(", lastProcessedSeqTxn=").$(instance.getLastProcessedSeqTxn())
+                            .$(", baseTableTxn=").$(baseSeqLastTxn)
+                            .I$();
+                    engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
+                    didWork = true;
+                    continue;
+                }
             }
             long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
             // The 2a.7 restart-restore runs inside refreshInstance on the
@@ -4753,7 +4782,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // table anyway (drainAppliedBaseForLead), so it never raises this error.
                             final boolean rederiveFromAppliedBase = firstCycleWithoutCheckpoint
                                     && !leadReconstruction
-                                    && isBaseWalEventFileMissing(e);
+                                    && isBaseWalSegmentFileMissing(e);
                             if (!rederiveFromAppliedBase) {
                                 throw e;
                             }

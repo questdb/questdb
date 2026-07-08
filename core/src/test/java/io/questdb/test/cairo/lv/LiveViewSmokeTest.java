@@ -2589,6 +2589,58 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewAheadOfBaseInvalidates() throws Exception {
+        // A role migration onto a partially-uploaded object store can leave a live view's durable
+        // watermark (last_processed_seqtxn) ahead of the base seqTxn that actually replicated: the
+        // ex-primary flushed + uploaded derived rows for base commits whose own base-table WAL upload
+        // lagged and was cut, and a replica applied that LIVE_VIEW_DATA -- advancing _lv.s via
+        // CairoEngine.applyLiveViewData -- without ever holding the base beyond what replicated. The base
+        // can never reach that seqTxn, so the promoted primary's refresh must invalidate the view rather
+        // than sit active forever serving derived rows for base commits it no longer holds, mirroring the
+        // mat-view "view is ahead of base table and cannot be synchronized" guard. Drives
+        // applyLiveViewData directly -- the same call the replica apply job makes -- to construct the
+        // ahead state without an object store.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:01.000000Z', 1), ('2026-06-01T00:00:02.000000Z', 2)");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertFalse("view active after catching up to the base", instance.isInvalid());
+
+            final TableToken baseToken = engine.verifyTableName("base");
+            final long baseHead = engine.getTableSequencerAPI().lastTxn(baseToken);
+            // Force _lv.s ahead of the base head: simulate a replica having applied a LIVE_VIEW_DATA block
+            // whose base seqTxn (baseHead + 3) this node's base never received.
+            final long aheadSeqTxn = baseHead + 3;
+            final TableToken lvToken = engine.verifyTableName("lv");
+            try (
+                    BlockFileWriter w = new BlockFileWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration().getCommitMode());
+                    Path path = new Path()
+            ) {
+                engine.applyLiveViewData(lvToken, aheadSeqTxn, w, path);
+            }
+            Assert.assertEquals("watermark now ahead of the base head", aheadSeqTxn, instance.getLastProcessedSeqTxn());
+
+            // The promote-hydrate guard in scanForLaggingViews must invalidate the ahead view.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue("a live view ahead of its base must be invalidated", instance.isInvalid());
+            TestUtils.assertContains(instance.getInvalidationReason(), "ahead of base table");
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("view_status\ninvalid\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testWriterStallWhenBothSlotsPinned() throws Exception {
         // When both slots are reader-pinned, the
         // slow-path tryAcquireWrite returns null and the refresh worker
