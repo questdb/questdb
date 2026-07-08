@@ -140,6 +140,9 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
     // Small symbol universe so where-filters frequently hit populated values.
     private static final String[] SYMS = {"a", "b", "c", "d", "e", "f", "g", "h", "null-ish", "z"};
     private static volatile boolean skip;
+    // Live column state of the scenario currently under assertion, so the quarantine can attribute a
+    // ".pk." missing-file fault back to its column and refuse to mask a replica-only one.
+    private Cols lastScenarioCols;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -171,12 +174,9 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
                 runScenario(seed);
                 strictlyCompleted++;
             } catch (CairoException ce) {
-                if (!isPostingReaderMissingPkDefect(ce)) {
+                if (!isTolerablePostingReaderMissingPkDefect(ce)) {
                     throw ce;
                 }
-                System.out.println("SEPARATE FINDING (seed=" + seed + "): NON-replica-only posting index "
-                        + "reader missing per-partition .pk at query time; deferred to posting-index owner. "
-                        + "See class javadoc.");
             }
         }
         // The three convert-clean seeds MUST run fully strict; if even those regressed, fail.
@@ -184,14 +184,51 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
                 strictlyCompleted >= 3);
     }
 
-    // True iff the failure is the SEPARATE posting-index reader defect: the POSTING index reader
-    // (AbstractPostingIndexReader.of) cannot open a per-partition .pk that the planner assumed present.
-    // Distinct from the replica-only convert/link suspend (now fixed) and from any count/covering oracle.
-    private static boolean isPostingReaderMissingPkDefect(CairoException ce) {
+    // Extracts "<col>" from a "...: <path>/<col>.pk.<txn>" missing-file message, or null when the
+    // column segment cannot be isolated.
+    private static String parseFaultingPkColumn(CharSequence msg) {
+        final String s = msg.toString();
+        final int pk = s.indexOf(".pk.");
+        if (pk < 0) {
+            return null;
+        }
+        int start = pk;
+        while (start > 0 && s.charAt(start - 1) != '/') {
+            start--;
+        }
+        return start < pk ? s.substring(start, pk) : null;
+    }
+
+    // True iff the failure is the SEPARATE posting-index reader defect AND it faults on a
+    // NON-replica-only posting column: the POSTING index reader (AbstractPostingIndexReader.of) cannot
+    // open a per-partition .pk that the planner assumed present. A replica-only column (b/c/e) faulting
+    // is a genuine replica-only reconcile regression and must NOT be masked - this returns false for it
+    // (and for any fault whose column cannot be attributed), so the call site re-throws. Distinct from
+    // the replica-only convert/link suspend (now fixed) and from any count/covering oracle.
+    private boolean isTolerablePostingReaderMissingPkDefect(CairoException ce) {
         final CharSequence msg = ce.getFlyweightMessage();
-        return msg != null
-                && Chars.contains(msg, "could not open, file does not exist")
-                && Chars.contains(msg, ".pk.");
+        if (msg == null
+                || !Chars.contains(msg, "could not open, file does not exist")
+                || !Chars.contains(msg, ".pk.")) {
+            return false;
+        }
+        final String faultingColumn = parseFaultingPkColumn(msg);
+        if (faultingColumn == null || lastScenarioCols == null) {
+            // cannot attribute the fault to a specific column: do not mask it.
+            return false;
+        }
+        for (Col col : lastScenarioCols.all) {
+            if (faultingColumn.equals(col.name)) {
+                final boolean tolerable = !col.currentlyReplicaOnly;
+                if (tolerable) {
+                    System.out.println("SEPARATE FINDING (col=" + faultingColumn + "): NON-replica-only "
+                            + "posting index reader missing per-partition .pk at query time; deferred to "
+                            + "posting-index owner. See class javadoc.");
+                }
+                return tolerable;
+            }
+        }
+        return false;
     }
 
     // Reference column keeps its full-scan answer regardless of role: it has no replica-only index.
@@ -365,6 +402,7 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
                 final Col d = new Col("d", false, false, false);  // plain, not indexed
                 final Col e = new Col("e", true, true, true);     // RO covering posting (includes v)
                 final Cols cols = new Cols(a, b, c, d, e);
+                lastScenarioCols = cols;
 
                 long ts = 0;
 

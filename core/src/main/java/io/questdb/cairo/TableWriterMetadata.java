@@ -263,30 +263,35 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int symbolCapacity,
             boolean isDedupKey,
             int replacingIndex,
-            boolean isSymbolCached
+            boolean isSymbolCached,
+            boolean replicaOnlyIndex
     ) {
         int origWriterIndex = columnIndex;
         if (replacingIndex >= 0 && replacingIndex < columnMetadata.size()) {
             origWriterIndex = columnMetadata.get(replacingIndex).getOriginalWriterIndex();
         }
         String str = name.toString();
-        columnNameIndexMap.put(str, columnMetadata.size());
-        columnMetadata.add(
-                new WriterTableColumnMetadata(
-                        str,
-                        type,
-                        indexType,
-                        indexValueBlockCapacity,
-                        true,
-                        null,
-                        columnIndex,
-                        symbolCapacity,
-                        isDedupKey,
-                        replacingIndex,
-                        isSymbolCached,
-                        origWriterIndex
-                )
+        WriterTableColumnMetadata newColumnMetadata = new WriterTableColumnMetadata(
+                str,
+                type,
+                indexType,
+                indexValueBlockCapacity,
+                true,
+                null,
+                columnIndex,
+                symbolCapacity,
+                isDedupKey,
+                replacingIndex,
+                isSymbolCached,
+                origWriterIndex
         );
+        // Carry the replica-only-index flag so the column is persisted correctly and so the
+        // skip gate in TableWriter.configureColumn (which reads isColumnReplicaOnlyIndex) fires
+        // on a skipping primary. Otherwise a type change on a replica-only indexed column would
+        // drop the flag and materialize the bitmap index that this node must not build.
+        newColumnMetadata.setReplicaOnlyIndex(replicaOnlyIndex);
+        columnNameIndexMap.put(str, columnMetadata.size());
+        columnMetadata.add(newColumnMetadata);
         columnCount++;
         if (ColumnType.isSymbol(type)) {
             symbolMapCount++;

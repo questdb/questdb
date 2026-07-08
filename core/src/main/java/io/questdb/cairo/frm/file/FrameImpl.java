@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.frm.file;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
@@ -47,6 +48,7 @@ import static io.questdb.cairo.frm.FrameColumn.COLUMN_MEMORY;
 
 public class FrameImpl implements Frame {
     private final FrameColumnPool columnPool;
+    private final CairoConfiguration configuration;
     private boolean canWrite = false;
     private ReadOnlyObjList<? extends MemoryCR> columnsMemory;
     private boolean create = false;
@@ -59,8 +61,9 @@ public class FrameImpl implements Frame {
     private long partitionTimestamp;
     private long rowCount;
 
-    public FrameImpl(FrameColumnPool columnPool) {
+    public FrameImpl(FrameColumnPool columnPool, CairoConfiguration configuration) {
         this.columnPool = columnPool;
+        this.configuration = configuration;
     }
 
     @Override
@@ -201,7 +204,12 @@ public class FrameImpl implements Frame {
         if (columnType < 0) {
             return DeletedFrameColumn.INSTANCE;
         }
-        boolean isIndexed = metadata.isColumnIndexed(columnIndex);
+        // Role-aware index availability: a replica-only index on a skipping primary has no
+        // physical .k/.v files, so treat the column as un-indexed here (mirror the
+        // isColumnIndexActive gating in O3PartitionJob/openPartition). Otherwise a squash
+        // opens a BitmapIndexWriter against the absent key file (suspends the table) and a
+        // split wrongly materializes the replica-only bitmap index.
+        boolean isIndexed = metadata.isColumnIndexActive(columnIndex, configuration.skipReplicaOnlyIndexes());
         int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(columnIndex) : 0;
         byte indexType = metadata.getColumnIndexType(columnIndex);
         int crvRecIndex = crv.getRecordIndex(partitionTimestamp, columnIndex);

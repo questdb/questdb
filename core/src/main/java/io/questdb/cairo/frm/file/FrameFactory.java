@@ -42,11 +42,13 @@ import java.io.Closeable;
 
 public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     private final FrameColumnPool columnPool;
+    private final CairoConfiguration configuration;
     private final ConcurrentPool<FrameImpl> framePool = new ConcurrentPool<>();
     private boolean closed;
 
     public FrameFactory(CairoConfiguration configuration) {
         this.columnPool = new ContiguousFileColumnPool(configuration);
+        this.configuration = configuration;
     }
 
     // This method is used to clear the frame pool and release all frames.
@@ -211,7 +213,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         if (frm != null) {
             return frm;
         }
-        FrameImpl frame = new FrameImpl(columnPool);
+        FrameImpl frame = new FrameImpl(columnPool, configuration);
         frame.setRecycleBin(this);
         return frame;
     }

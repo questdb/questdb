@@ -24,8 +24,12 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -33,6 +37,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -532,6 +537,108 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         });
     }
 
+    // Partition split (splitLastPartition) and squash (squashPartitions) both copy columns through
+    // FrameImpl.getContiguousFileFrameColumn, which used to read the raw isColumnIndexed flag. On a
+    // skipping primary a REPLICA ONLY symbol index has no physical .k/.v, so the frame path must treat
+    // the column as un-indexed (isColumnIndexActive): otherwise the split builds a .k/.v the node must
+    // not materialize, and the squash opens a BitmapIndexWriter against the absent key file and throws
+    // "index does not exist", distressing the writer. This test forces several splits with an O3 insert
+    // and then squashes them; the fix keeps the writer healthy and materializes no index files.
+    @Test
+    public void testSplitAndSquashReplicaOnlyIndexDoesNotMaterializeOrDistress() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day bypass wal");
+            // Seed a single day-0 partition with an in-order run of 300 rows (all symbol 'a').
+            execute("insert into x select 'a', x * 1.0, timestamp_sequence(0, 60000000L) from long_sequence(300)");
+            engine.releaseAllWriters();
+
+            Assert.assertFalse("no index files expected on skipping primary after seed insert", indexFilesExist("x", "s"));
+
+            // Three O3 inserts landing near the tail of the seeded partition: with a split-min-size of 1
+            // each one splits the last partition (rather than merging), so several split partitions
+            // accumulate before the squash.
+            execute("insert into x values ('b', -1, 290 * 60000000L)");
+            execute("insert into x values ('b', -2, 280 * 60000000L)");
+            execute("insert into x values ('b', -3, 270 * 60000000L)");
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("x");
+            final long splitPartitionCount = selectLong("select count() from table_partitions('x')");
+            Assert.assertTrue(
+                    "test setup: O3 inserts must create split partitions before squashPartitions(), count=" + splitPartitionCount,
+                    splitPartitionCount > 1
+            );
+
+            // The split path must not have materialized the replica-only index.
+            Assert.assertFalse("no index files expected on skipping primary after O3 split", indexFilesExist("x", "s"));
+
+            // Squash the split partitions back together. Without the FrameImpl fix this opens a
+            // BitmapIndexWriter over the absent .k and throws, distressing the writer.
+            try (TableWriter writer = TestUtils.getWriter(engine, token)) {
+                writer.squashPartitions();
+                Assert.assertFalse("writer must not be distressed by squashPartitions() over a replica-only index", writer.isDistressed());
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            final long squashedPartitionCount = selectLong("select count() from table_partitions('x')");
+            Assert.assertTrue(
+                    "squashPartitions() must reduce the split partition count [before=" + splitPartitionCount + ", after=" + squashedPartitionCount + ']',
+                    squashedPartitionCount < splitPartitionCount
+            );
+
+            // Still no index files after the squash, and the metadata flags survive.
+            Assert.assertFalse("no index files expected on skipping primary after squash", indexFilesExist("x", "s"));
+            assertMetadataFlags("x", "s");
+
+            // Full-scan correctness over the squashed partition: the skipped index must not change results.
+            assertQuery("select s, count() from x order by s").noLeakCheck().expectSize().returns("s\tcount\na\t300\nb\t3\n");
+        });
+    }
+
+    // changeColumnType removes the source column and re-adds the replacement through addColumnToMeta.
+    // On a skipping primary a replica-only source column must not distress the writer or materialize an
+    // index during the conversion, and the replica-only flag must be carried onto the replacement column
+    // (addColumnToMeta now threads it through, matching the changeSymbolCapacity fix) so configureColumn's
+    // skip gate fires. A same-type symbol change is rejected by SQL, so the still-indexed survival path is
+    // not reachable here; this exercises the reachable conversion of a replica-only indexed symbol column.
+    @Test
+    public void testChangeColumnTypeReplicaOnlyIndexDoesNotMaterializeOrDistress() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a', 1, 0), ('b', 2, 1000000), ('a', 3, 2000000)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse("no index files expected on skipping primary before type change", indexFilesExist("x", "s"));
+
+            execute("alter table x alter column s type varchar");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "WAL table must not be suspended by ALTER COLUMN TYPE on a replica-only indexed column",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            Assert.assertFalse("no index files expected after type change", indexFilesExist("x", "s"));
+
+            // The replacement column is a plain varchar: no longer indexed or replica-only.
+            try (TableReader reader = engine.getReader(token)) {
+                final int colIdx = reader.getMetadata().getColumnIndex("s");
+                Assert.assertFalse("converted column must not be indexed", reader.getMetadata().isColumnIndexed(colIdx));
+                Assert.assertFalse("converted column must not be replica-only", reader.getMetadata().isColumnReplicaOnlyIndex(colIdx));
+            }
+
+            assertQuery("select s, v, ts from x where s = 'a'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("s\tv\tts\na\t1.0\t1970-01-01T00:00:00.000000Z\na\t3.0\t1970-01-01T00:00:02.000000Z\n");
+        });
+    }
+
     // The metadata must still record indexed=true and replicaOnly=true so a replica or a promoted
     // node (skipReplicaOnlyIndexes()==false) can build the bitmap index later.
     private void assertMetadataFlags(String table, String col) {
@@ -613,5 +720,15 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         }
         // next char after the prefix must be '.' (txn suffix) to avoid matching e.g. "s.kx"
         return name.charAt(prefix.length()) == '.';
+    }
+
+    private long selectLong(CharSequence sql) throws Exception {
+        try (RecordCursorFactory factory = select(sql);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("query must return one row [sql=" + sql + ']', cursor.hasNext());
+            final long value = cursor.getRecord().getLong(0);
+            Assert.assertFalse("query must return exactly one row [sql=" + sql + ']', cursor.hasNext());
+            return value;
+        }
     }
 }

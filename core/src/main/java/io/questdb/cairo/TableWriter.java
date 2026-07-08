@@ -774,6 +774,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 isDedupKey,
                 columnNameTxn,
                 -1,
+                false,
                 metadata
         );
 
@@ -1256,6 +1257,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
+            // Carry the replica-only-index flag across the type change: like the covering
+            // schema, this per-column flag would otherwise be dropped when the replacement
+            // column is added, materializing the bitmap index on a skipping primary.
+            boolean isReplicaOnlyIndex = metadata.isColumnReplicaOnlyIndex(existingColIndex);
             int columnIndex = columnCount;
             long columnNameTxn = getTxn();
 
@@ -1292,6 +1297,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     isDedupKey,
                     columnNameTxn,
                     existingColIndex,
+                    // the replica-only flag is only meaningful for an indexed column: carry it only
+                    // when the replacement column is itself indexed
+                    isReplicaOnlyIndex && IndexType.isIndexed(indexType),
                     metadata
             );
 
@@ -1308,8 +1316,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // write index if necessary or remove the old one
             // index must be created before column is initialised because
-            // it uses the primary column object as a temporary tool
-            if (IndexType.isIndexed(indexType)) {
+            // it uses the primary column object as a temporary tool.
+            // On a skipping primary a replica-only index has no wired indexer
+            // (configureColumn skipped it), so gate the build like addIndex does.
+            if (IndexType.isIndexed(indexType)
+                    && !(isReplicaOnlyIndex && configuration.skipReplicaOnlyIndexes())) {
                 SymbolColumnIndexer indexer = (SymbolColumnIndexer) indexers.get(columnIndex);
                 writeIndex(columnName, indexValueBlockCapacity, indexType, columnIndex, indexer);
                 // add / remove indexers
@@ -4042,6 +4053,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isDedupKey,
             long columnNameTxn,
             int replaceColumnIndex,
+            boolean replicaOnlyIndex,
             TableWriterMetadata metadata
     ) {
         // Keep the immediate predecessor as replacingIndex, not the
@@ -4058,7 +4070,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolCapacity,
                 isDedupKey,
                 replaceColumnIndex,
-                symbolCacheFlag
+                symbolCacheFlag,
+                replicaOnlyIndex
         );
 
         rewriteAndSwapMetadata(metadata);
@@ -12419,6 +12432,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // On-disk materialization probe for a replica-only indexed column: true when the index key
     // file exists in the last partition. Callers guarantee at least one partition exists. Mirrors
     // the reader's presence check (see TableReader).
+    //
+    // Assumption: the LAST partition is representative of whole-table materialization. Reconcile
+    // materializes/purges every partition atomically, so in steady state the index is either present
+    // on all partitions or none, and probing the last one is sufficient (and cheap). This can be
+    // fooled by a partial external restore that populates only some partitions - reconcile would then
+    // skip the all-partitions rebuild and a query over an un-indexed older partition surfaces the
+    // retryable "not materialized" error until the next reconcile. A per-partition probe would be more
+    // robust but is not warranted for that transient window.
     private boolean replicaOnlyIndexFilesPresent(int columnIndex) {
         final long partitionTimestamp = txWriter.getLastPartitionTimestamp();
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
