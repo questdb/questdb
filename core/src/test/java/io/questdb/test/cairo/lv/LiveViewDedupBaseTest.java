@@ -232,7 +232,7 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
         });
     }
 
-    @Test
+    @Test(timeout = 120_000)
     public void testAppliedBaseDrainDefersOnApplyLagInsteadOfDeadlocking() throws Exception {
         // Cooperative apply-lag handoff on the coupled dedup path (regression for
         // M-1). When the base sequencer head advances past the applied reader, the

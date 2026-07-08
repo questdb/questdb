@@ -86,10 +86,14 @@ public class LiveViewInstance implements QuietCloseable {
     private LiveViewWindow anchorWindow;
     // Wall-clock (micros) floor before which the refresh worker skips this view after a
     // cooperative apply-lag deferral, bounding the re-drain rate so it does not hot-spin the
-    // window recompute while the transient lag clears. LONG_NULL until armed; a stale past
-    // value is harmless, so it is never cleared. Written under the refresh latch; the pre-latch
-    // read in refreshInstance is a best-effort throttle, so a stale read costs one extra re-drain.
-    private long applyLagDeferUntilUs = Numbers.LONG_NULL;
+    // window recompute while the transient lag clears. LONG_NULL until armed;
+    // recordRefreshSuccess clears it back to LONG_NULL after a cycle drains cleanly so a
+    // recovered view stops taking the clock-read branch. Volatile because refreshInstance reads
+    // it pre-latch (a best-effort throttle) while another refresh worker may be writing it under
+    // the latch: the volatile publishes a coherent, untorn value. The field only ever holds
+    // LONG_NULL or a near-future floor, so a stale read costs at most one extra re-drain or a
+    // one-tick defer, never a permanently wrong skip.
+    private volatile long applyLagDeferUntilUs = Numbers.LONG_NULL;
     // In-memory count of base data-cursor rows the backfill sweep has consumed
     // so far - the skipRows() resume position for the next turn. Persists in
     // memory across in-process turns (window state persists with it), and is
@@ -915,7 +919,11 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Resets the consecutive-failure counter and the streak start. Called after each
-     * successful refresh cycle so the retry budget is per-streak, not lifetime.
+     * successful refresh cycle so the retry budget is per-streak, not lifetime. Also
+     * clears any armed apply-lag defer floor: a cycle that drained cleanly proves the
+     * transient base-apply lag has passed, so the pre-latch throttle in
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob#refreshInstance} should stop
+     * short-circuiting this view.
      * <p>
      * Does <em>not</em> clear {@code writerStallStartUs}: stall is a property of
      * the in-mem tier's slot pinning, not of refresh-cycle success. A zero-row
@@ -929,6 +937,7 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordRefreshSuccess() {
         flushRetryCount = 0;
         flushRetryStartUs = Numbers.LONG_NULL;
+        applyLagDeferUntilUs = Numbers.LONG_NULL;
     }
 
     /**
