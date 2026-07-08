@@ -69,43 +69,23 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // literal first lets any later reword land without scattering the change.
     public static final String READ_ONLY_ACCESS_MESSAGE = "replica access is read-only";
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+    private static final int FLAG_AUTHORIZATION_ERROR = 1;
+    private static final int FLAG_CACHEABLE = 1 << 1;
+    private static final int FLAG_CANCELLATION = 1 << 2; // query was explicitly cancelled by the user
+    private static final int FLAG_HOUSEKEEPING = 1 << 3;
+    private static final int FLAG_INTERRUPTION = 1 << 4; // query timed out
+    private static final int FLAG_OUT_OF_MEMORY = 1 << 5;
+    private static final int FLAG_PREFERENCES_OUT_OF_DATE_ERROR = 1 << 6;
+    private static final int FLAG_READ_ONLY_ACCESS_REFUSAL = 1 << 7;
+    private static final int FLAG_SCHEMA_MISMATCH = 1 << 8;
     protected final StringSink message = new StringSink();
     protected final StringSink nativeBacktrace = new StringSink();
     protected int errno;
-    private boolean authorizationError = false;
-    private boolean cacheable;
-    private boolean cancellation; // when query is explicitly cancelled by user
-    private boolean housekeeping;
-    private boolean interruption; // used when a query times out
+    private int flags;
     private int messagePosition;
-    private boolean outOfMemory;
-    private boolean preferencesOutOfDateError = false;
-    private boolean readOnlyAccessRefusal = false;
 
     public static CairoException authorization() {
         return nonCritical().setAuthorizationError();
-    }
-
-    /**
-     * A write refused BECAUSE the node is read-only -- statically
-     * ({@code readonly=true} in the server configuration) or dynamically (the
-     * role-derived read-only of an enterprise replica, including a demote in
-     * flight). Carries the authorization flag, the canonical
-     * {@link #READ_ONLY_ACCESS_MESSAGE} and the read-only-refusal marker
-     * ({@link #isReadOnlyAccessRefusal()}) in lockstep, so the refusal's CAUSE
-     * travels with the exception.
-     * <p>
-     * Protocol layers that must tell a transient role-demote refusal apart from
-     * a genuine ACL denial (e.g. the QWP NACK classification) key on the marker.
-     * They must NOT re-read live engine state at catch time -- that races with a
-     * demote revert (the drain-timeout PRIMARY restore can land between the
-     * throw and the catch; nothing fences the propagation) -- and must NOT match
-     * the message text, which is brittle. Every "node is read-only" refusal site
-     * uses this factory so the marker is correct by construction; sites must not
-     * hand-roll {@code authorization().put(READ_ONLY_ACCESS_MESSAGE)}.
-     */
-    public static CairoException readOnlyAccess() {
-        return authorization().setReadOnlyAccessRefusal().put(READ_ONLY_ACCESS_MESSAGE);
     }
 
     public static CairoException critical(int errno) {
@@ -216,6 +196,44 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("timeout, query aborted").setInterruption(true);
     }
 
+    /**
+     * A write refused BECAUSE the node is read-only -- statically
+     * ({@code readonly=true} in the server configuration) or dynamically (the
+     * role-derived read-only of an enterprise replica, including a demote in
+     * flight). Carries the authorization flag, the canonical
+     * {@link #READ_ONLY_ACCESS_MESSAGE} and the read-only-refusal marker
+     * ({@link #isReadOnlyAccessRefusal()}) in lockstep, so the refusal's CAUSE
+     * travels with the exception.
+     * <p>
+     * Protocol layers that must tell a transient role-demote refusal apart from
+     * a genuine ACL denial (e.g. the QWP NACK classification) key on the marker.
+     * They must NOT re-read live engine state at catch time -- that races with a
+     * demote revert (the drain-timeout PRIMARY restore can land between the
+     * throw and the catch; nothing fences the propagation) -- and must NOT match
+     * the message text, which is brittle. Every "node is read-only" refusal site
+     * uses this factory so the marker is correct by construction; sites must not
+     * hand-roll {@code authorization().put(READ_ONLY_ACCESS_MESSAGE)}.
+     */
+    public static CairoException readOnlyAccess() {
+        return authorization().setReadOnlyAccessRefusal().put(READ_ONLY_ACCESS_MESSAGE);
+    }
+
+    /**
+     * A non-critical error raised BECAUSE the wire value's type, shape or
+     * precision is fundamentally incompatible with the target column (e.g.
+     * an unsupported type coercion or a geohash precision mismatch). The
+     * refusal is DETERMINISTIC under byte-identical replay -- the same bytes
+     * produce the same rejection every time -- so protocol layers that must
+     * tell a permanent data error apart from a transient write refusal (the
+     * QWP NACK classification) key on {@link #isSchemaMismatch()} to reject
+     * it terminally instead of retrying. Every such site uses this factory so
+     * the marker is correct by construction; callers must not re-derive the
+     * distinction from message text.
+     */
+    public static CairoException schemaMismatch() {
+        return nonCritical().setSchemaMismatch();
+    }
+
     public static CairoException sequencerMetadataOpenFailed(TableToken tableToken, int causeErrno, CharSequence causeMessage) {
         return critical(SEQUENCER_METADATA_OPEN_FAILED)
                 .put("could not open sequencer metadata [table=").put(tableToken)
@@ -290,7 +308,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isAuthorizationError() {
-        return authorizationError;
+        return (flags & FLAG_AUTHORIZATION_ERROR) != 0;
     }
 
     public boolean isBlockApplyError() {
@@ -298,11 +316,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isCacheable() {
-        return cacheable;
+        return (flags & FLAG_CACHEABLE) != 0;
     }
 
     public boolean isCancellation() {
-        return cancellation;
+        return (flags & FLAG_CANCELLATION) != 0;
     }
 
     public boolean isCritical() {
@@ -325,11 +343,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isHousekeeping() {
-        return housekeeping;
+        return (flags & FLAG_HOUSEKEEPING) != 0;
     }
 
     public boolean isInterruption() {
-        return interruption;
+        return (flags & FLAG_INTERRUPTION) != 0;
     }
 
     public boolean isMetadataValidation() {
@@ -343,7 +361,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isOutOfMemory() {
-        return outOfMemory;
+        return (flags & FLAG_OUT_OF_MEMORY) != 0;
+    }
+
+    public boolean isPreferencesOutOfDateError() {
+        return (flags & FLAG_PREFERENCES_OUT_OF_DATE_ERROR) != 0;
     }
 
     /**
@@ -352,11 +374,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
      * for genuine ACL denials.
      */
     public boolean isReadOnlyAccessRefusal() {
-        return readOnlyAccessRefusal;
+        return (flags & FLAG_READ_ONLY_ACCESS_REFUSAL) != 0;
     }
 
-    public boolean isPreferencesOutOfDateError() {
-        return preferencesOutOfDateError;
+    /**
+     * Whether this refusal is a deterministic wire-value/column-type mismatch
+     * (set only by {@link #schemaMismatch()}). Implies the error is
+     * non-critical and permanent -- replay of the same bytes cannot succeed.
+     */
+    public boolean isSchemaMismatch() {
+        return (flags & FLAG_SCHEMA_MISMATCH) != 0;
     }
 
     public boolean isSequencerMetadataOpenFailed() {
@@ -426,26 +453,26 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public CairoException setCacheable(boolean cacheable) {
-        this.cacheable = cacheable;
+        setFlag(FLAG_CACHEABLE, cacheable);
         return this;
     }
 
     public CairoException setCancellation(boolean cancellation) {
-        this.cancellation = cancellation;
+        setFlag(FLAG_CANCELLATION, cancellation);
         return this;
     }
 
     public void setHousekeeping(boolean housekeeping) {
-        this.housekeeping = housekeeping;
+        setFlag(FLAG_HOUSEKEEPING, housekeeping);
     }
 
     public CairoException setInterruption(boolean interruption) {
-        this.interruption = interruption;
+        setFlag(FLAG_INTERRUPTION, interruption);
         return this;
     }
 
     public CairoException setOutOfMemory(boolean outOfMemory) {
-        this.outOfMemory = outOfMemory;
+        setFlag(FLAG_OUT_OF_MEMORY, outOfMemory);
         return this;
     }
 
@@ -494,17 +521,30 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     private CairoException setAuthorizationError() {
-        this.authorizationError = true;
+        this.flags |= FLAG_AUTHORIZATION_ERROR;
+        return this;
+    }
+
+    private void setFlag(int flag, boolean value) {
+        if (value) {
+            this.flags |= flag;
+        } else {
+            this.flags &= ~flag;
+        }
+    }
+
+    private CairoException setPreferencesOutOfDateError() {
+        this.flags |= FLAG_PREFERENCES_OUT_OF_DATE_ERROR;
         return this;
     }
 
     private CairoException setReadOnlyAccessRefusal() {
-        this.readOnlyAccessRefusal = true;
+        this.flags |= FLAG_READ_ONLY_ACCESS_REFUSAL;
         return this;
     }
 
-    private CairoException setPreferencesOutOfDateError() {
-        this.preferencesOutOfDateError = true;
+    private CairoException setSchemaMismatch() {
+        this.flags |= FLAG_SCHEMA_MISMATCH;
         return this;
     }
 
@@ -512,19 +552,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         message.clear();
         nativeBacktrace.clear();
         this.errno = errno;
-        cacheable = false;
-        interruption = false;
         // clear() fully resets state so the instance starts from a clean slate. The base
-        // CairoException.instance() allocates a fresh object every call, so for it these flag resets
+        // CairoException.instance() allocates a fresh object every call, so for it these resets
         // are belt-and-suspenders. They are load-bearing for subclasses that still recycle a pooled
         // flyweight through this method (e.g. LineProtocolException via ThreadLocal): without a full
         // reset a stale flag would leak onto the next exception built on the same flyweight.
-        cancellation = false;
-        preferencesOutOfDateError = false;
-        authorizationError = false;
-        readOnlyAccessRefusal = false;
+        flags = 0;
         messagePosition = 0;
-        outOfMemory = false;
-        housekeeping = false;
     }
 }

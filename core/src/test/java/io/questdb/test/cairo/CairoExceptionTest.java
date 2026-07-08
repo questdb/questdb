@@ -75,6 +75,49 @@ public class CairoExceptionTest extends AbstractTest {
     }
 
     @Test
+    public void testClearResetsStickySchemaMismatchFlag() throws Exception {
+        CairoException ex = CairoException.schemaMismatch().put("type coercion from VARCHAR to IPV4 is not supported");
+        Assert.assertTrue(ex.isSchemaMismatch());
+        invokeClear(ex);
+        Assert.assertFalse("clear() must reset the sticky schema-mismatch marker", ex.isSchemaMismatch());
+    }
+
+    @Test
+    public void testSchemaMismatchIsNonCriticalAndNotAuthorization() {
+        CairoException ex = CairoException.schemaMismatch();
+        Assert.assertTrue(ex.isSchemaMismatch());
+        Assert.assertFalse("schema mismatch must be non-critical", ex.isCritical());
+        Assert.assertFalse("schema mismatch must not be an authorization error", ex.isAuthorizationError());
+    }
+
+    @Test
+    public void testMarkerFlagsAreIndependent() throws Exception {
+        CairoException ex = CairoException.schemaMismatch();
+        ex.setOutOfMemory(true);
+        ex.setCacheable(true);
+        Assert.assertTrue(ex.isSchemaMismatch());
+        Assert.assertTrue(ex.isOutOfMemory());
+        Assert.assertTrue(ex.isCacheable());
+        Assert.assertFalse(ex.isCancellation());
+        Assert.assertFalse(ex.isAuthorizationError());
+
+        ex.setCacheable(false);
+        Assert.assertFalse(ex.isCacheable());
+        Assert.assertTrue(ex.isOutOfMemory());
+        Assert.assertTrue(ex.isSchemaMismatch());
+
+        // clearing OOM alone must leave schema-mismatch set: proves distinct bits
+        ex.setOutOfMemory(false);
+        Assert.assertFalse(ex.isOutOfMemory());
+        Assert.assertTrue(ex.isSchemaMismatch());
+
+        invokeClear(ex);
+        Assert.assertFalse(ex.isSchemaMismatch());
+        Assert.assertFalse(ex.isOutOfMemory());
+        Assert.assertFalse(ex.isCacheable());
+    }
+
+    @Test
     public void testMatViewDoesNotExistIsNotCritical() {
         Assert.assertFalse(CairoException.matViewDoesNotExist("foo").isCritical());
     }
