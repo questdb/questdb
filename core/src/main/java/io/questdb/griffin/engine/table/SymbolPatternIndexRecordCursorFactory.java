@@ -232,8 +232,14 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
             keys = matched;
         } else {
             complementKeys.clear();
+            // matched is sorted ascending/unique and k walks ascending, so a single-pass two-pointer
+            // merge yields the complement in O(symCount) (vs O(symCount*log|matched|) for per-k search).
+            int p = 0;
+            final int matchedSize = matched.size();
             for (int k = 0, symCount = symTab.getSymbolCount(); k < symCount; k++) {
-                if (matched.binarySearchUniqueList(k) < 0) {
+                if (p < matchedSize && matched.getQuick(p) == k) {
+                    p++; // k is matched -> excluded from the complement
+                } else {
                     complementKeys.add(k);
                 }
             }
