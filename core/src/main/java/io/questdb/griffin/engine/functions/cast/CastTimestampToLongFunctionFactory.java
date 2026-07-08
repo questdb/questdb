@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToLongFunctionFactory implements FunctionFactory {
@@ -49,7 +51,7 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToLongFunction {
+    private static class Func extends AbstractCastToLongFunction implements MonotonicTimestampFunction {
         public Func(Function arg) {
             super(arg);
         }
@@ -57,6 +59,18 @@ public class CastTimestampToLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             return arg.getTimestamp(rec);
+        }
+
+        @Override
+        public Function getTimestampArg() {
+            return arg;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            // The long value is the timestamp epoch in the column's own unit, so the
+            // preimage is the queried range unchanged.
+            return EXACT;
         }
     }
 }

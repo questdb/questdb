@@ -1,0 +1,90 @@
+# Build the java-questdb-client native library from source when the local-client
+# profile is active.
+#
+# The client submodule no longer commits its compiled native libraries
+# (libquestdb.so / .dylib / .dll). When core/pom.xml references a -SNAPSHOT
+# client, detect-local-client.yml sets CLIENT_PROFILE to "-P local-client" and
+# the reactor builds the client from source, so CI must also compile its native
+# library -- otherwise every client-dependent test fails at class load with:
+#   FatalError: cannot find /io/questdb/client/bin/<platform>/libquestdb.so
+# A Maven-Central client (release version) ships the binaries inside its jar, so
+# CLIENT_PROFILE is empty in that case and every step below is skipped.
+#
+# CMake writes the library into core/target/classes/.../bin-local/, which the
+# subsequent `mvn clean` would wipe before the test phase runs. We copy it into
+# the client's source resources (src/main/resources/io/questdb/client/bin/
+# <platform>/) so it survives the clean and lands on the production resource
+# path the loader checks first (see io.questdb.client.std.Os).
+#
+# These steps run after the JDK activation steps so $JAVA_HOME points at the JDK
+# whose jni.h CMake compiles against.
+steps:
+  - bash: |
+      set -eux
+      # zstd is a submodule of the client and is required by its CMake build.
+      git submodule update --init --recursive java-questdb-client
+      # gcc is already present (the core and Rust builds need it); add cmake and
+      # nasm (the x86-64 asmlib) only when missing.
+      if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
+        sudo apt-get update
+        sudo apt-get install -y cmake nasm build-essential
+      fi
+      export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}"
+      cd java-questdb-client/core
+      cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+      cmake --build cmake-build-release --config Release --parallel
+      case "$(uname -m)" in
+        aarch64|arm64) plat=linux-aarch64 ;;
+        *)             plat=linux-x86-64 ;;
+      esac
+      mkdir -p "src/main/resources/io/questdb/client/bin/$plat"
+      cp target/classes/io/questdb/client/bin-local/libquestdb.so \
+         "src/main/resources/io/questdb/client/bin/$plat/libquestdb.so"
+    displayName: "Build client native library (local-client, Linux)"
+    condition: and(contains(variables['CLIENT_PROFILE'], 'local-client'), eq(variables['os'], 'Linux'))
+
+  - bash: |
+      set -eux
+      git submodule update --init --recursive java-questdb-client
+      # macos-14 agents are arm64: that CMake path uses neither nasm nor asmlib,
+      # and cmake/clang ship with the image. Install nasm only on the x86-64 leg,
+      # which still assembles asmlib.
+      if [ "$(uname -m)" = "x86_64" ] && ! command -v nasm >/dev/null 2>&1; then
+        brew install nasm
+      fi
+      export JAVA_HOME="${JAVA_HOME:-${JAVA_HOME_25_ARM64:-${JAVA_HOME_25_X64:-$(/usr/libexec/java_home)}}}"
+      export MACOSX_DEPLOYMENT_TARGET=13.0
+      cd java-questdb-client/core
+      cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
+      cmake --build cmake-build-release --config Release --parallel
+      case "$(uname -m)" in
+        arm64|aarch64) plat=darwin-aarch64 ;;
+        *)             plat=darwin-x86-64 ;;
+      esac
+      mkdir -p "src/main/resources/io/questdb/client/bin/$plat"
+      cp target/classes/io/questdb/client/bin-local/libquestdb.dylib \
+         "src/main/resources/io/questdb/client/bin/$plat/libquestdb.dylib"
+    displayName: "Build client native library (local-client, macOS)"
+    condition: and(contains(variables['CLIENT_PROFILE'], 'local-client'), eq(variables['os'], 'macOS'))
+
+  - pwsh: |
+      $ErrorActionPreference = "Stop"
+      git submodule update --init --recursive java-questdb-client
+      if ($LASTEXITCODE -ne 0) { throw "submodule update failed" }
+      # The client distributes a mingw-built Windows .dll; reproduce that here.
+      # Ninja avoids the MinGW-Makefiles "sh.exe found in PATH" failure and the
+      # mingw32-make dependency. choco shims land on the machine PATH, which we
+      # refresh into this session before invoking cmake.
+      choco install -y --no-progress ninja nasm mingw
+      $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                  [System.Environment]::GetEnvironmentVariable("Path", "User")
+      Set-Location java-questdb-client/core
+      cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -B cmake-build-release -S .
+      if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+      cmake --build cmake-build-release --config Release
+      if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+      New-Item -ItemType Directory -Force -Path src/main/resources/io/questdb/client/bin/windows-x86-64 | Out-Null
+      Copy-Item target/classes/io/questdb/client/bin-local/libquestdb.dll `
+                src/main/resources/io/questdb/client/bin/windows-x86-64/libquestdb.dll
+    displayName: "Build client native library (local-client, Windows)"
+    condition: and(contains(variables['CLIENT_PROFILE'], 'local-client'), eq(variables['os'], 'Windows'))

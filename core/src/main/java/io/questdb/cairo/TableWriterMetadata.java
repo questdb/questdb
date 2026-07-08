@@ -189,6 +189,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             assert name != null;
             int type = TableUtils.getColumnType(metaMem, i);
             String nameStr = Chars.toString(name);
+            int replacingIndex = TableUtils.getReplacingColumnIndex(metaMem, i);
+            int origWriterIndex = TableUtils.getReplacingChainHead(metaMem, i, columnCount);
             WriterTableColumnMetadata colMeta = new WriterTableColumnMetadata(
                     nameStr,
                     type,
@@ -199,8 +201,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     i,
                     TableUtils.getSymbolCapacity(metaMem, i),
                     TableUtils.isColumnDedupKey(metaMem, i),
-                    TableUtils.getReplacingColumnIndex(metaMem, i),
-                    TableUtils.isSymbolCached(metaMem, i)
+                    replacingIndex,
+                    TableUtils.isSymbolCached(metaMem, i),
+                    origWriterIndex
             );
             colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, i) : 0);
             columnMetadata.add(colMeta);
@@ -296,6 +299,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int replacingIndex,
             boolean isSymbolCached
     ) {
+        int origWriterIndex = columnIndex;
+        if (replacingIndex >= 0 && replacingIndex < columnMetadata.size()) {
+            origWriterIndex = columnMetadata.get(replacingIndex).getOriginalWriterIndex();
+        }
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
@@ -310,7 +317,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                         symbolCapacity,
                         isDedupKey,
                         replacingIndex,
-                        isSymbolCached
+                        isSymbolCached,
+                        origWriterIndex
                 )
         );
         columnCount++;
@@ -356,7 +364,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 newSymbolCapacity,
                 oldMeta.isDedupKeyFlag(),
                 oldMeta.getReplacingIndex(),
-                oldMeta.isSymbolCacheFlag()
+                oldMeta.isSymbolCacheFlag(),
+                oldMeta.getOriginalWriterIndex()
         );
         newColumnMetadata.setParquetEncodingConfig(oldMeta.getParquetEncodingConfig());
         // Preserve the covering-index schema across a symbol-capacity change.
@@ -378,11 +387,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 int indexBlockCapacity,
                 boolean symbolTableStatic,
                 RecordMetadata parent,
-                int i,
+                int writerIndex,
                 int symbolCapacity,
                 boolean isDedupKey,
                 int replacingIndex,
-                boolean symbolCached
+                boolean symbolCached,
+                int originalWriterIndex
         ) {
             super(
                     nameStr,
@@ -391,11 +401,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     indexBlockCapacity,
                     symbolTableStatic,
                     parent,
-                    i,
+                    writerIndex,
                     isDedupKey,
                     replacingIndex,
                     symbolCached,
-                    symbolCapacity
+                    symbolCapacity,
+                    originalWriterIndex
             );
         }
     }
