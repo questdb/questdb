@@ -25,12 +25,14 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -52,20 +54,49 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code testFullRefreshLosingLock*} pair drives the real reschedule-sentinel site (a full refresh losing
  * the latch) end-to-end.
  * <p>
- * Two branches are left OSS-uncovered here, both needing {@code engine.isReadOnlyMode()} to flip mid-flow:
- * {@code finalizeDeferredInvalidation}'s read-only early-return and {@code invalidateView}'s
- * {@code isSelfDeferred} skip. A bespoke mutable-flag engine could flip the mode after a read-write setup,
- * but the flip is only meaningful as part of a demote, and that path lives in the enterprise suite
- * ({@code MatViewSwitchInvariantsTest}, {@code MatViewInvalidateRepromoteLosslessTest}), which covers both
- * branches.
+ * {@code finalizeDeferredInvalidation}'s read-only early-return is pinned here by
+ * {@link #testReadOnlyEngineLeavesDeferredInvalidationUntouched()}: a mutable-flag engine (injected via
+ * {@link AbstractCairoTest#engineFactory}) lets the test turn {@code isReadOnlyMode()} true under a held view
+ * latch and then route the unlock through {@code finalizeAndUnlock}, standing in for a demote that turns the
+ * node read-only while a lock-holder completes. The OSS base engine only ever reads the static
+ * {@code isReadOnlyInstance()} flag, so the flip is synthetic -- but the branch it drives is real, and its
+ * production trigger (an in-place role switch) lives in the enterprise demote suite
+ * ({@code MatViewInvalidateQuiesceWedgeTest}, {@code MatViewInvalidateRepromoteLosslessTest},
+ * {@code MatViewSwitchInvariantsTest}), which drives the read-only deferral end-to-end through a live demote
+ * cascade.
+ * <p>
+ * One read-only branch stays OSS-uncovered: {@code invalidateView}'s {@code isSelfDeferred} skip. It needs
+ * the flag to flip DURING the in-flight WAL-writer mint so the writer acquire throws an authorization error,
+ * a race the OSS read-only-agnostic {@code getWalWriter} cannot produce (only the enterprise override refuses
+ * on {@code isReadOnlyMode()}). That path is enterprise-only-reachable.
  */
 public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
+
+    // A test-controlled read-only flip. The OSS engine reads a static isReadOnlyInstance() flag; the
+    // injected engine below ORs this in so a test can turn the node read-only mid-hold, standing in for the
+    // enterprise demote that toggles isReadOnlyMode() dynamically. Reset to false before every test.
+    private static final AtomicBoolean readOnly = new AtomicBoolean();
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // Inject an engine whose isReadOnlyMode() follows the readOnly flag, so a lock-holder can be turned
+        // read-only mid-hold without a live role switch. When readOnly is false (setup, and every other
+        // test) this is identical to the base engine.
+        AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            public boolean isReadOnlyMode() {
+                return readOnly.get() || super.isReadOnlyMode();
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Override
     public void setUp() {
         super.setUp();
         // Materialized views require dev mode; without it the engine installs a no-op state store.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        readOnly.set(false);
     }
 
     // Hammers an off-latch reason-bearing deferral against an off-latch clear -- the two writers that, with
@@ -923,6 +954,78 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
                             price_1h\tbase_price\tinvalid\tupdate operation
                             """);
+        });
+    }
+
+    @Test
+    public void testReadOnlyEngineLeavesDeferredInvalidationUntouched() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            // Baseline: the view refreshed and is valid.
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // Pins finalizeDeferredInvalidation's isReadOnlyMode early-return. Model a lock-holder completing
+            // while the node is read-only with a deferral parked on the view: hold the latch as a refresh
+            // would, mark the view pending (the marker a losing concurrent invalidateView left), flip the
+            // engine read-only (a demote landing mid-hold), then route the unlock through finalizeAndUnlock --
+            // the shared tail every holder uses. finalize must skip: leave the marker for the promote-time
+            // rebuild from disk and re-enqueue NOTHING (a re-enqueue would self-feed the demote quiesce drain).
+            //
+            // The read-only branch is read in isolation on purpose. Draining a real refresh under read-only
+            // would let invalidateView's own read-only defer re-set the marker and swallow the re-enqueued
+            // task, so the frozen-pending end state is identical whether or not finalize skips -- it cannot
+            // witness the branch. Reading finalizeAndUnlock directly, before any re-enqueue is processed,
+            // does: with the clause present the marker stays set and nothing is queued; without it finalize
+            // clears the marker and queues a force=true INVALIDATE.
+            Assert.assertTrue(state.tryLock());
+            state.markAsPendingInvalidation("update operation");
+            readOnly.set(true);
+            try {
+                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+            } finally {
+                readOnly.set(false);
+            }
+
+            // finalize left the marker untouched (were the clause absent it would have cleared it here).
+            Assert.assertTrue("read-only finalize must leave the deferral marker set", state.isPendingInvalidation());
+            Assert.assertEquals("update operation", state.getPendingInvalidationReason());
+
+            // Proof that finalize queued nothing: back in read-write mode, a full drain mints no invalidation
+            // and the view stays valid on disk. Were the branch absent, finalize's re-enqueued force=true
+            // INVALIDATE would mint here and flip the view to invalid.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+
+            // Leave the view clean for teardown.
+            state.markAsValid();
         });
     }
 
