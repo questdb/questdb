@@ -453,6 +453,73 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBloomFilterDroppedColumnO3Rewrite() throws Exception {
+        // Regression: after DROP COLUMN, an O3 insert rewrites the parquet
+        // partition and raw-copies the row groups the O3 data does not touch.
+        // The updater extracts bloom bitsets in source-file order but writes
+        // the survivors in target order; without the remap, dropping the
+        // leading bloomed column shifted every bloom one slot (a's bloom onto
+        // b, b's onto c), so an equality filter probed the wrong column's
+        // bloom and silently pruned row groups holding matching rows.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (a INT, b INT, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Disjoint, gapped value ranges per column: a misattributed bloom
+            // reports every value of its neighbor as absent. 12 rows make 3
+            // row groups of 4.
+            execute("""
+                    INSERT INTO x
+                    SELECT (1000 + 10 * x)::INT, (2000 + 10 * x)::INT, (3000 + 10 * x)::INT,
+                           timestamp_sequence('2024-01-01', 3_600_000_000)
+                    FROM long_sequence(12)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("INSERT INTO x VALUES (1, 9999, 9999, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01' WITH (bloom_filter_columns = 'a,b,c')");
+            drainWalQueue();
+
+            // Drop the leading bloomed column: survivors b, c, ts shift down one slot.
+            execute("ALTER TABLE x DROP COLUMN a");
+            drainWalQueue();
+            // The O3 row lands in the first row group only; the schema change
+            // forces a rewrite that copies row groups 1 and 2 with their blooms.
+            execute("INSERT INTO x(b, c, ts) VALUES (5000, 6000, '2024-01-01T00:30:00.000000Z')");
+            drainWalQueue();
+
+            // Equality on values that live only in the copied row groups must
+            // return their rows instead of pruning on a misattributed bloom.
+            assertQuery("SELECT b, c FROM x WHERE b = 2100")
+                    .noLeakCheck()
+                    .returns("""
+                            b\tc
+                            2100\t3100
+                            """);
+            assertQuery("SELECT b, c FROM x WHERE c = 3060")
+                    .noLeakCheck()
+                    .returns("""
+                            b\tc
+                            2060\t3060
+                            """);
+            // The merged row group re-encodes its bloom and must find the O3 row.
+            assertQuery("SELECT b, c FROM x WHERE b = 5000")
+                    .noLeakCheck()
+                    .returns("""
+                            b\tc
+                            5000\t6000
+                            """);
+
+            // A value inside a copied row group's min/max range but absent from
+            // its data must still prune, proving the copied blooms stay live.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT b FROM x WHERE b = 2095")
+                    .noLeakCheck()
+                    .returns("b\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testBloomFilterFloat() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2497,9 +2564,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testMinMaxPruningShortNegative() throws Exception {
         // SHORT is INT32-backed in parquet. The skip path reads inline stats
         // at INT32 physical width, so a negative min must round-trip through
-        // the u64 slot as the correct i32. Surfaced by the query fuzzer:
-        // a SHORT column with min -74 was previously read back as 65462,
-        // dropping every row group whose true min was negative.
+        // the u64 slot as the correct i32. A SHORT column with min -74 must
+        // not appear as an unsigned 65462 to the skip path; otherwise every
+        // row group whose true min is negative gets dropped.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2514,8 +2581,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             // val = 0 must not skip the row group whose min is -30000.
-            // Before the round-trip fix the inline min read back as 35536,
-            // which is greater than 0, dropping every match.
+            // An unsigned-extended inline min of 35536 would be greater than 0
+            // and would drop every match.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQuery("SELECT val FROM x WHERE val = 0")
                     .noLeakCheck()
@@ -4176,6 +4243,39 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBloomFilterSkippedAfterAlterColumnTypeIntToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            execute("ALTER TABLE x ALTER COLUMN val TYPE LONG");
+            drainWalQueue();
+
+            // After type change INT->LONG, pushdown must be disabled for val.
+            // Otherwise the bloom filter bytes (stored as i32) would be probed
+            // with an i64 hash, producing false-negative skips and missing rows.
+            assertQuery("SELECT val FROM x WHERE val = 50_000").noLeakCheck().returns(
+                    """
+                            val
+                            50000
+                            """);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 25_000").noLeakCheck().returns(
+                    "val\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
     public void testRenamedColumnBetween() throws Exception {
         // Companion to testBloomFilterSymbolRenamedColumn for the min/max-stats path: a BETWEEN
         // range on a renamed column must resolve to the right parquet column by stable id, not
@@ -4205,6 +4305,40 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBloomFilterSkippedAfterAlterColumnTypeLongToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (50_000, '2024-01-01T01:00:00.000000Z'),
+                    (100_000, '2024-01-01T02:00:00.000000Z'),
+                    (100_001, '2024-01-02T01:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            execute("ALTER TABLE x ALTER COLUMN val TYPE INT");
+            drainWalQueue();
+
+            // After type change LONG->INT, pushdown must be disabled for val.
+            // The parquet file stores i64 bloom filters / min-max stats but the
+            // filter serializes i32 values — different element sizes cause wrong
+            // hashes and comparisons.
+            assertQuery("SELECT val FROM x WHERE val = 50_000").noLeakCheck().returns(
+                    """
+                            val
+                            50000
+                            """);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 25_000").noLeakCheck().returns(
+                    "val\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
     public void testRenamedColumnInList() throws Exception {
         // Companion to testBloomFilterSymbolRenamedColumn for the min/max-stats path: an IN list
         // on a renamed column must resolve by stable column id.
@@ -4228,6 +4362,74 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("b\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testBloomFilterSkippedAfterAlterColumnTypeShortToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (500, '2024-01-01T01:00:00.000000Z'),
+                    (1000, '2024-01-01T02:00:00.000000Z'),
+                    (1001, '2024-01-02T01:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            execute("ALTER TABLE x ALTER COLUMN val TYPE LONG");
+            drainWalQueue();
+
+            // After type change SHORT->LONG, pushdown must be disabled for val.
+            // The parquet file stores i32 bloom filters but the filter serializes
+            // i64 values — wrong hash width causes false-negative skips.
+            assertQuery("SELECT val FROM x WHERE val = 500").noLeakCheck().returns(
+                    """
+                            val
+                            500
+                            """);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val = 250").noLeakCheck().returns(
+                    "val\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningSkippedAfterAlterColumnTypeIntToLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    (10_000, '2024-01-01T00:00:00.000000Z'),
+                    (20_000, '2024-01-01T01:00:00.000000Z'),
+                    (30_000, '2024-01-01T02:00:00.000000Z'),
+                    (40_000, '2024-01-01T03:00:00.000000Z'),
+                    (50_000, '2024-01-01T04:00:00.000000Z'),
+                    (60_000, '2024-01-02T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            execute("ALTER TABLE x ALTER COLUMN val TYPE LONG");
+            drainWalQueue();
+
+            // After type change INT->LONG, min/max pushdown must be disabled for val.
+            // The parquet file stores i32 stats but the filter serializes i64
+            // values; cross-width comparisons would produce wrong skip decisions.
+            assertQuery("SELECT val FROM x WHERE val = 30_000").noLeakCheck().returns(
+                    """
+                            val
+                            30000
+                            """);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val > 100_000").noLeakCheck().returns(
+                    "val\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
         });
     }
 
@@ -4273,6 +4475,43 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("cnt\n1\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testMinMaxPruningSkippedAfterAlterColumnTypeTimestampToTimestampNs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2020-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                    ('2020-06-01T00:00:00.000000Z', '2024-01-01T01:00:00.000000Z'),
+                    ('2021-01-01T00:00:00.000000Z', '2024-01-01T02:00:00.000000Z'),
+                    ('2021-06-01T00:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
+                    ('2022-01-01T00:00:00.000000Z', '2024-01-01T04:00:00.000000Z'),
+                    ('2022-06-01T00:00:00.000000Z', '2024-01-02T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            execute("ALTER TABLE x ALTER COLUMN val TYPE TIMESTAMP_NS");
+            drainWalQueue();
+
+            // After TIMESTAMP(us)->TIMESTAMP_NS, the parquet min/max stats are in
+            // microseconds but the filter values are in nanoseconds (1000x larger).
+            // The skip path must compare precision in addition to the TIMESTAMP
+            // tag; otherwise cross-precision min/max comparisons drop matching
+            // row groups.
+            assertQuery("SELECT val FROM x WHERE val = '2021-01-01'::TIMESTAMP_NS").noLeakCheck().returns(
+                    """
+                            val
+                            2021-01-01T00:00:00.000000000Z
+                            """);
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertQuery("SELECT val FROM x WHERE val > '2025-01-01'::TIMESTAMP_NS").noLeakCheck().returns(
+                    "val\n");
+            Assert.assertEquals(0, ParquetRowGroupFilter.getRowGroupsSkipped());
         });
     }
 

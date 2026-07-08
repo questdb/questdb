@@ -1766,7 +1766,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // the auth call. The eager check alone does not close the demote window though -- a
             // demote landing between here and the marker write would still strand the marker on a
             // demoting node; the role-switch read-lock hold around the write below is what closes it.
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
         try {
@@ -1799,7 +1799,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 lock.lock();
                 try {
                     if (engine.isReadOnlyMode()) {
-                        throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                        throw CairoException.readOnlyAccess();
                     }
                     engine.fireRoleSwitchMintObserver();
                     path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
@@ -3166,7 +3166,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // table registry, so the caller sees "replica access is read-only" rather than
         // "table does not exist" when the table has not yet been replicated to this node.
         if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
         InsertOperationImpl insertOperation = null;
@@ -3296,7 +3296,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // table registry, so the caller sees "replica access is read-only" rather than
         // "table does not exist" when the table has not yet been replicated to this node.
         if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
@@ -3577,7 +3577,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Refuse the instant the node goes read-only, mirroring the per-statement write gates
                 // on the pg-wire and HTTP /exec paths -- otherwise this enqueues an async refresh that
                 // writes to a node that is already demoting and loses the write once it settles.
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
             if (isStatsReset) {
@@ -3832,13 +3832,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             // this runs fully as PRIMARY while the flip's write acquire waits. The fence
                             // is a no-op for pure-OSS deployments (uncontended read lock, static flag).
                             if (engine.isReadOnlyMode()) {
-                                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                throw CairoException.readOnlyAccess();
                             }
                             final Lock lock = engine.getRoleSwitchReadLock();
                             lock.lock();
                             try {
                                 if (engine.isReadOnlyMode()) {
-                                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                    throw CairoException.readOnlyAccess();
                                 }
                                 engine.fireRoleSwitchMintObserver();
                                 writer.truncateSoft();
@@ -5628,12 +5628,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             for (short j = ColumnType.DECIMAL8; j <= ColumnType.DECIMAL256; j++) {
                 addSupportedConversion(i, j);
             }
-            // We only allow types that are accurately representable to be converted directly, others should use explicit
-            // casting.
-            addSupportedConversion(ColumnType.BYTE, i);
-            addSupportedConversion(ColumnType.SHORT, i);
-            addSupportedConversion(ColumnType.INT, i);
-            addSupportedConversion(ColumnType.LONG, i);
+            // Integer -> DECIMAL is supported on both the native and parquet paths; the reverse
+            // direction (DECIMAL -> {BYTE, SHORT, INT, LONG}) is not implemented in either the
+            // C++ converter kernel or the Rust parquet decoder, so register it one-way only.
+            columnConversionSupport[ColumnType.BYTE][i] = true;
+            columnConversionSupport[ColumnType.SHORT][i] = true;
+            columnConversionSupport[ColumnType.INT][i] = true;
+            columnConversionSupport[ColumnType.LONG][i] = true;
             addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
             addSupportedConversion(ColumnType.STRING, i);
             addSupportedConversion(ColumnType.VARCHAR, i);

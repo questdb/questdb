@@ -1049,8 +1049,14 @@ public class MetadataCache implements QuietCloseable {
 
                 column.setName(columnName);
                 column.setType(columnType);
-                int replacingIndex = columnMetadata.getReplacingIndex();
-                column.setPosition(replacingIndex > -1 ? replacingIndex : i);
+                // A type-converted column keeps its original catalogue position. Use the
+                // chain root (originalWriterIndex), not the immediate predecessor: after two
+                // or more conversions getReplacingIndex() points at the intermediate column,
+                // which would push the column to the end of the catalogue. getOriginalWriterIndex()
+                // is the precomputed chain head and equals the column's own writer index when
+                // it was never converted.
+                int originalWriterIndex = columnMetadata.getOriginalWriterIndex();
+                column.setPosition(originalWriterIndex > -1 ? originalWriterIndex : i);
                 column.setIndexType(columnMetadata.getIndexType());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 // Translate from writer to dense after the column list is

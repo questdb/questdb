@@ -442,6 +442,16 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         memoryTracker = null;
         frameRowCounts.clear();
         atom.clear();
+        // Unfreeze the covered posting readers frozen at dispatch BEFORE the
+        // address cache (which holds them) and the frame cursor (which owns them)
+        // are torn down. reset() runs after the sequence has been awaited (see the
+        // close() paths of the async cursors, which call await() then reset()), so
+        // every worker cursor has finished and the unfreeze is race-free. A reader
+        // left frozen would make its reloadConditionally() a permanent no-op and
+        // break the next query against the same partition.
+        if (frameAddressCache != null) {
+            frameAddressCache.unfreezeCoveredReaders();
+        }
         Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
         // collect sequence may not be set here when
@@ -489,6 +499,17 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
+
+        // Covered frames decode their columns on the async workers (in
+        // PageFrameMemoryPool.navigateTo) by iterating detached cursors over the
+        // shared per-partition posting readers. That is only race-free if the
+        // readers are positioned at the query txn, cache-warm, and FROZEN before
+        // any worker decodes. The eager production decode above (driven through
+        // frameAddressCache.add -> the covering page-frame cursor) already
+        // positioned + warmed each reader as a side effect of its full iteration,
+        // so freeze them now, before dispatch. unfreezeCoveredReaders() in reset()
+        // reverses it once the sequence has been awaited.
+        frameAddressCache.freezeCoveredReaders();
 
         // dispatch tasks only if there is anything to dispatch
         if (frameCount > 0) {
