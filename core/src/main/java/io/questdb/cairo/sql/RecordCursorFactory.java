@@ -301,6 +301,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns true if this factory may read a Parquet-format partition storing a column whose
+     * type was later changed by {@code ALTER COLUMN TYPE} (decoded in its source type and
+     * converted lazily, so raw-address readers would misread it). Delegates to the base
+     * factory so wrapping factories report their underlying scan.
+     */
+    default boolean hasParquetConvertedColumns(SqlExecutionContext executionContext) {
+        final RecordCursorFactory base = getBaseFactory();
+        return base != null && base.hasParquetConvertedColumns(executionContext);
+    }
+
     default boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
         return false;
     }

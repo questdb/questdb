@@ -131,8 +131,18 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     }
 
     @Override
+    public int getSourceColumnType(int columnIndex) {
+        return -1;
+    }
+
+    @Override
     public boolean hasColumnTops() {
         return hasColumnTops;
+    }
+
+    @Override
+    public boolean hasColumnTypeCasts() {
+        return false;
     }
 
     public void of(PageFrame frame) {
