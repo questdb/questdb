@@ -3122,7 +3122,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
-    @Test
+    @Test(timeout = 120_000)
     public void testO3ReplayDefersOnBaseApplyLagInsteadOfDeadlocking() throws Exception {
         // Cooperative apply-lag handoff (regression for the LiveViewFuzzTest
         // waitForApply self-deadlock). When a lead refresh detects an O3 base
@@ -3177,10 +3177,15 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals("lead must survive the deferred replay", leadBefore, instance.getLeadRowCount());
                 Assert.assertEquals("watermark must not advance on apply lag", processedBefore, instance.getLastProcessedSeqTxn());
                 Assert.assertEquals("refresh cursor must not advance on apply lag", refreshedBefore, instance.getRefreshedUpToSeqTxn());
-                Assert.assertEquals("O3 detection watermark must roll back on apply lag", latestSeenBefore, instance.getLatestSeenTs());
+                // The single O3 commit trips detection before any in-cycle latestSeenTs
+                // bump, so the watermark is simply left untouched here; the drainBaseWal
+                // rollback of in-cycle bumps is exercised by the multi-commit O3 tests.
+                Assert.assertEquals("O3 detection watermark must not advance on apply lag", latestSeenBefore, instance.getLatestSeenTs());
 
-                // Apply the base commit, then let the next tick converge the replay.
+                // Apply the base commit, advance the clock past the apply-lag
+                // back-off, then let the next tick converge the replay.
                 drainWalQueue();
+                setCurrentMicros(currentMicros + 1_000_000);
                 drainJob(job);
                 drainWalQueue();
                 Assert.assertFalse("view must stay valid after the replay converges", instance.isInvalid());

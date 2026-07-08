@@ -285,8 +285,10 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
                 Assert.assertEquals("apply lag must not tick the flush-retry budget",
                         retryBefore, instance.getFlushRetryCount());
 
-                // Apply the base commit, then let the next tick converge the drain.
+                // Apply the base commit, advance the clock past the apply-lag
+                // back-off, then let the next tick converge the drain.
                 drainWalQueue();
+                setCurrentMicros(currentMicros + 1_000_000);
                 drainJob(job);
                 drainWalQueue();
                 Assert.assertFalse("view must stay valid after the drain converges", instance.isInvalid());

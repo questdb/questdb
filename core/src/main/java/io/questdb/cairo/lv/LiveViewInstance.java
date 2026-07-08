@@ -84,6 +84,12 @@ public class LiveViewInstance implements QuietCloseable {
     // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
     // per-row resetPartition dispatch when the LV has an anchored named WINDOW.
     private LiveViewWindow anchorWindow;
+    // Wall-clock (micros) floor before which the refresh worker skips this view after a
+    // cooperative apply-lag deferral, bounding the re-drain rate so it does not hot-spin the
+    // window recompute while the transient lag clears. LONG_NULL until armed; a stale past
+    // value is harmless, so it is never cleared. Written under the refresh latch; the pre-latch
+    // read in refreshInstance is a best-effort throttle, so a stale read costs one extra re-drain.
+    private long applyLagDeferUntilUs = Numbers.LONG_NULL;
     // In-memory count of base data-cursor rows the backfill sweep has consumed
     // so far - the skipRows() resume position for the next turn. Persists in
     // memory across in-process turns (window state persists with it), and is
@@ -436,6 +442,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public LiveViewWindow getAnchorWindow() {
         return anchorWindow;
+    }
+
+    public long getApplyLagDeferUntilUs() {
+        return applyLagDeferUntilUs;
     }
 
     public long getBackfillDataOffset() {
@@ -949,6 +959,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setAppliedWatermark(long appliedWatermark) {
         stateReader.setAppliedWatermark(appliedWatermark);
+    }
+
+    public void setApplyLagDeferUntilUs(long applyLagDeferUntilUs) {
+        this.applyLagDeferUntilUs = applyLagDeferUntilUs;
     }
 
     public void setBackfillDataOffset(long backfillDataOffset) {

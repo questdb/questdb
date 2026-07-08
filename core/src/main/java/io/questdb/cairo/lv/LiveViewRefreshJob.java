@@ -141,6 +141,10 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
+    // Anti-spin floor (micros) between re-drains of a view deferred on base apply lag.
+    // Bounds the retry rate without perceptibly delaying convergence (LV cadences are
+    // >=100ms); the transient lag clears within a few apply-job ticks.
+    private static final long APPLY_LAG_DEFER_BACKOFF_US = 5_000;
     // Sentinel returned by replayToApplied when it detected an out-of-order base
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
@@ -891,6 +895,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the downstream waitForApply (which deadlocks the single-threaded
             // drain). drainBaseWal already rolled back this cycle's draft on O3
             // detect, so the unwind leaves no durable or reader-visible change.
+            //
+            // Defense-in-depth: unlike the lead-path twin (finishLeadRefresh, covered
+            // by testO3ReplayDefersOnBaseApplyLagInsteadOfDeadlocking), the deferral
+            // here is not deterministically reachable. The only routes into this
+            // leadMode==false drain are a dedup-clean cycle - which isRangeProvablyClean
+            // admits only when apply has already covered toSeqTxn (>= o3SeqTxn), so the
+            // gate passes - and a tier-unstorable output type, which is INTERVAL alone
+            // and cannot be persisted into an LV table. The gate stays for symmetry and
+            // to cover a narrow apply-signal race; its logic is identical to the tested
+            // lead path.
             ensureBaseApplied(baseToken, o3SeqTxn);
             // The replay path opens its own WalWriter and TableReader on the
             // base, drives the ts-sorted re-execution, commits a single
@@ -1900,6 +1914,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
         applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+        // Read the applied LV-table seqTxn only AFTER applyWalDirect: restampSlotAfterFlush
+        // below stamps the slot with it, and the getCursor staleness retry depends on the
+        // slot's seqTxn never exceeding what an applied-base reader can observe. Stamp it
+        // before the apply and a racing cursor that re-opened disk would spin (see
+        // LiveViewRecordCursor.isSlotNewerThanDisk).
         final long lvAppliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn();
         boolean lvConsumedPersisted = false;
         try {
@@ -4746,6 +4765,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     private void refreshInstance(LiveViewInstance instance, long seqTxn) {
+        // Apply-lag back-off: a prior cycle deferred this view (raw-WAL O3 or coupled dedup
+        // drain) because ApplyWal2TableJob had not applied the base to the seqTxn the replay
+        // reads. Skip re-entering the full window recompute until the floor elapses so the
+        // worker does not hot-spin the drain every tick; apply advances on its own, so a tick
+        // past the floor converges. Cheap guard before the latch - a deferred view costs a
+        // clock read, not a re-drain. Covers both refresh entry paths.
+        final long deferUntilUs = instance.getApplyLagDeferUntilUs();
+        if (deferUntilUs != Numbers.LONG_NULL
+                && engine.getConfiguration().getMicrosecondClock().getTicks() < deferUntilUs) {
+            return;
+        }
         if (!instance.tryLockForRefresh()) {
             return;
         }
@@ -5035,6 +5065,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // view (head > processedTo still holds) once the apply catches up.
                 // Not counting this toward the flush-retry budget is deliberate:
                 // apply lag is transient and self-heals, unlike a refresh fault.
+                // Arm a short back-off so the next scans skip this view instead of
+                // re-draining the whole window every tick until apply lands.
+                instance.setApplyLagDeferUntilUs(
+                        engine.getConfiguration().getMicrosecondClock().getTicks() + APPLY_LAG_DEFER_BACKOFF_US);
                 LOG.debug().$("live view O3 replay deferred, base apply lag [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", base=").$safe(e.getBaseTableName())
