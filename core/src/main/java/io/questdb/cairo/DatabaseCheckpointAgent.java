@@ -476,9 +476,22 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // try/finally below once the inner for(;;) exits for this
                                         // table - covering both the LV-specific copy and the
                                         // fall-through TableReader path.
-                                        freezeLvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
-                                        if (freezeLvInstance != null) {
-                                            freezeLvInstance.startCheckpoint(freezeLvInstance.getStateReader().getAppliedWatermark());
+                                        //
+                                        // Freeze exactly once per table. The inner for(;;) can
+                                        // re-enter this branch after a reader retry (continue), and
+                                        // by then a concurrent DROP may have removed the view from
+                                        // the registry so getViewInstance returns null. Reassigning
+                                        // freezeLvInstance there would drop the reference to the
+                                        // already-frozen instance, the finally below would skip its
+                                        // endCheckpoint(), and the view would stay frozen forever
+                                        // (a later base-table invalidation would then park in
+                                        // waitForUnfrozen() and hang). Keep the first frozen
+                                        // reference across retries; startCheckpoint is idempotent.
+                                        if (freezeLvInstance == null) {
+                                            freezeLvInstance = engine.getLiveViewRegistry().getViewInstance(tableToken.getTableName());
+                                            if (freezeLvInstance != null) {
+                                                freezeLvInstance.startCheckpoint(freezeLvInstance.getStateReader().getAppliedWatermark());
+                                            }
                                         }
 
                                         // The LV-specific copy follows. Standard TableReader path

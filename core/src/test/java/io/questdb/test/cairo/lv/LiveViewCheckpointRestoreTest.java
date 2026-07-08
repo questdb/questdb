@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -32,6 +34,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
@@ -79,6 +82,11 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     // pass-through unless a test arms lvStateCopyHook; testCheckpointWhileBaseAdvancesConverges uses it to
     // land a deterministic base advance during the _lv.s copy.
     private static final LvCheckpointFilesFacade testFilesFacade = new LvCheckpointFilesFacade();
+    // One-shot fault injection for testCheckpointRetryDoesNotLeakLiveViewFreeze: fires the first time
+    // the checkpoint agent opens a reader for the named live view, simulating a reader retry that lands
+    // in the narrow DROP window. retryFired records whether it actually fired.
+    private static final AtomicBoolean retryFired = new AtomicBoolean(false);
+    private static volatile String retryLvName;
     private static Path checkpointPath;
     private static Path triggerFilePath;
     private int checkpointRootLen;
@@ -88,6 +96,26 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
         checkpointPath = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
+        // Engine whose getReaderWithRepair injects a one-shot reader retry for the armed live view.
+        // Inert unless retryLvName is set, so every other test in this class sees a stock engine.
+        AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            public TableReader getReaderWithRepair(TableToken tableToken) {
+                final String lvName = retryLvName;
+                if (lvName != null
+                        && tableToken.isLiveView()
+                        && lvName.equals(tableToken.getTableName())
+                        && retryFired.compareAndSet(false, true)) {
+                    // Simulate the narrow DROP window: the view has left the registry's viewsByName
+                    // (so the agent's retry re-fetch of the instance returns null) while the table
+                    // token is not yet marked dropped. Throwing here forces the agent's for(;;) loop
+                    // to re-enter the isLiveView branch a second time.
+                    getLiveViewRegistry().removeView(tableToken.getTableName());
+                    throw TableReferenceOutOfDateException.of(tableToken);
+                }
+                return super.getReaderWithRepair(tableToken);
+            }
+        };
         AbstractCairoTest.setUpStatic();
     }
 
@@ -105,6 +133,9 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
         super.setUp();
         ff = testFilesFacade;
         testFilesFacade.reset();
+        // Disarm the reader-retry injection so it never leaks into another test.
+        retryLvName = null;
+        retryFired.set(false);
         checkpointPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
         checkpointRootLen = checkpointPath.size();
         triggerFilePath.of(configuration.getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
@@ -421,6 +452,63 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
             assertViewMatchesRecompute(viewSql);
 
             execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testCheckpointRetryDoesNotLeakLiveViewFreeze() throws Exception {
+        // Regression for the DatabaseCheckpointAgent freeze/unfreeze pairing. The inner for(;;)
+        // reader-retry loop must freeze the LiveViewInstance once and keep that reference across
+        // retries. If a concurrent DROP removes the view from the registry between the initial
+        // freeze and a reader retry, getViewInstance returns null on the retry; pre-fix the loop
+        // overwrote freezeLvInstance with that null, losing the reference to the frozen instance,
+        // so the finally never called endCheckpoint() and the view stayed frozen forever (a later
+        // base-table invalidation would then park in waitForUnfrozen() and hang).
+        //
+        // The engineFactory installed in setUpStatic injects exactly that: on the LV's first
+        // getReaderWithRepair during CHECKPOINT CREATE it removes the view from the registry and
+        // throws a retriable exception, forcing the agent to re-enter the isLiveView branch with
+        // getViewInstance now returning null.
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                        "('2026-01-01T00:00:02.000000Z', 'b', 2.0)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("view must not start frozen", instance.isFreezeInProgress());
+
+                // Arm the one-shot reader-retry injection, then run the real CHECKPOINT CREATE.
+                retryFired.set(false);
+                retryLvName = "lv";
+                execute("CHECKPOINT CREATE");
+                retryLvName = null;
+
+                // The injection must actually have fired, otherwise the retry path was never taken
+                // and the assertion below would pass vacuously.
+                Assert.assertTrue("reader-retry injection never fired", retryFired.get());
+                // The freeze must be released despite the retry that saw a null instance.
+                Assert.assertFalse(
+                        "CHECKPOINT leaked the live view freeze across a reader retry",
+                        instance.isFreezeInProgress()
+                );
+
+                // The injection removed the instance from the registry; re-register it so normal
+                // teardown frees its native state and the DROP below can find it.
+                engine.getLiveViewRegistry().registerView(instance);
+            }
+
+            execute("CHECKPOINT RELEASE");
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
         });
     }
 
