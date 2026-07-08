@@ -65,10 +65,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private boolean betweenNegated;
     private CairoConfiguration configuration;
     private boolean intervalApplied = false;
+    private boolean isOwnershipTransferred;
     private int partitionBy;
     private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
+        isOwnershipTransferred = true;
         return new RuntimeIntervalModel(
                 timestampDriver,
                 partitionBy,
@@ -79,10 +81,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     @Override
     public void clear() {
-        staticIntervals.clear();
-        dynamicRangeList.clear();
-        intervalApplied = false;
-        clearBetweenParsing();
+        if (isOwnershipTransferred) {
+            // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them
+            isOwnershipTransferred = false;
+            staticIntervals.clear();
+            dynamicRangeList.clear();
+            intervalApplied = false;
+            clearBetweenParsing();
+        } else {
+            // no build(): the accumulated functions are orphaned, free them here
+            freeAndClear();
+        }
     }
 
     /**
@@ -91,6 +100,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * otherwise this double-frees Functions still owned by the built model.
      */
     public void freeAndClear() {
+        isOwnershipTransferred = false;
         if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
             betweenBoundaryFunc.close();
         }
@@ -148,7 +158,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectEmpty() {
-        clear();
+        // free the runtime functions gathered so far; ownership has not been transferred via build()
+        freeAndClear();
         intervalApplied = true;
     }
 
@@ -182,6 +193,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 dynamicRangeList.add(null);
             }
         }
+        intervalApplied = true;
+    }
+
+    public void intersectMonotonicTimestamp(TimestampMonotonicInverter inverter) {
+        if (isEmptySet()) {
+            Misc.free(inverter);
+            return;
+        }
+
+        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(inverter);
         intervalApplied = true;
     }
 

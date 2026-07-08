@@ -559,6 +559,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     frameAddressCache.add(frameCount++, frame);
                 }
 
+                // Covered frames decode their columns on the vector-aggregate
+                // workers (PageFrameMemoryPool.navigateTo) over the shared
+                // per-partition posting readers; freeze each reader so its mmaps
+                // stay stable for the concurrent detached cursors. The add() loop
+                // above already positioned + warmed them via the eager production
+                // decode. unfreezeCoveredReaders() runs in the finally below, after
+                // runWhatsLeft has drained the done-latch (so no worker is reading).
+                frameAddressCache.freezeCoveredReaders();
+
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
                     final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
                     for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {
@@ -647,7 +656,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
-                // Release page frame memory now, when no worker is using it.
+                // runWhatsLeft has drained the done-latch, so every vector-aggregate
+                // worker has finished iterating its detached covered cursors. Unfreeze
+                // the covered posting readers (no-op when none) so later queries can
+                // reload them, and release page frame memory -- both safe now that no
+                // worker is using it.
+                frameAddressCache.unfreezeCoveredReaders();
                 Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
 

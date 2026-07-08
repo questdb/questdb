@@ -288,7 +288,8 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     private long dstFromHistory(long utcEpoch) {
         int index = historicTransitions.binarySearch(utcEpoch, Vect.BIN_SEARCH_SCAN_UP);
         if (index == -1) {
-            return Long.MAX_VALUE;
+            // utcEpoch precedes the first transition, which is therefore the next one
+            return historicTransitions.size() > 0 ? historicTransitions.getQuick(0) : Long.MAX_VALUE;
         }
 
         if (index < 0) {
