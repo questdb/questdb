@@ -2102,15 +2102,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testParquetExportSingleKeyCoveringScanShapes() throws Exception {
-        // Regression for single-key covering scans (sym = 'x') exporting all-null covered
-        // columns to parquet. Their page frames are metadata-only -- covered columns are
-        // decoded on the async reduce workers -- so every zero-copy export route that reads
-        // raw frame addresses (DIRECT_PAGE_FRAME and PAGE_FRAME_BACKED) shipped placeholders.
-        // Each shape below reaches a different route: a bare projection with a computed column
-        // reaches PAGE_FRAME_BACKED, a query through a view reaches it via StaleViewCheckFactory
-        // (whose getBaseFactory() skips its own base), and a var-size covered column falls to
-        // CURSOR_BASED. All must decode the covered columns and match the source query.
+    public void testParquetExportCoveringScanShapes() throws Exception {
+        // Regression for covering scans exporting all-null covered columns to parquet. A
+        // single-key scan (sym = 'x') produces metadata-only page frames -- covered columns are
+        // decoded on the async reduce workers -- so every zero-copy export route that reads raw
+        // frame addresses (DIRECT_PAGE_FRAME and PAGE_FRAME_BACKED) shipped placeholders. Each
+        // shape below reaches a different route: a bare projection with a computed column reaches
+        // PAGE_FRAME_BACKED, a query through a view reaches it via StaleViewCheckFactory (whose
+        // getBaseFactory() skips its own base), and a var-size covered column falls to
+        // CURSOR_BASED. The multi-key (IN-list) merge materializes eagerly and stays on
+        // DIRECT_PAGE_FRAME -- exercised here with a var-size covered column, the shape most
+        // likely to hide a latent eager-materialization gap. All must match the source query.
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
                     engine.execute("""
@@ -2127,12 +2129,14 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     engine.execute("CREATE VIEW deriv_v AS SELECT timestamp, symbol, open, note FROM deriv", sqlExecutionContext);
 
                     final String[] queries = {
-                            // projection with a computed column over the covering scan -> PAGE_FRAME_BACKED
+                            // single-key projection with a computed column over the covering scan -> PAGE_FRAME_BACKED
                             "SELECT symbol, open + 1 AS o FROM deriv WHERE symbol = 'S3'",
-                            // query through a view -> StaleViewCheckFactory wraps the covering scan directly
+                            // single-key query through a view -> StaleViewCheckFactory wraps the covering scan directly
                             "SELECT timestamp, symbol, open, note FROM deriv_v WHERE symbol = 'S3'",
-                            // var-size covered column -> CURSOR_BASED
+                            // single-key var-size covered column -> CURSOR_BASED
                             "SELECT symbol, note FROM deriv WHERE symbol = 'S3'",
+                            // multi-key var-size covered column -> DIRECT_PAGE_FRAME (eager merge)
+                            "SELECT timestamp, symbol, note FROM deriv WHERE symbol IN ('S1', 'S3')",
                     };
                     try (
                             TestHttpClient testHttpClient = new TestHttpClient();
