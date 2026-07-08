@@ -442,6 +442,59 @@ public class SqlUtilTest {
     }
 
     @Test
+    public void testExprColumnAliasWholeQuotedLiteralDottedStaysProtected() {
+        // A whole quote-protected DOTTED base with nonLiteral=false must alias its interior as protected
+        // content (displaying a.b), not mis-fire prefixedLiteral and alias only the tail `b`. A duplicate
+        // keeps the dedup suffix INSIDE the quotes ("a.b_2") so it strips to a clean a.b_2, never a leaked
+        // "a.b"_2. Mirrors createColumnAlias's whole quote-protected handling for the literal path.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        CharSequence first = SqlUtil.createExprColumnAlias(store, "\"a.b\"", aliasMap, seqMap, 64, false);
+        Assert.assertEquals("\"a.b\"", first.toString());
+        Assert.assertEquals("a.b", SqlUtil.toColumnName(first));
+        aliasMap.put(first.toString(), null);
+
+        CharSequence second = SqlUtil.createExprColumnAlias(store, "\"a.b\"", aliasMap, seqMap, 64, false);
+        Assert.assertEquals("\"a.b_2\"", second.toString());
+        Assert.assertTrue(SqlUtil.isQuoteProtectedAlias(second));
+        Assert.assertEquals("a.b_2", SqlUtil.toColumnName(second));
+    }
+
+    @Test
+    public void testExprColumnAliasWholeQuotedLiteralOperatorTokenDedups() {
+        // Regression (createExprColumnAlias vs createColumnAlias asymmetry): a WHOLE quote-protected
+        // operator-token base with nonLiteral=false (e.g. a compiler alias surfacing in its protected
+        // "in" form) must be keyed on its stripped display name `in`, not returned verbatim. A sibling
+        // `in` and a base "in" both display `in`, so the second must dedup to in_2 - not a second bare
+        // column also displaying `in` (the early-exit used to return "in" verbatim), and never a leaked
+        // "in"_2. The early-exit only checked the raw-token sibling, missing the quote-protected interior
+        // its twin createColumnAlias checks. This path is not reachable from SQL today (subquery metadata
+        // stores clean names, so an outer reference is the bare `in`), so it is a defensive consistency
+        // guard on a zero-tolerance path.
+        CharacterStore store = new CharacterStore(64, 4);
+        LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(8);
+        LowerCaseCharSequenceIntHashMap seqMap = new LowerCaseCharSequenceIntHashMap();
+
+        // no collision: the whole-quoted base surfaces as its protected form (display name in)
+        CharSequence fresh = SqlUtil.createExprColumnAlias(store, "\"in\"", aliasMap, seqMap, 64, false);
+        Assert.assertEquals("\"in\"", fresh.toString());
+        Assert.assertEquals("in", SqlUtil.toColumnName(fresh));
+
+        // sibling `in` already surfaced the display name in
+        CharSequence sibling = SqlUtil.createExprColumnAlias(store, "in", aliasMap, seqMap, 64, false);
+        Assert.assertEquals("in", sibling.toString());
+        aliasMap.put(sibling.toString(), null);
+
+        // the whole-quoted "in" must now dedup against it, cleanly and quote-free
+        CharSequence deduped = SqlUtil.createExprColumnAlias(store, "\"in\"", aliasMap, seqMap, 64, false);
+        Assert.assertEquals("in_2", deduped.toString());
+        Assert.assertFalse(SqlUtil.isQuoteProtectedAlias(deduped));
+        Assert.assertEquals("in_2", SqlUtil.toColumnName(deduped));
+    }
+
+    @Test
     public void testExprNonLiteral() {
         CharacterStore store = new CharacterStore(32, 1);
         LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>(0);

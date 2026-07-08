@@ -439,13 +439,23 @@ public class SqlUtil {
             boolean nonLiteral
     ) {
         // We need to wrap disallowed aliases with double quotes to avoid later conflicts.
-        // A base that is itself a protective-looking quoted string (e.g. a PIVOT value whose data is
-        // literally "in" or "a.b") displays as its stripped interior - toColumnName strips it - so alias
-        // the interior and let the per-candidate protection below re-wrap it only when the final content
-        // still needs it. Otherwise a dedup suffix would land outside the quotes ("in"_2), where
-        // isQuoteProtectedAlias no longer recognizes it and toColumnName cannot strip it, leaking the
-        // quotes into result set metadata and breaking CREATE TABLE AS SELECT.
-        if (nonLiteral && isQuoteProtectedAlias(base)) {
+        // A base that is itself a protective-looking quoted string (a PIVOT value whose data is
+        // literally "in" or "a.b", or a literal reference whose alias surfaces in its protected form)
+        // displays as its stripped interior - toColumnName strips it - so alias the interior and let the
+        // per-candidate protection below re-wrap it only when the final content still needs it. Otherwise
+        // a dedup suffix would land outside the quotes ("in"_2), where isQuoteProtectedAlias no longer
+        // recognizes it and toColumnName cannot strip it, leaking the quotes into result set metadata and
+        // breaking CREATE TABLE AS SELECT; and a bare "in" returned verbatim by the early-exit below would
+        // duplicate the display name of an already-taken sibling.
+        boolean forceQuote = false;
+        if (isQuoteProtectedAlias(base)) {
+            // A non-literal base re-derives its protection from the stripped interior's dot / operator
+            // token via the quote decision below, so it needs no forced flag. A literal base must force
+            // it: its quote rule fires only for a composed table."col", so without the flag a stripped
+            // operator token (in) would surface bare and collide, and a stripped dotted interior (a.b)
+            // would mis-fire prefixedLiteral and alias just the tail. Mirrors createColumnAlias, which
+            // keys a whole quote-protected base on its interior for literal and non-literal callers alike.
+            forceQuote = !nonLiteral;
             base = Chars.toString(base, 1, base.length() - 1);
         }
         int baseLen = base.length();
@@ -455,8 +465,7 @@ public class SqlUtil {
         // quotes back on per candidate (like a whole quote-protected base). Without this a dedup
         // suffix lands OUTSIDE the copied quotes ("a.b"_2), which toColumnName cannot strip - leaking
         // them into result set metadata and breaking CREATE TABLE AS SELECT.
-        boolean forceQuote = false;
-        if (!nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1
+        if (!forceQuote && !nonLiteral && indexOfDot > -1 && indexOfDot < baseLen - 1
                 && isQuoteProtectedAlias(base, indexOfDot + 1, baseLen)) {
             base = Chars.toString(base, indexOfDot + 2, baseLen - 1);
             baseLen = base.length();
