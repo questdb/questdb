@@ -13933,17 +13933,21 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 while ((f = cursor.next(0)) != null) {
                     long count = f.getPartitionHi() - f.getPartitionLo();
                     rows += count;
-                    // 'vals' is column index 1 in the projection (sym is 0).
-                    // Each row inserts a 3-element double array, so the frame
-                    // must carry an aux entry per row (16 bytes per row,
-                    // matching ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES) and a
-                    // non-empty data page holding the array bytes.
-                    assertNotEquals("ARRAY aux page address should be populated",
+                    // 'vals' is column index 1 in the projection (sym is 0) and is
+                    // a covered INCLUDE column. Under metadata-only single-key frame
+                    // production the covered values are NOT materialized at frame
+                    // production -- the worker covered arm decodes them on navigate
+                    // -- so the production page addresses/sizes read directly off the
+                    // frame here are legitimately PLACEHOLDER zeroes. (Same precedent
+                    // as testAddressCacheStoresCoveredMetadata in
+                    // CoveringIndexParallelDecodeTest.) This test never navigates the
+                    // frame, so it only ever observes those production placeholders.
+                    assertEquals("covered ARRAY aux page address is a production placeholder (0)",
                             0L, f.getAuxPageAddress(1));
-                    assertEquals("ARRAY aux page size should be 16 bytes per row",
-                            16L * count, f.getAuxPageSize(1));
-                    assertTrue("ARRAY data page size should be non-zero",
-                            f.getPageSize(1) > 0);
+                    assertEquals("covered ARRAY aux page size is a production placeholder (0)",
+                            0L, f.getAuxPageSize(1));
+                    assertEquals("covered ARRAY data page size is a production placeholder (0)",
+                            0L, f.getPageSize(1));
                 }
                 assertEquals(10, rows);
             }
