@@ -96,6 +96,14 @@ public enum ParquetExportMode {
             if (hasComputedBinaryColumn(vf)) {
                 return TEMP_TABLE;
             }
+            // PAGE_FRAME_BACKED reads the base's raw page-frame addresses for the pass-through
+            // columns, so a metadata-only base (single-key covering scan under a projection, e.g.
+            // SELECT sym, price * qty FROM t WHERE sym = 'x') would ship all-null covered columns
+            // just like the DIRECT path. Only stay on the hybrid fast path when the base
+            // materializes its frames; otherwise export row-wise via CURSOR_BASED.
+            if (!vf.getBaseFactory().producesMaterializedPageFrames()) {
+                return CURSOR_BASED;
+            }
             return isDescending ? CURSOR_BASED : PAGE_FRAME_BACKED;
         }
         RecordMetadata meta = factory.getMetadata();

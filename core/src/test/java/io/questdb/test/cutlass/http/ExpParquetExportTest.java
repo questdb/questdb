@@ -2102,6 +2102,67 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportSingleKeyCoveringScanShapes() throws Exception {
+        // Regression for single-key covering scans (sym = 'x') exporting all-null covered
+        // columns to parquet. Their page frames are metadata-only -- covered columns are
+        // decoded on the async reduce workers -- so every zero-copy export route that reads
+        // raw frame addresses (DIRECT_PAGE_FRAME and PAGE_FRAME_BACKED) shipped placeholders.
+        // Each shape below reaches a different route: a bare projection with a computed column
+        // reaches PAGE_FRAME_BACKED, a query through a view reaches it via StaleViewCheckFactory
+        // (whose getBaseFactory() skips its own base), and a var-size covered column falls to
+        // CURSOR_BASED. All must decode the covered columns and match the source query.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE deriv (
+                                symbol SYMBOL INDEX TYPE POSTING INCLUDE (open, note, timestamp),
+                                open DOUBLE, note VARCHAR,
+                                timestamp TIMESTAMP
+                            ) TIMESTAMP(timestamp) PARTITION BY MONTH""", sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO deriv
+                            SELECT 'S' || (x % 8), rnd_double(), rnd_varchar(1, 20, 1),
+                                timestamp_sequence('2025-01-01T00:00:00.000000Z', 3_600_000_000L)
+                            FROM long_sequence(20_000)""", sqlExecutionContext);
+                    engine.execute("CREATE VIEW deriv_v AS SELECT timestamp, symbol, open, note FROM deriv", sqlExecutionContext);
+
+                    final String[] queries = {
+                            // projection with a computed column over the covering scan -> PAGE_FRAME_BACKED
+                            "SELECT symbol, open + 1 AS o FROM deriv WHERE symbol = 'S3'",
+                            // query through a view -> StaleViewCheckFactory wraps the covering scan directly
+                            "SELECT timestamp, symbol, open, note FROM deriv_v WHERE symbol = 'S3'",
+                            // var-size covered column -> CURSOR_BASED
+                            "SELECT symbol, note FROM deriv WHERE symbol = 'S3'",
+                    };
+                    try (
+                            TestHttpClient testHttpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(1 << 20)
+                    ) {
+                        final StringSink planSink = new StringSink();
+                        for (int i = 0; i < queries.length; i++) {
+                            planSink.clear();
+                            TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + queries[i], planSink);
+                            TestUtils.assertContains(planSink, "CoveringIndex on: symbol");
+
+                            HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                            req.GET().url("/exp")
+                                    .query("query", queries[i])
+                                    .query("fmt", "parquet");
+                            sink.clear();
+                            testHttpClient.reqToSink(req, sink, null, null, null, null);
+                            assertParquetMatchesQuery(
+                                    engine,
+                                    sqlExecutionContext,
+                                    sink,
+                                    queries[i],
+                                    "covering_shape_" + i + ".parquet"
+                            );
+                        }
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameVarcharAndArrayColumns() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
