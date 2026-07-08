@@ -68,6 +68,9 @@ public class PostingGenLookup implements Closeable {
     private long cacheBudget = DEFAULT_CACHE_BUDGET;
     private long cacheUsedBytes;
     private long cacheVersion;
+    // Set by the owning reader's setFrozen during parallel decode. While frozen the cache is
+    // strictly read-only (workers replay it concurrently); putCacheEntries asserts on a write.
+    private boolean frozen;
     private Snapshot staging = bufB;
 
     public PostingGenLookup() {
@@ -112,6 +115,16 @@ public class PostingGenLookup implements Closeable {
 
     public static int unpackEntryStart(long packedSlot) {
         return (int) (packedSlot >>> 32);
+    }
+
+    /**
+     * True iff the active snapshot has at least one sparse gen. Mirrors the gate
+     * {@link #cacheLookup} and {@link #putCacheEntries} apply: when no sparse gen
+     * exists the cache can never hold an entry, so callers (e.g. the O(genCount)
+     * cache-warm primitive) can skip the walk entirely.
+     */
+    public boolean anySparseGen() {
+        return active.anySparseGen;
     }
 
     public long cacheEntryAt(int idx) {
@@ -235,6 +248,10 @@ public class PostingGenLookup implements Closeable {
         if (cacheUsedBytes + bytesNeeded > cacheBudget) {
             return;
         }
+        // Defence-in-depth: a frozen reader's cache is read-only — workers replay it concurrently,
+        // so any write here would be an unsynchronised mutation under concurrent readers. Detached
+        // worker cursors skip this call entirely (see Posting*Reader); this catches any other path.
+        assert !frozen : "genLookup cache written while frozen (key=" + key + ")";
         long newSize = cacheEntries.size() + count;
         assert newSize <= Integer.MAX_VALUE : "cache pool overflow: " + newSize;
         int startIdx = (int) cacheEntries.size();
@@ -251,6 +268,14 @@ public class PostingGenLookup implements Closeable {
         cacheEntries.reopen();
         cacheUsedBytes = 0;
         cacheVersion++;
+        // Self-healing: a re-initialised (pooled) lookup starts unfrozen so a reused reader
+        // can never inherit a stale freeze if setFrozen(false) was skipped. Mirrors the
+        // frozen reset in AbstractPostingIndexReader.of(), which is this method's only caller.
+        frozen = false;
+    }
+
+    public void setFrozen(boolean frozen) {
+        this.frozen = frozen;
     }
 
     public void setCacheMemoryBudget(long budget) {

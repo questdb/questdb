@@ -1097,6 +1097,113 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrLargeMagnitudeOverflow() throws Exception {
+        // Regression test for the window-function variants of corr(): prior to the
+        // conditional split-sqrt in computeCorr / computeCorrWelford, the denominator
+        // sqrt(cXX * cYY) (resp. sqrt(sumXX * sumYY)) overflowed to +Infinity for
+        // inputs of magnitude ~1e153, causing corr() over (...) to return 0.0
+        // instead of the true correlation.
+        //
+        // Exercises both compute paths: the whole-partition and order-by running frames
+        // below both route to computeCorrWelford (BivarStatOverPartitionFunction and
+        // BivarStatOverUnboundedPartitionRowsFrameFunction); the removable rows-frame
+        // query routes to the naive computeCorr (BivarStatOverRowsFrameFunction).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 1e153, 1e153), (2, 1, -1e153, -1e153), " +
+                    "(3, 2, 1e153, -1e153), (4, 2, -1e153, 1e153)");
+
+            // Welford, whole partition.
+            assertQuery("select ts, i, corr(y, x) over (partition by i) cr from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\ti\tcr
+                            1970-01-01T00:00:00.000001Z\t1\t1.0
+                            1970-01-01T00:00:00.000002Z\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\t2\t-1.0
+                            1970-01-01T00:00:00.000004Z\t2\t-1.0
+                            """));
+
+            // Welford, order-by running (unbounded preceding to current row).
+            assertQuery("select ts, i, corr(y, x) over (partition by i order by ts) cr from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\ti\tcr
+                            1970-01-01T00:00:00.000001Z\t1\tnull
+                            1970-01-01T00:00:00.000002Z\t1\t1.0
+                            1970-01-01T00:00:00.000003Z\t2\tnull
+                            1970-01-01T00:00:00.000004Z\t2\t-1.0
+                            """));
+
+            // Naive computeCorr, removable rows frame. Sliding 2-row window over the
+            // designated timestamp (ignoring the partition key): the second row sees a
+            // perfectly positive pair (-> 1.0), the third sees a constant y (zero variance
+            // -> null), and the fourth a perfectly negative pair (-> -1.0). Each finite-pair
+            // frame overflows the product and recovers via the split-sqrt fallback + clamp.
+            assertQuery("select ts, corr(y, x) over (order by ts rows between 1 preceding and current row) cr from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\tcr
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\t1.0
+                            1970-01-01T00:00:00.000003Z\tnull
+                            1970-01-01T00:00:00.000004Z\t-1.0
+                            """));
+        });
+    }
+
+    @Test
+    public void testCorrSmallMagnitudeUnderflow() throws Exception {
+        // Regression test for the underflow tail of the corr() window variants. For inputs
+        // of very small magnitude (~1e-150) the sums of squared deviations are ~1e-300, so
+        // their product underflows to exactly 0.0 while each factor stays finite and non-zero.
+        // Prior to widening the split-sqrt fallback to this case, sqrt(0.0) made the
+        // denominator 0.0 and corr() returned NaN instead of the true correlation.
+        //
+        // The whole-partition query routes to computeCorrWelford; the removable rows-frame
+        // query routes to the naive computeCorr.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, x double, y double) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values " +
+                    "(1, 1, 1e-150, 1e-150), (2, 1, -1e-150, -1e-150)");
+
+            // Welford, whole partition. The split-sqrt fallback's two roundings land 1 ULP
+            // below the true 1.0 (the clamp only bounds the > 1 / < -1 tails); the point is
+            // that the result is finite, not NaN.
+            assertQuery("select ts, corr(y, x) over (partition by i) cr from tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\tcr
+                            1970-01-01T00:00:00.000001Z\t0.9999999999999999
+                            1970-01-01T00:00:00.000002Z\t0.9999999999999999
+                            """));
+
+            // Naive computeCorr, removable rows frame.
+            assertQuery("select ts, corr(y, x) over (order by ts rows between 1 preceding and current row) cr from tab")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceTimestampSuffix1("""
+                            ts\tcr
+                            1970-01-01T00:00:00.000001Z\tnull
+                            1970-01-01T00:00:00.000002Z\t0.9999999999999999
+                            """));
+        });
+    }
+
+    @Test
     public void testCovarPopBoundedRangeFrameWithEviction() throws Exception {
         // Covers the frameLoBounded eviction path in both partitioned and non-partitioned range frame
         assertMemoryLeak(() -> {

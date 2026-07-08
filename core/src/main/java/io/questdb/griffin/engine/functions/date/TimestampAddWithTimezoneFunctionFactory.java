@@ -34,11 +34,13 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -122,7 +124,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         return localTimestamp - timeZoneRules.getLocalOffset(localTimestamp);
     }
 
-    private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction {
+    private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
         private final char period;
         private final TimestampDriver.TimestampAddMethod periodAddFunction;
         private final int stride;
@@ -159,8 +161,110 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         }
 
         @Override
+        public Function getTimestampArg() {
+            return timestampFunc;
+        }
+
+        @Override
+        public int invertTimestampInterval(Interval io) {
+            if (stride == Numbers.INT_NULL) {
+                return NONE;
+            }
+            // a positive local add near the domain max overflows the long boundary and wraps to a
+            // low value; with an open lower but finite upper bound that wrapped value matches and
+            // splits the preimage. The designated timestamp is non-negative, so a negative add
+            // cannot underflow.
+            if (stride > 0 && io.getLo() == Numbers.LONG_NULL && io.getHi() != Long.MAX_VALUE) {
+                return NONE;
+            }
+            // 48h bounds any zone offset difference (e.g. Samoa's 2011 date-line shift);
+            // calendar units add a further +/-1 unit of day-clamping slack.
+            final long margin = timestampDriver.fromDays(2);
+            final boolean isCalendar = period == 'M' || period == 'y';
+            // a fixed unit is a constant local shift, exact when no transition splits source and target
+            if (!isCalendar && tryExactShift(io, margin)) {
+                return EXACT;
+            }
+            long lo = io.getLo();
+            long hi = io.getHi();
+            if (lo != Numbers.LONG_NULL) {
+                long w = periodAddFunction.add(lo, -stride);
+                if (addOverflows(lo, w, -stride)) {
+                    return NONE;
+                }
+                if (isCalendar) {
+                    final long c = periodAddFunction.add(w, -1);
+                    if (c >= w) {
+                        return NONE;
+                    }
+                    w = c;
+                }
+                lo = w < Long.MIN_VALUE + margin ? Numbers.LONG_NULL : w - margin;
+            }
+            if (hi != Long.MAX_VALUE) {
+                long w = periodAddFunction.add(hi, -stride);
+                if (addOverflows(hi, w, -stride)) {
+                    return NONE;
+                }
+                if (isCalendar) {
+                    final long c = periodAddFunction.add(w, 1);
+                    if (c <= w) {
+                        return NONE;
+                    }
+                    w = c;
+                }
+                hi = w > Long.MAX_VALUE - margin ? Long.MAX_VALUE : w + margin;
+            }
+            io.of(lo, hi);
+            return SUPERSET;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(period).val("',").val(stride).val(',').val(timestampFunc).val(',').val(tzFunc).val(')');
+        }
+
+        private static boolean addOverflows(long base, long result, int units) {
+            return units > 0 ? result <= base : units < 0 && result >= base;
+        }
+
+        private boolean tryExactShift(Interval io, long margin) {
+            final long k = periodAddFunction.add(0, stride);
+            if (addOverflows(0, k, stride)) {
+                return false;
+            }
+            final long lo = io.getLo();
+            final long hi = io.getHi();
+            final boolean isLoFinite = lo != Numbers.LONG_NULL;
+            final boolean isHiFinite = hi != Long.MAX_VALUE;
+            long newLo = k < 0 ? Long.MIN_VALUE - k : Numbers.LONG_NULL;
+            long newHi = k > 0 ? Long.MAX_VALUE - k : Long.MAX_VALUE;
+            long spanLo = Long.MAX_VALUE;
+            long spanHi = Long.MIN_VALUE;
+            if (isLoFinite) {
+                if ((k > 0 && lo < Long.MIN_VALUE + k) || (k < 0 && lo > Long.MAX_VALUE + k)) {
+                    return false;
+                }
+                newLo = lo - k;
+                spanLo = Math.min(lo, newLo);
+                spanHi = Math.max(lo, newLo);
+            }
+            if (isHiFinite) {
+                if ((k > 0 && hi < Long.MIN_VALUE + k) || (k < 0 && hi > Long.MAX_VALUE + k)) {
+                    return false;
+                }
+                newHi = hi - k;
+                spanLo = Math.min(spanLo, Math.min(hi, newHi));
+                spanHi = Math.max(spanHi, Math.max(hi, newHi));
+            }
+            if (spanLo > spanHi || spanLo < Long.MIN_VALUE + margin || spanHi > Long.MAX_VALUE - margin) {
+                return false;
+            }
+            if (timeZoneRules.getNextDST(spanLo - margin) <= spanHi + margin) {
+                return false;
+            }
+            io.of(newLo, newHi);
+            return true;
         }
     }
 

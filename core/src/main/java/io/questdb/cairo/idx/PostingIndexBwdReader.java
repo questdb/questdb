@@ -150,6 +150,66 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         return EmptyRowCursor.INSTANCE;
     }
 
+    /**
+     * Backward-iteration peer of
+     * {@link PostingIndexFwdReader#getDetachedCursor(int, long, long, int[])}.
+     * Constructs a fresh, single-worker-owned cursor that never draws from or
+     * returns to the shared freeCursors pool; its {@link Cursor#close()} frees
+     * its own native scratch directly. Positioning is identical to
+     * {@link #getCursor(int, long, long, int[])}; only the construct/close
+     * lifecycle differs. The reader's shared state must have been made
+     * read-only first via
+     * {@link AbstractPostingIndexReader#warmForKeys} for concurrent use to be
+     * safe. Does NOT stamp the operating-thread tripwire (detached cursors run
+     * off the reader's owning thread by design).
+     * <p>
+     * Provided for API symmetry with the forward reader. The covered parallel-decode
+     * pipeline reads each frame forward (even DESC frames are decoded ascending; the
+     * cheap selectKthMatch partitioning is forward-only), so this backward variant is
+     * not currently exercised by that pipeline — it is internally correct but untested
+     * in the concurrent path.
+     */
+    public RowCursor getDetachedCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
+        reloadConditionally();
+
+        // Mirror getCursor's clamp of the index-walked upper bound to the
+        // picked chain entry's MAX_VALUE.
+        long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
+
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            NullCursor nc = new NullCursor();
+            nc.isDetached = true;
+            // of() can throw (e.g. OOM growing the block buffer). A detached cursor is
+            // never in the reader's free list, so nothing else would reclaim it; release
+            // its native scratch on a mid-of() failure (mirrors getCursor).
+            try {
+                nc.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                nc.releaseResources();
+                throw th;
+            }
+            final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
+            nc.nullCount = Math.min(columnTop, hi);
+            nc.nullPos = nc.nullCount;
+            return nc;
+        }
+
+        if (key < keyCount) {
+            openRequiredSidecars(requiredCoverColumns);
+            Cursor c = new Cursor();
+            c.isDetached = true;
+            try {
+                c.of(key, minValue, indexMaxValue);
+            } catch (Throwable th) {
+                c.releaseResources();
+                throw th;
+            }
+            return c;
+        }
+
+        return EmptyRowCursor.INSTANCE;
+    }
+
     private class Cursor extends AbstractCoveringCursor {
         private final LongList builderEntries = new LongList();
         protected long efRankDirAddr;
@@ -157,6 +217,11 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         protected long maxValue;
         protected long minValue;
         protected long next;
+        // Set for cursors handed out by getDetachedCursor: a single worker owns
+        // this cursor and it was never drawn from freeCursors, so close() must
+        // free its native scratch directly and never push it back to the pool
+        // (which is racy under the concurrent same-reader decode this enables).
+        boolean isDetached;
         boolean isPooled;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
@@ -195,6 +260,16 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
+            // Detached cursors are owned by a single worker thread that is, by
+            // design, NOT the reader's owning thread; they never touch the
+            // shared freeCursors pool. releaseResources() frees the block buffer,
+            // the EF rank directory, and all covering scratch -- the same native
+            // state the pool branch frees -- so skip both the operating-thread
+            // tripwire and the pool-push.
+            if (isDetached) {
+                releaseResources();
+                return;
+            }
             assert assertSameOperatingThread() : "posting index cursor closed off the reader's owning thread";
             // Only return to the idle pool while the owning reader is still open.
             // The pool retains blockBufferAddr (NATIVE_INDEX_READER) for reuse and
@@ -367,7 +442,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
                 currentGen--;
             }
-            if (!isCacheReplayMode && requestedKey >= 0) {
+            // A detached (per-worker) cursor must NEVER mutate the shared reader's genLookup cache
+            // (see PostingIndexFwdReader): the dispatch-thread warm populates it before freeze; a
+            // detached cursor that reaches here re-walked read-only and must not race on the write.
+            if (!isCacheReplayMode && requestedKey >= 0 && !isDetached) {
                 builderEntries.reverse();
                 genLookup.putCacheEntries(requestedKey, builderEntries);
             }
@@ -515,7 +593,17 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            valueMem.extend(genFileOffset + genDataSize);
+            // Invariant: valueMem is pre-extended to its full published size
+            // (valueMemSize) by the synchronous read setup (of -> mapValueMem /
+            // reloadConditionally -> changeSize) and, for the parallel-decode
+            // path, once up front by warmForKeys. No gen load may therefore need
+            // to grow valueMem here; if it could, a worker decode would trigger a
+            // remap and invalidate raw page addresses held by sibling cursors.
+            assert genFileOffset + genDataSize <= valueMem.size()
+                    : "covering gen exceeds pre-extended valueMem: off=" + genFileOffset + " len=" + genDataSize + " size=" + valueMem.size();
+            if (genFileOffset + genDataSize > valueMem.size()) {
+                throw CairoException.critical(0).put("covering gen data exceeds mapped valueMem [off=").put(genFileOffset).put(", len=").put(genDataSize).put(", size=").put(valueMem.size()).put(']');
+            }
             Unsafe.loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
@@ -674,7 +762,17 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int genKeyCount = genLookup.getGenKeyCount(gen);
             int activeKeyCount = -genKeyCount;
 
-            valueMem.extend(genFileOffset + genDataSize);
+            // Invariant: valueMem is pre-extended to its full published size
+            // (valueMemSize) by the synchronous read setup (of -> mapValueMem /
+            // reloadConditionally -> changeSize) and, for the parallel-decode
+            // path, once up front by warmForKeys. No gen load may therefore need
+            // to grow valueMem here; if it could, a worker decode would trigger a
+            // remap and invalidate raw page addresses held by sibling cursors.
+            assert genFileOffset + genDataSize <= valueMem.size()
+                    : "covering gen exceeds pre-extended valueMem: off=" + genFileOffset + " len=" + genDataSize + " size=" + valueMem.size();
+            if (genFileOffset + genDataSize > valueMem.size()) {
+                throw CairoException.critical(0).put("covering gen data exceeds mapped valueMem [off=").put(genFileOffset).put(", len=").put(genDataSize).put(", size=").put(valueMem.size()).put(']');
+            }
             Unsafe.loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
@@ -744,7 +842,17 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             int genKeyCount = genLookup.getGenKeyCount(gen);
             int activeKeyCount = -genKeyCount;
 
-            valueMem.extend(genFileOffset + genDataSize);
+            // Invariant: valueMem is pre-extended to its full published size
+            // (valueMemSize) by the synchronous read setup (of -> mapValueMem /
+            // reloadConditionally -> changeSize) and, for the parallel-decode
+            // path, once up front by warmForKeys. No gen load may therefore need
+            // to grow valueMem here; if it could, a worker decode would trigger a
+            // remap and invalidate raw page addresses held by sibling cursors.
+            assert genFileOffset + genDataSize <= valueMem.size()
+                    : "covering gen exceeds pre-extended valueMem: off=" + genFileOffset + " len=" + genDataSize + " size=" + valueMem.size();
+            if (genFileOffset + genDataSize > valueMem.size()) {
+                throw CairoException.critical(0).put("covering gen data exceeds mapped valueMem [off=").put(genFileOffset).put(", len=").put(genDataSize).put(", size=").put(valueMem.size()).put(']');
+            }
             Unsafe.loadFence();
             long genAddr = valueMem.addressOf(genFileOffset);
 
@@ -958,6 +1066,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
+            // See Cursor.close(): detached cursors bypass the tripwire and the
+            // pool, freeing their own native scratch directly.
+            if (isDetached) {
+                releaseResources();
+                return;
+            }
             assert assertSameOperatingThread() : "posting index null cursor closed off the reader's owning thread";
             // See Cursor.close(): the isOpen() guard is a single-threaded leak
             // mitigation (it avoids re-pooling into a closed reader and leaking the
