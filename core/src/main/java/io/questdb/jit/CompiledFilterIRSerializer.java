@@ -50,6 +50,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntStack;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Mutable;
@@ -156,6 +157,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // but a narrow-int product on the wrap-side must still wrap. Compared by
     // identity. See markI64WrapArithLeaves.
     private final ObjList<ExpressionNode> i64WrapLeaves = new ObjList<>();
+    // inKeyWidthOverride captured per stub offset for a constant serialized inside a width-sensitive
+    // IN key; the constant backfills after the override is reset, and the key re-serializes per
+    // element, so the width is keyed by memory offset (not node identity). get() == UNDEFINED_CODE
+    // when absent. See serializeConstantStub / backfillConstant.
+    private final LongIntHashMap inKeyWidthOverrideByOffset = new LongIntHashMap();
     private final NarrowI64WidenDetector narrowI64WidenDetector = new NarrowI64WidenDetector();
     private final PredicateContext predicateContext = new PredicateContext();
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
@@ -191,6 +197,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         predicateContext.clear();
         backfillNodes.clear();
         collectedPredicates.clear();
+        // Reused per-predicate width state; reset defensively so a fresh filter can never read a
+        // stale mark from an earlier one (onNodeDescended / serialize() already reset before use).
+        i64WidenFoldRoots.clear();
+        i64WidenLeaves.clear();
+        i64WrapLeaves.clear();
+        inKeyWidthOverrideByOffset.clear();
+        inKeyWidthOverride = UNDEFINED_CODE;
     }
 
     @Override
@@ -391,6 +404,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             try {
                 backfillNodes.forEach(backfillNodeConsumer);
                 backfillNodes.clear();
+                inKeyWidthOverrideByOffset.clear();
             } catch (SqlWrapperException e) {
                 throw e.wrappedException;
             }
@@ -805,7 +819,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        serializeConstant(offset, position, token, negate, isI64WidenLeaf(node), isI64WrapLeaf(node));
+        // A constant stubbed under a per-element IN-key width override honors it (wrap I4 vs widen
+        // I8) instead of its predicate-global widen / wrap marks. UNDEFINED_CODE means none captured.
+        final int widthOverride = inKeyWidthOverrideByOffset.get(offset);
+        final boolean widenToI64;
+        final boolean keepNarrow;
+        if (widthOverride != UNDEFINED_CODE) {
+            widenToI64 = widthOverride == I8_TYPE;
+            keepNarrow = widthOverride == I4_TYPE;
+        } else {
+            widenToI64 = isI64WidenLeaf(node);
+            keepNarrow = isI64WrapLeaf(node);
+        }
+        serializeConstant(offset, position, token, negate, widenToI64, keepNarrow);
     }
 
     private void backfillNode(long key, ExpressionNode value) {
@@ -1844,6 +1870,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (predicateContext.isActive()) {
             long offset = memory.getAppendOffset();
             backfillNodes.put(offset, node);
+            // A constant stubbed inside a width-sensitive IN key must take that element pairing's
+            // width, not the predicate-global one it would get at backfill (after the override is
+            // reset) - mirroring descend() for a fold root and maybeEmitI64Widening() for a column.
+            if (inKeyWidthOverride != UNDEFINED_CODE) {
+                inKeyWidthOverrideByOffset.put(offset, inKeyWidthOverride);
+            }
             putOperand(UNDEFINED_CODE, UNDEFINED_CODE, 0);
         } else {
             throw SqlException.position(node.position)

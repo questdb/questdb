@@ -1498,6 +1498,46 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowWidenConstOperandKeyPerElement() throws Exception {
+        // C1 regression: an IN key that is a narrow-int column arithmetic with a CONSTANT operand
+        // - (a * 3), (a + const), (n - const) - whose product/sum overflows INT, in a multi-value
+        // list mixing a genuine-LONG element with the in-INT-range element the WRAPPED key equals.
+        // The column leaf honored the per-element key width (maybeEmitI64Widening) but the constant
+        // operand did not: it was backfilled at predicate exit, after serializeIn reset the width
+        // override, so a coexisting LONG element emitted it at I8 and the JIT computed the whole
+        // product at long width (no wrap), missing the wrapped match Java keeps (getInt). Existing
+        // IN-key column-arith tests only used two-column keys (a*b)/(a+a), never a constant operand.
+        //
+        // a*3 = 3e9 wraps to INT -1294967296, widens to 3e9; the INT element matches only the WRAP.
+        assertMemoryLeak(() -> {
+            execute("create table z (a int, n int, k timestamp) timestamp(k)");
+            execute("insert into z values (1000000000, -2000000000, 1)");
+
+            // RED on HEAD: the LONG element widened the key against the INT element, missing the wrap.
+            assertJitMatchesJava("select a from z where (a * 3) in (5000000000, -1294967296)", true);
+            assertJitMatchesJava("select a from z where (a * 3) in (-1294967296, 5000000000)", true); // order swapped
+            assertJitMatchesJava("select a from z where (a * 3) in (5, 5000000000, -1294967296)", true); // extra element
+            assertJitMatchesJava("select a from z where (a * 3) not in (5000000000, -1294967296)", true); // inverse
+            // '+' and '-' operand forms overflow the same way; '-' underflows via the n column.
+            assertJitMatchesJava("select a from z where (a + 2000000000) in (5000000000, -1294967296)", true);
+            assertJitMatchesJava("select a from z where (n - 1000000000) in (-5000000000, 1294967296)", true);
+
+            // The Java (JIT-disabled) path is the oracle: the wrapped key matches the INT element.
+            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (a * 3) in (5000000000, -1294967296)"));
+            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (a + 2000000000) in (5000000000, -1294967296)"));
+            Assert.assertEquals("a\n1000000000\n", runJavaToString("select a from z where (n - 1000000000) in (-5000000000, 1294967296)"));
+            Assert.assertEquals("a\n", runJavaToString("select a from z where (a * 3) not in (5000000000, -1294967296)"));
+
+            // controls that already agreed - none mix widths across the list: '=' wraps, a single
+            // INT element wraps, a single LONG element widens (matches neither image, so no row).
+            assertJitMatchesJava("select a from z where (a * 3) = -1294967296", true);
+            assertJitMatchesJava("select a from z where (a * 3) in (-1294967296)", true);
+            assertJitMatchesJava("select a from z where (a * 3) in (5000000000)", true);
+            Assert.assertEquals("a\n", runJavaToString("select a from z where (a * 3) in (5000000000)"));
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowWidenElementPerPairing() throws Exception {
         // C1/C2: an overflowing INT-arithmetic IN key against a list that mixes a genuine-LONG
         // element with an overflowing INT-arith element (C1) or a NULL element (C2). The Java
