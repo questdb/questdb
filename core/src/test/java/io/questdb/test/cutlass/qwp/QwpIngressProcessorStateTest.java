@@ -661,6 +661,79 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCairoExceptionStatusReturnsSchemaMismatchForSchemaMismatchException() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                Misc.free((QwpTudCache) tudCacheField.get(state));
+                DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+                tudCacheField.set(state, new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY) {
+                    @Override
+                    public WalTableUpdateDetails getTableUpdateDetails(
+                            SecurityContext secCtx, Utf8Sequence tableName,
+                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor, int maxTables) {
+                        throw CairoException.schemaMismatch().put("type coercion from VARCHAR to IPV4 is not supported");
+                    }
+                });
+
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0,    // rowCount=0
+                        0     // columnCount=0
+                }));
+                state.processMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                Assert.assertTrue(state.getErrorText().contains("type coercion from VARCHAR to IPV4 is not supported"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCairoExceptionStatusReturnsNotAcceptingWritesForUnmarkedNonCriticalException() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+                tudCacheField.setAccessible(true);
+                Misc.free((QwpTudCache) tudCacheField.get(state));
+                DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+                tudCacheField.set(state, new QwpTudCache(engine, true, true, defaultColumnTypes, PartitionBy.DAY) {
+                    @Override
+                    public WalTableUpdateDetails getTableUpdateDetails(
+                            SecurityContext secCtx, Utf8Sequence tableName,
+                            ObjList<QwpColumnDef> schema, QwpTableBlockCursor cursor, int maxTables) {
+                        throw CairoException.nonCritical().put("table is busy");
+                    }
+                });
+
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0,    // rowCount=0
+                        0     // columnCount=0
+                }));
+                state.processMessage();
+                Assert.assertEquals(QwpIngressProcessorState.Status.NOT_ACCEPTING_WRITES, state.getStatus());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testClearFreesResourcesWhenRollbackThrows() throws Exception {
         // When tud.rollback() throws during clear(), the cache enters the
         // distressed path: it frees all TUDs without rolling back and clears

@@ -82,6 +82,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * HTTP request processor for the QWP egress endpoint at {@code /read/v1}.
@@ -175,6 +176,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      */
     public static volatile int DEBUG_FORCE_INTERNAL_ERROR_ON_RESUME = 0;
     /**
+     * Test-only: when set to {@code N > 0}, the next {@code N} SELECT cursor-open
+     * attempts throw {@link TableReferenceOutOfDateException} before any bytes are
+     * streamed to the client. Tests use this to exercise the bounded stale-plan
+     * recompile loop deterministically without racing real DDL. Production leaves
+     * the counter at 0 and pays one volatile read per SELECT cursor open.
+     */
+    @TestOnly
+    public static volatile int DEBUG_FORCE_STALE_PLAN_RECOMPILES = 0;
+    /**
      * Test-only: when set to {@code N > 0}, {@link #streamResults} throws
      * {@link PeerDisconnectedException#INSTANCE} once {@code N} batches have
      * already been committed on the current stream. That propagates through
@@ -194,6 +204,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
+    private final int maxSqlRecompileAttempts;
     private final QwpEgressMetrics metrics;
     private final int recvBufferSize;
     /**
@@ -217,6 +228,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
+        this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.sharedWorkerCount = sharedWorkerCount;
         this.selectCache = httpConfiguration.isQueryCacheEnabled()
                 ? new ConcurrentAssociativeCache<>(httpConfiguration.getConcurrentCacheConfiguration())
@@ -643,6 +655,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         rawSocket.send(wsHeaderSize + qwpSize);
     }
 
+    private static void stageReject(HttpConnectionContext context, int bytesWritten) {
+        RejectFlushTracker tracker = REJECT_FLUSH.get(context);
+        if (tracker == null) {
+            tracker = new RejectFlushTracker();
+            REJECT_FLUSH.set(context, tracker);
+        }
+        tracker.pendingBytes = bytesWritten;
+    }
+
     /**
      * Writes a self-contained {@code SERVER_INFO} WebSocket frame into the given
      * buffer region and returns the total number of bytes written (WS header +
@@ -709,6 +730,52 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     /**
+     * Step 1 of the cache-reset emission. Checks whether any connection-scoped
+     * cache has exceeded its soft cap; if so, applies the matching server-side
+     * reset NOW so that the new query's cursor and first batch allocate
+     * against a fresh cache, and stashes the bitmask on state for
+     * {@link #emitPendingCacheReset} to emit on the wire once
+     * {@code streamingActive=true}.
+     * <p>
+     * Splitting "apply locally" from "emit on the wire" keeps the wire-send
+     * inside a streaming-active region so a PISR park is recoverable via
+     * {@code resumeSend} -> {@code streamResults}. Emitting from
+     * {@code handleQueryRequest} -- the earlier shape -- abandoned the query
+     * on PISR because {@code resumeSend} saw {@code streamingActive=false},
+     * drained the CACHE_RESET bytes, and returned; the QUERY_REQUEST was
+     * never processed and the client hung waiting for a response.
+     * <p>
+     * Called at query-completion boundaries (after {@code RESULT_END},
+     * {@code EXEC_DONE}, or {@code QUERY_ERROR}) -- never mid-stream, because
+     * resetting the dict mid-stream would invalidate ids referenced by
+     * in-flight RESULT_BATCH frames.
+     */
+    private void applyCacheResetForUpcomingQuery(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state
+    ) {
+        byte resetMask = state.computeCacheResetMask();
+        if (resetMask == 0) {
+            return;
+        }
+        state.applyCacheReset(resetMask);
+        // OR-merge rather than overwrite: an earlier query may have staged
+        // bits whose CACHE_RESET frame never went out (a non-SELECT routed
+        // through executeNonSelect, or a SELECT that threw before
+        // emitPendingCacheReset ran). Overwriting
+        // would drop those bits while the server-side caches they cleared
+        // stay cleared -- the client would keep its stale entries and the
+        // next batch's deltaStart would land out of sync with connDictSize.
+        state.mergePendingCacheResetMask(resetMask);
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
+            metrics.markCacheResetDict();
+        }
+        LOG.debug().$("Egress cache reset staged [fd=").$(context.getFd())
+                .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
+                .I$();
+    }
+
+    /**
      * Detaches the streaming factory from {@code state} and puts it into the
      * compile cache keyed by the query's SQL text. Idempotent: safe to call
      * even when the factory was already detached (no-op), or when the SQL
@@ -754,6 +821,45 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
         }
     }
+
+    /**
+     * Step 2 of the cache-reset emission. Writes the CACHE_RESET frame using
+     * the bitmask staged by {@link #applyCacheResetForUpcomingQuery} and
+     * sends it. Clears the staged mask BEFORE the send so that a PISR park
+     * (residual bytes drained by {@code resumeResponseSend}) does not cause a
+     * re-entry through {@code streamResults} to double-emit the frame.
+     * <p>
+     * Called at the top of {@link #streamResults}, before the first batch.
+     * The CACHE_RESET frame ordering invariant (must arrive before any
+     * RESULT_BATCH for the new query) is satisfied: this site runs after
+     * {@code beginStreaming} but strictly before {@code beginBatch} on the
+     * first iteration.
+     */
+    private void emitPendingCacheReset(HttpConnectionContext context, QwpEgressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        byte resetMask = state.getPendingCacheResetMask();
+        if (resetMask == 0) {
+            return;
+        }
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufAddr = rawSocket.getBufferAddress();
+        long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
+        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
+                qwpStart, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
+        long bodyEnd = QwpEgressFrameWriter.writeCacheReset(bodyStart, resetMask);
+        int qwpSize = (int) (bodyEnd - qwpStart);
+        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
+        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
+        // Clear the staged mask BEFORE the send. On PISR the residual bytes
+        // live in the framework send buffer (resumeResponseSend drains them);
+        // resumeSend then re-enters streamResults, and a non-zero mask there
+        // would re-write the same CACHE_RESET on top of the already-buffered
+        // bytes and double-emit it on the wire.
+        state.setPendingCacheResetMask((byte) 0);
+        sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
+    }
+
+    // Egress message dispatch and query execution
 
     /**
      * Runs a non-SELECT {@link CompiledQuery} synchronously and replies with an
@@ -857,8 +963,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
         throw ServerDisconnectException.INSTANCE;
     }
-
-    // Egress message dispatch and query execution
 
     /**
      * CANCEL handler: decodes the target {@code requestId} and, if it matches
@@ -1072,14 +1176,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             );
             sqlCtx.initNow();
 
-            // Retry-once loop: a factory returned by the compile cache may have a
+            // Bounded retry loop: a factory returned by the compile cache may have a
             // stale TableReader reference if the table was dropped+recreated after
             // the factory was compiled (matching by SQL text alone; tableId and
             // metadataVersion don't survive). Detected by
             // {@link TableReferenceOutOfDateException} on cursor open. We drop the
-            // stale factory and recompile. Two consecutive occurrences means the
-            // table changed mid-recompile -- rare and probably indicates an abusive
-            // DDL pattern; propagate as a normal error.
+            // stale factory and recompile, matching HTTP/PGWire's bounded
+            // maxSqlRecompileAttempts behavior. The retry stays before beginStreaming*,
+            // so no query bytes have reached the client yet.
             //
             // Compose the select-cache key: SQL text on its own for bindless
             // queries (existing shape), or [type0,type1,...]sql when binds are
@@ -1088,12 +1192,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // return a factory whose bind signature does not match the
             // current request. Mirrors pgwire's TypesAndSelect design.
             final CharSequence cacheKey = decoder.buildSelectCacheKey(state.getBindVariableService());
-            int attempts = 0;
-            while (true) {
-                attempts++;
+            for (int retries = 0; ; retries++) {
                 try {
                     // Cache lookup only on first attempt. Retry always recompiles.
-                    if (attempts == 1) {
+                    if (retries == 0) {
                         factory = selectCache.poll(cacheKey);
                     }
                     if (factory == null) {
@@ -1119,6 +1221,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     // PageFrameMemoryRecord.getInt. Factories that don't support it
                     // (filtered/joined/grouped queries) keep the existing RecordCursor
                     // path without change.
+                    int forcedStalePlanRecompiles = DEBUG_FORCE_STALE_PLAN_RECOMPILES;
+                    if (forcedStalePlanRecompiles > 0) {
+                        DEBUG_FORCE_STALE_PLAN_RECOMPILES = forcedStalePlanRecompiles - 1;
+                        throw TableReferenceOutOfDateException.of("qwp_debug_stale_plan");
+                    }
                     if (factory.supportsPageFrameCursor()) {
                         int order = factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD
                                 ? PartitionFrameCursorFactory.ORDER_DESC
@@ -1134,13 +1241,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     // beginStreaming{,PageFrame} they'd be owned by state, but the
                     // exception fires BEFORE that (on getCursor / getPageFrameCursor),
                     // so we still own them here.
+                    cursor = Misc.free(cursor);
+                    pageFrameCursor = Misc.free(pageFrameCursor);
                     factory = Misc.free(factory);
-                    if (attempts >= 2) {
-                        // Fresh compile also raced with a DDL -- unusual, propagate.
-                        throw e;
+                    if (retries == maxSqlRecompileAttempts) {
+                        throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$("Egress cached factory stale, recompiling [fd=").$(context.getFd())
+                    LOG.info().$("Egress query plan stale, recompiling [fd=").$(context.getFd())
                             .$(", requestId=").$(requestId)
+                            .$(", retry=").$(retries + 1)
                             .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
@@ -1255,89 +1364,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             default -> LOG.debug().$("Egress unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
-    }
-
-    /**
-     * Step 1 of the cache-reset emission. Checks whether any connection-scoped
-     * cache has exceeded its soft cap; if so, applies the matching server-side
-     * reset NOW so that the new query's cursor and first batch allocate
-     * against a fresh cache, and stashes the bitmask on state for
-     * {@link #emitPendingCacheReset} to emit on the wire once
-     * {@code streamingActive=true}.
-     * <p>
-     * Splitting "apply locally" from "emit on the wire" keeps the wire-send
-     * inside a streaming-active region so a PISR park is recoverable via
-     * {@code resumeSend} -> {@code streamResults}. Emitting from
-     * {@code handleQueryRequest} -- the earlier shape -- abandoned the query
-     * on PISR because {@code resumeSend} saw {@code streamingActive=false},
-     * drained the CACHE_RESET bytes, and returned; the QUERY_REQUEST was
-     * never processed and the client hung waiting for a response.
-     * <p>
-     * Called at query-completion boundaries (after {@code RESULT_END},
-     * {@code EXEC_DONE}, or {@code QUERY_ERROR}) -- never mid-stream, because
-     * resetting the dict mid-stream would invalidate ids referenced by
-     * in-flight RESULT_BATCH frames.
-     */
-    private void applyCacheResetForUpcomingQuery(
-            HttpConnectionContext context,
-            QwpEgressProcessorState state
-    ) {
-        byte resetMask = state.computeCacheResetMask();
-        if (resetMask == 0) {
-            return;
-        }
-        state.applyCacheReset(resetMask);
-        // OR-merge rather than overwrite: an earlier query may have staged
-        // bits whose CACHE_RESET frame never went out (a non-SELECT routed
-        // through executeNonSelect, or a SELECT that threw before
-        // emitPendingCacheReset ran). Overwriting
-        // would drop those bits while the server-side caches they cleared
-        // stay cleared -- the client would keep its stale entries and the
-        // next batch's deltaStart would land out of sync with connDictSize.
-        state.mergePendingCacheResetMask(resetMask);
-        if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
-            metrics.markCacheResetDict();
-        }
-        LOG.debug().$("Egress cache reset staged [fd=").$(context.getFd())
-                .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
-                .I$();
-    }
-
-    /**
-     * Step 2 of the cache-reset emission. Writes the CACHE_RESET frame using
-     * the bitmask staged by {@link #applyCacheResetForUpcomingQuery} and
-     * sends it. Clears the staged mask BEFORE the send so that a PISR park
-     * (residual bytes drained by {@code resumeResponseSend}) does not cause a
-     * re-entry through {@code streamResults} to double-emit the frame.
-     * <p>
-     * Called at the top of {@link #streamResults}, before the first batch.
-     * The CACHE_RESET frame ordering invariant (must arrive before any
-     * RESULT_BATCH for the new query) is satisfied: this site runs after
-     * {@code beginStreaming} but strictly before {@code beginBatch} on the
-     * first iteration.
-     */
-    private void emitPendingCacheReset(HttpConnectionContext context, QwpEgressProcessorState state)
-            throws PeerDisconnectedException, PeerIsSlowToReadException {
-        byte resetMask = state.getPendingCacheResetMask();
-        if (resetMask == 0) {
-            return;
-        }
-        HttpRawSocket rawSocket = context.getRawResponseSocket();
-        long bufAddr = rawSocket.getBufferAddress();
-        long qwpStart = bufAddr + QwpEgressFrameWriter.WS_HEADER_RESERVATION;
-        long bodyStart = QwpEgressFrameWriter.writeMessageHeader(
-                qwpStart, state.getNegotiatedVersion(), (byte) 0, 0, 0 /* payload len patched */);
-        long bodyEnd = QwpEgressFrameWriter.writeCacheReset(bodyStart, resetMask);
-        int qwpSize = (int) (bodyEnd - qwpStart);
-        int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
-        QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
-        // Clear the staged mask BEFORE the send. On PISR the residual bytes
-        // live in the framework send buffer (resumeResponseSend drains them);
-        // resumeSend then re-enters streamResults, and a non-zero mask there
-        // would re-write the same CACHE_RESET on top of the already-buffered
-        // bytes and double-emit it on the wire.
-        state.setPendingCacheResetMask((byte) 0);
-        sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
     }
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
@@ -2004,15 +2030,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // all live inside the send functions so they commit before any
             // PeerIsSlowToReadException thrown by sendFrame.
         }
-    }
-
-    private static void stageReject(HttpConnectionContext context, int bytesWritten) {
-        RejectFlushTracker tracker = REJECT_FLUSH.get(context);
-        if (tracker == null) {
-            tracker = new RejectFlushTracker();
-            REJECT_FLUSH.set(context, tracker);
-        }
-        tracker.pendingBytes = bytesWritten;
     }
 
     // Per-connection holder for the byte count of a 4xx upgrade rejection
