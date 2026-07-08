@@ -241,6 +241,7 @@ mod tests {
                 column_top: 0,
                 format: None, // It should error because this is missing.
                 ascii: None,
+                id: None,
             },
         );
 
@@ -280,6 +281,7 @@ mod tests {
                 column_top: 0,
                 format: None, // Missing format makes the page decode fail mid-chunk.
                 ascii: None,
+                id: None,
             },
         );
 
@@ -334,6 +336,7 @@ mod tests {
                 column_top: 0,
                 format: None, // Missing format makes the page decode fail mid-chunk.
                 ascii: None,
+                id: None,
             },
         );
 

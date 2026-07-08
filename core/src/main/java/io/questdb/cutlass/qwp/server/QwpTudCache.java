@@ -356,7 +356,7 @@ public class QwpTudCache implements QuietCloseable {
         }
 
         if (!engine.isWalTable(tableToken)) {
-            throw CairoException.nonCritical().put("cannot insert into non-WAL table: ").put(tableNameUtf16);
+            throw CairoException.schemaMismatch().put("cannot insert into non-WAL table: ").put(tableNameUtf16);
         }
 
         TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetryEvent.ILP_RESERVE_WRITER);
@@ -619,7 +619,7 @@ public class QwpTudCache implements QuietCloseable {
                 if (batchDims == -1) {
                     batchDims = rowDims;
                 } else if (batchDims != rowDims) {
-                    throw CairoException.nonCritical()
+                    throw CairoException.schemaMismatch()
                             .put("array dimensionality mismatch in QWP batch [column=")
                             .put(columnName)
                             .put(", expectedDims=")

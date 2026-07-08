@@ -397,6 +397,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         memoryTracker = null;
         frameRowCounts.clear();
         atom.clear();
+        // Unfreeze the covered posting readers frozen in buildAddressCache() BEFORE the
+        // address cache (which holds them) and the frame cursor (which owns them) are
+        // torn down. reset() runs after the sequence has been awaited, so every worker
+        // cursor has finished and the unfreeze is race-free. A reader left frozen would
+        // make its reloadConditionally() a permanent no-op and break the next query
+        // against the same partition.
+        if (frameAddressCache != null) {
+            frameAddressCache.unfreezeCoveredReaders();
+        }
         Misc.free(frameAddressCache);
         frameCursor = Misc.free(frameCursor);
     }
@@ -440,6 +449,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
+
+        // Mirror PageFrameSequence.buildAddressCache(): covered frames decode their
+        // columns on the async workers by iterating detached cursors over the shared
+        // per-partition posting readers, which is only race-free if those readers are
+        // positioned at the query txn, cache-warm, and FROZEN before any worker decodes.
+        // The eager production iteration above already positioned + warmed each reader,
+        // so freeze them now, before dispatch. unfreezeCoveredReaders() in reset()
+        // reverses it once the sequence has been awaited.
+        frameAddressCache.freezeCoveredReaders();
     }
 
     private boolean hasError() {
