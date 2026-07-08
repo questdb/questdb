@@ -24,6 +24,7 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.MemoryTag;
@@ -186,6 +187,20 @@ public class DirectSymbolMapTest {
                 map.valueOf(1, viewB);
                 Assert.assertEquals("one", Chars.toString(viewA));
                 Assert.assertEquals("two", Chars.toString(viewB));
+            }
+        });
+    }
+
+    @Test
+    public void testInternRejectsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                try {
+                    map.intern(null);
+                    Assert.fail("intern(null) must be rejected");
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "does not accept null"));
+                }
             }
         });
     }

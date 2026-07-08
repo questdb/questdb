@@ -371,6 +371,9 @@ public class LiveViewRecordCursor implements RecordCursor {
             // size() = disk.size() + (rowCount - leadStart) = disk.size() +
             // leadRowCount. When the slot holds no lead this collapses to
             // disk.size(). Returning -1 (unknown) would defeat LIMIT pushdown.
+            // leadStart <= rowCount under a passing fence; assert to fail safe.
+            assert leadStart <= pinnedSlot.rowCount()
+                    : "leadStart " + leadStart + " exceeds slot rowCount " + pinnedSlot.rowCount();
             return diskCursor.size() + (pinnedSlot.rowCount() - leadStart);
         }
         // Disk-only: the fence did not engage, so the read serves the applied
@@ -408,6 +411,8 @@ public class LiveViewRecordCursor implements RecordCursor {
         // [0, leadStart) sits at ts >= seamTs and is served from the slot, not
         // disk. This is the same identity size() relies on (size == diskSize +
         // leadRowCount), so the split stays consistent with LIMIT bound math.
+        // The overlap band is a subset of the disk prefix; assert to fail safe.
+        assert leadStart <= diskSize : "leadStart " + leadStart + " exceeds disk size " + diskSize;
         final long diskRoutedCount = diskSize - leadStart;
         if (toSkip < diskRoutedCount) {
             // Landing inside the disk region: hand the skip to the disk cursor's

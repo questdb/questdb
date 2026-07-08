@@ -1315,6 +1315,42 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllNullPartitionKeyCollapsesToSinglePartition() throws Exception {
+        // Pins the all-NULL partition-key case the fuzz suite only hits
+        // probabilistically: every base row has a NULL PARTITION BY value. The
+        // running sum across the four rows (1, 3, 6, 10) proves they collapse into
+        // one partition - a one-partition-per-row bug would reset the sum every row
+        // (1, 2, 3, 4), and a dropped-NULL-key bug would return fewer than four rows.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-04-01T00:00:00.000000Z', NULL, 1), " +
+                        "('2026-04-01T00:00:01.000000Z', NULL, 2), " +
+                        "('2026-04-01T00:00:02.000000Z', NULL, 3), " +
+                        "('2026-04-01T00:00:03.000000Z', NULL, 4)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, x, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(
+                        "ts\tsym\tx\ts\n" +
+                                "2026-04-01T00:00:00.000000Z\t\t1\t1.0\n" +
+                                "2026-04-01T00:00:01.000000Z\t\t2\t3.0\n" +
+                                "2026-04-01T00:00:02.000000Z\t\t3\t6.0\n" +
+                                "2026-04-01T00:00:03.000000Z\t\t4\t10.0\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCreateAndDropLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

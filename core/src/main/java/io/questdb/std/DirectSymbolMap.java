@@ -145,9 +145,15 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
      * Returns an existing key if {@code value} has already been interned on this
      * map, otherwise appends a new entry with a sequentially assigned key and
      * returns it. Must not be mixed with {@link #put(int, CharSequence)} on the
-     * same instance.
+     * same instance. Does not accept {@code null} - callers that must store a
+     * null value use {@link #put(int, CharSequence)}.
      */
     public int intern(CharSequence value) {
+        // The reverse index cannot key a null (hashBytes/matches assume a
+        // non-negative length); reject to fail with a clear message, not an NPE.
+        if (value == null) {
+            throw CairoException.nonCritical().put("DirectSymbolMap.intern does not accept null values; use put()");
+        }
         ensureValueToKeyMap();
         long idx = valueToKey.keyIndex(value);
         if (idx < 0) {

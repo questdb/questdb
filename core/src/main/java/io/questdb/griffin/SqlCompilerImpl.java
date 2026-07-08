@@ -54,6 +54,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
@@ -3144,6 +3145,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     createMatViewBuilder.setSelectModel(selectModel);
                 }
                 return model;
+            case ExecutionModel.CREATE_LIVE_VIEW:
+                // Authorize for parity with CREATE MAT VIEW so a restricted user
+                // cannot probe a plan they may not create. Plan generation is left
+                // to compileExecutionModel0 unchanged (the real create recompiles
+                // from the captured SQL text, not this parser model).
+                executionContext.getSecurityContext().authorizeLiveViewCreate();
+                break;
         }
         return compileExecutionModel0(executionContext, model);
     }
@@ -4774,13 +4782,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (tableToken != null && !tableToken.isLiveView()) {
             throw SqlException.$(op.getEntityNamePosition(), "live view name expected [name=").put(name).put(']');
         }
-        if (!engine.getLiveViewRegistry().hasView(name)) {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(name);
+        if (instance == null) {
             if (op.ifExists()) {
                 return false;
             }
             throw SqlException.$(op.getEntityNamePosition(), "live view does not exist [name=").put(name).put(']');
         }
-        executionContext.getSecurityContext().authorizeLiveViewDrop(tableToken);
+        // Authorize against the registry's non-null token: getTableTokenIfExists
+        // can transiently return null during a concurrent create/drop, and an
+        // enterprise per-object ACL dereferences the token.
+        executionContext.getSecurityContext().authorizeLiveViewDrop(instance.getLiveViewToken());
         engine.dropLiveView(name);
         return true;
     }

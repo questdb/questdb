@@ -1204,6 +1204,9 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken baseTableToken,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        // Defense-in-depth authorize mirroring createMatView: the compiler path
+        // already authorizes, but a future direct caller cannot bypass the ACL.
+        executionContext.getSecurityContext().authorizeLiveViewCreate();
         // A DEDUP base table is supported: the refresh worker routes such a view
         // onto the coupled, applied-reader path (see LiveViewRefreshJob) so it reads
         // the post-dedup base rather than the pre-dedup raw WAL. The steady-state

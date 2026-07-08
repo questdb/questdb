@@ -267,7 +267,7 @@ public class LiveViewDefinition {
         } else if (nChars == 2 && tok.charAt(k) == 'm' && tok.charAt(k + 1) == 's') {
             return 'T';
         }
-        throw SqlException.$(position + len, "invalid duration qualifier ").put(tok);
+        throw SqlException.$(position + k, "invalid duration qualifier ").put(tok);
     }
 
     private static int endOfDigits(CharSequence tok, int len, int position) throws SqlException {
