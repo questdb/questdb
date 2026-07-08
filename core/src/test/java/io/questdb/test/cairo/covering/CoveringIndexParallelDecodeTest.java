@@ -319,10 +319,12 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // sidecar prefix-sum memo it reads (SparseGenSidecarPrefixSum) must be PRIMED single-threaded
         // before the freeze (AbstractPostingIndexReader.populateCacheForKey); otherwise the workers build
         // it lazily from N threads over one shared reader -- a data race that silently corrupts covered
-        // values. This drives that exact path over SPARSE, multi-gen, O3-resealed partitions (so
-        // loadSparseGenDirect -> baseOrdinal fires on the frozen workers) and compares covered decode to
-        // a non-indexed twin. The `frozen` guard in baseOrdinal additionally turns a missed prime into a
-        // deterministic -ea failure rather than a nondeterministic wrong result.
+        // values. This drives that exact path over UNSEALED sparse multi-gen partitions and compares
+        // covered decode to a non-indexed twin; a diagnostic during development confirmed baseOrdinal is
+        // reached on the frozen reduce workers here. The suite-wide deterministic guard against the race
+        // is the `assert !frozen` invariant in baseOrdinal (AbstractPostingIndexReader): if any covering
+        // query ever reaches a frozen worker with the memo unprimed, that assert fails loudly under -ea
+        // instead of racing. This test is the end-to-end covered-decode-under-workers exercise of it.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 256);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -332,21 +334,21 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 engine.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE)" +
                         " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
 
-                // 10 daily partitions, each its own sealed generation. Every gen carries a HIGH-CARDINALITY
-                // background (rnd_symbol over ~2000 keys) so its active keys are a SPARSE subset of the
-                // globally-growing keyspace -> the posting chain picks the SPARSE gen encoding (the
-                // loadSparseGenDirect -> baseOrdinal path), not the dense stride path. A known 'HOT' key is
-                // sprinkled into every partition so a single-key covered decode of it spans many sparse gens.
-                for (int d = 0; d < 10; d++) {
-                    engine.execute("INSERT INTO cov SELECT" +
-                            " dateadd('s', x::int, dateadd('d', " + d + ", '2024-01-01'))::timestamp," +
-                            " case when x%20=0 then 'HOT' else rnd_symbol(2000,4,8,0) end," +
-                            " (x + " + d + "*1000000)::double" +
-                            " FROM long_sequence(10000)", ctx);
-                    engine.releaseAllWriters(); // seal this partition's generation
-                }
+                // A SINGLE bulk INSERT under BYPASS WAL and, crucially, NO releaseAllWriters: the posting
+                // index stays UNSEALED, so each DAY partition's generation is SPARSE (its counts[] array has
+                // gaps) -- exactly the gen shape that drives loadSparseGenDirect -> baseOrdinal. A high-
+                // cardinality background (rnd_symbol over ~4000 keys) keeps every gen's active keys a sparse
+                // subset of the growing keyspace, and a known 'HOT' key sprinkled throughout means a single-
+                // key covered decode of it spans many sparse gens. Leaving the gens unsealed keeps the cheap
+                // metadata-only production path (populateCacheForKey) live instead of a traverse, so the memo
+                // is primed by exactly the code under test. ~7 DAY partitions (10s spacing over 60k rows).
+                engine.execute("INSERT INTO cov SELECT" +
+                        " dateadd('s', (x * 10)::int, '2024-01-01T00:00:00Z'::timestamp)," +
+                        " case when x % 20 = 0 then 'HOT' else rnd_symbol(4000, 4, 8, 0) end," +
+                        " x::double" +
+                        " FROM long_sequence(60000)", ctx);
                 engine.execute("INSERT INTO ref SELECT * FROM cov", ctx); // exact value twin
-                engine.releaseAllWriters();
+                // Intentionally NO releaseAllWriters: sealing would collapse the sparse gens.
 
                 // Prove the covered aggregate actually routes through the ASYNC group-by over the
                 // covering index (i.e. covered px is decoded ON THE WORKERS over a frozen reader) --
@@ -361,8 +363,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 // The aggregate routes to the async group-by over the covering index; the projection
                 // takes the parallel record fast-path. Both decode px on the workers.
                 final String agg = "SELECT sum(px), count() FROM %s WHERE sym = 'HOT'";
-                final String residual = "SELECT sum(px), count() FROM %s WHERE sym = 'HOT' AND px > 3000000";
-                final String proj = "SELECT ts, px FROM %s WHERE sym = 'HOT' AND px > 3000000";
+                final String residual = "SELECT sum(px), count() FROM %s WHERE sym = 'HOT' AND px > 30000";
+                final String proj = "SELECT ts, px FROM %s WHERE sym = 'HOT' AND px > 30000";
                 final String fl = "SELECT first(px), last(px), count() FROM %s WHERE sym = 'HOT'";
                 TestUtils.assertSqlCursors(compiler, ctx, String.format(agg, "ref"), String.format(agg, "cov"), LOG);
                 TestUtils.assertSqlCursors(compiler, ctx, String.format(residual, "ref"), String.format(residual, "cov"), LOG);
