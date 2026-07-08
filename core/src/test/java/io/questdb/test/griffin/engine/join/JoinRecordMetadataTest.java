@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.EmptyRecordMetadata;
 import io.questdb.griffin.PriorityMetadata;
@@ -94,6 +95,31 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPriorityMetadataResolvesDottedLocalColumnOverSplittingBase() {
+        // Regression (review m1): a PriorityMetadata wrapping a dot-splitting base (join) forwards
+        // splitsOnDot=true, so SqlUtil.getColumnIndexQuiet skips its quote-strip retry for a dotted
+        // protected alias. But this metadata's OWN projection column is stored clean (a.b) and matches
+        // verbatim, so the protected reference "a.b" must still resolve to it. The metadata retries its
+        // LOCAL map with the quotes stripped, without exposing the stripped name to the splitting base
+        // (contrast testQuoteProtectedDottedAliasDoesNotMisbindThroughPriorityMetadata, where a.b lives
+        // in the base as table.column and there is no local column, so it correctly misses).
+        try (JoinRecordMetadata base = new JoinRecordMetadata(configuration, 1)) {
+            base.add("t", "x", ColumnType.INT, IndexType.NONE, 0, false, null);
+            PriorityMetadata pm = new PriorityMetadata(1, base);
+            pm.add(new TableColumnMetadata("a.b", ColumnType.INT));
+            Assert.assertTrue(pm.splitsOnDot());
+            // the clean local name resolves verbatim
+            Assert.assertEquals(0, pm.getColumnIndexQuiet("a.b", 0, 3));
+            // the compiler-protected form "a.b" now resolves to the same local column
+            Assert.assertEquals(0, pm.getColumnIndexQuiet("\"a.b\"", 0, 5));
+            // end-to-end through SqlUtil, which would otherwise short-circuit on the splitsOnDot guard
+            Assert.assertEquals(0, SqlUtil.getColumnIndexQuiet(pm, "\"a.b\""));
+            // the base column stays reachable, offset by the reserved virtual slot
+            Assert.assertEquals(1, pm.getColumnIndexQuiet("t.x", 0, 3));
+        }
+    }
+
+    @Test
     public void testQuoteProtectedDottedAliasDoesNotMisbind() {
         // Regression: SqlUtil.getColumnIndexQuiet resolves a protected alias by stripping the quotes
         // and retrying via the ranged lookup, which JoinRecordMetadata splits on a dot. A whole-quoted
@@ -147,9 +173,15 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         try (JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 2)) {
             metadata.add("t1", "in", ColumnType.INT, IndexType.NONE, 0, false, null);
             final String composed = "xxt1.in";
-            // slice "t1.in" resolves; the ignored-bounds bug would look up "xxt1.in" and miss
+            // LO bound: slice "t1.in" resolves; the ignored-bounds bug would look up "xxt1.in" and miss
             Assert.assertEquals(0, metadata.getColumnIndexQuiet(composed, 2, composed.length()));
             Assert.assertEquals(-1, metadata.getColumnIndexQuiet(composed, 0, composed.length()));
+            // HI bound: a slice ending before the string end must key the column part on hi, not
+            // columnName.length() (the other half of the ignored-bounds bug: old code read the column
+            // part as "inZZ" and missed)
+            final String trailing = "t1.inZZ";
+            Assert.assertEquals(0, metadata.getColumnIndexQuiet(trailing, 0, 5));
+            Assert.assertEquals(-1, metadata.getColumnIndexQuiet(trailing, 0, trailing.length()));
         }
     }
 

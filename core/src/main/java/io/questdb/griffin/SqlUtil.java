@@ -278,7 +278,10 @@ public class SqlUtil {
             LowerCaseCharSequenceIntHashMap nextAliasSequenceMap,
             boolean nonLiteral
     ) {
-        final boolean containsDisallowed = disallowedAliases.contains(base);
+        // containsDisallowed and quoteProtected are consumed only on the dot-free path (indexOfDot == -1);
+        // a dotted base uses the ranged isQuoteProtectedAlias(base, indexOfDot + 1, ...) below instead, so
+        // gate both on indexOfDot to skip a full-base hash / scan that would be dead work for a dotted base.
+        final boolean containsDisallowed = indexOfDot == -1 && disallowedAliases.contains(base);
         final boolean disallowed = nonLiteral && containsDisallowed;
 
         // A quote-protected base carries its dedup suffix inside the quotes and re-derives
@@ -287,7 +290,7 @@ public class SqlUtil {
         // operator token sheds the quotes once the suffix makes it a plain identifier ("in" ->
         // in1). Putting the suffix after the quotes ("a.b"1) would fail isQuoteProtectedAlias
         // and leak them into the result set metadata.
-        final boolean quoteProtected = isQuoteProtectedAlias(base);
+        final boolean quoteProtected = indexOfDot == -1 && isQuoteProtectedAlias(base);
 
         // early exit for simple cases: return the base verbatim (preserving its object identity,
         // which the wildcard '*' passthrough and other callers rely on) when it carries no
@@ -626,8 +629,10 @@ public class SqlUtil {
                 // Keep the "column" placeholder within the configured cap (maxLength >= 4): reserve
                 // room for the dedup suffix (seqSize) and truncate, so an empty/all-space value at a
                 // small maxLength surfaces a bounded name rather than a fixed 6-char one (6 ==
-                // "column".length()).
-                entry.put("column", 0, Math.max(0, Math.min(6, maxLength - seqSize)));
+                // "column".length()). Keep at least one placeholder char so a pathological collision
+                // count at the minimum cap never collapses the content to empty and leaks a bare
+                // "_<seq>" name.
+                entry.put("column", 0, Math.max(1, Math.min(6, maxLength - seqSize)));
             } else {
                 entry.put(base, start, start + contentLen);
             }
@@ -1860,7 +1865,11 @@ public class SqlUtil {
      * and leak the quotes into result set metadata.
      */
     public static CharSequence protectColumnAlias(CharacterStore store, CharSequence name) {
-        if (Chars.indexOfLastUnquoted(name, '.') > -1 || disallowedAliases.contains(name)) {
+        // An empty name has no interior to protect: wrapping it as "" is not recognized as a
+        // quote-protected alias (quoteProtectedInteriorDot needs a >= 1 char interior), so toColumnName
+        // could not strip it back and the quotes would leak. Only a non-empty name that carries an
+        // unquoted dot or collides with an operator token needs the protective quotes.
+        if (name.length() > 0 && (Chars.indexOfLastUnquoted(name, '.') > -1 || disallowedAliases.contains(name))) {
             final CharacterStoreEntry entry = store.newEntry();
             entry.put('"').put(name).put('"');
             return entry.toImmutable();

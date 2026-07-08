@@ -420,14 +420,16 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 intervalPos = intervalNode.position;
                 if (timestamp == null) {
                     // Clean name: the persisted designated-timestamp name is resolved verbatim against
-                    // factory metadata downstream, and the model map is keyed clean (see above).
-                    createTableOperation.setTimestampColumnName(SqlUtil.toColumnName(queryColumn.getName()));
+                    // factory metadata downstream, and the model map is keyed clean (see above). Compute
+                    // it once - toColumnName re-scans the alias and allocates a String on each call.
+                    final String tsName = SqlUtil.toColumnName(queryColumn.getName());
+                    createTableOperation.setTimestampColumnName(tsName);
                     createTableOperation.setTimestampColumnNamePosition(ast.position);
-                    final CreateTableColumnModel timestampModel = createColumnModelMap.get(SqlUtil.toColumnName(queryColumn.getName()));
+                    final CreateTableColumnModel timestampModel = createColumnModelMap.get(tsName);
                     if (timestampModel == null) {
                         throw SqlException.position(selectTextPosition)
                                 .put("TIMESTAMP column does not exist or not present in select list [name=")
-                                .put(SqlUtil.toColumnName(queryColumn.getName())).put(']');
+                                .put(tsName).put(']');
                     }
                 }
             }
@@ -451,9 +453,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);
                 if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
-                    final CreateTableColumnModel columnModel = createColumnModelMap.get(SqlUtil.toColumnName(column.getName()));
+                    final String columnName = SqlUtil.toColumnName(column.getName());
+                    final CreateTableColumnModel columnModel = createColumnModelMap.get(columnName);
                     if (columnModel == null) {
-                        throw SqlException.$(0, "missing column [name=").put(SqlUtil.toColumnName(column.getName())).put(']');
+                        throw SqlException.$(0, "missing column [name=").put(columnName).put(']');
                     }
                     copyBaseTableSymbolColumnCapacity(column.getAst(), queryModel, columnModel, baseTableName, baseTableMetadata);
                 }

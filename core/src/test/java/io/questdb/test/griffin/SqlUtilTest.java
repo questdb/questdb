@@ -1272,6 +1272,22 @@ public class SqlUtilTest {
         }
     }
 
+    @Test
+    public void testProtectColumnAliasEmptyNameRoundTrips() {
+        // Regression (review m2): protectColumnAlias must not wrap an empty name. The empty string is a
+        // disallowed alias, but wrapping it as "" is not recognized as quote-protected (the interior is
+        // empty), so toColumnName could not strip it back and the quotes would leak. An empty name is
+        // returned as-is and round-trips; a non-empty operator token / dotted name still wraps and
+        // round-trips through toColumnName.
+        CharacterStore store = new CharacterStore(64, 4);
+        CharSequence empty = SqlUtil.protectColumnAlias(store, "");
+        Assert.assertEquals("", empty.toString());
+        Assert.assertEquals("", SqlUtil.toColumnName(empty));
+        Assert.assertEquals("in", SqlUtil.toColumnName(SqlUtil.protectColumnAlias(store, "in")));
+        Assert.assertEquals("a.b", SqlUtil.toColumnName(SqlUtil.protectColumnAlias(store, "a.b")));
+        Assert.assertEquals(".", SqlUtil.toColumnName(SqlUtil.protectColumnAlias(store, ".")));
+    }
+
     private void testImplicitCastCharAsGeoHashInvalidChar0(char c) {
         int bits = 5;
         try {
