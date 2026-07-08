@@ -211,6 +211,8 @@ pub fn alltypes_statistics(column: &str) -> Arc<dyn Statistics> {
             distinct_count: None,
             min_value: Some(vec![48, 49, 47, 48, 49, 47, 48, 57]),
             max_value: Some(vec![48, 52, 47, 48, 49, 47, 48, 57]),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
         }),
         "string_col" => Arc::new(BinaryStatistics {
             primitive_type: PrimitiveType::from_physical(
@@ -221,6 +223,8 @@ pub fn alltypes_statistics(column: &str) -> Arc<dyn Statistics> {
             distinct_count: None,
             min_value: Some(vec![48]),
             max_value: Some(vec![49]),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
         }),
         "timestamp_col" => {
             todo!()

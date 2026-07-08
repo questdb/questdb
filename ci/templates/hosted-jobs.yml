@@ -3,14 +3,50 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        mac-griffin:
+        mac-griffin-base:
+          # griffin base package only; subpackages run in mac-griffin-sub,
+          # fuzz tests in mac-griffin-fuzz. Splitting the single griffin shard
+          # (the pipeline's long pole) keeps each leg well under the 60 min cap.
           WEB_CONSOLE_PROFILE: ""
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
           jdk: "1.25"
           testset: "all"
-          includeTests: "**/griffin/**"
+          includeTests: "**/griffin/*"
+          # Exclude fuzz tests: run in mac-griffin-fuzz
+          excludeTests: "**/griffin/**/*Fuzz*"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-griffin-sub:
+          # griffin subpackages; base package runs in mac-griffin-base,
+          # fuzz tests in mac-griffin-fuzz.
+          WEB_CONSOLE_PROFILE: ""
+          imageName: "macos-14"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/griffin/**/*"
+          # Exclude base package: run in mac-griffin-base
+          # Exclude fuzz tests: run in mac-griffin-fuzz
+          excludeTests: "**/griffin/*,**/griffin/fuzz/**,**/griffin/**/*Fuzz*"
+          javadoc_step: ""
+          javadoc_profile: ""
+        mac-griffin-fuzz:
+          # All griffin fuzz tests: the griffin/fuzz package plus every *Fuzz*
+          # class under griffin (at any depth). These dominate the griffin shard's
+          # wall-clock time, so they run on their own leg (mirrors the windows-fuzz
+          # split). Note: **/griffin/**/*Fuzz* is depth-agnostic; **/griffin/**Fuzz**
+          # would only match immediate children of griffin/ and leave subpackage
+          # fuzzers (join, unnest, window, order-by, ...) on mac-griffin-sub.
+          WEB_CONSOLE_PROFILE: ""
+          imageName: "macos-14"
+          poolName: "Azure Pipelines"
+          os: macOS
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/griffin/fuzz/**,**/griffin/**/*Fuzz*"
           javadoc_step: ""
           javadoc_profile: ""
         mac-cairo:
