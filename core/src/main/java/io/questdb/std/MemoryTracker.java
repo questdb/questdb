@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Tracks the native memory charged to a single bounded workload (a user SQL
@@ -43,6 +44,30 @@ public abstract class MemoryTracker implements Closeable {
     // this tracker. Indexed by `memoryTag - NATIVE_DEFAULT`. Allocated lazily
     // by `getOrCreateNativeAllocator` and freed by `freeNativeAllocators`.
     private final long[] nativeAllocators = new long[MemoryTag.SIZE - MemoryTag.NATIVE_DEFAULT];
+    // Running total of native bytes charged to this tracker by the covered-index
+    // decode path (MemoryTag.NATIVE_INDEX_READER). Covered decode buffers charge
+    // the tracker at allocation, so the per-query limit sees and caps them, but
+    // they are freed on global-only accounting AFTER this tracker is released: the
+    // shared reduce-task pool that owns them is reset lazily on reuse by the NEXT
+    // query, not at the owning query's teardown. Decrementing `used` at that late
+    // free would target a recycled tracker block and trip init()'s used==0 guard.
+    // Instead, every covered allocation adds its delta here, and reconcileCovered()
+    // subtracts the outstanding total from `used` when this tracker is released,
+    // leaving the pooled block clean while the buffers themselves stay accounted
+    // globally until their lazy free. Updated concurrently by decode workers.
+    private final AtomicLong coveredBytes = new AtomicLong();
+
+    /**
+     * Records covered-index decode bytes charged to this tracker's {@code used}
+     * counter. {@code delta} is the allocation size change (positive on grow).
+     * Thread-safe: multiple decode workers sharing this tracker call it
+     * concurrently. See {@link #reconcileCovered()}.
+     */
+    public final void addCoveredBytes(long delta) {
+        if (delta != 0) {
+            coveredBytes.addAndGet(delta);
+        }
+    }
 
     @Override
     public abstract void close();
@@ -77,6 +102,32 @@ public abstract class MemoryTracker implements Closeable {
      * {@code Unsafe.getNativeAllocator(tag, tracker)} overload.
      */
     public abstract long nativeAddress();
+
+    /**
+     * Releases the outstanding covered-index decode charge from {@code used}.
+     * Called at tracker release (and defensively at re-acquire) so the pooled
+     * block recycles with {@code used == 0} even though the covered buffers it
+     * charged are freed later, on global-only accounting, by a subsequent query.
+     * Idempotent and single-threaded: all decode workers have finished by the
+     * time a tracker is released. A {@code null} native block is a no-op.
+     */
+    public final void reconcileCovered() {
+        final long covered = coveredBytes.getAndSet(0);
+        if (covered == 0) {
+            return;
+        }
+        final long base = nativeAddress();
+        if (base == 0) {
+            return;
+        }
+        final long usedAddr = base + Unsafe.MEMORY_TRACKER_USED_OFFSET;
+        final long mem = Unsafe.getUnsafe().getAndAddLong(null, usedAddr, -covered) - covered;
+        // Defensive clamp, mirroring Unsafe.recordPerQueryMemAlloc: never leave the
+        // shared counter negative (Rust reads it as an unsigned usize).
+        if (mem < 0) {
+            Unsafe.getUnsafe().getAndAddLong(null, usedAddr, -mem);
+        }
+    }
 
     /**
      * Releases every per-tag Rust-side QdbAllocator block this tracker has
