@@ -558,6 +558,17 @@ public final class ColumnType {
         return columnType == NULL;
     }
 
+    /**
+     * Returns true for fixed-size types that have no dedicated NULL sentinel value, i.e. every
+     * bit pattern is a valid value (BOOLEAN, BYTE, SHORT, CHAR). Such columns cannot represent
+     * NULL on the data vector, so a column top over them reads as leading default values rather
+     * than NULLs.
+     */
+    public static boolean isNoNullSentinelFixedType(int columnType) {
+        final int tag = tagOf(columnType);
+        return tag == BOOLEAN || tag == BYTE || tag == SHORT || tag == CHAR;
+    }
+
     public static boolean isParseableType(int colType) {
         return isTimestamp(colType) || colType == LONG256;
     }

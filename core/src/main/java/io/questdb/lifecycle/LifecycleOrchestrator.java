@@ -424,26 +424,39 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 // routed every clean switch through the error-level invalid-transition log.
                 // A republish to the current state changes nothing: skip it quietly (debug,
                 // not error) without firing the transition log or the state-change dispatch.
-                injectedLog.debug()
-                        .$("ignoring same-state republish component=").$(name)
-                        .$(" state=").$(next)
-                        .I$();
+                try {
+                    injectedLog.debug()
+                            .$("ignoring same-state republish component=").$(name)
+                            .$(" state=").$(next)
+                            .I$();
+                } catch (Throwable ignore) {
+                    // Diagnostics only; the log subsystem can already be halted when a
+                    // JVM-shutdown close publishes late (see emitTransitionLog).
+                }
                 return;
             }
             if (prev == State.FAILED && next != State.FAILED) {
                 // FAILED is a terminal state; ignore any late publish that tries to leave it.
-                injectedLog.error()
-                        .$("rejecting transition from FAILED component=").$(name)
-                        .$(" attempted to=").$(next)
-                        .I$();
+                try {
+                    injectedLog.error()
+                            .$("rejecting transition from FAILED component=").$(name)
+                            .$(" attempted to=").$(next)
+                            .I$();
+                } catch (Throwable ignore) {
+                    // Same shutdown-race guard as emitTransitionLog.
+                }
                 return;
             }
             if (!isValidTransition(prev, next)) {
-                injectedLog.error()
-                        .$("invalid transition component=").$(name)
-                        .$(" from=").$(prev)
-                        .$(" to=").$(next)
-                        .I$();
+                try {
+                    injectedLog.error()
+                            .$("invalid transition component=").$(name)
+                            .$(" from=").$(prev)
+                            .$(" to=").$(next)
+                            .I$();
+                } catch (Throwable ignore) {
+                    // Same shutdown-race guard as emitTransitionLog.
+                }
                 return;
             }
         } while (!ref.compareAndSet(prev, next));
@@ -564,7 +577,33 @@ public class LifecycleOrchestrator implements QuietCloseable {
         fireStableBelowCallbacks();
     }
 
+    /**
+     * Emits the advisory transition record, tolerating a halted log subsystem. During
+     * JVM shutdown the log factory's own shutdown hook can free the log rings while
+     * component close/stop paths are still publishing their final transitions (shutdown
+     * hook order is unspecified, and a SIGTERM'd test JVM tears the servers and the
+     * logger down concurrently). The record is diagnostics; the CAS'd state transition
+     * and the dispatch that follow in {@code publishInternal} are load-bearing and must
+     * survive a dead logger, so an emit failure is swallowed rather than allowed to
+     * abort the FAILED cascade and the state-change dispatch.
+     */
     private void emitTransitionLog(
+            String name,
+            State prev,
+            State next,
+            long ts,
+            long since,
+            @Nullable CharSequence reason
+    ) {
+        try {
+            emitTransitionLog0(name, prev, next, ts, since, reason);
+        } catch (Throwable ignore) {
+            // Log subsystem already halted (JVM shutdown race); the transition itself
+            // must still complete.
+        }
+    }
+
+    private void emitTransitionLog0(
             String name,
             State prev,
             State next,

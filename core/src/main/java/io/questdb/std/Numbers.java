@@ -568,6 +568,10 @@ public final class Numbers {
         return (val << 32) | ((val >> 32) & 0xFFFFFFFFL);
     }
 
+    public static long ceilDiv(long a, long b) {
+        return -Math.floorDiv(-a, b);
+    }
+
     public static int ceilPow2(int value) {
         int i = value;
         if ((i != 0) && (i & (i - 1)) > 0) {
