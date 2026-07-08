@@ -555,7 +555,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // worker mints invalid durably through the normal path. A null reason marks a full-refresh
         // reschedule (see fullRefresh), not an invalidation, so leave it for the queued full refresh. Skip
         // while read-only: a demote rebuilds derived state from disk on promote, and re-enqueueing here
-        // would self-feed the demote quiesce drain.
+        // would self-feed the demote quiesce drain. Skip a closed state the same way: close() means the
+        // owner store is discarded (engine shutdown, or a demote teardown whose quiesce this hold
+        // survived), the marker dies with the state, and nothing must be fed back into the queue --
+        // closed is terminal, so the skip is unconditionally correct and does not rely on the demote
+        // flipping the read-only flag first.
         //
         // The marker clears regardless of getLastRefreshBaseTxn(): the re-enqueued view task re-delivers as
         // force=true (see invalidate()), which mints regardless of lastRefreshBaseTxn, so a range-only view
@@ -569,7 +573,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // One marker read covers both "not pending" (null marker) and the reschedule sentinel (a pending
         // marker that reports a null reason): either way there is no reason-bearing deferral to finalize.
         final String invalidationReason = viewState.getPendingInvalidationReason();
-        if (invalidationReason == null || viewState.isInvalid() || viewState.isDropped() || engine.isReadOnlyMode()) {
+        if (invalidationReason == null
+                || viewState.isInvalid()
+                || viewState.isDropped()
+                || viewState.isClosed()
+                || engine.isReadOnlyMode()) {
             return null;
         }
         viewState.clearPendingInvalidation();

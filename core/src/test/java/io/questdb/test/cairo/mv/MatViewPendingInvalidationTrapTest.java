@@ -99,6 +99,68 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
         readOnly.set(false);
     }
 
+    @Test
+    public void testClosedStateLeavesDeferredInvalidationUntouched() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            // Baseline: the view refreshed and is valid.
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // Pins finalizeDeferredInvalidation's isClosed early-return -- the teardown race the
+            // invalidateView guard comment names ("a closed state dies with its marker and finalize
+            // skips it anyway"). Model a lock-holder completing while the owner store tears down with
+            // a deferral parked on the view: hold the latch as a refresh would, mark the view pending
+            // (the marker a losing concurrent invalidateView left), close() the state mid-hold (close
+            // cannot take the held latch, so it only flags closed and leaves the parked factory for
+            // the holder), then route the unlock through finalizeAndUnlock -- the shared tail every
+            // holder uses. finalize must skip: the marker dies with the discarded state and nothing
+            // may be enqueued, while the unlock tail (tryCloseIfClosed) still frees the parked factory.
+            Assert.assertTrue(state.tryLock());
+            state.markAsPendingInvalidation("update operation");
+            state.close();
+            Assert.assertTrue(state.isClosed());
+            MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+
+            // finalize left the marker untouched (were the isClosed clause absent it would have
+            // cleared it here and queued a force=true INVALIDATE against the discarded state).
+            Assert.assertTrue("closed-state finalize must leave the deferral marker set", state.isPendingInvalidation());
+            Assert.assertEquals("update operation", state.getPendingInvalidationReason());
+
+            // Proof that finalize queued nothing: a full drain mints no invalidation and the view
+            // stays valid on disk.
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
     // Hammers an off-latch reason-bearing deferral against an off-latch clear -- the two writers that, with
     // the former composite written in opposite field orders, could tear to (pending=true, reason=null) and
     // strand the view valid+stale with no self-heal. With a single atomic marker no torn pair can exist AT
