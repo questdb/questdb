@@ -194,10 +194,13 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      * A {@code true} result is a capability flag, not a guarantee: a static plan
      * cannot see the runtime seqTxn fence, the tier's population state, a
      * column-pruned (but timestamp-bearing) projection - the in-mem subset check
-     * still rejects it - or a timestamp-interval filter pushed into the scan, all
-     * of which can still route an individual cursor disk-only. A {@code false}
-     * result, by contrast, is reliable: the read is always disk-only, since these
-     * three preconditions are hard disqualifiers the cursor enforces too.
+     * still rejects it - a reordered full-schema projection (the optimiser fuses
+     * the reorder into the scan as a non-identity column mapping; the cursor's
+     * identity-mapping check rejects it), or a timestamp-interval filter pushed
+     * into the scan, all of which can still route an individual cursor disk-only.
+     * A {@code false} result, by contrast, is reliable: the read is always
+     * disk-only, since these preconditions are hard disqualifiers the cursor
+     * enforces too.
      */
     private static boolean isInMemRoutable(RecordCursorFactory base, int timestampColumnIndex) {
         if (base.getScanDirection() != SCAN_DIRECTION_FORWARD || timestampColumnIndex < 0) {

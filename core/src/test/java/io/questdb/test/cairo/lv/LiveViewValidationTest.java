@@ -175,6 +175,21 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectNonDeterministicFunctionInProjection() throws Exception {
+        // The SELECT list rides the same compile-time guard as the WHERE filter and
+        // the window arguments: a non-deterministic value projected into a live-view
+        // column would diverge from any recompute on a re-refresh, O3 replay or
+        // checkpoint restore, so CREATE must reject it up front.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertLiveViewCreateRejected("SELECT ts, x, rnd_double() AS r, row_number() OVER () AS rn FROM base");
+            assertLiveViewCreateRejected("SELECT ts, x, now() AS r, row_number() OVER () AS rn FROM base");
+            assertLiveViewCreateRejected("SELECT ts, x, systimestamp() AS r, row_number() OVER () AS rn FROM base");
+            assertLiveViewCreateRejected("SELECT ts, x, sysdate() AS r, row_number() OVER () AS rn FROM base");
+        });
+    }
+
+    @Test
     public void testRejectNonDeterministicFunctionInWhere() throws Exception {
         // WHERE is the worst case: a row admitted on one random draw cannot be
         // un-emitted, so the row set diverges permanently from any recompute.

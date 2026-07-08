@@ -32,6 +32,7 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.lv.LiveViewSymbolTable;
+import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -315,7 +316,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.slotIdx = pin;
                     this.pinnedSlot = candidate.getSlot(pin);
                     this.symbolCache = candidate.getSymbolCache();
-                    this.inMemEligible = isFullSchemaProjection(baseMetadata, pinnedSlot, timestampColumnIndex);
+                    this.inMemEligible = isFullSchemaProjection(diskCursor, baseMetadata, pinnedSlot, timestampColumnIndex);
                     // Fence: serve the slot only when (a) the disk scan is
                     // ascending (the seam split assumes ascending ts), and
                     // (b) the slot and the disk reader share an LV-table seqTxn
@@ -470,7 +471,23 @@ public class LiveViewRecordCursor implements RecordCursor {
      * correct because disk holds every applied row - they simply do not see the
      * un-flushed lead, trailing it by at most one flush cycle. Only an identity
      * projection (every output column, in declared order) may route through the
-     * tier; the type-by-type match below establishes that.
+     * tier.
+     * <p>
+     * The column count + per-position type match is necessary but not sufficient:
+     * two same-typed columns are type-equal yet not identity, so a reordered
+     * projection (e.g. {@code SELECT ts, b, a FROM lv} where {@code a} and
+     * {@code b} share a type - the optimiser fuses the reorder into the
+     * page-frame scan as a reordered column list, so {@code baseMetadata} matches
+     * the buffer position-by-type) would pass it while
+     * {@link MergedRecord}'s in-mem accessors, which index the buffer by output
+     * position, serve {@code a} where {@code b} is expected. The buffer stores the
+     * LV table's columns in declared order, so routing is safe only when output
+     * column {@code i} maps to LV-table storage column {@code i};
+     * {@link #isIdentityColumnMapping} enforces that on the disk scan's column
+     * mapping. Reads whose base is not a plain page-frame scan (an aliasing or
+     * expression projection the optimiser fronts with a {@code SelectedRecord} /
+     * {@code VirtualRecord}) also fail the check and route disk-only - always
+     * correct.
      * <p>
      * SYMBOL columns are routable: the tier stores LV-table-consistent symbol ids
      * (eager-interned by the refresh worker, see
@@ -480,6 +497,7 @@ public class LiveViewRecordCursor implements RecordCursor {
      * lead-only ids against the cache.
      */
     private static boolean isFullSchemaProjection(
+            RecordCursor diskCursor,
             RecordMetadata baseMetadata,
             LiveViewInMemoryBuffer buffer,
             int timestampColumnIndex
@@ -493,6 +511,32 @@ public class LiveViewRecordCursor implements RecordCursor {
         }
         for (int i = 0; i < columnCount; i++) {
             if (baseMetadata.getColumnType(i) != buffer.columnType(i)) {
+                return false;
+            }
+        }
+        return isIdentityColumnMapping(diskCursor, columnCount);
+    }
+
+    // Returns true iff the disk cursor is a page-frame scan whose query-to-reader
+    // column mapping is the identity over [0, columnCount): output column i reads
+    // LV-table storage column i. A non-page-frame cursor, a column-count mismatch,
+    // or any reordered / pruned mapping returns false, so the caller routes
+    // disk-only (always correct). See isFullSchemaProjection for why the identity
+    // mapping - not merely a per-position type match - is what keeps routing safe.
+    private static boolean isIdentityColumnMapping(RecordCursor diskCursor, int columnCount) {
+        if (!(diskCursor instanceof PageFrameRecordCursor pfrc)) {
+            return false;
+        }
+        final var frameCursor = pfrc.getPageFrameCursor();
+        if (frameCursor == null) {
+            return false;
+        }
+        final ColumnMapping mapping = frameCursor.getColumnMapping();
+        if (mapping == null || mapping.getColumnCount() != columnCount) {
+            return false;
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (mapping.getColumnIndex(i) != i) {
                 return false;
             }
         }

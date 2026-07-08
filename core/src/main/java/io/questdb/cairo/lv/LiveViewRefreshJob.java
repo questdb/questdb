@@ -3382,11 +3382,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Failure handling: a structural error opening the {@code .cp} (CRC fail,
      * magic mismatch, missing function class, anchor type mismatch) unlinks the
      * head .cp and clears the head metadata on the instance; the LV is not
-     * invalidated - {@code .cp} is derived state, and the upcoming refresh cycle
-     * falls through to the head-miss replay path. A replay-to-applied error,
-     * however, can leave the restored accumulators inconsistent with disk, so it
-     * invalidates the view (operator recovers with DROP + CREATE) via the
-     * pending-invalidation hook rather than serving wrong results.
+     * invalidated - {@code .cp} is derived state, so this method rebuilds the
+     * whole view inline via {@link #o3HeadMissReplay} over the applied base
+     * snapshot (identical to the missing-.cp recovery) rather than bare-returning
+     * into the caller's incremental drain from the applied watermark, which would
+     * recompute post-watermark rows from cold accumulators and durably flush wrong
+     * cumulative aggregates. A compatibility break (version-too-old / file-version
+     * mismatch) instead stashes a pending-invalidation reason, and a
+     * replay-to-applied error can leave the restored accumulators inconsistent
+     * with disk; both invalidate the view (operator recovers with DROP + CREATE)
+     * via the pending-invalidation hook rather than serving wrong results.
      */
     private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
         final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
@@ -3396,8 +3401,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // (potentially older) base seqTxn.
         final long diskAppliedSeqTxn = instance.getAppliedWatermark();
         if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
-            // restoreFromHead has already unlinked the corrupt .cp and
-            // cleared head metadata; nothing more to do here.
+            // restoreFromHead failed in one of two distinct ways:
+            //  - Compatibility break (LV_*_VERSION_* errno): it stashed a
+            //    pending-invalidation reason. Return so the caller drives
+            //    invalidation out of the refresh latch - a format we can no
+            //    longer read must not be served or rebuilt from.
+            //  - Structural corruption (CRC / magic / truncation / missing
+            //    function class, all errno 0): it unlinked the corrupt .cp and
+            //    cleared head metadata but left NO pending reason. A bare return
+            //    here falls through to the caller's incremental drain from the
+            //    applied watermark with COLD accumulators, which recomputes the
+            //    post-watermark rows from zero and commits + flushes wrong
+            //    cumulative aggregates (sum() OVER (ORDER BY ts), row_number(),
+            //    partitioned cumulatives) durably - silent, no crash, no
+            //    invalidation. A *missing* .cp recovers correctly via a full
+            //    rebuild; a *corrupt* one must not fare worse. Recover the same
+            //    way the O3 head-hit and dedup-restart paths do: rebuild the
+            //    whole view from the applied base snapshot, which re-seeds the
+            //    window from identity, rewrites the tier with a single
+            //    REPLACE_RANGE, advances the watermarks, and writes a fresh head.
+            if (instance.hasPendingInvalidationReason()) {
+                return;
+            }
+            try {
+                o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, instance.getDefinition().getBaseTableToken(), diskAppliedSeqTxn);
+            } catch (Throwable t) {
+                LOG.critical().$("live view restart head-miss replay failed after corrupt checkpoint [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", appliedWatermark=").$(diskAppliedSeqTxn)
+                        .$(", error=").$(t).I$();
+                instance.setPendingInvalidationReason("live view restart head-miss replay after corrupt checkpoint failed");
+                return;
+            }
+            instance.setCheckpointRestoreSucceeded();
             return;
         }
         final long manifestBaseSeqTxn = restoredHeadState.manifestBaseSeqTxn;

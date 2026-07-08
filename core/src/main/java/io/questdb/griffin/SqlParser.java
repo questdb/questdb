@@ -475,6 +475,10 @@ public class SqlParser {
                 || tag == ColumnType.TIMESTAMP;
     }
 
+    private static boolean isLexerWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }
+
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         return switch (token.charAt(0)) {
@@ -1441,8 +1445,21 @@ public class SqlParser {
         if (hasParens) {
             expectTok(lexer, ")");
         }
-        int selectEnd = lexer.getPosition() - (hasParens ? 1 : 0);
-        builder.setSelectSql(Chars.toString(lexer.getContent(), selectStart, selectEnd));
+        // Trim whitespace between the query and any wrapping parentheses so the
+        // captured SELECT text round-trips cleanly. SHOW CREATE LIVE VIEW re-emits
+        // the definition as "AS (\n<sql>\n)"; without trimming, re-parsing that
+        // output would fold the surrounding newlines into the stored SQL and
+        // accumulate more whitespace on every round-trip.
+        final CharSequence content = lexer.getContent();
+        int selectTextStart = selectStart;
+        int selectTextEnd = lexer.getPosition() - (hasParens ? 1 : 0);
+        while (selectTextStart < selectTextEnd && isLexerWhitespace(content.charAt(selectTextStart))) {
+            selectTextStart++;
+        }
+        while (selectTextEnd > selectTextStart && isLexerWhitespace(content.charAt(selectTextEnd - 1))) {
+            selectTextEnd--;
+        }
+        builder.setSelectSql(Chars.toString(content, selectTextStart, selectTextEnd));
         builder.setSelectModel(queryModel);
 
         // extract base table name from query model

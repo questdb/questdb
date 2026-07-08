@@ -25,7 +25,10 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -34,14 +37,18 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
@@ -137,6 +144,60 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             ) {
                 Assert.assertFalse("seqTxn mismatch must not be routing-eligible", cursor.isRoutingEligible());
             }
+        });
+    }
+
+    @Test
+    public void testReorderedSameTypeProjectionRoutesDiskOnly() throws Exception {
+        // C1 regression: the in-mem tier stores the LV's output row in declared
+        // column order and MergedRecord indexes the buffer by output position. A
+        // reordered projection over two same-typed columns (SELECT ts, b, a FROM
+        // lv, with a and b both INT) shares the buffer's column count and its
+        // per-position types, so the pre-fix count + type gate wrongly engaged the
+        // tier and served a where b was expected: the optimiser fuses the reorder
+        // into the page-frame scan as a reordered column mapping ([0, 2, 1, 3]),
+        // leaving no SelectedRecord wrapper to correct it. The identity
+        // column-mapping check now routes such a read disk-only (always correct),
+        // while an in-declared-order read still routes through the tier.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                    "SELECT ts, a, b, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, a, b) VALUES " +
+                    "('2026-05-12T00:00:00.000001Z', 10, 20), " +
+                    "('2026-05-12T00:00:00.000002Z', 11, 21)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // Positive control: the in-declared-order full-schema read routes
+            // through the tier (identity mapping) and agrees with disk-only.
+            try (
+                    RecordCursorFactory factory = select("SELECT ts, a, b, rn FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("in-declared-order read must route through the tier", cursor.isRoutingEligible());
+            }
+            assertModeBMatchesDiskOnly("SELECT ts, a, b, rn FROM lv");
+
+            // The reorder swaps two same-typed columns: pre-fix the tier engaged
+            // and served swapped values. It must now route disk-only, and the
+            // values must be correct (b then a).
+            try (
+                    RecordCursorFactory factory = select("SELECT ts, b, a, rn FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertFalse("reordered same-type projection must route disk-only", cursor.isRoutingEligible());
+            }
+            assertModeBMatchesDiskOnly("SELECT ts, b, a, rn FROM lv");
+            assertQuery("SELECT ts, b, a, rn FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tb\ta\trn\n" +
+                            "2026-05-12T00:00:00.000001Z\t20\t10\t1\n" +
+                            "2026-05-12T00:00:00.000002Z\t21\t11\t2\n");
         });
     }
 
@@ -498,11 +559,22 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
             // Seam in the middle: disk serves the older prefix, in-mem the recent
-            // suffix. Every shape must match the disk-only path byte for byte.
-            assertModeBMatchesDiskOnly("SELECT * FROM lv");
-            assertModeBMatchesDiskOnly("SELECT * FROM lv LIMIT 3");
-            assertModeBMatchesDiskOnly("SELECT * FROM lv LIMIT -2");
-            assertModeBMatchesDiskOnly("SELECT * FROM lv WHERE x > 2");
+            // suffix. Each routing-eligible shape must both engage the tier (its
+            // inner cursor serves in-mem rows) AND match the disk-only path byte for
+            // byte. The engagement gate matters: the differential oracle alone would
+            // still pass if a fence regression silently routed a shape disk-only,
+            // because both sides would then read disk.
+            assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv");
+            assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv LIMIT 3");
+            assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv LIMIT -2");
+            assertModeBEngagesAndMatchesDiskOnly("SELECT * FROM lv WHERE x > 2");
+            // ORDER BY ts DESC is the non-routing control: a backward scan is
+            // deliberately fenced disk-only (testModeBDisabledForBackwardScan), so
+            // both sides read disk here. It still must match, but the tier serves
+            // nothing - assert that so this line is not mistaken for Mode B coverage.
+            InnerRead desc = readInner("SELECT * FROM lv ORDER BY ts DESC");
+            Assert.assertFalse("backward scan must fence disk-only", desc.routingEligible);
+            Assert.assertEquals("backward scan must not serve the tier", 0, desc.inMemRowsServed);
             assertModeBMatchesDiskOnly("SELECT * FROM lv ORDER BY ts DESC");
         });
     }
@@ -1368,6 +1440,66 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredReadFiltersUnflushedLead() throws Exception {
+        // Regression guard for a filter-bypass concern flagged in review: does a
+        // WHERE over an LV skip tier rows (the disk-backed overlap and the
+        // un-flushed lead served from RAM) and over-return them?
+        //
+        // It does not, and cannot, with the current pushdown rules. A predicate that
+        // an LV read cannot turn into an intrinsic index scan (LV tables never carry
+        // an index) is re-attached to the model by generateTableQuery0
+        // (model.setWhereClause(intrinsicModel.filter)) and applied by a Filter node
+        // wrapping the LiveView; the base cursor the LiveView routes through is an
+        // unfiltered full forward scan. So every row the tier yields - overlap AND
+        // lead - passes through the outer filter. (A timestamp-interval predicate is
+        // the one shape pushed under the tier, and the routing fence disables tier
+        // routing for it; a backward LATEST BY scan is disabled by the ascending-scan
+        // fence.) This test pins that a filtered read matches a from-scratch oracle
+        // and never leaks a non-matching tier row, including a lead-only symbol.
+        assertMemoryLeak(() -> {
+            buildSymbolFlushedPlusLead();
+
+            // The tier is actively leading disk: 5 rows resident, 2 of them the
+            // un-flushed lead (cc @ rn=4, bb @ rn=5). This is the state under which a
+            // filter bypass would surface as over-returned tier rows.
+            InnerRead lead = readInner("SELECT * FROM lv");
+            Assert.assertTrue("lead read must be routing-eligible", lead.routingEligible);
+            Assert.assertEquals("all rows served from the tier", 5, lead.inMemRowsServed);
+            Assert.assertEquals("two un-flushed lead rows served from RAM", 2, lead.leadRowsServed);
+
+            // The read must be full-schema (SELECT *) so it routes through the tier
+            // and serves the lead; a pruned projection (e.g. SELECT g) would fence to
+            // disk-only and never see the lead. g='bb' matches one disk-overlap row
+            // (rn=2) and one un-flushed lead row (rn=5). rn=5 lives only in RAM, so
+            // its presence in the filtered output proves the lead is both served AND
+            // filtered; the aa/cc rows must be dropped even though the tier serves
+            // every one of them from RAM. Differential oracle (a from-scratch recompute
+            // over base) plus an explicit expectation. printSql, not assertQuery: the
+            // latter's battery clears the engine and drops the un-flushed lead.
+            assertLvMatchesOracle("SELECT * FROM lv WHERE g = 'bb'",
+                    "SELECT * FROM (SELECT ts, g, row_number() OVER () AS rn FROM base) WHERE g = 'bb'");
+            StringSink bb = new StringSink();
+            printSql("SELECT * FROM lv WHERE g = 'bb'", bb);
+            Assert.assertEquals("ts\tg\trn\n" +
+                    "2026-05-12T00:00:02.000000Z\tbb\t2\n" +
+                    "2026-05-12T00:00:05.000000Z\tbb\t5\n", bb.toString());
+
+            // A lead-only symbol ('cc', first seen in the un-flushed lead) is returned
+            // through the filter - the freshest match, correctly filtered.
+            StringSink cc = new StringSink();
+            printSql("SELECT * FROM lv WHERE g = 'cc'", cc);
+            Assert.assertEquals("ts\tg\trn\n2026-05-12T00:00:04.000000Z\tcc\t4\n", cc.toString());
+
+            // A disk-only symbol ('aa', never in the lead) returns just its overlap rows.
+            StringSink aa = new StringSink();
+            printSql("SELECT * FROM lv WHERE g = 'aa'", aa);
+            Assert.assertEquals("ts\tg\trn\n" +
+                    "2026-05-12T00:00:01.000000Z\taa\t1\n" +
+                    "2026-05-12T00:00:03.000000Z\taa\t3\n", aa.toString());
+        });
+    }
+
+    @Test
     public void testArrayPassthroughServesLeadFromRam() throws Exception {
         // Passthrough DOUBLE[] output column: the tier carries the raw arrays from
         // RAM via ArrayTypeDriver, so an array LV gets the same lead-serving
@@ -1968,6 +2100,72 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
                             "2026-05-12T00:00:04.000000Z\t4\t4\n" +
                             "2026-05-12T00:00:05.000000Z\t5\t5\n" +
                             "2026-05-12T00:00:06.000000Z\t6\t6\n");
+        });
+    }
+
+    @Test
+    public void testRestartWithCorruptHeadCheckpointRebuildsFromBase() throws Exception {
+        // C2 regression: a STRUCTURALLY corrupt head .cp on restart (bit rot /
+        // truncation / a renamed window-function class - all errno 0) makes
+        // restoreFromHead trip the CRC check, unlink the .cp, and clear the head
+        // metadata WITHOUT stashing an invalidation reason. Before the fix
+        // tryRestoreFromHead bare-returned, so the caller fell through to the
+        // incremental drain from the applied watermark with COLD window
+        // accumulators: row_number() (and every cumulative window function)
+        // recomputed the post-watermark rows from zero and durably flushed the
+        // wrong values (disk rn 1..3 + a cold-restart lead rn 1..2 instead of
+        // 4..5). The restart must instead rebuild the whole view from the applied
+        // base snapshot, exactly as a MISSING .cp already does, and must NOT
+        // invalidate the view (the corruption is recoverable).
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead(); // rn 1..3 flushed on disk, rn 4..5 un-flushed lead in RAM
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            // The first flush always writes a head .cp; corrupt it in place.
+            final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+            Assert.assertTrue("the first flush must have written a head .cp", headLvSeqTxn != Numbers.LONG_NULL);
+            corruptHeadCheckpoint(instance.getLiveViewToken(), headLvSeqTxn);
+
+            // Simulated restart: the RAM lead (rn 4..5) is lost; disk holds rn 1..3;
+            // the head .cp is present but corrupt (the startup sweep stamps it by
+            // filename without validating its content).
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            Assert.assertEquals("the corrupt head .cp must be stamped on the restored instance",
+                    headLvSeqTxn, restored.getHeadCheckpointLvSeqTxn());
+
+            // First refresh cycle: restoreFromHead trips the CRC check, unlinks the
+            // corrupt .cp, and (with the fix) rebuilds the whole view from the applied
+            // base via o3HeadMissReplay instead of draining forward from cold state.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // The corruption is recoverable, so the view stays valid ...
+            Assert.assertFalse("a recoverable corrupt .cp must not invalidate the view", restored.isInvalid());
+            // ... and equals a from-scratch recompute: row_number continues 1..5, not a
+            // cold-restart 1..3 (disk) + 1..2 (lead).
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            // The rebuild retired the corrupt .cp and wrote a fresh post-rebuild head.
+            Assert.assertTrue("a fresh head .cp must be written after the rebuild",
+                    restored.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL);
+
+            // o3HeadMissReplay flushed the full view to disk, so assertQuery's
+            // engine.clear() battery loses nothing. Confirm rn 1..5 exactly once.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:01.000000Z\t1\t1\n" +
+                            "2026-05-12T00:00:02.000000Z\t2\t2\n" +
+                            "2026-05-12T00:00:03.000000Z\t3\t3\n" +
+                            "2026-05-12T00:00:04.000000Z\t4\t4\n" +
+                            "2026-05-12T00:00:05.000000Z\t5\t5\n");
         });
     }
 
@@ -2626,6 +2824,19 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
         Assert.assertEquals("disk-only read must match oracle for: " + lvSql, oracle.toString(), diskOnly.toString());
     }
 
+    // Proves a routing-eligible shape actually engages the tier before running the
+    // differential oracle: the inner cursor must be routing-eligible and serve at
+    // least one in-mem row, otherwise a fence regression that silently routed the
+    // shape disk-only would still pass assertModeBMatchesDiskOnly (both sides read
+    // disk). The inner read walks the whole LiveView cursor, so a LIMIT / outer
+    // WHERE wrapper does not suppress the counter.
+    private static void assertModeBEngagesAndMatchesDiskOnly(String sql) throws SqlException {
+        InnerRead read = readInner(sql);
+        Assert.assertTrue("shape must stay routing-eligible: " + sql, read.routingEligible);
+        Assert.assertTrue("shape must serve in-mem rows: " + sql, read.inMemRowsServed > 0);
+        assertModeBMatchesDiskOnly(sql);
+    }
+
     // Runs the SELECT with the tier on (Mode B) and then with the fence forced
     // off (disk-only, achieved by mismatching both slots' stamps), and asserts
     // the two outputs are byte-identical. Restores the stamps afterwards.
@@ -2649,6 +2860,38 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             tier.getSlot(1).setLvSeqTxn(s1);
         }
         Assert.assertEquals("Mode B vs disk-only mismatch for: " + sql, diskOnly.toString(), modeB.toString());
+    }
+
+    // Flips a byte inside the head .cp's manifest payload (past the fixed file header)
+    // so the checkpoint reader's CRC check fails on the next restart. This is the
+    // errno-0 STRUCTURAL corruption class (bit rot / truncation / a renamed
+    // window-function class) - distinct from a version-mismatch compatibility break,
+    // which restoreFromHead reports separately and which invalidates the view. Mirrors
+    // LiveViewCheckpointTest#overwriteByteInFile, which leaves a structurally intact
+    // file with a stale CRC trailer (not a truncation).
+    private static void corruptHeadCheckpoint(TableToken liveViewToken, long headLvSeqTxn) {
+        final CairoConfiguration cfg = configuration;
+        try (Path cpPath = new Path()) {
+            cpPath.of(cfg.getDbRoot())
+                    .concat(liveViewToken)
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .slash();
+            LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+            Assert.assertTrue("head .cp must exist on disk: " + cpPath, cfg.getFilesFacade().exists(cpPath.$()));
+            final long offset = LiveViewCheckpointWriter.FILE_HEADER_SIZE + 8;
+            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.of(
+                        cfg.getFilesFacade(),
+                        cpPath.$(),
+                        cfg.getFilesFacade().getPageSize(),
+                        offset + Byte.BYTES,
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_NONE
+                );
+                mem.putByte(offset, (byte) 0xAB);
+                mem.sync(false);
+            }
+        }
     }
 
     // Creates a fixed-width LV with the in-mem tier on, ingests two rows, and
