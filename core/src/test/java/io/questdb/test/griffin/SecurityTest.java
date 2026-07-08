@@ -394,6 +394,33 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewDeniedOnNoWriteAccess() throws Exception {
+        // Compile CREATE LIVE VIEW through a read-only security context and assert
+        // authorizeLiveViewCreate() denies it. The base table exists so compilation
+        // reaches execution, where the ACL fires before the view is created.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            try {
+                engine.execute(
+                        "create live view lv flush every 1s as " +
+                                "select ts, x, row_number() over () as rn from base",
+                        roContext
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                TestUtils.assertContains(ex.getMessage(), "permission denied");
+            }
+            // The denial must not have created the view.
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            assertQuery("select count() from lv")
+                    .noLeakCheck()
+                    .failsWith("table does not exist");
+        });
+    }
+
+    @Test
     public void testCreateTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -418,6 +445,31 @@ public class SecurityTest extends AbstractCairoTest {
             assertQuery("select count() from balances")
                     .noLeakCheck()
                     .failsWith("table does not exist");
+        });
+    }
+
+    @Test
+    public void testDropLiveViewDeniedOnNoWriteAccess() throws Exception {
+        // Compile DROP LIVE VIEW through a read-only security context and assert
+        // authorizeLiveViewDrop() denies it after the existence check passes. The
+        // view must survive the denied drop.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s as " +
+                    "select ts, x, row_number() over () as rn from base");
+            final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            try {
+                engine.execute("drop live view lv", roContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                TestUtils.assertContains(ex.getMessage(), "permission denied");
+            }
+            // The denied DROP must leave the view registered and droppable by a
+            // privileged context.
+            Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("drop live view lv");
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
         });
     }
 

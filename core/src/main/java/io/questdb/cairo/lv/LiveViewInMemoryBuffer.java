@@ -654,12 +654,27 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      */
     public long footprintBytes() {
         long sum = 0;
+        // Runs lock-free off the live_views() catalogue cursor with no read pin, so
+        // a concurrent DROP / invalidate can free this buffer mid-scan: close()
+        // calls Misc.freeObjList(dataMem) then dataMem.clear() (Arrays.fill(null))
+        // before the tier nulls the slot reference, so a slot the tier still sees
+        // as non-null can have its dataMem / auxMem entries nulled underneath this
+        // loop. Bail on the first null rather than NPE the monitoring query; a
+        // freed buffer simply reports whatever it summed before teardown reached it.
         for (int i = 0, n = dataMem.size(); i < n; i++) {
-            sum += dataMem.getQuick(i).size();
+            final MemoryCARWImpl data = dataMem.getQuick(i);
+            if (data == null) {
+                break;
+            }
+            sum += data.size();
             // Add the aux region only for var-size columns; a fixed-width column's
             // aux is the NullMemory stub, whose size() throws.
             if (ColumnType.isVarSize(columnTypes.getQuick(i))) {
-                sum += auxMem.getQuick(i).size();
+                final MemoryCARW aux = auxMem.getQuick(i);
+                if (aux == null) {
+                    break;
+                }
+                sum += aux.size();
             }
         }
         return sum;

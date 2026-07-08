@@ -3874,26 +3874,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
                 long retainThreshold = stagingMaxTs - inMemoryInBaseUnits;
 
-                // Per-row eviction. A slot's trailing leadRowCount rows are the
-                // un-flushed lead (no durable disk copy) and must never age out;
-                // the leading overlap rows are on disk, so they age out once they
-                // fall below latest - IN MEMORY. The lead suffix bounds the tier at
-                // the IN MEMORY window plus the un-flushed lead, and forces a flush
-                // before the lead could span the whole window. In subset mode
-                // leadRowCount is 0, so every row is overlap and ages normally.
+                // Eviction. A slot's trailing leadRowCount rows are the un-flushed
+                // lead (no durable disk copy) and must never age out; the leading
+                // overlap rows are on disk, so they age out once they fall below
+                // latest - IN MEMORY. The lead suffix bounds the tier at the IN
+                // MEMORY window plus the un-flushed lead, and forces a flush before
+                // the lead could span the whole window. In subset mode leadRowCount
+                // is 0, so every row is overlap and ages normally.
+                //
+                // Slot rows are ts-ascending, so the evicted overlap rows form a
+                // prefix [0, k) and the retained rows a contiguous suffix
+                // [k, rowCount) - retained overlap plus the always-kept lead. Binary
+                // search k (lower bound of retainThreshold) over the overlap region,
+                // then bulk-copy the suffix with a single copyRowsFrom - a per-column
+                // memcpy for fixed-width / SYMBOL columns - instead of a scalar
+                // per-row, per-column copy.
                 long leadCount = pubSlot.leadRowCount();
                 long overlapCount = pubSlot.rowCount() - leadCount;
-                for (long r = 0, rn = pubSlot.rowCount(); r < rn; r++) {
-                    long srcTs = pubSlot.getLong(r, tsCol);
-                    boolean isLead = r >= overlapCount;
-                    if (!isLead && srcTs < retainThreshold) {
-                        continue;
+                long lo = 0;
+                long hi = overlapCount;
+                while (lo < hi) {
+                    long mid = (lo + hi) >>> 1;
+                    if (pubSlot.getLong(mid, tsCol) < retainThreshold) {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
                     }
-                    if (writeSeamTs == Numbers.LONG_NULL) {
-                        writeSeamTs = srcTs;
-                    }
-                    writeSlot.copyRowFrom(pubSlot, r, writeRow);
-                    writeRow++;
+                }
+                // lo is the first retained overlap row, or overlapCount when the
+                // whole overlap aged out and only the lead survives.
+                long retainedCount = pubSlot.rowCount() - lo;
+                if (retainedCount > 0) {
+                    writeSeamTs = pubSlot.getLong(lo, tsCol);
+                    writeSlot.copyRowsFrom(pubSlot, lo, pubSlot.rowCount(), 0);
+                    writeRow = retainedCount;
                 }
             }
             // Append staging rows on top. Staging is ts-ascending, so its first row

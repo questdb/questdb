@@ -535,17 +535,21 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         // Live views publish lv_consumed_seqTxn through this purge floor
-        // alongside mat-view consumers. Only dropped views release their floor:
-        // DROP is the visibility cut that frees the base WAL. An INVALID view
-        // keeps holding the floor at its last published value until it is dropped,
-        // so an invalid-and-readable view can be re-CREATEd to fill the gap
-        // without the base WAL having been purged out from under it.
+        // alongside mat-view consumers. Both dropped and invalid views release
+        // their floor, mirroring the mat-view arm above. Invalidation is
+        // terminal for a live view - there is no in-place revalidation path,
+        // the refresh worker permanently skips an invalid view, and its
+        // lvConsumed / head checkpoint would otherwise freeze forever. Keeping
+        // the floor pinned would clamp safeToPurgeTxn to that frozen value and
+        // block base WAL purging indefinitely while the base keeps ingesting.
+        // Re-CREATE requires a DROP first and backfills through an MVCC snapshot
+        // reader, not the raw base WAL, so the retained WAL is never load-bearing.
         liveViewSink.clear();
         final LiveViewRegistry liveViewRegistry = engine.getLiveViewRegistry();
         liveViewRegistry.getViewsForBaseTable(tableToken.getTableName(), liveViewSink);
         for (int v = 0, n = liveViewSink.size(); v < n; v++) {
             final LiveViewInstance instance = liveViewSink.getQuick(v);
-            if (instance.isDropped()) {
+            if (instance.isDropped() || instance.isInvalid()) {
                 continue;
             }
             final long lvConsumed = instance.getStateReader().getLvConsumedSeqTxn();

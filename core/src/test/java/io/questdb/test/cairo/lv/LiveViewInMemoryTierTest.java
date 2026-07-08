@@ -51,6 +51,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -177,6 +178,65 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
                 // Clean up the lingering pin so close() doesn't observe a stale rc.
                 tier.releaseRead(otherPin);
+            }
+        });
+    }
+
+    @Test
+    public void testFootprintBytesToleratesConcurrentClose() throws Exception {
+        // footprintBytes() / publishedRowCount() feed live_views() and run
+        // lock-free off the catalogue cursor with no read pin, so a concurrent
+        // DROP can free the tier mid-scan. freeNativeMemory() closes each buffer -
+        // Misc.freeObjList(dataMem) then dataMem.clear() (Arrays.fill(null)) -
+        // before nulling the slot reference, so a reader that captured the slot
+        // non-null then walked the buffer used to NPE on a nulled dataMem / auxMem
+        // entry. Race many trials of the monitoring reads against close(); a
+        // regression in the buffer's null guards throws.
+        assertMemoryLeak(() -> {
+            final int trials = 100;
+            for (int t = 0; t < trials; t++) {
+                final LiveViewInMemoryTier tier = new LiveViewInMemoryTier(strBinSchema(), 0, PAGE_SIZE);
+                int writeIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(slot);
+                VarSizeRecord rec = new VarSizeRecord();
+                final int rows = 16;
+                for (int r = 0; r < rows; r++) {
+                    rec.of((r + 1) * 1_000_000L, "row-" + r, new TestBinarySequence().of(bytesOf(r + 1, 8)));
+                    slot.copyRowFromRecord(rec, r);
+                }
+                slot.setRowCount(rows);
+                tier.publishSwap(writeIdx);
+
+                final CountDownLatch start = new CountDownLatch(1);
+                final AtomicReference<Throwable> error = new AtomicReference<>();
+                final AtomicBoolean closed = new AtomicBoolean();
+                Thread reader = new Thread(() -> {
+                    try {
+                        start.await();
+                        while (!closed.get()) {
+                            tier.footprintBytes();
+                            tier.publishedRowCount();
+                        }
+                        // One more read after teardown, covering the fully-nulled slots.
+                        tier.footprintBytes();
+                        tier.publishedRowCount();
+                    } catch (Throwable th) {
+                        error.set(th);
+                    }
+                });
+                reader.start();
+                start.countDown();
+                tier.close();
+                closed.set(true);
+                reader.join(TimeUnit.SECONDS.toMillis(10));
+                Assert.assertFalse("reader thread must terminate", reader.isAlive());
+                if (error.get() != null) {
+                    throw new AssertionError(
+                            "monitoring read threw during concurrent close",
+                            error.get()
+                    );
+                }
             }
         });
     }

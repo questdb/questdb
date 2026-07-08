@@ -2479,12 +2479,21 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInvalidatedViewHoldsWalRetentionFloor() throws Exception {
-        // An INVALID live view keeps holding its WAL purge floor at the last
-        // published value until it is dropped (WAL retention coupling). Releasing
-        // it would let the base WAL be purged past the LV's last-applied seqTxn,
-        // foreclosing the invalid-and-readable -> re-CREATE recovery path.
+    public void testInvalidatedViewReleasesWalRetentionFloor() throws Exception {
+        // An INVALID live view releases its WAL purge floor, mirroring the
+        // mat-view arm in WalPurgeJob.getSafeToPurgeUpToTxn. Invalidation is
+        // terminal: there is no in-place revalidation path, the refresh worker
+        // permanently skips an invalid view, and its lvConsumed / head checkpoint
+        // would otherwise freeze forever - clamping safeToPurgeTxn to that frozen
+        // value and blocking base WAL purging indefinitely while the base keeps
+        // ingesting (unbounded WAL growth). Re-CREATE requires a DROP first and
+        // backfills through an MVCC snapshot reader of the applied base table,
+        // not the raw base WAL, so the retained WAL is never load-bearing.
         assertMemoryLeak(() -> {
+            // Pin the clock past epoch + one purge interval so drainPurgeJob's
+            // interval gate actually fires (a clock frozen at epoch skips every
+            // sweep), but below the data so the view still materializes the rows.
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
@@ -2496,26 +2505,37 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             long floorBefore = instance.getStateReader().getLvConsumedSeqTxn();
             Assert.assertTrue("LV must publish an initial floor", floorBefore > -1);
 
-            // A base commit lands in segment 0, above the LV's floor and never
-            // consumed by the view.
+            // Two base commits land in separate segments, both above the LV's
+            // floor and never consumed by the view. The purge only reaps a segment
+            // once a later one exists, so segment 1 must be present for segment 0 to
+            // become eligible.
             execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000000Z', 1)");
             drainWalQueue();
             engine.releaseInactive();
+            execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:01:00.000000Z', 2)");
+            drainWalQueue();
+            engine.releaseInactive();
 
-            // Invalidate the LV. The floor must stay at the last published value.
+            // While the view is still valid, its floor pins segment 0: the
+            // unconsumed seqTxn sits above the floor, so the segment survives.
+            drainPurgeJob();
+            assertSegmentExistence(true, "base", 1, 0);
+
+            // Invalidate the LV. The in-memory floor value is unchanged, but the
+            // purge job now skips this view entirely.
             engine.invalidateLiveView(instance, "test retention floor");
             Assert.assertTrue("LV must be invalid", instance.isInvalid());
             Assert.assertEquals(
-                    "invalid LV must hold its floor at the last published value",
+                    "invalidation does not move the LV's published floor",
                     floorBefore,
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
 
-            // Purge: segment 0 holds the unconsumed seqTxn, which sits above the
-            // held floor, so the segment must survive. Were the floor released on
-            // invalidation, the purge would clamp only to the base head and reap it.
+            // Purge again: with the invalid view's floor released, safeToPurgeTxn
+            // clamps only to the base head, so segment 0 is reaped. Were the floor
+            // still held, the segment would survive as it did above.
             drainPurgeJob();
-            assertSegmentExistence(true, "base", 1, 0);
+            assertSegmentExistence(false, "base", 1, 0);
 
             execute("DROP LIVE VIEW lv");
         });
