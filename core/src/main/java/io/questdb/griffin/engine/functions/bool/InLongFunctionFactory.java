@@ -326,9 +326,15 @@ public class InLongFunctionFactory implements FunctionFactory {
         } else if (longSet != null) {
             // A present long set, or an empty long set that renders as [].
             sink.val(longSet);
-        } else {
+        } else if (intSet != null) {
             // No long set: render the (possibly empty) int set.
             sink.val(intSet);
+        } else {
+            // Both sets absent. Unreachable today - the >=3-arg default arm always
+            // fills at least one set - but render an empty list explicitly rather
+            // than lean on the sink tolerating a null Sinkable, so a future change
+            // to the set-partition invariant keeps rendering [] instead of nothing.
+            sink.val("[]");
         }
     }
 
