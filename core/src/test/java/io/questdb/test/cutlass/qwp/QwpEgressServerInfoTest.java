@@ -69,6 +69,27 @@ public class QwpEgressServerInfoTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testOssServerAdvertisesQueryFlagsCapability() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain ignored = startFragmented()) {
+                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    client.connect();
+                    QwpServerInfo info = client.getServerInfo();
+                    Assert.assertNotNull(info);
+                    // The OSS egress processor parses the query_flags trailer, so
+                    // it must advertise CAP_QUERY_FLAGS; clients only append the
+                    // trailer when this bit is set.
+                    Assert.assertNotEquals(
+                            "OSS server must advertise CAP_QUERY_FLAGS",
+                            0,
+                            info.getCapabilities() & io.questdb.cutlass.qwp.codec.QwpEgressMsgKind.CAP_QUERY_FLAGS
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOssServerReportsStandalone() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain ignored = startFragmented()) {
