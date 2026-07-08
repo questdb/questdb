@@ -824,7 +824,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // See SparseGenSidecarPrefixSum.
             if (coverCount > 0) {
                 int sidecarBase = sidecarPrefixSum.baseOrdinal(
-                        genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount);
+                        genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount, isFrozen());
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
             } else {
                 this.sidecarOrdinal = totalValueCount;
@@ -882,7 +882,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // sibling loadSparseGenByPrefixSum and SparseGenSidecarPrefixSum.
             if (coverCount > 0) {
                 int sidecarBase = sidecarPrefixSum.baseOrdinal(
-                        genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount);
+                        genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount, isFrozen());
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
             } else {
                 this.sidecarOrdinal = totalValueCount;

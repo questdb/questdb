@@ -806,7 +806,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 // counts[] on every cursor open; version-guarded on the gen
                 // snapshot. See SparseGenSidecarPrefixSum.
                 this.sidecarOrdinal = sidecarPrefixSum.baseOrdinal(
-                        genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount);
+                        genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount, isFrozen());
             } else {
                 this.sidecarOrdinal = 0;
             }
@@ -852,7 +852,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 // counts[] on every cursor open; version-guarded on the gen
                 // snapshot. See SparseGenSidecarPrefixSum.
                 this.sidecarOrdinal = sidecarPrefixSum.baseOrdinal(
-                        genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount);
+                        genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount, isFrozen());
             } else {
                 this.sidecarOrdinal = 0;
             }

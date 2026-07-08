@@ -562,6 +562,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 continue;
             }
             cacheBuilderEntries.add(PostingGenLookup.packCacheEntry(g, start));
+            if (coverCount > 0) {
+                // Prime the sidecar prefix-sum memo for this gen NOW: single-threaded and
+                // BEFORE the covering pipeline freezes the reader and dispatches workers.
+                // The frozen worker's loadSparseGen{Direct,ByPrefixSum} calls baseOrdinal for
+                // exactly these cached gens; without priming it would lazily build this
+                // reader-shared row from N threads (the C1 data race). Derive countsBase the
+                // SAME way loadSparseGenDirect does: genAddr + activeKeyCount per-slot counts.
+                final int activeKeyCount = -genLookup.getGenKeyCount(g);
+                final long genAddr = valueMem.addressOf(genLookup.getGenFileOffset(g));
+                final long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
+                sidecarPrefixSum.prime(genLookup.getCacheVersion(), genCount, g, countsBase, activeKeyCount);
+            }
         }
         genLookup.putCacheEntries(key, cacheBuilderEntries);
     }
@@ -3102,9 +3114,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * recompute. The memo stores only integer prefix sums — never a native
      * address — so a resized/remapped valueMem can never leave a dangling pointer.
      * <p>
-     * Not thread-safe: a posting index reader is single-threaded (see the
-     * operating-thread asserts on the cursors), and this memo is only touched from
-     * the {@code loadSparseGen*} paths under that same single-writer discipline.
+     * Concurrency: the memo is built single-threaded and then read-only while
+     * frozen. On the parallel covering-decode path a reader is warmed BEFORE it is
+     * frozen: {@link AbstractPostingIndexReader#populateCacheForKey} primes every
+     * cached sparse gen's row (and {@link AbstractPostingIndexReader#warmForKeys}
+     * force-builds it via a full traverse), so the worker cursors that share this
+     * one memo object over a frozen reader only ever READ it. The {@code frozen}
+     * flag threaded into {@link #baseOrdinal} asserts that no build (or version
+     * drop / grow) happens while frozen — i.e. that priming was complete — turning
+     * a would-be silent data race into a deterministic {@code -ea} failure.
      */
     protected static final class SparseGenSidecarPrefixSum {
         // perGen[gen][slot] = sum(counts[0..slot)) for the sparse gen; a null row
@@ -3114,17 +3132,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         // new gen snapshot was committed, so every cached row is dropped.
         private long version = -1;
 
-        void clear() {
-            if (perGen != null) {
-                Arrays.fill(perGen, null);
-            }
-            version = -1;
-        }
-
         /**
          * O(1) sidecar base ordinal for {@code slot} in {@code gen}, i.e.
-         * {@code sum(counts[0..slot))}. Builds (or rebuilds on a version change)
-         * the gen's prefix row on first use, then reads it directly.
+         * {@code sum(counts[0..slot))}. Reads the gen's prefix row, building it on
+         * first use. On the parallel-decode path the row must already have been
+         * primed single-threaded (see {@link #prime}) before the reader froze; the
+         * {@code frozen} flag asserts that so a missed prime fails deterministically
+         * rather than racing the shared memo.
          *
          * @param cacheVersion   current {@link PostingGenLookup#getCacheVersion()}
          * @param genCount       number of gens visible in the current snapshot
@@ -3135,17 +3149,46 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
          *                       (already computed by the caller from the current
          *                       snapshot's gen file offset)
          * @param activeKeyCount number of slots in the sparse gen
+         * @param frozen         true when called from a frozen reader (a concurrent
+         *                       worker decode); the row must be pre-primed, so no
+         *                       build/version-drop/grow may occur here
          */
-        int baseOrdinal(long cacheVersion, int genCount, int gen, int slot, long countsBase, int activeKeyCount) {
+        int baseOrdinal(long cacheVersion, int genCount, int gen, int slot, long countsBase, int activeKeyCount, boolean frozen) {
+            return rowFor(cacheVersion, genCount, gen, countsBase, activeKeyCount, frozen)[slot];
+        }
+
+        void clear() {
+            if (perGen != null) {
+                Arrays.fill(perGen, null);
+            }
+            version = -1;
+        }
+
+        /**
+         * Force-build the prefix row for {@code gen} single-threaded, BEFORE the
+         * reader is frozen for parallel decode, so later frozen {@link #baseOrdinal}
+         * reads are pure reads with no shared-state mutation across worker threads.
+         */
+        void prime(long cacheVersion, int genCount, int gen, long countsBase, int activeKeyCount) {
+            rowFor(cacheVersion, genCount, gen, countsBase, activeKeyCount, false);
+        }
+
+        // Ensures perGen[gen] exists for the current snapshot and returns it. Mutates
+        // shared state (version reset, grow, row build) only when !frozen; while
+        // frozen (concurrent worker decode over one shared reader) the row must
+        // already have been primed, which the asserts enforce deterministically.
+        private int[] rowFor(long cacheVersion, int genCount, int gen, long countsBase, int activeKeyCount, boolean frozen) {
             if (version != cacheVersion) {
                 // A new gen snapshot was committed since we last built: every
                 // cached row may reference stale offsets/counts. Drop and rebind.
+                assert !frozen : "sidecar memo version changed while frozen";
                 if (perGen != null) {
                     Arrays.fill(perGen, null);
                 }
                 version = cacheVersion;
             }
             if (perGen == null || perGen.length < genCount) {
+                assert !frozen : "sidecar memo grown while frozen";
                 int[][] grown = new int[genCount][];
                 if (perGen != null) {
                     System.arraycopy(perGen, 0, grown, 0, perGen.length);
@@ -3154,6 +3197,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             int[] prefix = perGen[gen];
             if (prefix == null) {
+                // Building here on a frozen reader would be a cross-worker data race on
+                // the shared memo (silent wrong covered values). The row must have been
+                // primed by populateCacheForKey / warmForKeys before the freeze.
+                assert !frozen : "sidecar memo row built while frozen: gen " + gen + " was not primed before parallel decode";
                 // prefix[i] = sum(counts[0..i)); prefix[0] = 0.
                 prefix = new int[activeKeyCount];
                 int acc = 0;
@@ -3163,7 +3210,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 }
                 perGen[gen] = prefix;
             }
-            return prefix[slot];
+            return prefix;
         }
     }
 }

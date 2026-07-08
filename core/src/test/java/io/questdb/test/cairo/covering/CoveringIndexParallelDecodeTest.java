@@ -313,6 +313,66 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCoveredDecodeSparseMultiGenMatchesReference() throws Exception {
+        // C1 regression (review): a single-key covered decode (sym = 'x') is produced metadata-only at
+        // frame production and DECODED ON THE ASYNC WORKERS over a SHARED, frozen posting reader. The
+        // sidecar prefix-sum memo it reads (SparseGenSidecarPrefixSum) must be PRIMED single-threaded
+        // before the freeze (AbstractPostingIndexReader.populateCacheForKey); otherwise the workers build
+        // it lazily from N threads over one shared reader -- a data race that silently corrupts covered
+        // values. This drives that exact path over SPARSE, multi-gen, O3-resealed partitions (so
+        // loadSparseGenDirect -> baseOrdinal fires on the frozen workers) and compares covered decode to
+        // a non-indexed twin. The `frozen` guard in baseOrdinal additionally turns a missed prime into a
+        // deterministic -ea failure rather than a nondeterministic wrong result.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 256);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+
+                // 10 daily partitions, each its own sealed generation. Every gen carries a HIGH-CARDINALITY
+                // background (rnd_symbol over ~2000 keys) so its active keys are a SPARSE subset of the
+                // globally-growing keyspace -> the posting chain picks the SPARSE gen encoding (the
+                // loadSparseGenDirect -> baseOrdinal path), not the dense stride path. A known 'HOT' key is
+                // sprinkled into every partition so a single-key covered decode of it spans many sparse gens.
+                for (int d = 0; d < 10; d++) {
+                    engine.execute("INSERT INTO cov SELECT" +
+                            " dateadd('s', x::int, dateadd('d', " + d + ", '2024-01-01'))::timestamp," +
+                            " case when x%20=0 then 'HOT' else rnd_symbol(2000,4,8,0) end," +
+                            " (x + " + d + "*1000000)::double" +
+                            " FROM long_sequence(10000)", ctx);
+                    engine.releaseAllWriters(); // seal this partition's generation
+                }
+                engine.execute("INSERT INTO ref SELECT * FROM cov", ctx); // exact value twin
+                engine.releaseAllWriters();
+
+                // Prove the covered aggregate actually routes through the ASYNC group-by over the
+                // covering index (i.e. covered px is decoded ON THE WORKERS over a frozen reader) --
+                // otherwise this test would silently exercise a serial path and not guard C1 at all.
+                final StringSink plan = new StringSink();
+                TestUtils.printSql(compiler, ctx, "EXPLAIN SELECT sum(px), count() FROM cov WHERE sym = 'HOT'", plan);
+                final String p = plan.toString();
+                assertTrue("covered agg must route async over the covering index; plan:\n" + p,
+                        (p.contains("Async Group By") || p.contains("Async JIT Group By")) && p.contains("CoveringIndex on: sym"));
+
+                // Covered VALUE decode of the HOT key on the frozen workers, across the sparse gens.
+                // The aggregate routes to the async group-by over the covering index; the projection
+                // takes the parallel record fast-path. Both decode px on the workers.
+                final String agg = "SELECT sum(px), count() FROM %s WHERE sym = 'HOT'";
+                final String residual = "SELECT sum(px), count() FROM %s WHERE sym = 'HOT' AND px > 3000000";
+                final String proj = "SELECT ts, px FROM %s WHERE sym = 'HOT' AND px > 3000000";
+                final String fl = "SELECT first(px), last(px), count() FROM %s WHERE sym = 'HOT'";
+                TestUtils.assertSqlCursors(compiler, ctx, String.format(agg, "ref"), String.format(agg, "cov"), LOG);
+                TestUtils.assertSqlCursors(compiler, ctx, String.format(residual, "ref"), String.format(residual, "cov"), LOG);
+                TestUtils.assertSqlCursors(compiler, ctx, String.format(proj, "ref"), String.format(proj, "cov"), LOG);
+                TestUtils.assertSqlCursors(compiler, ctx, String.format(fl, "ref"), String.format(fl, "cov"), LOG);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testCoveringPlanShowsDecodeStrategyViaFilterShape() throws Exception {
         // Review finding #7: rather than emit a separate decode-strategy attr (which would churn
         // every covering-plan golden test), the strategy is intentionally derivable from the filter
