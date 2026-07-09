@@ -54,6 +54,49 @@ public class WaitProcessorTest {
     private int job1Attempts = 0;
 
     @Test
+    public void testCloseFreesRetryStrandedInOutQueue() {
+        WaitProcessor processor = createProcessor();
+        final int[] closed = {0};
+        Retry retry = new Retry() {
+            private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
+
+            @Override
+            public void close() {
+                closed[0]++;
+            }
+
+            @Override
+            public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public RetryAttemptAttributes getAttemptDetails() {
+                return attemptAttributes;
+            }
+
+            @Override
+            public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+                throw new UnsupportedOperationException("retry must not run; it is stranded in the out queue");
+            }
+        };
+
+        processor.reschedule(retry);
+        // inQueue -> nextRerun; the first retry is due at now + 2ms.
+        processor.runSerially();
+        // Advance past that delay so the next runSerially() promotes it nextRerun -> outQueue.
+        currentTimeMs += 10;
+        processor.runSerially();
+        // Deliberately skip runReruns(): the retry now sits in the out queue, the exact state
+        // a shutdown catches once the worker pool has halted and no longer drains it.
+        Assert.assertEquals("retry must still be parked, not yet freed", 0, closed[0]);
+
+        processor.close();
+
+        Assert.assertEquals("close() must free the retry stranded in the out queue", 1, closed[0]);
+    }
+
+    @Test
     public void testMultipleRetriesExecutedSameCountOverSamePeriod() {
         WaitProcessor processor = createProcessor();
         int[] jobAttempts = new int[10];

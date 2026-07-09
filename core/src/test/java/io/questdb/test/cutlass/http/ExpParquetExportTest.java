@@ -375,6 +375,29 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testExpCsvExportPivotProtectedColumnNames() throws Exception {
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE data (grp INT, cat STRING, val INT)", sqlExecutionContext);
+                    engine.execute("INSERT INTO data VALUES (1,'in',10),(1,'and',20),(2,'in',30),(2,'and',40)", sqlExecutionContext);
+
+                    // Operator-token pivot columns are quote-protected internally; the CSV export
+                    // must emit clean, ordinary CSV-quoted headers ("in","and"), not the protective
+                    // quotes escaped into the name ("""in""","""and""") - a regression for the leak.
+                    String expectedCsv = """
+                            "grp","in","and"\r
+                            1,10,20\r
+                            2,30,40\r
+                            """;
+
+                    CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                    params.put("query", "data PIVOT (sum(val) FOR cat IN ('in','and') GROUP BY grp) ORDER BY grp");
+                    params.put("format", "csv");
+                    testHttpClient.assertGet("/exp", expectedCsv, params, null, null);
+                });
+    }
+
+    @Test
     public void testExpCsvExportStillWorks() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
