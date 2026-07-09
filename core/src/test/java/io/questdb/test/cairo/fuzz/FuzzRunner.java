@@ -82,6 +82,7 @@ import org.junit.Before;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
@@ -536,8 +537,11 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
+        // getTableMetadata reloads the table _meta and can hit the same transient read timeout as a
+        // reader open while a structural change applies; getLegacyMetadata reads the sequencer from
+        // memory and cannot, so only the table-metadata open needs the retry.
         try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
-             TableMetadata tableMetadata = engine.getTableMetadata(tableToken)
+             TableMetadata tableMetadata = openWithRetries(() -> engine.getTableMetadata(tableToken), false)
         ) {
             return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
         }
@@ -1226,25 +1230,36 @@ public class FuzzRunner {
         return engine.getReader(engine.verifyTableName(tableName));
     }
 
-    // Opens a reader, retrying the transient failures seen when the table is concurrently mutated:
-    // dropped / name reserved / entry locked, or a metadata-read timeout while a structural change applies.
+    // Concurrent-read reader open: on top of the read-timeout retry, also waits out the table being
+    // concurrently dropped and recreated (dropped / name reserved / entry locked).
     private TableReader getReaderWithRetries(String tableName) {
-        int metadataTimeoutRetries = 10;
+        return openWithRetries(() -> getReader(tableName), true);
+    }
+
+    // Retries a table-resource open past the read timeouts (metadata / transaction / column version) that
+    // a reader or metadata open hits while a structural change is mid-apply (10x, 100ms backoff). With
+    // tolerateTableRecreate it also waits out a dropped / name-reserved / entry-locked table; otherwise
+    // those surface immediately, so setup and verify callers - whose table is never concurrently dropped -
+    // fail fast on a genuine error instead of spinning forever.
+    private <T> T openWithRetries(Supplier<T> open, boolean tolerateTableRecreate) {
+        int readTimeoutRetries = 10;
         while (true) {
             try {
-                return getReader(tableName);
+                return open.get();
             } catch (CairoException e) {
-                if (Chars.contains(e.getFlyweightMessage(), "table does not exist")
-                        || Chars.contains(e.getFlyweightMessage(), "table name is reserved")
-                        || e instanceof EntryLockedException) {
-                    LOG.error().$((Throwable) e).$();
-                    Os.sleep(10);
-                } else if (Chars.contains(e.getFlyweightMessage(), "Metadata read timeout")) {
-                    if (--metadataTimeoutRetries < 0) {
+                CharSequence message = e.getFlyweightMessage();
+                if (Chars.contains(message, "read timeout")) {
+                    if (--readTimeoutRetries < 0) {
                         throw e;
                     }
-                    LOG.error().$("metadata read timeout, retrying [remainingRetries=").$(metadataTimeoutRetries).$("]").$((Throwable) e).$();
+                    LOG.error().$("read timeout opening table resource, retrying [remainingRetries=").$(readTimeoutRetries).$("]").$((Throwable) e).$();
                     Os.sleep(100);
+                } else if (tolerateTableRecreate
+                        && (Chars.contains(message, "table does not exist")
+                        || Chars.contains(message, "table name is reserved")
+                        || e instanceof EntryLockedException)) {
+                    LOG.error().$((Throwable) e).$();
+                    Os.sleep(10);
                 } else {
                     throw e;
                 }
@@ -1382,7 +1397,7 @@ public class FuzzRunner {
     }
 
     protected void assertStringColDensity(String tableNameWal) {
-        try (TableReader reader = getReaderWithRetries(tableNameWal)) {
+        try (TableReader reader = openWithRetries(() -> getReader(tableNameWal), false)) {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
@@ -1412,7 +1427,7 @@ public class FuzzRunner {
         String[] symbols = new String[totalSymbols];
         int symbolIndex = 0;
 
-        try (TableReader reader = getReaderWithRetries(baseSymbolTableName)) {
+        try (TableReader reader = openWithRetries(() -> getReader(baseSymbolTableName), false)) {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
