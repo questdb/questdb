@@ -392,6 +392,77 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyLagBackOffClearsEarlyWhenBaseAppliesBeforeFloor() throws Exception {
+        // The apply-lag back-off floor is only an anti-spin bound; the real
+        // precondition is the base applying past the seqTxn that forced the defer.
+        // When apply catches up while the clock is still strictly BELOW the floor,
+        // the pre-latch guard in LiveViewRefreshJob.refreshInstance must re-check
+        // getWriterTxn against the armed target, clear the floor, and drain this
+        // tick rather than stall until the wall-clock floor elapses - which a
+        // frozen test clock never crosses. The companion
+        // testApplyLagBackOffThrottlesRedrainWithinWindow proves the throttle
+        // engages while apply still lags; this proves the early clear fires the
+        // moment apply catches up. Reverting the early-clear re-check leaves the
+        // pre-latch guard a plain clock comparison, so under the frozen clock the
+        // deferred row never converges and the assertions below fail.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Establish the coupled frontier with a fully applied first row.
+                execute("INSERT INTO base (sym, val, ts) VALUES ('a', 10, '2026-01-01T00:00:01.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final long processedAfterFirst = instance.getLastProcessedSeqTxn();
+
+                // Commit a second row to the sequencer but do NOT apply it: the
+                // coupled drainAppliedBase gate observes the apply lag and the
+                // cooperative unwind arms the back-off floor at now + backOffUs.
+                final long deferArmedAtUs = 2_000_000L;
+                final long backOffUs = 5_000L; // APPLY_LAG_DEFER_BACKOFF_US
+                setCurrentMicros(deferArmedAtUs);
+                execute("INSERT INTO base (sym, val, ts) VALUES ('b', 20, '2026-01-01T00:00:02.000000Z')");
+                drainJob(job);
+                Assert.assertEquals("apply-lag defer must arm a back-off floor",
+                        deferArmedAtUs + backOffUs, instance.getApplyLagDeferUntilUs());
+                Assert.assertEquals("watermark must not advance while deferred",
+                        processedAfterFirst, instance.getLastProcessedSeqTxn());
+
+                // Apply the base commit so getWriterTxn passes the armed target,
+                // but keep the clock frozen strictly BELOW the floor. The re-entry
+                // now finds apply caught up: the pre-latch guard must clear the
+                // floor early and drain this tick.
+                drainWalQueue();
+                Assert.assertTrue("clock must stay below the floor to isolate the early clear",
+                        engine.getConfiguration().getMicrosecondClock().getTicks() < deferArmedAtUs + backOffUs);
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertFalse("early-clear convergence must not invalidate the view", instance.isInvalid());
+                Assert.assertEquals("apply catching up below the floor must clear it early",
+                        Numbers.LONG_NULL, instance.getApplyLagDeferUntilUs());
+                Assert.assertTrue("the deferred row must be processed after the early clear",
+                        instance.getLastProcessedSeqTxn() > processedAfterFirst);
+            }
+            // Both rows land in ts order with a gapless row_number sequence.
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("sym\tval\tts\trn\n" +
+                            "a\t10\t2026-01-01T00:00:01.000000Z\t1\n" +
+                            "b\t20\t2026-01-01T00:00:02.000000Z\t2\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testBaseTruncateFreezesDerivedPrefix() throws Exception {
         // A base TRUNCATE below the frontier is a data-shaped non-DATA commit
         // (walId>0, isDataType=false): the WAL-E walk excludes it from batchMinTs, so

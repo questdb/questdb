@@ -14831,6 +14831,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // testRestartRestoresRankFromHeadCheckpoint; this case isolates the codec
         // round-trip on the function level so a regression in the chain-prefix
         // serializer surfaces here before the integration test sees it.
+        //
+        // The check is byte-exact, not partition-count-only: after toTop() drops
+        // the whole map it restores from the captured bytes and re-serialises,
+        // requiring the second image to match the first byte-for-byte. A
+        // partition-count check alone would miss a slot-offset regression in the
+        // chain-prefix serializer that still restores the right number of keys.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -14854,20 +14860,176 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertTrue("rank reports snapshot capability after 2b.1b", rankFn.supportsSnapshot());
             Assert.assertEquals(2L, rankFn.getPartitionMap().size());
 
-            try (MemoryCARW buf = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                LiveViewFunctionSnapshot.write(buf, rankFn);
-                final long snapshotBytes = buf.getAppendOffset();
+            try (MemoryCARW s1 = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                 MemoryCARW s2 = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                LiveViewFunctionSnapshot.write(s1, rankFn);
+                final long snapshotBytes = s1.getAppendOffset();
                 Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
-                // Clear the function's map and restore from the captured bytes.
-                rankFn.getPartitionMap().clear();
+                // toTop drops the map and every per-partition slot; restore must
+                // rebuild the rank, count, and chain-prefix bytes from the image.
+                rankFn.toTop();
                 Assert.assertEquals(0L, rankFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(buf, 0L, snapshotBytes, rankFn, rankFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, rankFn, rankFn.snapshotFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
                         rankFn.getPartitionMap().size()
                 );
+                // Re-serialise the restored map. A byte-exact match proves the
+                // chain-prefix + rank + count slots round-tripped by value, not
+                // just by partition count.
+                LiveViewFunctionSnapshot.write(s2, rankFn);
+                Assert.assertEquals(snapshotBytes, s2.getAppendOffset());
+                for (long i = 0; i < snapshotBytes; i++) {
+                    Assert.assertEquals("rank snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                }
             }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRowNumberOverPartitionSnapshotRoundTrip() throws Exception {
+        // row_number() over a PARTITION BY keeps a single [rowNumber: LONG] value
+        // slot per partition (the tombstone BYTE at slot 1 is anchor-compaction
+        // scratch and is not serialised). This isolates the codec round-trip at
+        // the function level and reads the restored per-partition counters back
+        // out through the map cursor, so a value-mapping regression in the slot
+        // codec - not just a partition-count drift - surfaces here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // All rows share one anchor day, so the counters never reset:
+                // 'a' reaches row_number 3, 'b' reaches 2. Sum 5.
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 5.0, 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 50.0, 'a'), " +
+                        "('2026-08-01T02:00:00.000000Z', 20.0, 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 7.0, 'b'), " +
+                        "('2026-08-01T01:00:00.000000Z', 11.0, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, rn FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns("ts\tsym\trn\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t2\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t3\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t1\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t2\n");
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction rnFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertTrue(rnFunc.supportsSnapshot());
+                Map fnMap = rnFunc.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(sink, rnFunc);
+                    rnFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), rnFunc, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    // Sum the restored per-partition counters: 3 ('a') + 2 ('b').
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
+                    long total = 0;
+                    while (mc.hasNext()) {
+                        total += rec.getValue().getLong(0);
+                    }
+                    Assert.assertEquals(5L, total);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartRestoresRowNumberFromHeadCheckpoint() throws Exception {
+        // End-to-end counterpart to testRowNumberOverPartitionSnapshotRoundTrip:
+        // a refresh cycle writes a head .cp, a simulated restart re-discovers it,
+        // and the first post-restart refresh tick rehydrates row_number's
+        // partition map. Mirrors testRestartRestoresRankFromHeadCheckpoint, but
+        // reads the restored per-partition counters back out of the map so a
+        // value-mapping regression in the .cp restore path - not just a
+        // partition-count drift - fails the assertion.
+        //
+        // The post-restart-then-new-commit scenario is intentionally NOT covered:
+        // getIncrementalCursor's pre-existing toTop chain wipes the function maps
+        // at the start of each refresh cycle, so a new commit immediately after
+        // restore would discard the rehydrated state (the same limitation
+        // testRestartRestoresRankFromHeadCheckpoint documents).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Single anchor day: 'a' reaches row_number 3, 'b' reaches 2.
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-09-01T02:00:00.000000Z', 'a', 4.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 3.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'b', 5.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp must be written for a snapshot-capable row_number LV",
+                        Numbers.LONG_NULL,
+                        preHeadLvSeqTxn
+                );
+                Assert.assertEquals(
+                        "two partition keys seeded pre-restart",
+                        2L,
+                        instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            // The success + unchanged-seqTxn asserts prove the counters below flow
+            // from the restored map, not from a head-miss replay recompute.
+            Assert.assertTrue(
+                    "head .cp restore must rehydrate row_number, not fall back to a head-miss replay",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            Map fnMap = reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap();
+            Assert.assertEquals("row_number's partition map rehydrates its partition count", 2L, fnMap.size());
+            MapRecordCursor mc = fnMap.getCursor();
+            MapRecord rec = fnMap.getRecord();
+            long total = 0;
+            while (mc.hasNext()) {
+                total += rec.getValue().getLong(0);
+            }
+            Assert.assertEquals("row_number counters rehydrate to their pre-restart values (3 + 2)", 5L, total);
 
             execute("DROP LIVE VIEW lv");
         });

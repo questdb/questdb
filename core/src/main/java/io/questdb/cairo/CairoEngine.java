@@ -455,8 +455,12 @@ public class CairoEngine implements Closeable, WriterSource {
      * snapshot, so it clears the pass-count check and is rejected here - and, lacking a
      * partition Map, it is never live-view-eligible, so this reject is permanent. The
      * partitioned ZERO_PASS aggregate frame shapes - including the full DECIMAL aggregate
-     * window family - are migrated to the snapshot contract and accepted; only these
-     * un-partitioned shapes still reach this reject. The pass-count reject, by contrast, is
+     * window family - are migrated to the snapshot contract and accepted. A partitioned
+     * {@code rank()} / {@code dense_rank()} whose ORDER BY key is a wide-fixed type
+     * (UUID / LONG256 / DECIMAL) also reaches this reject: its chain-prefix slots restore
+     * through MapValue setters that cover only narrow fixed-width types, so
+     * {@code supportsSnapshot()} stays false even though it does carry a partition Map. The
+     * pass-count reject, by contrast, is
      * defensive - multi-pass / lead / percent_rank shapes compile to a cached factory and
      * are caught upstream by {@link #validateLiveViewFactory}, so no GA function reaches
      * it; a ZERO_PASS stub lacking snapshot support is the only way to exercise its wording.
