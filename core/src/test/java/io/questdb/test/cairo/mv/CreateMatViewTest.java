@@ -600,7 +600,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("create materialized view test as (" + query + ") partition by day")
                     .noLeakCheck()
                     .fails(34, "TIMESTAMP column does not exist or not present in select list [name=ts]");
-            assertNull(getMatViewDefinition("testView"));
+            assertNull(getMatViewDefinition("test"));
         });
     }
 
@@ -756,7 +756,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("create materialized view test_view as (" + query + ") partition by month")
                     .noLeakCheck()
                     .fails(39, "materialized view query is required to have designated timestamp");
-            assertNull(getMatViewDefinition("testView"));
+            assertNull(getMatViewDefinition("test_view"));
         });
     }
 
