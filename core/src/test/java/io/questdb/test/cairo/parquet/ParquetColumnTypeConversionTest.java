@@ -46,12 +46,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Tests lazy column type conversion on parquet partitions.
+ * Tests column type conversion on parquet partitions.
  * <p>
  * When a column type changes via ALTER TABLE ALTER COLUMN TYPE while a partition is
- * stored in parquet, the Rust parquet decoder converts data on-the-fly during queries.
- * This test verifies that the parquet (Rust) conversion path produces the same results
- * as the native (JNI) conversion path for all supported type pairs.
+ * stored in parquet, the partition is re-encoded to the new type at ALTER time. This
+ * test verifies that the parquet conversion path produces the same results as the
+ * native (JNI) conversion path for all supported type pairs.
  * <p>
  * Rust-handled conversions tested here:
  * <ul>
@@ -69,7 +69,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     @Test
     public void testAddColumnAfterParquetConversionReadsNullThenAltersType() throws Exception {
         // ADD COLUMN fires AFTER the partition is parquet, so the parquet file
-        // never carries the new column. The lazy decoder must surface NULL for
+        // never carries the new column. The reader must surface NULL for
         // all existing rows (column-top covers the whole partition), and a
         // subsequent ALTER COLUMN TYPE on that column must keep the NULLs
         // matching the native control table.
@@ -132,7 +132,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     @Test
     public void testAllNullColumnInParquetConvertsToTargetNulls() throws Exception {
         // A partition where one column is entirely NULL must round-trip NULLs
-        // through both the lazy parquet read and the eager rewrite, regardless
+        // through both the parquet read and the eager rewrite, regardless
         // of source and target type. Covers fixed-source, var-source, and
         // var-target paths.
         assertMemoryLeak(() -> {
@@ -156,12 +156,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Regression for the {@code getVarcharSize} override gap. {@code length_bytes(val)}
-     * routes through {@code LengthBytesVarcharFunctionFactory.getInt} which calls
-     * {@code arg.getVarcharSize(rec)}.
-     * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord#getVarcharSize(int)}
-     * reads the aux page without consulting {@code needsLazyConversion}, mirroring the
-     * {@code getStrLen} gap.
+     * Value parity for {@code length_bytes(val)} over a parquet column ALTERed from a fixed
+     * type to VARCHAR: {@code LengthBytesVarcharFunctionFactory.getInt} calls
+     * {@code getVarcharSize(rec)} on the filtered record. The eager re-encode stores
+     * {@code val} as VARCHAR, so the read is direct and must match the native control.
      */
     @Test
     public void testAsyncGroupByByLengthBytesOfFixedToVarcharParquetColumn() throws Exception {
@@ -172,15 +170,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Regression for the {@code getStrLen} override gap. {@code length(val)} routes
-     * through {@code LengthStrFunctionFactory.getInt} which calls
-     * {@code arg.getStrLen(rec)}. With {@code val} on the fixed-to-STRING lazy conversion
-     * path,
-     * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord#getStrLen(int)} fires
-     * instead of the parent. The filtered override reads the aux page directly and
-     * does NOT check {@code needsLazyConversion}, so for a fixed-source column where
-     * no STRING aux page exists, it either returns {@code TableUtils.NULL_LEN} or
-     * reads garbage. The GROUP BY result diverges from the native control table.
+     * Value parity for {@code length(val)} over a parquet column ALTERed from a fixed type
+     * to STRING: {@code LengthStrFunctionFactory.getInt} calls {@code getStrLen(rec)} on the
+     * filtered record. The eager re-encode stores {@code val} as STRING, so the read is
+     * direct and the GROUP BY result must match the native control table.
      */
     @Test
     public void testAsyncGroupByByLengthOfFixedToStrParquetColumn() throws Exception {
@@ -191,35 +184,17 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Regression for the fixed-to-var typecast read in {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}.
+     * Value parity for the async keyed group-by over a parquet column ALTERed from INT to
+     * STRING.
      * <p>
-     * {@code val} starts as INT, the partition is converted to parquet, then {@code val}
-     * is ALTERed to STRING. Reads on the parquet partition take the fixed-to-var lazy
-     * conversion path ({@code sourceColumnTypes[val] >= 0}, {@code hasTypeCasts=true}).
-     * <p>
-     * The query groups by {@code val} and filters on a separate non-typecast column
-     * {@code other}. This sequences the code path under test:
-     * <ol>
-     *   <li>{@code AsyncGroupByRecordCursorFactory.run} sees
-     *       {@code frameMemory.hasColumnTypeCasts()} and falls back to the scalar filter,
-     *       calling {@code populateRemainingColumns(filterColumnIndexes, rows, false)}
-     *       which decodes non-filter columns in compacted layout.</li>
-     *   <li>{@code aggregateFilteredNonSharded} wraps the frame in a
-     *       {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}, where
-     *       {@code filteredColumns[val]=false} since {@code val} is the GROUP BY key,
-     *       not the filter target.</li>
-     *   <li>The map sink calls {@code getStrA(val)}. {@code PageFrameFilteredMemoryRecord}
-     *       does NOT override {@code getStrA} (or {@code getStrB}), so the call falls
-     *       through to the parent {@link io.questdb.cairo.sql.PageFrameMemoryRecord},
-     *       which routes to {@code convertFixedToStr} and indexes by the parent's
-     *       absolute {@code rowIndex} field rather than {@code getRowIndex(columnIndex)}
-     *       (which would return the compacted index).</li>
-     *   <li>The non-filter column buffer holds only {@code rows.size()} entries in
-     *       compacted layout, so the absolute-index read goes out of bounds.</li>
-     * </ol>
-     * A miss on this path surfaces as wrong GROUP BY keys (silent data corruption)
-     * or a JVM crash on native OOB. The control table {@code nt} is native; the
-     * parquet+ALTER table {@code pt} must produce an identical cursor.
+     * The query groups by {@code val} and filters on a separate column {@code other}, so
+     * {@code val} is a non-filter GROUP BY key that
+     * {@code AsyncGroupByRecordCursorFactory} reads in compacted layout through a
+     * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord} (the filtered record reads
+     * non-filter columns at the compacted index). The map sink calls {@code getStrA(val)}.
+     * The eager re-encode stores {@code val} as STRING, so the read is direct; the
+     * parquet+ALTER table {@code pt} must produce a cursor identical to the native control
+     * {@code nt}.
      */
     @Test
     public void testAsyncGroupByKeyedByFixedToStrParquetColumn() throws Exception {
@@ -230,11 +205,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Same regression as {@link #testAsyncGroupByKeyedByFixedToStrParquetColumn} but for
-     * fixed-to-VARCHAR. {@code PageFrameFilteredMemoryRecord} does not override
-     * {@code getVarcharA} / {@code getVarcharB}, so the call falls through to the parent
-     * which routes to {@code convertFixedToVarchar} and indexes by the absolute rowIndex
-     * into the compacted buffer.
+     * Same as {@link #testAsyncGroupByKeyedByFixedToStrParquetColumn} but for
+     * fixed-to-VARCHAR: {@code val} is a non-filter GROUP BY key read through the filtered
+     * record via {@code getVarcharA} / {@code getVarcharB}; the re-encoded parquet must
+     * match the native control.
      */
     @Test
     public void testAsyncGroupByKeyedByFixedToVarcharParquetColumn() throws Exception {
@@ -246,24 +220,14 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * Mirror of {@link #testAsyncGroupByKeyedByFixedToStrParquetColumn} in the reverse
-     * direction: var-to-fixed. {@code val} starts as STRING, the partition is converted to
-     * parquet, then {@code val} is ALTERed to INT. On {@code pt} the parquet keeps STRING
-     * storage so reads of {@code val} take the var-to-fixed lazy conversion path
-     * ({@code sourceColumnTypes[val] < -1}, {@code hasTypeCasts=true}).
+     * direction: {@code val} starts as STRING, the partition is converted to parquet, then
+     * {@code val} is ALTERed to INT. The eager re-encode stores {@code val} as INT.
      * <p>
-     * The query groups by {@code val} and filters on a separate non-typecast column
-     * {@code other}, so {@code val} is a non-filter column in compacted layout under
+     * The query groups by {@code val} and filters on a separate column {@code other}, so
+     * {@code val} is a non-filter GROUP BY key read in compacted layout through a
      * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}. The map sink calls
-     * {@code getInt(val)} on the filtered record. The override delegates to
-     * {@code super.getInt}, which routes through {@code convertVarToInt} ->
-     * {@code readVarValueForConversion} -> {@code getStr0} / {@code getVarchar}. The
-     * latter pair is overridden on the filtered record to use {@code getRowIndex},
-     * so the compacted index reaches the read. This pins the routing: a future
-     * regression that adds a fall-through path inside a fixed-width lazy getter
-     * which reads {@code this.rowIndex} directly (mirroring the
-     * {@code convertFixedToStr}/{@code convertFixedToVarchar} path that
-     * {@code getStrA}/{@code getVarcharA} already wrap with save/restore of
-     * {@code rowIndex}) would break this query.
+     * {@code getInt(val)}; the re-encoded parquet must produce a cursor identical to the
+     * native control.
      */
     @Test
     public void testAsyncGroupByKeyedByStrToIntParquetColumn() throws Exception {
@@ -274,9 +238,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * The async keyed group-by factory. Same {@code hasColumnTypeCasts()} gate. The
-     * difference vs the not-keyed variant is that a {@code GROUP BY} key is materialized
-     * per row and the per-key aggregation update path runs.
+     * The async keyed group-by factory over an altered parquet column. The difference vs
+     * the not-keyed variant is that a {@code GROUP BY} key is materialized per row and the
+     * per-key aggregation update path runs.
      */
     @Test
     public void testAsyncGroupByKeyedOverAlteredParquetColumn() throws Exception {
@@ -287,12 +251,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * The async not-keyed group-by factory runs an aggregation without a {@code GROUP BY}
-     * clause. Its inner loop checks {@code frameMemory.hasColumnTypeCasts()} and falls back
-     * to a row-by-row update path when {@code true}; the batched / vectorized aggregation
-     * path reads raw page addresses and would silently produce wrong values if the parquet
-     * column needs lazy conversion. The control table {@code nt} is native; {@code pt} is a
-     * parquet partition with {@code val} ALTER'd from STRING to INT, which sets
-     * {@code hasTypeCasts=true} (var to fixed). Results across both tables must match.
+     * clause, reading raw page addresses in its batched / vectorized aggregation path. The
+     * eager re-encode stores {@code val} at its current type, so those reads are correct.
+     * The control table {@code nt} is native; {@code pt} is a parquet partition with
+     * {@code val} ALTER'd from STRING to INT. Results across both tables must match.
      */
     @Test
     public void testAsyncGroupByNotKeyedOverAlteredParquetColumn() throws Exception {
@@ -321,7 +283,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * The async horizon-join factory with no {@code GROUP BY} keys -- a single aggregated
      * output row. The left side is the parquet+ALTER'd table; the right side is a native
-     * shared {@code prices} table. The aggregation references the lazy-converted {@code val}.
+     * shared {@code prices} table. The aggregation references the altered {@code val}.
      */
     @Test
     public void testAsyncHorizonJoinNotKeyedOverAlteredParquetColumn() throws Exception {
@@ -335,9 +297,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * The async JIT-filtered factory. When parquet needs a lazy conversion, the JIT'ed
-     * filter cannot be applied directly to the parquet page bytes -- the factory must
-     * fall back to scalar filter evaluation through {@code PageFrameMemoryRecord}.
+     * The async JIT-filtered factory over an altered parquet column. The eager re-encode
+     * stores {@code val} at its current type, so the JIT'ed filter applies directly to the
+     * parquet page bytes; the result must match the native control.
      */
     @Test
     public void testAsyncJitFilteredOverAlteredParquetColumn() throws Exception {
@@ -347,7 +309,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * The async multi-horizon-join factory with {@code GROUP BY} keys. Same gate as the
+     * The async multi-horizon-join factory with {@code GROUP BY} keys. Same as the
      * not-keyed variant; selects {@code AsyncMultiHorizonJoinRecordCursorFactory}.
      */
     @Test
@@ -371,10 +333,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * aggregated output row. Two HORIZON JOIN clauses share a single offset {@code LIST},
      * which routes the query through {@code AsyncMultiHorizonJoinNotKeyedRecordCursorFactory}.
      * The {@code WHERE t.val > 50} predicate is JIT-compiled against the current INT
-     * metadata, but the parquet frame still stores {@code val} as STRING. The factory
-     * must consult {@code hasColumnTypeCasts()} and fall back to the scalar filter;
-     * applying the compiled filter directly would read VARCHAR aux bytes as INT and
-     * select wrong rows. The parity check against the native control pins this gate.
+     * metadata; the eager re-encode stores {@code val} as INT, so the compiled filter
+     * applies directly to the parquet page bytes. The parity check against the native
+     * control pins this.
      */
     @Test
     public void testAsyncMultiHorizonJoinNotKeyedOverAlteredParquetColumn() throws Exception {
@@ -391,9 +352,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * The async top-K factory orders by {@code val} with a {@code LIMIT}. Its vectorized
-     * comparator path reads {@code val} via the column page address; with a lazy var to
-     * fixed conversion in parquet, only the scalar fallback materializes the converted
-     * integer.
+     * comparator path reads {@code val} via the column page address; the eager re-encode
+     * stores {@code val} at its current type, so the read is direct and must match the
+     * native control.
      */
     @Test
     public void testAsyncTopKOverAlteredParquetColumn() throws Exception {
@@ -404,11 +365,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * Sibling of {@link #testAsyncTopKSingleKeyOverAlteredParquetColumn()} for the STRING key
-     * shape: a single-column ORDER BY ... LIMIT over a lazily fixed-to-STRING converted parquet
-     * column routes through {@code SortKeyEncoder.encodeStringBatch}. For a natively-stored STRING
-     * that batch reads {@code frameMemory.getPageAddress(...)} plus the aux page straight, but with
-     * an INT-to-STRING lazy cast the parquet still stores INT, so the data page holds raw INT bytes
-     * rather than a native STRING layout. The batch must fall back to the per-row converting path.
+     * shape: a single-column ORDER BY ... LIMIT over a parquet column ALTERed from INT to
+     * STRING routes through {@code SortKeyEncoder.encodeStringBatch}, which reads
+     * {@code frameMemory.getPageAddress(...)} plus the aux page straight. The eager re-encode
+     * stores {@code val} as STRING, so the batch reads the native STRING layout directly and
+     * must match the native control.
      */
     @Test
     public void testAsyncTopKSingleKeyFixedToStrParquetColumn() throws Exception {
@@ -420,12 +381,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * Sibling of {@link #testAsyncTopKSingleKeyOverAlteredParquetColumn()} for the VARCHAR key
-     * shape: a single-column ORDER BY ... LIMIT over a lazily fixed-to-VARCHAR converted parquet
-     * column routes through {@code SortKeyEncoder.encodeVarcharBatch}. Unlike the fixed/string/wide
-     * siblings, that batch already special-cases parquet, and for an INT-to-VARCHAR cast the parquet
-     * keeps the INT storage so the column has no aux page ({@code auxAddr == 0}); the batch declines
-     * and the per-row converting path runs. This pins that contract for the one batch shape the fix
-     * leaves unchanged.
+     * shape: a single-column ORDER BY ... LIMIT over a parquet column ALTERed from INT to
+     * VARCHAR routes through {@code SortKeyEncoder.encodeVarcharBatch}. The eager re-encode
+     * stores {@code val} as VARCHAR, so the batch reads the native VARCHAR layout directly and
+     * must match the native control.
      */
     @Test
     public void testAsyncTopKSingleKeyFixedToVarcharParquetColumn() throws Exception {
@@ -439,8 +398,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * No-filter variant of {@link #testAsyncTopKSingleKeyOverAlteredParquetColumn()}: with no
      * WHERE predicate the async top-K routes through {@code findTopK} rather than
      * {@code filterAndFindTopK}, so {@code SortKeyEncoder.encodeFrame} runs with a null
-     * {@code rows} list (the whole-frame scan). This pins the {@code rows == null} branch of the
-     * lazy-cast fallback in the fixed-width batch path.
+     * {@code rows} list (the whole-frame scan). This pins the {@code rows == null} branch of
+     * the fixed-width batch path.
      */
     @Test
     public void testAsyncTopKSingleKeyNoFilterOverAlteredParquetColumn() throws Exception {
@@ -451,17 +410,14 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Single-column ORDER BY ... LIMIT over a lazily var-to-fixed converted parquet column.
+     * Single-column ORDER BY ... LIMIT over a parquet column ALTERed from STRING to LONG.
      * Unlike {@link #testAsyncTopKOverAlteredParquetColumn()} (a two-column key that routes to
-     * {@code SortKeyEncoder.encodeGeneric}, i.e. the per-row converting record path), a
-     * single-column fixed-width sort key takes the batch path
+     * {@code SortKeyEncoder.encodeGeneric}, the per-row record path), a single-column
+     * fixed-width sort key takes the batch path
      * {@code SortKeyEncoder.encodeFixed8Batch}/{@code encodeFixedWideBatch}/{@code encodeStringBatch},
      * which read {@code frameMemory.getPageAddress(...)} raw and only fall back on a column top
-     * ({@code colAddr == 0}). {@code AsyncTopKRecordCursorFactory} gates only its filter on
-     * {@code frameMemory.hasColumnTypeCasts()}, not the {@code encoder.encodeFrame(...)} call, so
-     * the batch reads the VARCHAR_SLICE source buffer as raw longs and the top-K diverges from the
-     * native control. Only {@code encodeVarcharBatch} guards on {@code PartitionFormat.PARQUET}; the
-     * fixed/wide/string batch siblings do not.
+     * ({@code colAddr == 0}). The eager re-encode stores {@code val} as LONG, so the batch
+     * reads the correct fixed bytes and the top-K must match the native control.
      */
     @Test
     public void testAsyncTopKSingleKeyOverAlteredParquetColumn() throws Exception {
@@ -473,10 +429,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * Sibling of {@link #testAsyncTopKSingleKeyOverAlteredParquetColumn()} for the wide-fixed key
-     * shape: a single-column ORDER BY ... LIMIT over a lazily STRING-to-UUID converted parquet
-     * column routes through {@code SortKeyEncoder.encodeFixedWideBatch}. The parquet keeps the
-     * STRING storage, so the column page is a VARCHAR_SLICE buffer; reading it as raw 16-byte UUID
-     * values yields garbage. The batch must fall back to the per-row converting path.
+     * shape: a single-column ORDER BY ... LIMIT over a parquet column ALTERed from STRING to
+     * UUID routes through {@code SortKeyEncoder.encodeFixedWideBatch}. The eager re-encode
+     * stores {@code val} as UUID, so the batch reads the correct 16-byte values and must match
+     * the native control.
      */
     @Test
     public void testAsyncTopKSingleKeyStrToUuidParquetColumn() throws Exception {
@@ -488,7 +444,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * The async window-join FAST factory ({@code WINDOW JOIN ... ON (key)}). The left
      * frame is the parquet+ALTER'd table; the join key is the symbol column. Aggregation
-     * references both the lazy-converted left column {@code t.val} and the right table's
+     * references both the altered left column {@code t.val} and the right table's
      * {@code p.price}.
      */
     @Test
@@ -506,7 +462,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * The async window-join SLOW factory ({@code WINDOW JOIN} without {@code ON}). Same
-     * fallback gate as the fast variant.
+     * as the fast variant.
      */
     @Test
     public void testAsyncWindowJoinOverAlteredParquetColumn() throws Exception {
@@ -810,7 +766,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // Narrowing physical width while KEEPING the scale. No rescale runs, so the
             // decode-time byte truncation is lossless as long as the value fits the target
             // precision. Every value here is representable in the narrower target, so the
-            // lazy parquet read must equal the native conversion. Covers each wider->narrower
+            // parquet read must equal the native conversion. Covers each wider->narrower
             // backing-width step.
             String v = """
                     (1.2m, '2024-01-01T00:00:01.000000Z'),
@@ -838,14 +794,14 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // The native converter (DecimalColumnTypeConverter.convertToDecimal) loads each value
             // into a full Decimal256, rescales at full width, range-checks against the target
             // precision, then narrows to the target (widen -> rescale -> range-check -> narrow), so
-            // it preserves any value that fits the target precision. The lazy parquet decoder mirrors
+            // it preserves any value that fits the target precision. The parquet re-encode mirrors
             // this via convert_decimal_narrowing (row_groups.rs): plan_decode_conversion keeps the
             // SOURCE width during decode, then convert_decimal_narrowing rescales, range-checks, and
             // only then narrows. So a value whose raw form (logical * 10^srcScale) exceeds the
             // target's physical byte width still survives when the logical value fits the target
             // precision -- it is the rescaled, not the raw, magnitude that is range-checked.
             //
-            // Every value below is representable in the narrower target, so the lazy parquet read
+            // Every value below is representable in the narrower target, so the parquet read
             // (pt) must equal the native conversion (nt). A naive narrow-before-rescale decoder
             // would truncate 1.2 to 0.0 here; this test pins that it does not.
 
@@ -889,9 +845,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     @Test
     public void testDecimalToDecimalScaleDownRounds() throws Exception {
         assertMemoryLeak(() -> {
-            // A scale reduction rounds half away from zero on BOTH the native ALTER and the lazy
-            // parquet decode; a dropped fraction never NULLs. assertConversion pins that nt (native)
-            // and pt (parquet) agree across the lazy read and the eager parquet->native rewrite.
+            // A scale reduction rounds half away from zero on BOTH the native ALTER and the
+            // parquet re-encode; a dropped fraction never NULLs. assertConversion pins that nt
+            // (native) and pt (parquet) agree across the parquet read and the eager
+            // parquet->native rewrite.
             // Values carry non-zero dropped digits, including exact-half ties and negatives, across
             // all backings.
             // Decimal16 -> Decimal16 (i64), scale 2 -> 1; 99.99 rounds up to 100.0 (carry).
@@ -925,7 +882,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     public void testDecimalToDecimalTwoStep() throws Exception {
         assertMemoryLeak(() -> {
             // Chained (two-step) decimal->decimal conversions over a parquet partition. The
-            // first ALTER reads lazily; the second ALTER sees a prior conversion, so the
+            // first ALTER re-encodes the parquet; the second ALTER sees a prior conversion, so the
             // ConvertOperatorImpl pre-pass eagerly materialises the parquet partition to native
             // (isParquetStorageCompatible is false for differing decimal types) and the second
             // step runs through the native DecimalColumnTypeConverter. Both intermediate and
@@ -1016,10 +973,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     @Test
     public void testDecimalToDecimalLazyUnrepresentableProducesNull() throws Exception {
         assertMemoryLeak(() -> {
-            // Decimal->decimal conversions that stay lazy (same width, or widening) must read a value
-            // that does not fit the target as NULL on the lazy parquet path, matching the native
-            // converter (DecimalColumnTypeConverter). These all keep the same or a wider physical width,
-            // so the eager pre-pass does not materialise them - the Rust decoder must do the NULL clamp.
+            // Decimal->decimal conversions where the source fits the target width (same width, or
+            // widening) must read a value that does not fit the target as NULL on the parquet path,
+            // matching the native converter (DecimalColumnTypeConverter). These all keep the same or a
+            // wider physical width, so the pre-pass does not convert them to native - the Rust decoder
+            // does the NULL clamp during the re-encode.
             // Each case mixes an unrepresentable value (-> NULL) with one that fits (-> survives).
 
             // Same width (Decimal128), precision reduced 38 -> 20, same scale. 18 integer digits exceed
@@ -1079,7 +1037,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins lazy parquet behavior for DOUBLE-&gt;LONG/DATE/TIMESTAMP/INT at the
+     * Pins parquet behavior for DOUBLE-&gt;LONG/DATE/TIMESTAMP/INT at the
      * float-to-integer boundaries. Two distinct concerns share the same test:
      * <ul>
      *     <li>Upper bound precision loss (LONG/DATE/TIMESTAMP only): the Rust
@@ -1376,7 +1334,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins lazy parquet behavior for FLOAT-&gt;LONG/DATE/TIMESTAMP/INT at the
+     * Pins parquet behavior for FLOAT-&gt;LONG/DATE/TIMESTAMP/INT at the
      * float-to-integer boundaries. Two distinct concerns share the same test:
      * <ul>
      *     <li>Upper bound precision loss (LONG/DATE/TIMESTAMP and INT): the Rust
@@ -1449,11 +1407,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * Pins the shared overflow contract for narrow-int -&gt; narrow-decimal scaling: a value that
      * does not fit the target DECIMAL becomes the target NULL sentinel on BOTH the native ALTER and
-     * the lazy parquet decode, and neither path throws or suspends the WAL table.
+     * the parquet re-encode, and neither path throws or suspends the WAL table.
      * <p>
      * The native (JNI) {@code DecimalColumnTypeConverter.convertToDecimal} scales through Decimal256,
      * maps a rescale that loses information or a magnitude beyond the target precision to NULL, and
-     * never throws. The lazy parquet decoder ({@code convert_fixed_to_decimal} in
+     * never throws. The parquet re-encode ({@code convert_fixed_to_decimal} in
      * core/rust/qdbr/src/parquet_read/row_groups.rs) must match it: it scales each value by
      * {@code 10^scale} and NULLs the result when it exceeds the target <b>precision</b>, not merely
      * the destination byte width. Two overflow shapes are covered:
@@ -1470,7 +1428,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      *         -&gt; {@code DECIMAL(18, 18)} computes {@code 10^18}, which fits i64 but is 19 digits.
      *         A byte-width-only guard stored these verbatim, diverging from the native NULL.</li>
      * </ul>
-     * The helper asserts NULL on the native control, the lazy parquet read, and after a
+     * The helper asserts NULL on the native control, the parquet read, and after a
      * CONVERT PARTITION TO NATIVE rewrite, so all three materialization paths agree.
      */
     @Test
@@ -1569,7 +1527,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     // Materializes the fixed->var conversion through produceNativeFromParquet,
-                    // so subsequent reads hit the native files, not the lazy parquet path.
+                    // so subsequent reads hit the native files, not the parquet path.
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                     drainWalQueue();
 
@@ -1637,13 +1595,13 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * ASOF JOIN whose ON key is a lazily converted parquet column. The existing JOIN coverage
+     * ASOF JOIN whose ON key is an altered parquet column. The existing JOIN coverage
      * ({@link #testAsyncHorizonJoinKeyedOverAlteredParquetColumn} and the WINDOW/MULTI-HORIZON
      * siblings) always joins on the unconverted {@code sym} and only aggregates the converted
      * {@code val}, so the converted column is never read as a join equality key. Here {@code val}
-     * is the ASOF key, so the join driver must pull each master row's key through the lazy
-     * var-to-fixed conversion before probing the slave's key map; reading the raw parquet STRING
-     * bytes as INT would mis-key the lookup. Parity against the native control {@code nt} pins it.
+     * is the ASOF key. The eager re-encode stores {@code val} as INT, so the join driver reads
+     * each master row's key directly before probing the slave's key map. Parity against the
+     * native control {@code nt} pins it.
      * Master rows live in 2024-01-02 (the parquet partition); the slave {@code quotes} carries
      * keys 1..50 timestamped in 2024-01-01, so master {@code val} 1..50 match a preceding quote
      * and 51..100 fall through to a NULL price.
@@ -1849,8 +1807,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * O3 insert into a parquet partition that has a pending column type cast must
      * rewrite the parquet with the new type, materializing the conversion. The
      * partition stays in parquet format but the on-disk parquet column type
-     * matches the post-ALTER metadata type, so subsequent reads no longer take
-     * the lazy decode path for that column.
+     * matches the post-ALTER metadata type, so subsequent reads see the new
+     * type directly.
      */
     @Test
     public void testO3InsertRewritesConvertedParquetPartition() throws Exception {
@@ -2200,9 +2158,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * parquet-backed partition. A cursor opened against the pre-ALTER transaction must
      * continue to see the original column type and values for its entire lifetime, while
      * a fresh cursor opened after the ALTER has been applied via the WAL must see the
-     * converted type. This pins the contract between the page frame pool's
-     * {@code sourceColumnTypes} snapshot, the parquet frame cache, and cursor state
-     * across a schema change.
+     * converted type. This pins the contract between the page frame pool's parquet frame
+     * cache and cursor state across a schema change.
      */
     @Test
     public void testReaderOpenedBeforeAlterSeesOldSchema() throws Exception {
@@ -2282,9 +2239,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * read-time conversion. The test interleaves Record A iteration with a Record B
      * {@code recordAt(...)} on the other frame and asserts each record still reads its own row.
      * <p>
-     * Re-encoding 2024-01-01 at ALTER time means neither frame needs a read-time
-     * {@code sourceColumnTypes} conversion, so this no longer sets up the mixed conversion
-     * state its name suggests - it now covers only cross-frame Record A/B independence.
+     * Re-encoding 2024-01-01 at ALTER time means neither frame needs a read-time conversion,
+     * so this no longer sets up the mixed conversion state its name suggests - it now covers
+     * only cross-frame Record A/B independence.
      */
     @Test
     public void testRecordABMixedConversionStatesAcrossPartitions() throws Exception {
@@ -2342,17 +2299,16 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     TestUtils.assertEquals("42", recordA.getStrA(0));
 
                     // Exercise the aliasing path: navigate recordB to partition 2.
-                    // This rebuilds the pool's sourceColumnTypes in place with partition 2's
-                    // mapping (no conversion). A correct implementation must not let this
-                    // rebuild leak into Record A's view; an aliased reference would silently
-                    // overwrite the state Record A relies on.
+                    // This rebuilds the pool's per-frame column mapping for partition 2. A
+                    // correct implementation must not let this rebuild leak into Record A's
+                    // view; an aliased buffer would silently overwrite the state Record A
+                    // relies on.
                     cursor.recordAt(recordB, rowIdPartition2);
                     TestUtils.assertEquals("hello-from-p2", recordB.getStrA(0));
 
-                    // Re-read Record A: it is still anchored at partition 1 (rowIdPartition1)
-                    // which needs INT->STRING conversion. The pool must give each record a
-                    // private sourceColumnTypes snapshot; sharing a single array between
-                    // Record A and Record B would let partition 2's "no conversion" mapping
+                    // Re-read Record A: it is still anchored at partition 1 (rowIdPartition1).
+                    // The pool must give each record its own per-frame binding; sharing frame
+                    // state between Record A and Record B would let partition 2's mapping
                     // clobber Record A's view and the read would return garbage.
                     final CharSequence afterB = recordA.getStrA(0);
                     final String afterBStr = afterB == null ? "<null>" : afterB.toString();
@@ -2597,7 +2553,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
                 // Sweep all six decimal widths (DECIMAL8/16/32/64/128/256, precisions
                 // 2/4/9/18/38/76). Each list includes an overflow input whose magnitude
-                // exceeds the target precision; both the lazy parquet read path and the
+                // exceeds the target precision; both the parquet read and the
                 // CONVERT-PARTITION-TO-NATIVE materialized path must agree on NULL for
                 // that row (NumericException in decimal.ofString -> DECIMAL NULL).
                 assertConversion(source, "DECIMAL(2, 1)", """
@@ -2655,13 +2611,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                         ('world', '2024-01-01T00:00:02.000000Z'),
                         (NULL, '2024-01-01T00:00:03.000000Z')""");
 
-                // UUID cases include malformed inputs: non-UUID strings must produce NULL on
-                // the lazy parquet path, matching the native str2Uuid converter (which calls
-                // Uuid.checkDashesAndLength first and treats failure as null). Without the
-                // length/dash pre-check, Uuid.parseHi/parseLo index past the end of short
-                // strings and raise IndexOutOfBoundsException, which the NumericException-only
-                // catch in convertVarToUuidHi/Lo does not handle, propagating out of the
-                // Record API.
+                // UUID cases include malformed inputs: non-UUID strings must produce NULL,
+                // matching the native str2Uuid converter (which calls Uuid.checkDashesAndLength
+                // first and treats failure as null). The parquet re-encode and the native ALTER
+                // must agree on NULL for every malformed input.
                 assertConversion(source, "UUID", """
                         ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
                         ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
@@ -2690,12 +2643,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     @Test
     public void testStringToUuidLazyScanAcrossParquetPartitions() throws Exception {
-        // Two parquet partitions form two frames whose in-frame row indexes both start at 0, so the
-        // lazy scan reuses the same (rowIndex, columnIndex) for different data across the frame
-        // switch. PageFrameMemoryRecord caches the per-row var->UUID parse keyed by (frameIndex,
-        // rowIndex, columnIndex) -- frameIndex is what keeps a partition-2 read from serving a
-        // partition-1 cached value. The half-corrupt value at partition 2 row 0 must read NULL
-        // (matching native), and the distinct valid UUIDs across partitions must each round-trip.
+        // Two parquet partitions ALTERed from STRING to UUID, read frame by frame. The eager
+        // re-encode stores each partition as UUID; the half-corrupt value at partition 2 row 0
+        // must read NULL (matching native), and the distinct valid UUIDs across partitions must
+        // each round-trip.
         assertMemoryLeak(() -> {
             try {
                 execute("CREATE TABLE nt (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2714,7 +2665,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 execute("ALTER TABLE nt ALTER COLUMN val TYPE UUID");
                 execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
                 drainWalQueue();
-                // Lazy read: both partitions are still parquet, scanned frame by frame.
+                // Both partitions are parquet, scanned frame by frame.
                 assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
                 // Eager rewrite, then re-read against native files.
                 execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
@@ -2729,8 +2680,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins parity between the lazy per-row parquet read path
-     * ({@code PageFrameMemoryRecord.convertVarToXxx}) and the eager native rewrite path
+     * Pins parity between the parquet conversion path and the native rewrite path
      * ({@code ColumnTypeConverter}) for adversarial inputs that one path might silently
      * normalize while the other rejects. Whitespace, empty strings, and non-numeric text
      * must produce the same sentinel on both paths; date strings with timezone offsets
@@ -2805,12 +2755,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins lazy VARCHAR/STRING -> TIMESTAMP_NS conversion on a parquet partition.
-     * The partition stays in parquet (no CONVERT PARTITION TO NATIVE), so reads
-     * go through PageFrameMemoryRecord.convertVarToTimestamp. That path must
-     * dispatch to NanosTimestampDriver based on the target column type; the prior
-     * implementation hard-coded MicrosTimestampDriver, returning values 1000x
-     * too small.
+     * Pins VARCHAR/STRING -> TIMESTAMP_NS conversion on a parquet partition. The eager
+     * re-encode converts {@code val} to TIMESTAMP_NS; that conversion must dispatch to
+     * NanosTimestampDriver based on the target column type. The prior implementation
+     * hard-coded MicrosTimestampDriver, returning values 1000x too small.
      */
     @Test
     public void testStringToTimestampNanoLazyParquet() throws Exception {
@@ -2898,7 +2846,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     public void testStringToVarchar() throws Exception {
         // Covers the UTF-8/UTF-16 translation across the conversion boundary. Each width
         // class exercises a distinct encoding path and each is a canonical mojibake source
-        // if the lazy path (readVarValueForConversion -> asAsciiCharSequence) is hit:
+        // if the conversion mishandles UTF-8 decoding:
         //   - 2-byte UTF-8 (e, n, u, a with diacritics): 0xC3 0xXX pairs would render as
         //     two Latin-1 chars (e.g. UTF-8 'e-acute' 0xC3 0xA9 -> U+00C3 U+00A9 'A-tilde,
         //     copyright')
@@ -2984,14 +2932,13 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins the chained-conversion guard in ConvertOperatorImpl.isParquetStorageCompatible:
-     * TIMESTAMP -> TIMESTAMP_NS -> TIMESTAMP on a parquet partition where the parquet
-     * itself stays TIMESTAMP (us) throughout. After the second hop the metadata tag is
-     * TIMESTAMP again, matching the parquet tag, but a naive tag-only equality check
-     * would let the lazy decoder return raw us values as if they were ns (off by 1000x).
-     * The guard must instead notice the prior conversion on the column metadata and
-     * force a parquet -> native rewrite before the second hop, so the round-trip is
-     * lossless. The control table nt (no parquet) must agree with pt at every step.
+     * Chained TIMESTAMP -> TIMESTAMP_NS -> TIMESTAMP on a parquet partition. Each hop
+     * eagerly re-encodes the parquet - hop 1 scales us -> ns by x1000, hop 2 scales
+     * ns -> us by /1000 - so the parquet stores the exact current type at every step and
+     * never falls back to native. TIMESTAMP and TIMESTAMP_NS share a type tag, so a naive
+     * tag-only read after hop 2 could return raw ns bytes as us (off by 1000x); re-encoding
+     * to the exact type keeps the us -> ns -> us round-trip lossless. The control table nt
+     * (no parquet) must agree with pt after each hop.
      */
     @Test
     public void testTimestampChainedThroughTimestampNanoOnParquetPartition() throws Exception {
@@ -3012,21 +2959,17 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
                 drainWalQueue();
 
-                // Hop 1: TIMESTAMP -> TIMESTAMP_NS on both tables. On pt the parquet
-                // stays TIMESTAMP (us); the lazy decoder scales each read by 1000 via
-                // post_convert's date/timestamp branch.
+                // Hop 1: TIMESTAMP -> TIMESTAMP_NS on both tables. The re-encode scales
+                // by 1000 via post_convert's date/timestamp branch.
                 execute("ALTER TABLE nt ALTER COLUMN val TYPE TIMESTAMP_NS");
                 execute("ALTER TABLE pt ALTER COLUMN val TYPE TIMESTAMP_NS");
                 drainWalQueue();
                 assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
 
-                // Hop 2: TIMESTAMP_NS -> TIMESTAMP on both tables. The pt metadata now
-                // says TIMESTAMP again while the parquet still stores TIMESTAMP (us),
-                // so the metadata tag matches the parquet tag. isParquetStorageCompatible
-                // must still detect that the column has a prior conversion recorded
-                // (getReplacingIndex() >= 0) and force a parquet -> native rewrite
-                // before the second hop; otherwise the lazy path would return raw us
-                // values as ns values (off by 1000x) or the table would suspend.
+                // Hop 2: TIMESTAMP_NS -> TIMESTAMP on both tables. The parquet, re-encoded
+                // to ns in hop 1, is re-encoded again scaling ns -> us by /1000, restoring
+                // the original microsecond values exactly. A naive tag-only read that skipped
+                // the scale (TIMESTAMP and TIMESTAMP_NS share a tag) would be off by 1000x.
                 execute("ALTER TABLE nt ALTER COLUMN val TYPE TIMESTAMP");
                 execute("ALTER TABLE pt ALTER COLUMN val TYPE TIMESTAMP");
                 drainWalQueue();
@@ -3050,17 +2993,17 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * Direct fixed-to-fixed conversions from TIMESTAMP_NS source on a parquet partition.
-     * Exercises the post-decode nano-scaling branch in PageFrameMemoryPool.openParquet
-     * (the bit-24 encoded flag path) for both narrowing into Timestamp/Date (divide by
-     * 1000 and 1_000_000) and pass-through into Long. NULL preservation across the nano
-     * scale is verified by the LONG_MIN sentinel surviving the divide.
+     * Exercises the nano-scaling applied during the parquet re-encode for both narrowing
+     * into Timestamp/Date (divide by 1000 and 1_000_000) and pass-through into Long. NULL
+     * preservation across the nano scale is verified by the LONG_MIN sentinel surviving the
+     * divide.
      */
     @Test
     public void testTimestampNanoToOtherFixedTypes() throws Exception {
         assertMemoryLeak(() -> {
             // TIMESTAMP_NS stores nanoseconds since epoch.
             // Sub-microsecond precision is intentionally truncated by the ÷1000 to
-            // TIMESTAMP and the ÷1_000_000 to DATE; both lazy and native paths
+            // TIMESTAMP and the ÷1_000_000 to DATE; both the parquet and native paths
             // truncate identically.
             String values = """
                     ('2020-06-15T12:30:00.123456789Z', '2024-01-01T00:00:01.000000Z'),
@@ -3080,7 +3023,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // '2020-06-15T12:30:00.123456Z' = 1_592_224_200_123_456 us
             // TIMESTAMP -> DATE divides by 1000 (us -> ms), losing sub-ms precision.
             // TIMESTAMP -> TIMESTAMP_NS multiplies by 1000 (us -> ns) via the
-            // post-decode nano-scaling branch in PageFrameMemoryPool.openParquet.
+            // nano-scaling during the parquet re-encode.
             // NULL (LONG_MIN) is preserved across scaling (checked before divide).
             // Sub-millisecond precision: .000001Z = 1 microsecond, .999999Z = max micros.
             String values = """
@@ -3177,8 +3120,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                             null\t2024-01-01T00:00:12.000000Z
                             """;
 
-                    // Lazy parquet read: the partition is still parquet, decoded per row group on
-                    // the fly. Pins multi-row-group correctness of the lazy var->fixed path.
+                    // Parquet read: the partition is parquet, decoded per row group. Pins
+                    // multi-row-group correctness of the var->fixed conversion.
                     assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
 
                     // Eager rewrite: materializes the var->fixed conversion through
@@ -3269,7 +3212,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                             \t2024-01-01T00:00:12.000000Z
                             """;
 
-                    // Lazy parquet read: per-row-group decode on the fly.
+                    // Parquet read: per-row-group decode.
                     assertQuery("SELECT val, ts FROM pt").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
 
                     // Eager rewrite: materializes the var->var append through produceNativeFromParquet,
@@ -3288,7 +3231,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * Var-source mirror of {@link #testFixedWithAllEncodings}. STRING and VARCHAR columns
      * stored under each writer-supported parquet encoding must round-trip identically
-     * through both the native and lazy-parquet conversion paths. This exercises the
+     * through both the native and parquet conversion paths. This exercises the
      * encoding axis of {@code decode_byte_array_dispatch} in {@code decode.rs}:
      * <ul>
      *     <li>{@code (RleDictionary | PlainDictionary, _, String/Varchar)}</li>
@@ -3387,8 +3330,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * map the multi-byte sequence for U+00E9 (0xC3 0xA9) to two Latin-1 chars
      * (U+00C3, U+00A9) and CHAR would materialize as U+00C3 on disk.
      * The differential assertConversion helper does not catch this because both
-     * native and the lazy parquet read path use a proper UTF-8 decode, while
-     * this materialization path is only reachable through the O3 merge / convert
+     * native and the parquet read use a proper UTF-8 decode, while this
+     * materialization path is only reachable through the O3 merge / convert
      * pipeline.
      */
     @Test
@@ -3409,7 +3352,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 drainWalQueue();
                 // Materializes the var->fixed conversion through O3PartitionJob, so
                 // the bytes on disk are whatever writeFixedParsedValue wrote. The
-                // SELECT below reads native files, not the lazy parquet path.
+                // SELECT below reads native files, not the parquet path.
                 execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                 drainWalQueue();
 
@@ -3423,16 +3366,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * Asserts VARCHAR-&gt;CHAR conversion on a parquet partition against an absolute
-     * oracle. This is a lazy conversion path: the parquet decoder hands back a
-     * {@link io.questdb.std.str.Utf8Sequence} and Java takes the first char via
-     * io.questdb.cairo.sql.PageFrameMemoryRecord#convertVarToChar, which reads
-     * through {@code readVarValueForConversion -&gt; asAsciiCharSequence()}. The latter
-     * exposes each raw UTF-8 byte as a char, so a non-ASCII value like 'é'
-     * (UTF-8: 0xC3 0xA9) yields {@code charAt(0) == U+00C3} ('Ã') instead of the
-     * correct U+00E9. The differential assertion {@code nt==pt} does NOT catch this
-     * because io.questdb.cairo.ColumnTypeConverter#convertFromVarcharToFixed
-     * uses the same {@code asAsciiCharSequence()} call, so native and parquet produce
-     * the same mojibake. Fix: use a proper UTF-8-to-UTF-16 decoder.
+     * oracle. The eager re-encode converts {@code val} to CHAR; that conversion must
+     * decode UTF-8 before taking the first code unit, so a non-ASCII value like 'é'
+     * (UTF-8: 0xC3 0xA9) yields U+00E9 rather than U+00C3 ('Ã'). A differential
+     * {@code nt==pt} assertion would miss a regression if both paths shared the same
+     * bug, so this test pins the absolute expected value.
      */
     @Test
     public void testVarcharToCharPreservesNonAsciiCodepoint() throws Exception {
@@ -3475,9 +3413,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     @Test
     public void testVarcharToString() throws Exception {
         // VARCHAR is stored as UTF-8 in parquet; STRING is UTF-16 in memory. Non-ASCII
-        // must survive the decode intact. If the lazy path (convertVarToStr ->
-        // readVarValueForConversion) is ever reached, asAsciiCharSequence() would expose
-        // each UTF-8 byte as a char (Latin-1), producing mojibake: e.g. UTF-8 'e-acute'
+        // must survive the decode intact. If the conversion mishandles UTF-8 decoding,
+        // each UTF-8 byte would be exposed as a char (Latin-1), producing mojibake: e.g. UTF-8 'e-acute'
         // 0xC3 0xA9 would become two UTF-16 code units U+00C3 U+00A9 ('A-tilde,
         // copyright') instead of the single 'e-acute'. Each width class exercises a
         // distinct UTF-8 decode path:
@@ -3498,8 +3435,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * Same absolute-oracle approach for VARCHAR-&gt;VARCHAR/STRING paths that go through
-     * the lazy per-row Java conversion. The native path performs a proper UTF-8 decode,
-     * so this test pins the expected behaviour regardless of what the peer native path does.
+     * the parquet conversion. The native path performs a proper UTF-8 decode, so this
+     * test pins the expected behaviour regardless of what the peer native path does.
      */
     @Test
     public void testVarcharToStringPreservesNonAsciiUtf8() throws Exception {
@@ -3590,8 +3527,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * Mirror of {@link #assertAsyncFactoryParity(String)} for the reverse cast direction:
      * {@code val} starts as INT, the partition is converted to parquet, and {@code val}
      * is ALTERed to a var type ({@code STRING} or {@code VARCHAR}). On {@code pt} the
-     * parquet keeps the INT storage so reads go through lazy fixed-to-var conversion,
-     * setting {@code hasColumnTypeCasts()=true} on every parquet frame. The extra
+     * eager re-encode stores {@code val} as the var target, so reads are direct. The extra
      * {@code other LONG} column carries the WHERE predicate so {@code val} can remain
      * a non-filter column (in compacted layout under
      * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}).
@@ -3628,10 +3564,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * Builds a native control table {@code nt} and a parquet-backed table {@code pt} with
      * identical data, then ALTERs {@code val} from STRING to INT on both. On {@code pt} the
-     * parquet keeps the STRING storage so reads go through lazy var to fixed conversion,
-     * setting {@code hasColumnTypeCasts()=true} on every parquet frame. The supplied
-     * query template (with {@code $T} placeholder) runs against both tables and must
-     * produce identical cursors.
+     * eager re-encode stores {@code val} as INT, so reads are direct. The supplied query
+     * template (with {@code $T} placeholder) runs against both tables and must produce
+     * identical cursors.
      */
     private void assertAsyncFactoryParity(String queryTemplate) throws Exception {
         try {
@@ -3664,9 +3599,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * Mirror of {@link #assertAsyncFactoryFixedToVarParity(String, String)} for the reverse
      * cast direction: {@code val} starts as STRING, the partition is converted to parquet,
-     * and {@code val} is ALTERed to a fixed-width type (e.g. {@code INT}). On {@code pt}
-     * the parquet keeps the STRING storage so reads go through lazy var-to-fixed conversion,
-     * setting {@code hasColumnTypeCasts()=true} on every parquet frame. The extra
+     * and {@code val} is ALTERed to a fixed-width type (e.g. {@code INT}). On {@code pt} the
+     * eager re-encode stores {@code val} as the fixed target, so reads are direct. The extra
      * {@code other LONG} column carries the WHERE predicate so {@code val} can remain
      * a non-filter column (in compacted layout under
      * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}).
@@ -3703,11 +3637,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * Mirror of {@link #assertAsyncFactoryStrToFixedParity(String, String)} for a wide-fixed
      * target ({@code UUID}): {@code val} starts as STRING holding canonical UUID text, the
-     * partition is converted to parquet, then {@code val} is ALTERed to UUID. On {@code pt} the
-     * parquet keeps the STRING storage, so a single-column {@code ORDER BY val ... LIMIT} routes
-     * through the wide-fixed batch path {@code SortKeyEncoder.encodeFixedWideBatch}, exercising
-     * its lazy var-to-fixed fallback. {@code nt} seeds the random UUIDs and {@code pt} copies them
-     * so both tables hold identical data.
+     * partition is converted to parquet, then {@code val} is ALTERed to UUID. The eager
+     * re-encode stores {@code val} as UUID, so a single-column {@code ORDER BY val ... LIMIT}
+     * routes through the wide-fixed batch path {@code SortKeyEncoder.encodeFixedWideBatch}
+     * reading it directly. {@code nt} seeds the random UUIDs and {@code pt} copies them so
+     * both tables hold identical data.
      */
     private void assertAsyncFactoryStrToUuidParity(String queryTemplate) throws Exception {
         try {
@@ -3783,14 +3717,14 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * tables ({@code bids} and {@code asks}) so MULTI HORIZON JOIN queries route through
      * the {@code AsyncMultiHorizonJoin(NotKeyed)RecordCursorFactory} pair.
      * <p>
-     * Spreads data across many daily partitions on the master side. The compiled-filter
-     * fallback under {@code hasColumnTypeCasts()} only fires when SelectivityStats
-     * decides against late materialization (selectivity above 20% with at least two
-     * recorded samples). A single-partition setup keeps every frame on the late-material
-     * path, where {@code hasColumnTops()} already routes around the compiled filter and
-     * the cast bug stays hidden. Spreading rows over ~20 days produces enough frames per
-     * worker for the SelectivityStats EMA to disable late materialization on subsequent
-     * frames.
+     * Spreads data across many daily partitions on the master side so enough frames take the
+     * compiled-filter (JIT) path rather than the late-materialization path. SelectivityStats
+     * disables late materialization only above ~20% selectivity with at least two recorded
+     * samples; a single-partition setup keeps every frame on the late-material path, where
+     * {@code hasColumnTops()} already routes around the compiled filter. Spreading rows over
+     * ~20 days produces enough frames per worker for the SelectivityStats EMA to disable late
+     * materialization on subsequent frames, exercising the compiled filter over the parquet
+     * partition.
      */
     private void assertAsyncMultiJoinFactoryParity(String queryTemplate) throws Exception {
         try {
@@ -3847,7 +3781,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // sorts before every value row (which start at 00:00:01), so the parquet file
             // stores it as a def-level=0 (NULL) entry. This makes every conversion test also
             // assert that column-top rows materialise as the target type's NULL -- both on the
-            // lazy parquet read and after CONVERT PARTITION TO NATIVE -- exactly as the native
+            // parquet read and after CONVERT PARTITION TO NATIVE -- exactly as the native
             // ALTER path does. The remaining value rows still cover the non-column-top path.
             execute("CREATE TABLE nt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE pt (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3877,11 +3811,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
             drainWalQueue();
 
-            // First assertion: lazy parquet read path (pt partition is still parquet).
+            // First assertion: parquet read path (pt partition is parquet).
             assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
 
             // Second assertion: eager rewrite path. CONVERT PARTITION TO NATIVE
-            // materializes the lazy conversion through produceNativeFromParquet ->
+            // materializes the conversion through produceNativeFromParquet ->
             // O3PartitionJob.convertVarColumnToFixed / convertFixedColumnToString /
             // convertFixedColumnToVarchar (and the in-place var->var copy), so the
             // re-read goes against native files written by the eager kernel.
@@ -3897,15 +3831,15 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * Shared body for the equi-JOIN-on-converted-key tests. Builds a native control {@code nt}
      * and a parquet {@code pt} with a {@code val} column, converts {@code pt}'s partition to
-     * parquet, then ALTERs {@code val} from {@code sourceType} to {@code targetType} on both --
-     * on {@code pt} the parquet keeps the source storage, so reads go through the lazy
-     * conversion. A small native {@code dim} table holds the join key {@code k} (of
+     * parquet, then ALTERs {@code val} from {@code sourceType} to {@code targetType} on both.
+     * On {@code pt} the eager re-encode stores {@code val} as {@code targetType}, so reads are
+     * direct. A small native {@code dim} table holds the join key {@code k} (of
      * {@code targetType}) for the even values 2,4,...,100 only.
      * <p>
      * The query joins on the converted column itself ({@code t.val = d.k}), the case the rest of
      * the JOIN suite never exercises (it always joins on the unconverted {@code sym}). The join
-     * driver must read each {@code pt} row's key through the lazy conversion before hashing/probing;
-     * reading the raw parquet bytes of the source type would mis-key the match. Because {@code dim}
+     * driver reads each {@code pt} row's key (re-encoded to {@code targetType}) before
+     * hashing/probing. Because {@code dim}
      * carries only even keys, an INNER join keeps the even-valued rows while a LEFT join also
      * surfaces the odd-valued rows with a NULL slave side. Parity against {@code nt} pins both.
      *
@@ -3976,7 +3910,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
 
-            // Step 1: lazy parquet read path.
+            // Step 1: parquet read path.
             execute("ALTER TABLE nt ALTER COLUMN val TYPE " + midType);
             drainWalQueue();
             execute("ALTER TABLE pt ALTER COLUMN val TYPE " + midType);

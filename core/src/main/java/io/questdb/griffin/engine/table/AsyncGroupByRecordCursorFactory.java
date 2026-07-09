@@ -510,7 +510,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         try {
             atom.resetLocalStats(slotId);
 
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops()) {
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
                 AsyncFilterUtils.applyCompiledFilter(

@@ -120,9 +120,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final ParquetPartitionDecoder parquetMetaDecoder;
     private final IntList queryToSlot = new IntList(16);
     private final IntLongHashMap recordAtSlices = new IntLongHashMap();
-    // Per-column source type tag for fixed-to-var type-cast columns.
-    // Indexed by query column index; -1 means no type cast.
-    private final IntList sourceColumnTypes;
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
     // Per-worker covered (posting-index sidecar) decode buffers, keyed by frame
@@ -169,7 +166,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // active decoder's file, letting openParquet(int) skip the rebuild on
     // every subsequent frame of the same file.
     private boolean hasFullProjectionMap;
-    private boolean hasTypeCasts;
     private ParquetBuffers lruHead;
     private ParquetBuffers lruTail;
     // Per-query tracker propagated to each ParquetBuffers' RowGroupBuffers when
@@ -196,7 +192,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             parquetIdxToDecodeSlot = new IntIntHashMap(16);
             parquetMetaDecoder = new ParquetPartitionDecoder();
             legacyDecoder = new ParquetFileDecoder();
-            sourceColumnTypes = new IntList();
         } catch (Throwable th) {
             close();
             throw th;
@@ -300,8 +295,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getAuxPageSizes(),
                     addressCache.toColumnOffset(frameIndex),
                     addressCache.getColumnCount(),
-                    false,
-                    null,
                     null
             );
         } else if (format == PartitionFormat.PARQUET) {
@@ -319,15 +312,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (record.getFrameIndex() == frameIndex && record.getBoundPool() == this && record.getBoundGeneration() == bindGeneration) {
                 return;
             }
-            // openParquet() rebuilds parquetColumns / parquetIdxToDecodeSlot AND the pool's
-            // per-frame lazy-conversion metadata (sourceColumnTypes / hasTypeCasts). record.init()
-            // below reads that metadata, so openParquet() must run on EVERY navigation: the pool's
-            // sourceColumnTypes is shared and a navigation to another file overwrites it, so a
-            // still-cached frame would otherwise hand the record a stale mapping and read a
-            // converted column with the wrong source type. activateDecoder() inside openParquet()
-            // clears hasFullProjectionMap on a file switch and forces the rebuild; on a same-file
-            // repeat visit the rebuild is skipped but the still-valid mapping is reused. Only the
-            // expensive decode() stays gated on the buffer cache miss / partial window.
+            // openParquet() rebuilds parquetColumns / parquetIdxToDecodeSlot (the per-frame
+            // column mapping) which record.init() below reads, so it must run on EVERY
+            // navigation: the mapping is shared and a navigation to another file overwrites it,
+            // so a still-cached frame would otherwise hand the record a stale mapping.
+            // activateDecoder() inside openParquet() clears hasFullProjectionMap on a file switch
+            // and forces the rebuild; on a same-file repeat visit the rebuild is skipped but the
+            // still-valid mapping is reused. Only the expensive decode() stays gated on the buffer
+            // cache miss / partial window.
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             ParquetBuffers parquetBuffers = tryHit(frameIndex, usageBit);
             final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
@@ -382,8 +374,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.auxPageSizes,
                     0, // parquet buffers use 0 offset since they're frame-specific
                     addressCache.getColumnCount(),
-                    hasTypeCasts,
-                    sourceColumnTypes,
                     parquetBuffers.columnTops
             );
             record.setBoundPool(this, bindGeneration);
@@ -509,14 +499,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     throw th;
                 }
             } else {
-                // Full cache hit, no decode needed, but the lazy-conversion metadata
-                // (the pool's hasTypeCasts / sourceColumnTypes, surfaced through
-                // PageFrameMemoryImpl.hasColumnTypeCasts() / getSourceColumnType()) still
-                // reflects whichever frame openParquet() last ran for. A later
-                // record.init(frameMemory) reads that metadata, so it must be rebuilt for
-                // THIS frame or the record inherits another frame's mapping and reads a
-                // converted column with the wrong source type. Mirrors the cache-hit refresh
-                // in navigateTo(int, PageFrameMemoryRecord).
+                // Full cache hit, no decode needed, but the column mapping still reflects
+                // whichever frame openParquet() last ran for. A later record.init(frameMemory)
+                // reads that mapping, so it must be rebuilt for THIS frame or the record inherits
+                // another frame's mapping. Mirrors the cache-hit refresh in
+                // navigateTo(int, PageFrameMemoryRecord).
                 try {
                     openParquet(frameIndex);
                 } catch (Throwable th) {
@@ -586,11 +573,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     throw th;
                 }
             } else {
-                // Full cache hit, no decode needed, but the lazy-conversion metadata
-                // (the pool's hasTypeCasts / sourceColumnTypes) still reflects whichever
-                // frame openParquet() last ran for. Rebuild it for THIS frame so a later
-                // record.init(frameMemory) does not inherit another frame's mapping. Mirrors
-                // the cache-hit refresh in navigateTo(int, PageFrameMemoryRecord).
+                // Full cache hit, no decode needed, but the column mapping still reflects
+                // whichever frame openParquet() last ran for. Rebuild it for THIS frame so a
+                // later record.init(frameMemory) does not inherit another frame's mapping.
+                // Mirrors the cache-hit refresh in navigateTo(int, PageFrameMemoryRecord).
                 try {
                     openParquet(frameIndex, columnIndexes, true);
                 } catch (Throwable th) {
@@ -691,8 +677,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 buffers.getAuxPageSizes(),
                 0, // covered buffers are frame-specific, so they use a 0 column offset
                 addressCache.getColumnCount(),
-                false, // covered NATIVE frames have no parquet-style lazy type conversion
-                null,
                 null
         );
         record.setBoundPool(this, bindGeneration);
@@ -1251,8 +1235,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         for (int q = 0; q < readParquetColumnCount; q++) {
             queryToSlot.setQuick(q, -1);
         }
-        sourceColumnTypes.setAll(readParquetColumnCount, -1);
-        hasTypeCasts = false;
         for (int i = 0; i < readParquetColumnCount; i++) {
             resolveParquetColumn(i, columnMapping, activeDecoder);
         }
@@ -1275,15 +1257,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         for (int q = 0; q < readParquetColumnCount; q++) {
             queryToSlot.setQuick(q, -1);
         }
-        if (isInclude) {
-            // First-pass navigation: start from a clean slate.
-            sourceColumnTypes.setAll(readParquetColumnCount, -1);
-            hasTypeCasts = false;
-        }
-        // isInclude=false is populateRemainingColumns: retain sourceColumnTypes / hasTypeCasts
-        // set by the prior isInclude=true call so that lazy conversion metadata for filter
-        // columns survives. Without this, PageFrameMemoryRecord re-snapshots a stale -1
-        // for filter columns and reads VARCHAR_SLICE bytes as the target fixed type.
         for (int i = 0; i < readParquetColumnCount; i++) {
             if (columnIndexes.contains(i) != isInclude) {
                 continue;
@@ -1360,101 +1333,28 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
 
         if (parquetIdx < 0) {
-            // Direct writer index lookup failed. The column may have been type-converted
-            // (ALTER COLUMN TYPE), so the parquet file stores it under the original writer index.
+            // Direct writer index lookup failed. A type-converted column (ALTER COLUMN TYPE)
+            // is stored under its original writer index (the replacingIndex chain head), so
+            // retry under that id. ALTER re-encodes the parquet eagerly, so the stored type
+            // always matches the current type here - only the writer index differs.
             final int origWriterIndex = columnMapping.getOriginalWriterIndex(i);
             if (origWriterIndex >= 0 && origWriterIndex != columnWriterIndex) {
                 parquetIdx = columnIdToParquetIdx.get(origWriterIndex);
-            }
-            if (parquetIdx >= 0) {
-                int targetType = addressCache.getColumnTypes().getQuick(i);
-                final int sourceType = parquetMetadata.getColumnType(parquetIdx);
-                final int sourceTag = ColumnType.tagOf(sourceType);
-                final int targetTag = ColumnType.tagOf(targetType);
-                if (ColumnType.isSymbol(targetTag) && !ColumnType.isSymbol(sourceTag)) {
-                    // Non-symbol -> symbol: the pre-pass in ConvertOperatorImpl should have
-                    // converted this parquet partition to native. If we get here, it's a bug.
-                    throw CairoException.critical(0)
-                            .put("unexpected non-symbol->symbol in parquet, column=").put(i)
-                            .put(", sourceType=").put(ColumnType.nameOf(sourceTag))
-                            .put(", targetType=").put(ColumnType.nameOf(targetTag));
-                }
-                if (sourceTag == targetTag) {
-                    // Same type, just a writer index mismatch after ALTER COLUMN TYPE.
-                    // No conversion needed, decode normally.
-                    if (ColumnType.tagOf(targetType) == ColumnType.VARCHAR) {
-                        targetType = ColumnType.VARCHAR_SLICE;
+                if (parquetIdx >= 0) {
+                    final int sourceType = parquetMetadata.getColumnType(parquetIdx);
+                    final int targetType = addressCache.getColumnTypes().getQuick(i);
+                    if (ColumnType.tagOf(sourceType) != ColumnType.tagOf(targetType)) {
+                        // The eager re-encode guarantees the stored tag equals the current tag.
+                        // A mismatch means a parquet partition advanced its metadata type without
+                        // being re-encoded (only reachable if parquet partitions are ever split);
+                        // fail loud rather than read the stored bytes as the wrong type.
+                        throw CairoException.critical(0)
+                                .put("parquet column type mismatch after ALTER COLUMN TYPE [column=").put(i)
+                                .put(", stored=").put(ColumnType.nameOf(sourceType))
+                                .put(", current=").put(ColumnType.nameOf(targetType))
+                                .put(']');
                     }
-                    queryToSlot.setQuick(i, addDecodeSlotIfAbsent(parquetIdx, targetType));
-                    return;
                 }
-
-                if (ColumnType.isSymbol(sourceTag) && !ColumnType.isSymbol(targetTag)) {
-                    // Symbol -> non-symbol: decode as VARCHAR_SLICE, Java converts lazily.
-                    // For Symbol->VARCHAR, the fallthrough below handles it (VARCHAR_SLICE is native format).
-                    if (targetTag != ColumnType.VARCHAR && targetTag != ColumnType.STRING) {
-                        queryToSlot.setQuick(i, addDecodeSlotIfAbsent(parquetIdx, ColumnType.VARCHAR_SLICE));
-                        // Negative VARCHAR tag signals var->fixed/var->string conversion.
-                        // Same target-type metadata layout as the var->fixed branch
-                        // below; the Symbol-as-VARCHAR_SLICE rows are converted by
-                        // the same lazy converters in PageFrameMemoryRecord.
-                        int encoded = ColumnType.VARCHAR;
-                        if (ColumnType.isDecimal(targetType)) {
-                            encoded |= (ColumnType.getDecimalPrecision(targetType) << 8)
-                                    | (ColumnType.getDecimalScale(targetType) << 16);
-                        } else if (ColumnType.isTimestampNano(targetType)) {
-                            encoded |= (1 << 24);
-                        }
-                        sourceColumnTypes.setQuick(i, -encoded);
-                        hasTypeCasts = true;
-                        return;
-                    }
-                    // Symbol->VARCHAR falls through to the bottom of this method.
-                }
-
-                if (!ColumnType.isVarSize(sourceTag) && !ColumnType.isSymbol(sourceTag)
-                        && (targetTag == ColumnType.VARCHAR || targetTag == ColumnType.STRING)) {
-                    // Fixed -> var-size: decode as source fixed type.
-                    // Java does lazy per-row conversion in PageFrameMemoryRecord.
-                    queryToSlot.setQuick(i, addDecodeSlotIfAbsent(parquetIdx, sourceType));
-                    sourceColumnTypes.setQuick(i, sourceType);
-                    hasTypeCasts = true;
-                    return;
-                }
-
-                if (ColumnType.isVarSize(sourceTag) && !ColumnType.isVarSize(targetTag)
-                        && !ColumnType.isSymbol(targetTag)) {
-                    // Var -> fixed-size: decode as source var type.
-                    // Java does lazy per-row conversion in PageFrameMemoryRecord.
-                    int decodeType = (sourceTag == ColumnType.VARCHAR)
-                            ? ColumnType.VARCHAR_SLICE : sourceType;
-                    queryToSlot.setQuick(i, addDecodeSlotIfAbsent(parquetIdx, decodeType));
-                    // Negative value signals var->fixed direction.
-                    // -1 remains the "no conversion" sentinel.
-                    // Bit layout of the encoded value (target-specific metadata
-                    // in the upper bits - only one target family fills 8-23 at a time):
-                    //   bits 0-7:   source tag (STRING or VARCHAR)
-                    //   bits 8-15:  target decimal precision (decimal targets)
-                    //   bits 16-23: target decimal scale (decimal targets)
-                    //   bit  24:    target timestamp precision (0 = micros, 1 = nanos)
-                    int encoded = ColumnType.tagOf(sourceType);
-                    if (ColumnType.isDecimal(targetType)) {
-                        encoded |= (ColumnType.getDecimalPrecision(targetType) << 8)
-                                | (ColumnType.getDecimalScale(targetType) << 16);
-                    } else if (ColumnType.isTimestampNano(targetType)) {
-                        encoded |= (1 << 24);
-                    }
-                    sourceColumnTypes.setQuick(i, -encoded);
-                    hasTypeCasts = true;
-                    return;
-                }
-
-                // Fixed -> fixed type conversion: tell Rust to decode as target type.
-                if (targetTag == ColumnType.VARCHAR) {
-                    targetType = ColumnType.VARCHAR_SLICE;
-                }
-                queryToSlot.setQuick(i, addDecodeSlotIfAbsent(parquetIdx, targetType));
-                return;
             }
         }
 
@@ -1565,14 +1465,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
-        public int getSourceColumnType(int columnIndex) {
-            if (frameFormat == PartitionFormat.PARQUET && hasTypeCasts) {
-                return sourceColumnTypes.getQuick(columnIndex);
-            }
-            return -1;
-        }
-
-        @Override
         public boolean hasColumnTops() {
             for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
                 // VARCHAR column that contains short strings will have zero data vector,
@@ -1582,11 +1474,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
             }
             return false;
-        }
-
-        @Override
-        public boolean hasColumnTypeCasts() {
-            return frameFormat == PartitionFormat.PARQUET && hasTypeCasts;
         }
 
         @Override

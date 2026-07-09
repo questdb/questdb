@@ -1166,13 +1166,6 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     private boolean encodeFixed8Batch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK) {
-        if (frameMemory.getSourceColumnType(columnIndices[0]) != -1) {
-            // Lazily type-cast parquet column (ALTER COLUMN TYPE): the page holds the
-            // source type's raw bytes (e.g. a VARCHAR_SLICE for a STRING->LONG cast),
-            // not this column's current fixed type. Fall back to the per-row path,
-            // which materializes the converted value through the record accessors.
-            return false;
-        }
         final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
         if (colAddr == 0) {
             return false;
@@ -1261,12 +1254,6 @@ public class SortKeyEncoder implements QuietCloseable {
      * falls back to per-row {@link #encodeTopK} - for a column-top frame.
      */
     private boolean encodeFixedWideBatch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK) {
-        if (frameMemory.getSourceColumnType(columnIndices[0]) != -1) {
-            // Lazily type-cast parquet column (ALTER COLUMN TYPE): the page holds the
-            // source type's raw bytes (e.g. a VARCHAR_SLICE for a STRING->UUID cast),
-            // not this column's current wide-fixed type. Fall back to the per-row path.
-            return false;
-        }
         final long colAddr = frameMemory.getPageAddress(columnIndices[0]);
         if (colAddr == 0) {
             // Column top: every frame row is NULL for this column.
@@ -1302,14 +1289,9 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putLong(destAddr + lastWord, Long.reverseBytes(val & padMask));
     }
 
-    // A natively-stored STRING is materialized into native layout even in Parquet frames, so the
-    // value is read straight from the page. A lazily type-cast STRING (e.g. an INT->STRING cast on
-    // a Parquet partition) is not: the page holds the source type's bytes, so the per-row path must
-    // materialize the converted value through the record accessors.
+    // A STRING is materialized into native layout even in Parquet frames, so the value is read
+    // straight from the page.
     private boolean encodeStringBatch(PageFrameMemory frameMemory, int frameIndex, DirectLongList rows, long rowCount, EncodedTopKBuffer topK, PageFrameMemoryRecord record) {
-        if (frameMemory.getSourceColumnType(columnIndices[0]) != -1) {
-            return false;
-        }
         final long dataAddr = frameMemory.getPageAddress(columnIndices[0]);
         if (dataAddr == 0) {
             // Column top: every frame row is NULL for this column.
