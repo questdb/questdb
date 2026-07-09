@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.CharSequenceObjSortedHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -49,6 +50,10 @@ import org.junit.Test;
 
 import java.io.File;
 import java.time.Instant;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -906,7 +911,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
     @Test
     public void testReconcileLatchesCompleteAfterHydratingMissingTables() throws Exception {
-        // M3 optimization: when one hydrateAllTables() reconcile successfully hydrates
+        // When one hydrateAllTables() reconcile successfully hydrates
         // every missing table, it must latch cacheComplete in that same pass (reusing the
         // token snapshot it already collected), not leave the flag off and force the next
         // catalogue query to run a second, redundant full reconcile (getTableTokens +
@@ -1017,7 +1022,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
     @Test
     public void testReconcileBudgetCountsOnlyZeroProgressRounds() throws Exception {
-        // M2: the give-up budget must count consecutive reconcile rounds that make NO
+        // The give-up budget must count consecutive reconcile rounds that make NO
         // progress, not every reconcile that still finds something missing - otherwise a
         // post-restart storm (>=MAX concurrent catalogue queries racing the startup
         // hydrator) exhausts the 8-budget in one burst and latches cacheComplete with a
@@ -1169,16 +1174,17 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
     @Test
     public void testCompletenessLatchIsMutuallyExclusiveWithClearCache() throws Exception {
-        // M2 regression (deterministic): the completeness latch (cacheComplete=true) in
-        // hydrateAllTables() must be published under the read lock that observed the
-        // cache as complete, so it is mutually exclusive with clearCache() (write lock).
-        // We force the exact interleaving via a test hook fired right before the
-        // publish: while the hook runs, another thread tries to clearCache(). With the
-        // publish correctly inside the read lock, that clearCache() is blocked until we
-        // release, so the latch can never end up set on an emptied cache. Were the
-        // publish moved back outside the lock (the bug), the clearCache() would land
-        // between the scan and the publish and leave cacheComplete=true over an empty
-        // cache - which the post-condition below catches.
+        // The completeness latch (cacheComplete=true) in hydrateAllTables() must be
+        // published under the read lock that observed the cache as complete, so it is
+        // mutually exclusive with clearCache() (write lock).
+        // We force the exact interleaving by overriding publishCacheComplete(): while
+        // the override runs (inside the publisher's lock scope), another thread tries
+        // to clearCache(). With the publish correctly inside the read lock, that
+        // clearCache() is blocked until we release, so the latch can never end up set
+        // on an emptied cache. Were the publish moved back outside the lock (the bug),
+        // the clearCache() would land between the scan and the publish and leave
+        // cacheComplete=true over an empty cache - which the post-condition below
+        // catches.
         assertMemoryLeak(() -> {
             final int tableCount = 3;
             for (int i = 0; i < tableCount; i++) {
@@ -1186,91 +1192,88 @@ public class MetadataCacheTest extends AbstractCairoTest {
             }
             drainWalQueue();
 
-            final MetadataCache cache = engine.getMetadataCache();
-
-            // Start from a warm-but-unlatched state: full cache, cacheComplete=false.
-            // clearCache() empties + unlatches; we then warm the cache table-by-table via
-            // the point-lookup path (hydrateTableOnDemand never latches cacheComplete), so
-            // the cache holds every table while the flag stays off. A full
-            // hydrateAllTables() reconcile cannot produce this state: once it hydrates
-            // every missing table it latches immediately (under the read lock).
-            try (MetadataCacheWriter w = cache.writeLock()) {
-                w.clearCache();
-            }
-            for (int i = 0; i < tableCount; i++) {
-                cache.hydrateTableOnDemand(engine.getTableTokenIfExists("t" + i));
-            }
-            try (MetadataCacheReader ro = cache.readLock()) {
-                Assert.assertEquals(tableCount, ro.getTableCount());
-            }
-            Assert.assertFalse(cache.isCacheComplete());
-
-            // The hook fires once, on the next reconcile's missing==null publish. It
-            // kicks off a concurrent clearCache() and gives it ample time to run. In
-            // correct code that clearCache() is blocked on the write lock (we hold the
-            // read lock), so it cannot empty the cache before we publish.
             final AtomicReference<Thread> clearer = new AtomicReference<>();
             final AtomicReference<Throwable> clearError = new AtomicReference<>();
             final AtomicBoolean fired = new AtomicBoolean(false);
-            cache.setLatchCompleteTestHook(() -> {
-                if (!fired.compareAndSet(false, true)) {
-                    return;
-                }
-                final Thread b = new Thread(() -> {
-                    try (MetadataCacheWriter w = cache.writeLock()) {
-                        w.clearCache();
-                    } catch (Throwable t) {
-                        clearError.compareAndSet(null, t);
-                    } finally {
-                        Path.clearThreadLocals();
+            // The override fires once, on the reconcile's missing==null publish. It
+            // kicks off a concurrent clearCache() and gives it ample time to run. In
+            // correct code that clearCache() is blocked on the write lock (the publish
+            // holds the read lock), so it cannot empty the cache before the flag is
+            // set. `fired` keeps the self-healing reconcile below from re-triggering
+            // the interleaving.
+            try (MetadataCache cache = new MetadataCache(engine) {
+                @Override
+                protected void publishCacheComplete() {
+                    if (fired.compareAndSet(false, true)) {
+                        final Thread b = new Thread(() -> {
+                            try (MetadataCacheWriter w = writeLock()) {
+                                w.clearCache();
+                            } catch (Throwable t) {
+                                clearError.compareAndSet(null, t);
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        }, "clearer");
+                        clearer.set(b);
+                        b.start();
+                        // Long enough that, were the publish NOT holding the read lock,
+                        // the clearer would certainly empty the cache before the flag
+                        // is set.
+                        Os.sleep(200);
                     }
-                }, "clearer");
-                clearer.set(b);
-                b.start();
-                // Long enough that, were we NOT holding the read lock, the clearer would
-                // certainly have emptied the cache before we publish the latch.
-                Os.sleep(200);
-            });
-
-            try {
-                cache.hydrateAllTables();
-            } finally {
-                cache.setLatchCompleteTestHook(null);
-            }
-
-            final Thread b = clearer.get();
-            Assert.assertNotNull("hook did not fire - publish path changed?", b);
-            b.join();
-            if (clearError.get() != null) {
-                throw new RuntimeException(clearError.get());
-            }
-
-            // Invariant: cacheComplete must never be latched over an incomplete cache.
-            // Correct code ends here with the cache emptied by the clearer and the flag
-            // off (publish happened under the read lock while the cache was still full,
-            // then the clearer emptied + unlatched). The buggy code would end with
-            // cacheComplete=true over an empty cache.
-            try (MetadataCacheReader ro = cache.readLock()) {
-                if (cache.isCacheComplete()) {
-                    Assert.assertEquals(
-                            "cacheComplete latched on an incomplete cache",
-                            tableCount, ro.getTableCount());
+                    super.publishCacheComplete();
                 }
-            }
+            }) {
+                // Start from a warm-but-unlatched state: a fresh instance is empty, and
+                // the point-lookup path (hydrateTableOnDemand never latches
+                // cacheComplete) warms it so the cache holds every table while the flag
+                // stays off. A full hydrateAllTables() reconcile cannot produce this
+                // state: once it hydrates every missing table it latches immediately
+                // (under the read lock).
+                for (int i = 0; i < tableCount; i++) {
+                    cache.hydrateTableOnDemand(engine.getTableTokenIfExists("t" + i));
+                }
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(tableCount, ro.getTableCount());
+                }
+                Assert.assertFalse(cache.isCacheComplete());
 
-            // And the cache still self-heals to the full set.
-            cache.hydrateAllTables();
-            try (MetadataCacheReader ro = cache.readLock()) {
-                Assert.assertEquals(tableCount, ro.getTableCount());
+                cache.hydrateAllTables();
+
+                final Thread b = clearer.get();
+                Assert.assertNotNull("override did not fire - publish path changed?", b);
+                b.join();
+                if (clearError.get() != null) {
+                    throw new RuntimeException(clearError.get());
+                }
+
+                // Invariant: cacheComplete must never be latched over an incomplete
+                // cache. Correct code ends here with the cache emptied by the clearer
+                // and the flag off (publish happened under the read lock while the
+                // cache was still full, then the clearer emptied + unlatched). The
+                // buggy code would end with cacheComplete=true over an empty cache.
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    if (cache.isCacheComplete()) {
+                        Assert.assertEquals(
+                                "cacheComplete latched on an incomplete cache",
+                                tableCount, ro.getTableCount());
+                    }
+                }
+
+                // And the cache still self-heals to the full set.
+                cache.hydrateAllTables();
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(tableCount, ro.getTableCount());
+                }
             }
         });
     }
 
     @Test
     public void testConcurrentReconcileAndClearCacheNeverMarksEmptyCacheComplete() throws Exception {
-        // M2 regression: the completeness latch (cacheComplete=true) in
-        // hydrateAllTables() / onStartupAsyncHydrator() must be published under a lock
-        // that excludes clearCache(). Set outside the lock, a clearCache() can
+        // The completeness latch (cacheComplete=true) in hydrateAllTables() /
+        // onStartupAsyncHydrator() must be published under a lock that excludes
+        // clearCache(). Set outside the lock, a clearCache() can
         // interleave between observing the cache as complete and publishing the flag,
         // leaving an emptied cache marked complete - catalogue queries then
         // short-circuit forever with no self-healing. We hammer the reconcile path
@@ -1372,8 +1375,99 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGiveUpBudgetIgnoresRoundsThatOverlapAClearCache() throws Exception {
+        // The give-up budget must ignore rounds whose "no progress" a concurrent
+        // clearCache() manufactured. All reconcilers hydrate `alpha`, then a single clear
+        // wipes it right before the give-up assessment: unguarded, all 8 spend the budget
+        // in one burst and latch cacheComplete over the emptied, still-hydratable cache.
+        // Only such a burst reproduces the bug - every clearCache() resets the counter, so
+        // sequential rounds never reach the threshold. `stuck` (unhydratable) keeps each
+        // pass incomplete so every reconciler reaches the give-up path.
+        final int maxIncompleteReconcilePasses = 8;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE stuck (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final int registeredTables = 2;
+            // One reconciler per give-up pass: their combined post-clear bumps reach the
+            // budget in a single burst (each bumps once, from the clear-reset zero).
+            final int reconcilers = maxIncompleteReconcilePasses;
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+
+            final File stuckMeta = metaFile("stuck");
+            final File stuckHidden = new File(stuckMeta.getParentFile(), "_meta.hidden");
+            java.nio.file.Files.move(stuckMeta.toPath(), stuckHidden.toPath());
+            // The subclass parks every reconciler right before the give-up assessment
+            // (holding no lock). Once all are parked, the barrier action runs ONE
+            // clearCache(): it resets the budget and wipes alpha, so every reconciler
+            // then sees "no progress". A fresh instance starts empty, so both tables are
+            // missing on every reconciler's first scan.
+            try (MetadataCache cache = new MetadataCache(engine) {
+                private final CyclicBarrier atGiveUp = new CyclicBarrier(reconcilers, () -> {
+                    try (MetadataCacheWriter w = writeLock()) {
+                        w.clearCache();
+                    }
+                });
+
+                @Override
+                protected void assessReconcileGiveUp(ObjList<TableToken> missing, long startEpoch) {
+                    try {
+                        atGiveUp.await(30, TimeUnit.SECONDS);
+                    } catch (InterruptedException | BrokenBarrierException | TimeoutException e) {
+                        error.compareAndSet(null, e);
+                        Thread.currentThread().interrupt();
+                    }
+                    super.assessReconcileGiveUp(missing, startEpoch);
+                }
+            }) {
+                try {
+                    final Thread[] threads = new Thread[reconcilers];
+                    for (int i = 0; i < reconcilers; i++) {
+                        threads[i] = new Thread(() -> {
+                            try {
+                                cache.hydrateAllTables();
+                            } catch (Throwable t) {
+                                error.compareAndSet(null, t);
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        }, "reconciler-" + i);
+                        threads[i].start();
+                    }
+                    for (Thread t : threads) {
+                        t.join();
+                    }
+                    if (error.get() != null) {
+                        throw new RuntimeException(error.get());
+                    }
+
+                    // Deterministic end state: every reconciler's epoch snapshot predates
+                    // the clear, so all of them skip the budget and nothing latches.
+                    // Unguarded, the 8 post-clear bumps exhaust the budget and latch
+                    // cacheComplete over the emptied cache.
+                    Assert.assertFalse(
+                            "give-up latched cacheComplete over a clear-wiped cache",
+                            cache.isCacheComplete());
+                } finally {
+                    java.nio.file.Files.move(stuckHidden.toPath(), stuckMeta.toPath());
+                }
+
+                // With stuck readable again and clears stopped, the cache self-heals to
+                // the full set and warm-latches - the guard does not suppress legitimate
+                // latching.
+                cache.hydrateAllTables();
+                try (MetadataCacheReader ro = cache.readLock()) {
+                    Assert.assertEquals(registeredTables, ro.getTableCount());
+                }
+                Assert.assertTrue(cache.isCacheComplete());
+            }
+        });
+    }
+
+    @Test
     public void testHydrateTableOnDemandPopulatesMissingTable() throws Exception {
-        // M3: point-lookup catalogue paths (SHOW COLUMNS / SHOW CREATE TABLE / parquet
+        // Point-lookup catalogue paths (SHOW COLUMNS / SHOW CREATE TABLE / parquet
         // partition probes) resolve the token from the registry but read the lazily
         // hydrated cache. hydrateTableOnDemand() is their single-table reconcile: it must
         // populate a registered-but-uncached table, and no-op once the cache is marked
@@ -1421,7 +1515,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
     @Test
     public void testShowColumnsBeforeStartupHydration() throws Exception {
-        // M3 regression: SHOW COLUMNS resolves the token from the registry but reads the
+        // SHOW COLUMNS resolves the token from the registry but reads the
         // lazily hydrated cache; in the startup window it used to throw "table does not
         // exist" for a registered table. It must hydrate the table on demand.
         assertMemoryLeak(() -> {
