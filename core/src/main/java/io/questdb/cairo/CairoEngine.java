@@ -1377,8 +1377,13 @@ public class CairoEngine implements Closeable, WriterSource {
         // one extra segment stays retained for the deferred ring drain after the
         // sweep. Non-BACKFILL views start at subscribeFromSeqTxn - 1 - everything
         // from subscribeFromSeqTxn forward is the view's responsibility.
+        // Clamp the BACKFILL floor at 0: an empty base has backfillTargetSeqTxn=0,
+        // and a raw -1 collides with the "no floor" sentinel WalPurgeJob tests
+        // (lvConsumed > -1), which would let purge delete base WAL 1..K before the
+        // first drain reads it. 0 pins the floor without retaining anything, matching
+        // the non-BACKFILL empty-base case (subscribeFromSeqTxn - 1 == 0).
         final long initialLvConsumedSeqTxn = backfillRequested
-                ? backfillTargetSeqTxn - 1
+                ? Math.max(0, backfillTargetSeqTxn - 1)
                 : subscribeFromSeqTxn - 1;
 
         // Build the definition up front so it can ride into the sequencer

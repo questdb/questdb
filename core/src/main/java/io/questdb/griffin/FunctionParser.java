@@ -646,7 +646,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.position(position).put("bad function factory (NULL), check log");
         } else if (!sqlExecutionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
             Misc.freeObjList(args);
-            throw SqlException.nonDeterministicColumn(node.position, node.token);
+            // The same guard is armed for both a materialized view and a live view
+            // SELECT; name the kind actually being compiled so the reject reads right.
+            throw SqlException.nonDeterministicColumn(
+                    node.position,
+                    node.token,
+                    sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
+            );
         }
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point

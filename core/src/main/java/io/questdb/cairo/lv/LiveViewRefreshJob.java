@@ -2475,7 +2475,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         boolean readerAttached = false;
-        boolean restoredOk = false;
         long appendedRows = 0;
         long replayMaxTs = Numbers.LONG_NULL;
         try {
@@ -2524,9 +2523,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
                             // restoreFromHead retired the corrupt .cp + cleared
                             // head metadata (or stashed an invalidate reason).
-                            // State is now empty across the board - the same
-                            // starting condition head-miss replay expects.
-                            // try-with-resources closes the cursor on return.
+                            // The O3 replay is abandoned here without advancing
+                            // the watermark, so the same trigger re-fires on a
+                            // later refresh cycle and recovers once a fresh head
+                            // .cp exists (one cycle of stale pre-O3 rows in
+                            // between). try-with-resources closes the cursor on
+                            // return.
                             return;
                         }
                         // Snap the lifetime row counter back to the head's
@@ -2534,7 +2536,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // logically truncates rows above replayLowTs, so the
                         // counter rewinds in step with the table.
                         instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
-                        restoredOk = true;
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
@@ -2563,17 +2564,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 engine.attachReader(reader);
             }
             reader.close();
-        }
-
-        if (!restoredOk) {
-            // Falling through to the head-miss path. The reader/walWriter
-            // we held are released by the finally above; head-miss opens
-            // its own. The head .cp is already gone (restoreFromHead did
-            // it) so head-miss's invalidateHeadOnO3 no-ops.
-            LOG.info().$("live view O3 head-hit replay falling through to head-miss [view=")
-                    .$(viewName).I$();
-            o3HeadMissReplay(instance, windowFactory, Numbers.LONG_NULL, baseToken, advanceTo);
-            return;
         }
 
         if (appendedRows > 0) {

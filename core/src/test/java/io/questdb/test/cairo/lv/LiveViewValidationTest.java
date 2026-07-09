@@ -182,10 +182,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // checkpoint restore, so CREATE must reject it up front.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertLiveViewCreateRejected("SELECT ts, x, rnd_double() AS r, row_number() OVER () AS rn FROM base");
-            assertLiveViewCreateRejected("SELECT ts, x, now() AS r, row_number() OVER () AS rn FROM base");
-            assertLiveViewCreateRejected("SELECT ts, x, systimestamp() AS r, row_number() OVER () AS rn FROM base");
-            assertLiveViewCreateRejected("SELECT ts, x, sysdate() AS r, row_number() OVER () AS rn FROM base");
+            assertLiveViewCreateRejected("SELECT ts, x, rnd_double() AS r, row_number() OVER () AS rn FROM base", "rnd_double");
+            assertLiveViewCreateRejected("SELECT ts, x, now() AS r, row_number() OVER () AS rn FROM base", "now");
+            assertLiveViewCreateRejected("SELECT ts, x, systimestamp() AS r, row_number() OVER () AS rn FROM base", "systimestamp");
+            assertLiveViewCreateRejected("SELECT ts, x, sysdate() AS r, row_number() OVER () AS rn FROM base", "sysdate");
         });
     }
 
@@ -195,10 +195,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // un-emitted, so the row set diverges permanently from any recompute.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE v > rnd_double()");
-            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > now()");
-            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > systimestamp()");
-            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > sysdate()");
+            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE v > rnd_double()", "rnd_double");
+            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > now()", "now");
+            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > systimestamp()", "systimestamp");
+            assertLiveViewCreateRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE ts > sysdate()", "sysdate");
         });
     }
 
@@ -210,10 +210,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String frame = " OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base";
-            assertLiveViewCreateRejected("SELECT ts, x, sum(v + now()::long)" + frame);
-            assertLiveViewCreateRejected("SELECT ts, x, sum(v + systimestamp()::long)" + frame);
-            assertLiveViewCreateRejected("SELECT ts, x, sum(v + sysdate()::long)" + frame);
-            assertLiveViewCreateRejected("SELECT ts, x, sum(v + rnd_double(0))" + frame);
+            assertLiveViewCreateRejected("SELECT ts, x, sum(v + now()::long)" + frame, "now");
+            assertLiveViewCreateRejected("SELECT ts, x, sum(v + systimestamp()::long)" + frame, "systimestamp");
+            assertLiveViewCreateRejected("SELECT ts, x, sum(v + sysdate()::long)" + frame, "sysdate");
+            assertLiveViewCreateRejected("SELECT ts, x, sum(v + rnd_double(0))" + frame, "rnd_double");
         });
     }
 
@@ -235,6 +235,64 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRejectLagOverWideDecimalPartition() throws Exception {
+        // lag(DECIMAL128/256) OVER a partitioned frame compiles to a function
+        // without incremental-snapshot support (Decimal128/256LagOverPartitionFunction),
+        // so CREATE LIVE VIEW must reject it up front: a window function that cannot
+        // snapshot would make the refresh worker silently skip head checkpoints and
+        // route every restart / O3 through a full head-miss replay. The narrower
+        // DECIMAL64 lag over the same partitioned frame is snapshot-capable and is
+        // accepted, so the reject is specific to the wide widths, not to lag itself.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, " +
+                    "d64 DECIMAL(18, 6), d128 DECIMAL(38, 6), d256 DECIMAL(76, 6)) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            assertLagOverWideDecimalRejected("d128");
+            assertLagOverWideDecimalRejected("d256");
+
+            // DECIMAL64 (precision 18) stays on the snapshot-capable base function.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, lag(d64, 1) OVER w AS prev FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            Assert.assertNotNull(
+                    "DECIMAL64 lag over a partition must be accepted",
+                    engine.getLiveViewRegistry().getViewInstance("lv")
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRejectNonWalBaseTable() throws Exception {
+        // Incremental refresh drains the base table's WAL, and createLiveView assumes
+        // a WAL base (CairoEngine relies on isWalTable). A BYPASS WAL base is rejected
+        // at CREATE, with the position pointing at the base table name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_nowal (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base_nowal";
+            try {
+                execute(createSql);
+                // Should not reach here; drop defensively so a spurious success does
+                // not leave a view that trips a later assertion on the same name.
+                execute("DROP LIVE VIEW lv");
+                Assert.fail("expected non-WAL base reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "base table must be a WAL table [name=base_nowal]")
+                );
+                final int pos = e.getPosition();
+                Assert.assertTrue(
+                        "position " + pos + " must point at the base table name in: " + createSql,
+                        pos >= 0 && createSql.startsWith("base_nowal", pos)
+                );
+            }
+        });
+    }
+
     private void assertCreateLiveViewCollisionRejected(boolean ifNotExists) throws Exception {
         try {
             execute("CREATE LIVE VIEW " + (ifNotExists ? "IF NOT EXISTS " : "") +
@@ -244,6 +302,26 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "wrong message [msg=" + e.getFlyweightMessage() + ", ifNotExists=" + ifNotExists + ']',
                     Chars.contains(e.getFlyweightMessage(), "table or view with the requested name already exists")
+            );
+        }
+    }
+
+    private void assertLagOverWideDecimalRejected(String col) throws Exception {
+        try {
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, lag(" + col + ", 1) OVER w AS prev FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected wide-decimal lag reject for column " + col);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for column " + col,
+                    Chars.contains(
+                            e.getFlyweightMessage(),
+                            "live view select cannot use window function lag(); incremental snapshot is not supported for this function yet"
+                    )
             );
         }
     }
@@ -278,7 +356,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         }
     }
 
-    private void assertLiveViewCreateRejected(String selectSql) throws Exception {
+    private void assertLiveViewCreateRejected(String selectSql, String offendingToken) throws Exception {
         try {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " + selectSql);
             // Should not reach here; drop defensively so a spurious success does not
@@ -286,9 +364,22 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             execute("DROP LIVE VIEW lv");
             Assert.fail("expected non-deterministic function reject for: " + selectSql);
         } catch (SqlException e) {
+            // A CREATE LIVE VIEW reject names the live view - not "materialized view" -
+            // and identifies the offending function token.
             Assert.assertTrue(
                     "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
-                    Chars.contains(e.getFlyweightMessage(), "non-deterministic function cannot be used in materialized view")
+                    Chars.contains(
+                            e.getFlyweightMessage(),
+                            "non-deterministic function cannot be used in live view: " + offendingToken
+                    )
+            );
+            // The position points at the offending token in the SELECT text (the LV
+            // create compiles op.getSelectSql() directly, so positions are relative
+            // to selectSql). Error Position Convention: point at the offending char.
+            final int pos = e.getPosition();
+            Assert.assertTrue(
+                    "position " + pos + " must point at '" + offendingToken + "' in: " + selectSql,
+                    pos >= 0 && selectSql.startsWith(offendingToken, pos)
             );
         }
     }

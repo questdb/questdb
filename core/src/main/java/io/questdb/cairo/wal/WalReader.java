@@ -67,6 +67,7 @@ public class WalReader implements Closeable {
     private int columnCount;
     private int rootLen;
     private long rowCount;
+    private int segmentId = -1;
     private String tableName;
     private WalEventCursor walEventCursor;
     private String walName;
@@ -95,6 +96,9 @@ public class WalReader implements Closeable {
         Misc.freeObjList(columns);
         Misc.freeObjList(symbolMaps);
         Misc.free(path);
+        // Invalidate the same-segment fast path: a reused instance must take the
+        // full rebind in of() rather than matching a freed segment.
+        segmentId = -1;
         LOG.debug().$("closed '").$safe(tableName).$('\'').$();
     }
 
@@ -192,8 +196,25 @@ public class WalReader implements Closeable {
      * view, or column pointer is still in use.
      */
     public WalReader of(TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
+        // Detect a rebind to the exact same (table, wal, segment) - only rowCount
+        // grew. The live view drain re-opens the same segment once per base commit,
+        // and many commits share a segment; keeping the column list lets the
+        // loadColumnAt() reload below remap each mmap in place (openOrCreateMemory
+        // reuses mem.of at the new size) instead of munmap+mmap-ing every column
+        // per commit. Computed before the fields are reassigned; columnCount is
+        // cross-checked after metadata.open in case the on-disk schema differs.
+        final boolean sameTableWalSegment = this.walName != null
+                && this.tableName != null
+                && this.segmentId == segmentId
+                && Chars.equals(this.tableName, tableToken.getTableName())
+                && Chars.equals(this.walName, walName);
+        final int prevColumnCount = this.columnCount;
+
         this.tableName = tableToken.getTableName();
-        this.walName = Chars.toString(walName);
+        if (!sameTableWalSegment) {
+            this.walName = Chars.toString(walName);
+        }
+        this.segmentId = segmentId;
         this.rowCount = rowCount;
 
         path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
@@ -209,13 +230,19 @@ public class WalReader implements Closeable {
         path.slash().put(segmentId);
         walEventCursor.reset();
 
-        final int capacity = 2 * columnCount + 2;
-        // Drop column mmaps from a prior segment; loadColumnAt() remaps on demand for this one.
-        Misc.freeObjList(columns);
-        columns.clear();
-        columns.setPos(capacity + 2);
-        columns.setQuick(0, NullMemoryCMR.INSTANCE);
-        columns.setQuick(1, NullMemoryCMR.INSTANCE);
+        if (!sameTableWalSegment || prevColumnCount != columnCount) {
+            final int capacity = 2 * columnCount + 2;
+            // Different segment (or first bind): drop the prior segment's column
+            // mmaps; loadColumnAt() remaps on demand for this one.
+            Misc.freeObjList(columns);
+            columns.clear();
+            columns.setPos(capacity + 2);
+            columns.setQuick(0, NullMemoryCMR.INSTANCE);
+            columns.setQuick(1, NullMemoryCMR.INSTANCE);
+        }
+        // Same segment: keep the column list intact. dataCursor.of() below runs
+        // openSegment() -> loadColumnAt() for every column, and openOrCreateMemory
+        // remaps each retained mmap in place at the current rowCount.
         dataCursor.of(this);
         return this;
     }

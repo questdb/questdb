@@ -148,6 +148,83 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDiskOnlyReadReleasesTierPin() throws Exception {
+        // M3: a statically disk-only read - a pruned/reordered projection, a
+        // non-table cursor, or a non-ascending scan - can never engage the fence,
+        // so LiveViewRecordCursor.of() releases the tier slot pin immediately
+        // rather than holding it for the cursor's whole lifetime. Sustained
+        // concurrent disk-only reads straddling a tier swap would otherwise pin
+        // BOTH slots, so the refresh worker's publishToInMemoryTier fails and it
+        // emergency-flushes the lead every cycle. A routing read still pins its slot.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertTrue("published slot must hold rows", tier.getSlot(tier.getPublishedIdx()).rowCount() > 0);
+            Assert.assertFalse("no reader open -> slot unpinned", isPublishedSlotReaderPinned(tier));
+
+            // Control: a routing read holds the pin for its lifetime, released on close.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue("aligned identity read must route", cursor.isRoutingEligible());
+                Assert.assertTrue("a routing read must hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+            Assert.assertFalse("closing the routing read releases the pin", isPublishedSlotReaderPinned(tier));
+
+            // A pruned projection is disk-only and must not hold the pin while open.
+            try (
+                    RecordCursorFactory factory = select("SELECT rn FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertFalse("pruned projection must be disk-only", cursor.isRoutingEligible());
+                Assert.assertFalse("a disk-only pruned read must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+
+            // A backward scan is disk-only and must not hold the pin either.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv ORDER BY ts DESC");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertFalse("backward scan must be disk-only", cursor.isRoutingEligible());
+                Assert.assertFalse("a disk-only backward scan must not hold the slot pin", isPublishedSlotReaderPinned(tier));
+            }
+        });
+    }
+
+    @Test
+    public void testVersionFenceMissKeepsTierPin() throws Exception {
+        // M3 guard: a version-fence miss (full-schema projection + ascending scan,
+        // but the slot is stamped NEWER than the disk snapshot) serves disk-only
+        // yet must KEEP the slot pinned, so getCursor's isSlotNewerThanDisk()
+        // staleness retry still sees the slot. Only the STATIC disk-only cases
+        // (projection shape / scan direction) release the pin early.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            LiveViewInMemoryBuffer slot = tier.getSlot(tier.getPublishedIdx());
+            Assert.assertTrue(slot.rowCount() > 0);
+
+            // Force the slot newer than any reader's snapshot: the fence disengages
+            // but the slot must stay pinned for the retry.
+            slot.setLvSeqTxn(slot.lvSeqTxn() + 1000);
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertFalse("seqTxn mismatch must not route", cursor.isRoutingEligible());
+                Assert.assertTrue("a version-fence miss must keep the slot pinned for the retry", isPublishedSlotReaderPinned(tier));
+            }
+        });
+    }
+
+    @Test
     public void testReorderedSameTypeProjectionRoutesDiskOnly() throws Exception {
         // C1 regression: the in-mem tier stores the LV's output row in declared
         // column order and MergedRecord indexes the buffer by output position. A
@@ -3023,6 +3100,19 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
 
     // Unwraps any QueryProgress wrapper to the LiveViewRecordCursorFactory and
     // opens its cursor, so the test can read the fence predicate directly.
+    // Probes whether the tier's published slot currently carries a reader pin,
+    // without disturbing it: tryAcquireWrite takes the writer sentinel via a
+    // 0 -> -1 CAS that succeeds only when no reader holds the slot, in which case
+    // the sentinel is released straight back to 0.
+    private static boolean isPublishedSlotReaderPinned(LiveViewInMemoryTier tier) {
+        final int idx = tier.getPublishedIdx();
+        if (tier.tryAcquireWrite(idx) == null) {
+            return true;
+        }
+        tier.releaseWriteWithoutPublish(idx);
+        return false;
+    }
+
     private static LiveViewRecordCursor openLvCursor(RecordCursorFactory factory) throws SqlException {
         return (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(sqlExecutionContext);
     }

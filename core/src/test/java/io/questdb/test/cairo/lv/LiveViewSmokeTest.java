@@ -58,6 +58,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
@@ -2602,6 +2603,72 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
 
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillEmptyBasePinsPurgeFloorAtZero() throws Exception {
+        // Regression: a BACKFILL view created over an EMPTY base captures
+        // backfillTargetSeqTxn = 0, so a raw backfillTargetSeqTxn - 1 floor is -1 -
+        // the exact value WalPurgeJob treats as "no floor" (it pins the base WAL
+        // only when lvConsumed > -1). That let the base WAL be purged out from
+        // under the view's first drain, invalidating it and losing every row the
+        // drain had not yet consumed. The floor is now clamped at 0, matching the
+        // floor a non-BACKFILL view starts at over an empty base.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Create the view while the base is still empty: baseHeadSeqTxn is 0,
+            // so backfillTargetSeqTxn is 0 and the raw floor would be -1.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(
+                    "empty-base BACKFILL target must be 0",
+                    0,
+                    instance.getStateReader().getBackfillTargetSeqTxn()
+            );
+            Assert.assertEquals(
+                    "empty-base BACKFILL floor must clamp to 0, not the -1 no-floor sentinel",
+                    0,
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+
+            // Ingest and apply to the base, but do NOT refresh the view yet: its
+            // floor stays at the CREATE-time 0 while the base's applied seqTxn
+            // advances past the inserted rows.
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(5)");
+            drainWalQueue();
+
+            // A real purge with the base fully applied: only the view's floor can
+            // retain the base WAL segments the first drain still needs. The -1
+            // sentinel deleted them; the clamped 0 floor pins them.
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                purgeJob.drain(0);
+            }
+
+            // Now drive the view. It must consume the retained WAL, stay valid,
+            // and materialise every row.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertFalse(
+                    "view must stay valid; its base WAL was retained by the clamped floor",
+                    instance.isInvalid()
+            );
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    instance.getStateReader().getBackfillState()
+            );
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
             execute("DROP LIVE VIEW lv");
         });
     }

@@ -343,22 +343,45 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.pinnedSlot = candidate.getSlot(pin);
                     this.symbolCache = candidate.getSymbolCache();
                     this.inMemEligible = isFullSchemaProjection(diskCursor, baseMetadata, pinnedSlot, timestampColumnIndex);
-                    // Fence: serve the slot only when (a) the disk scan is
-                    // ascending (the seam split assumes ascending ts), and
-                    // (b) the slot and the disk reader share an LV-table seqTxn
-                    // (same version => rows agree). Mismatch / unstamped /
-                    // non-table cursor / non-ascending scan => disk-only.
-                    this.routingEligible = inMemEligible
-                            && diskScanAscending
-                            && pinnedSlot.rowCount() > 0
-                            && pinnedSlot.lvSeqTxn() != Numbers.LONG_NULL
-                            && pinnedSlot.lvSeqTxn() == diskReaderSeqTxn(diskCursor);
-                    // Snapshot the overlap/lead boundary. Rows [0, leadStart) are
-                    // the overlap (also on disk, served via the seam split); rows
-                    // [leadStart, rowCount) are the un-flushed lead, served only
-                    // from RAM. The slot is frozen for the cursor's lifetime, so
-                    // this snapshot stays valid.
-                    this.leadStart = pinnedSlot.rowCount() - pinnedSlot.leadRowCount();
+                    if (!inMemEligible || !diskScanAscending) {
+                        // Statically disk-only: the projection is pruned/reordered or
+                        // the disk cursor is non-table (inMemEligible false), or the
+                        // scan is not ascending (the seam split assumes ascending ts).
+                        // The fence can never engage for this cursor regardless of the
+                        // slot's version, and no serving path (hasNext / size /
+                        // skipRows / getSymbolTable / newSymbolTable / recordAt) reads
+                        // the slot while routingEligible is false. Release the tier
+                        // slot now instead of holding the global pin lease + per-slot
+                        // rc for the whole cursor lifetime: sustained concurrent
+                        // disk-only reads straddling a tier swap would otherwise pin
+                        // BOTH slots, so publishToInMemoryTier fails and the refresh
+                        // worker emergency-flushes the lead every cycle.
+                        //
+                        // A version-fence miss (schema + direction OK, but the slot is
+                        // newer than the disk snapshot) is deliberately NOT released
+                        // here: getCursor's isSlotNewerThanDisk() staleness retry needs
+                        // the slot pinned to detect it and re-open against a fresh
+                        // snapshot, so that path keeps the pin (routingEligible stays
+                        // false and it serves disk-only for this attempt).
+                        releaseSlot();
+                        this.pinnedSlot = null;
+                        this.symbolCache = null;
+                    } else {
+                        // schema + direction are fine; serve the slot only when it and
+                        // the disk reader share an LV-table seqTxn (same version => rows
+                        // agree) and the slot actually holds rows. Mismatch / unstamped
+                        // => disk-only, but the slot stays pinned for the staleness
+                        // retry noted above.
+                        this.routingEligible = pinnedSlot.rowCount() > 0
+                                && pinnedSlot.lvSeqTxn() != Numbers.LONG_NULL
+                                && pinnedSlot.lvSeqTxn() == diskReaderSeqTxn(diskCursor);
+                        // Snapshot the overlap/lead boundary. Rows [0, leadStart) are
+                        // the overlap (also on disk, served via the seam split); rows
+                        // [leadStart, rowCount) are the un-flushed lead, served only
+                        // from RAM. The slot is frozen for the cursor's lifetime, so
+                        // this snapshot stays valid.
+                        this.leadStart = pinnedSlot.rowCount() - pinnedSlot.leadRowCount();
+                    }
                 }
             }
         }
