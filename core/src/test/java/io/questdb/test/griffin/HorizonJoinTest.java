@@ -1019,6 +1019,53 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinKeyedOnQuoteProtectedAlias() throws Exception {
+        // The master join key is a dotted alias the compiler wraps in protective quotes;
+        // the composed reference m."k.b" must resolve against the projection metadata,
+        // which stores the name unquoted.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE src (k INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE ref (k INT, v DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute(
+                    """
+                            INSERT INTO src VALUES
+                                (1, '2000-01-01T00:00:01.000000Z'),
+                                (2, '2000-01-01T00:00:01.000000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO ref VALUES
+                                (1, 100.0, '2000-01-01T00:00:00.500000Z'),
+                                (2, 200.0, '2000-01-01T00:00:00.500000Z')
+                            """
+            );
+
+            assertQuery("""
+                    SELECT m."k.b", avg(r.v)
+                    FROM (SELECT k AS "k.b", ts FROM src) m
+                    HORIZON JOIN ref AS r ON (m."k.b" = r.k)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY m."k.b"
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k.b\tavg
+                            1\t100.0
+                            2\t200.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinKeyedSomeMasterSymbolsMissing() throws Exception {
         // Some master symbols exist in slave, some don't.
         // Matching symbols produce results, non-matching produce NULLs.
