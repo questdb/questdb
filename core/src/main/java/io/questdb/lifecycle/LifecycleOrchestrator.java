@@ -12,6 +12,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -336,6 +337,11 @@ public class LifecycleOrchestrator implements QuietCloseable {
      * close() rests on the hook being a pure atomic signal. It must not free resources either
      * (that belongs in the component's stop()).
      */
+    @TestOnly
+    public Runnable getPreJoinCancelHookForTest() {
+        return preJoinCancelHook;
+    }
+
     public void setPreJoinCancelHook(@Nullable Runnable hook) {
         this.preJoinCancelHook = hook;
     }
