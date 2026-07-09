@@ -1077,6 +1077,54 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadOnlyDeferralAtInvalidateViewRecordsReason() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            execute("create materialized view price_1h as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull("expected a real (non-no-op) state store to hold the view state", state);
+
+            // Deliver an INVALIDATE on a read-only engine: invalidateView's top read-only branch must defer
+            // carrying the reason, not the no-reason reschedule sentinel. The difference decides whether a
+            // post-promote finalize can ever mint this deferral: finalize treats a null reason as a
+            // full-refresh reschedule and never mints from it, so a sentinel here would strand the view
+            // valid-but-stale after the promote instead of retrying the invalidation.
+            readOnly.set(true);
+            try {
+                engine.getMatViewStateStore().enqueueInvalidate(viewToken, "update operation");
+                drainMatViewQueue(engine);
+            } finally {
+                readOnly.set(false);
+            }
+
+            Assert.assertTrue("the read-only delivery must defer", state.isPendingInvalidation());
+            Assert.assertEquals("the read-only deferral must record the invalidation reason",
+                    "update operation", state.getPendingInvalidationReason());
+            Assert.assertFalse("the deferral alone must not mint", state.isInvalid());
+
+            // The deferral is in-memory only: the view is still valid on disk.
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1h\tbase_price\tvalid
+                            """);
+        });
+    }
+
+    @Test
     public void testReadOnlyEngineLeavesDeferredInvalidationUntouched() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_price (" +
