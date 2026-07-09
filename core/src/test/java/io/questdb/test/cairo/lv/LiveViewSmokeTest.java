@@ -10928,6 +10928,160 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateaddCalendarUnitAnchorNeverCompacts() throws Exception {
+        // dateadd('M', 1, ts) is a calendar add: it clamps day-of-month, so it is NOT
+        // monotone non-decreasing in the ascending designated timestamp. Two later
+        // timestamps can produce the SAME anchor as an earlier one (a clamp collision),
+        // and a still-later row can produce an anchor BELOW one already seen - which
+        // revisits a bucket the frontier sweep may have already evicted, resetting the
+        // running sum and silently undercounting. The build-time gate must reject the
+        // calendar-unit dateadd so compaction stays disabled; the sibling
+        // testNonMonotoneTimestampFunctionAnchorNeverCompacts covers the wrapped case.
+        //
+        // Clamp collision (2026 is not a leap year, Feb has 28 days):
+        //   sym 1 ts 01-30T12:00 -> dateadd('M',1) = Feb 30 -> clamp 02-28T12:00  <- seeded first
+        //   sym 2 ts 01-30T13:00 ->                          02-28T13:00
+        //   sym 3 ts 01-30T14:00 ->                          02-28T14:00
+        //   sym 4 ts 01-30T15:00 ->                          02-28T15:00  frontier
+        //   sym 1 ts 01-31T12:00 -> dateadd('M',1) = Feb 31 -> clamp 02-28T12:00  <- dip
+        // The dip (02-28T12:00) lands below the frontier: with a WRONGLY monotone gate the
+        // sweep would have evicted sym 1's 02-28T12:00 bucket by the time the dip revisits
+        // it, restarting sym 1's sum at 7. With the gate rejecting 'M', every partition is
+        // retained and the same-bucket dip continues it: 100 + 7 = 107.
+        //
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION dateadd('M', 1, ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-01-30T12:00:00.000000Z', 100, 1), " +
+                        "('2026-01-30T13:00:00.000000Z', 10, 2), " +
+                        "('2026-01-30T14:00:00.000000Z', 20, 3), " +
+                        "('2026-01-30T15:00:00.000000Z', 30, 4), " +
+                        "('2026-01-31T12:00:00.000000Z', 7, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull("anchor window must be built after refresh", window);
+                Assert.assertEquals(
+                        "calendar-unit dateadd is non-monotone (day-of-month clamp): all 4 partitions retained",
+                        4L,
+                        window.getAnchorMapSize()
+                );
+
+                // sym 1's dip row (same 02-28 clamp bucket as its first row) continues the
+                // running sum: 100 + 7 = 107, not a reset to 7.
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                        "2026-01-30T12:00:00.000000Z\t1\t100.0\n" +
+                        "2026-01-30T13:00:00.000000Z\t2\t10.0\n" +
+                        "2026-01-30T14:00:00.000000Z\t3\t20.0\n" +
+                        "2026-01-30T15:00:00.000000Z\t4\t30.0\n" +
+                        "2026-01-31T12:00:00.000000Z\t1\t107.0\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testDateaddFixedUnitAnchorCompacts() throws Exception {
+        // Positive coverage for the dateadd accept branch of isProvablyMonotoneAnchor:
+        // a FIXED-duration unit ('h' here) adds the same constant to every row, so the
+        // add IS monotone non-decreasing in the ascending designated timestamp and the
+        // frontier sweep may safely evict stale partitions. Composing it under
+        // timestamp_floor('1d', ...) yields clean day buckets while keeping the nested
+        // dateadd load-bearing: if the gate wrongly rejected the fixed-unit dateadd the
+        // whole anchor would be classified non-monotone, compaction would stay disabled,
+        // and the map would never shrink below 3. Mirrors
+        // testFrontierSweepDropsStalePartitionsAndRevivesCorrectly, whose plain
+        // timestamp_floor('1d', ts) anchor produces the identical buckets.
+        //
+        // Anchors floor(dateadd('h', 1, ts)) (the +1h shift stays within the same day):
+        //   sym 1 ts 08-01T00:00 -> 08-01T01:00 -> 08-01
+        //   sym 2 ts 08-01T01:00 -> 08-01T02:00 -> 08-01
+        //   sym 3 ts 08-01T02:00 -> 08-01T03:00 -> 08-01
+        //   sym 1 ts 08-02T00:00 -> 08-02T01:00 -> 08-02  (frontier day1 -> day2)
+        //   sym 1 ts 08-03T00:00 -> 08-03T01:00 -> 08-03  (frontier day2 -> day3, sweep)
+        //   sym 2 ts 08-03T01:00 -> 08-03T02:00 -> 08-03  (revives in a new bucket)
+        //
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', dateadd('h', 1, ts)))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10, 1), " +
+                        "('2026-08-01T01:00:00.000000Z', 20, 2), " +
+                        "('2026-08-01T02:00:00.000000Z', 30, 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull(window);
+                Assert.assertEquals("all partitions retained at the first advance", 3L, window.getAnchorMapSize());
+
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-02T00:00:00.000000Z', 11, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals("still all three at the second advance (prev bucket kept)", 3L, window.getAnchorMapSize());
+
+                // Day 3 for sym 1 advances the frontier day2 -> day3, so the sweep drops
+                // sym 2 and sym 3 (still on day 1, below the previous bucket). A wrongly
+                // rejected dateadd would leave compaction disabled and the map at 3.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-03T00:00:00.000000Z', 12, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals("fixed-unit dateadd is monotone: stale sym 2 and 3 swept, only sym 1 remains", 1L, window.getAnchorMapSize());
+                Assert.assertEquals(
+                        "the sum function map shrank in lockstep (reused scratch, no leak)",
+                        1L,
+                        window.getFunctions().getQuick(0).getPartitionMap().size()
+                );
+
+                // sym 2 revives on day 3 -- a brand new bucket, so it starts fresh at 99
+                // (not 20 + 99). sym 1's day-3 running sum is just 12.
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-03T01:00:00.000000Z', 99, 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts, sym").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                        "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\t2\t20.0\n" +
+                        "2026-08-01T02:00:00.000000Z\t3\t30.0\n" +
+                        "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
+                        "2026-08-03T00:00:00.000000Z\t1\t12.0\n" +
+                        "2026-08-03T01:00:00.000000Z\t2\t99.0\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCrossCycleAnchorMapPreserved() throws Exception {
         // A second refresh cycle that hits no anchor crossings
         // must not wipe the anchor map populated by the first cycle. Before

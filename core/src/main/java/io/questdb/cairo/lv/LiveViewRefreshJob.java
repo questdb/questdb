@@ -86,6 +86,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -653,8 +654,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The check is an allowlist of expression forms provably monotone non-decreasing
      * in the ascending designated timestamp (see {@link #isProvablyMonotoneAnchor}):
      * the bare designated timestamp column, a two-argument {@code timestamp_floor} /
-     * {@code date_trunc} (the pure UTC floor), or a constant-stride {@code dateadd},
-     * each composable over another such form.
+     * {@code date_trunc} (the pure UTC floor), or a {@code dateadd} with a constant
+     * stride and a constant fixed-duration-unit period (calendar {@code 'M'} / {@code 'y'}
+     * periods are excluded - their day-of-month clamp is non-monotone), each composable
+     * over another such form.
      * <p>
      * It is deliberately conservative because the failure modes are asymmetric: a
      * false negative only forgoes compaction (more resident memory, still correct),
@@ -757,10 +760,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     monotone form and whose stride argument is constant. The three- and
      *     five-argument (from-offset / timezone) overloads are excluded because a
      *     sub-day timezone floor dips at DST fall-back;</li>
-     *     <li>a three-argument {@code dateadd} whose period and stride are constant
-     *     (a fixed offset applied to every row) and whose timestamp argument is a
-     *     monotone form. A variable stride is not monotone and is rejected because
-     *     the stride argument then carries a column reference.</li>
+     *     <li>a three-argument {@code dateadd} whose stride is constant and whose
+     *     period is a constant fixed-duration unit (a fixed offset applied to every
+     *     row) and whose timestamp argument is a monotone form. A variable stride is
+     *     not monotone and is rejected because the stride argument then carries a
+     *     column reference. A calendar-unit period ({@code 'M'} / {@code 'y'}) is
+     *     rejected by {@link #hasConstFixedDurationPeriod} because day-of-month
+     *     clamping makes it non-monotone by up to one unit.</li>
      * </ul>
      * Any other function, operator, or column reference returns {@code false}.
      */
@@ -782,10 +788,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 || Chars.equalsIgnoreCase(node.token, "date_trunc"))) {
             return hasSingleMonotoneArgRestConstant(node, projectedMeta, tsIndex);
         }
-        if (node.paramCount == 3 && Chars.equalsIgnoreCase(node.token, "dateadd")) {
+        if (node.paramCount == 3 && Chars.equalsIgnoreCase(node.token, "dateadd")
+                && hasConstFixedDurationPeriod(node)) {
             return hasSingleMonotoneArgRestConstant(node, projectedMeta, tsIndex);
         }
         return false;
+    }
+
+    /**
+     * Confirms the period argument of a three-argument {@code dateadd} is a constant
+     * fixed-duration unit. A fixed-duration unit ({@code s}/{@code m}/{@code h}/{@code d}/
+     * {@code w}/...) adds the same constant to every row, so the add is monotone
+     * non-decreasing in the ascending timestamp. A calendar unit ({@code 'M'} month or
+     * {@code 'y'} year) clamps day-of-month ({@link io.questdb.std.datetime.microtime.Micros#addMonths}),
+     * so it is non-monotone by up to one unit: a later row can produce an anchor below one
+     * an earlier row already produced (e.g. Jan 30 and Jan 31 both clamp to Feb 28), which
+     * revisits an already-evicted bucket and silently undercounts. This is the same gate
+     * {@code TimestampAddFunctionFactory} applies before treating {@code dateadd} as a
+     * {@code MonotonicTimestampFunction} for interval pruning.
+     * <p>
+     * The period is {@code dateadd}'s FIRST SQL argument; args are stored inverted (see
+     * {@code SqlParser}), so it is the last list item. Anything not provably a constant
+     * single-character fixed-duration-unit literal is rejected, forgoing compaction, which
+     * is the safe direction (still correct, just more resident memory).
+     */
+    private static boolean hasConstFixedDurationPeriod(ExpressionNode node) {
+        final ExpressionNode period = node.args.getLast();
+        if (period == null || period.type != ExpressionNode.CONSTANT || period.token == null) {
+            return false;
+        }
+        // The period is a quoted single-character unit literal, e.g. 'M'; require exactly 'X'.
+        final CharSequence token = period.token;
+        if (token.length() != 3 || !Chars.isQuoted(token)) {
+            return false;
+        }
+        return CommonUtils.isFixedDurationUnit(token.charAt(1));
     }
 
     /**
