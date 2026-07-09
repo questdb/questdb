@@ -105,7 +105,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                         windowContext.getPartitionByKeyTypes(),
                         windowContext.getPartitionByRecord(),
                         windowContext.getPartitionBySink(),
-                        windowContext.getTimestampIndex(),
                         configuration,
                         false,
                         windowContext.isLiveView(),
@@ -347,13 +346,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private final boolean dense;
         private final ColumnTypes keyColumnTypes;
         // True when this function is being compiled as part of a live view's
-        // SELECT. Drives opt-in allocation of the lastActivityTs value-layout
-        // slot used by partition-state eviction.
+        // SELECT. Drives opt-in allocation of the tombstone value-layout slot
+        // used by anchor-driven compaction, plus the chain-type capture the
+        // snapshot codec needs.
         private final boolean liveView;
         private final String name;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
-        private final int tsColumnIndex;
         // Subset of mapValueTypes covering the chain-prefix slots [0, chainTypeIndex).
         // Populated when this function compiles for a live view so the snapshot
         // codec can read the chain bytes back from MapValue at restore time;
@@ -363,17 +362,12 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private int columnIndex;
         // Reusable second map for the live-view frontier sweep; ping-pongs with map.
         private Map compactionScratch;
-        // Value-layout index of the lastActivityTs slot (live view). Lives
-        // at chainTypeIndex + 2 when present, or is -1 for regular queries where
-        // the slot is omitted.
-        private int lastActivityTsValueIndex = -1;
         private Map map;
         private ArrayColumnTypes mapValueTypes;
         private long rank;
         private ObjList<DirectIntList> rankMaps;
         private RecordComparator recordComparator;
         private RecordValueSink recordValueSink;
-        private long sizeAfterLastEvict;
         // For the streaming (WindowRecordCursorFactory) path the MapValue stores only the ORDER BY
         // columns, compacted. This maps each compacted rank-map slot back to its base column index so
         // init() can populate the rank maps from the right symbol tables. Null on the cached path.
@@ -383,14 +377,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         // path. Not volatile.
         private long tombstoneCount;
         // Value-layout index of the per-partition tombstone byte (live view only).
-        // Lives at chainTypeIndex + 3 (one slot past lastActivityTs); -1 for
+        // Lives at chainTypeIndex + 2 (one slot past the count slot); -1 for
         // non-live-view compiles where the slot is omitted.
         private int tombstoneValueIndex = -1;
 
         public RankOverPartitionFunction(ColumnTypes keyColumnTypes,
                                          VirtualRecord partitionByRecord,
                                          RecordSink partitionBySink,
-                                         int tsColumnIndex,
                                          CairoConfiguration configuration,
                                          boolean dense,
                                          boolean liveView,
@@ -399,10 +392,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             this.partitionBySink = partitionBySink;
             // Snapshot the key types: the streaming path builds the map lazily in
             // initRecordComparator(), by which point the generator has rebuilt its shared key-types
-            // buffer for a later window column's PARTITION BY. Partition-state eviction also needs a
-            // stable copy to allocate a scratch Map with the same key shape after compilation moves on.
+            // buffer for a later window column's PARTITION BY. The live-view frontier sweep also
+            // needs a stable copy to allocate a scratch Map with the same key shape after
+            // compilation moves on.
             this.keyColumnTypes = copyKeyTypes(keyColumnTypes);
-            this.tsColumnIndex = tsColumnIndex;
             this.configuration = configuration;
             this.dense = dense;
             this.liveView = liveView;
@@ -472,38 +465,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             }
             mapValue.putLong(chainTypeIndex, rank);
             mapValue.putLong(chainTypeIndex + 1, count + 1);
-            if (lastActivityTsValueIndex >= 0) {
-                // Track per-key last-activity-ts for live view retention-driven eviction.
-                // tsColumnIndex is -1 when the window is defined over a source with no
-                // designated timestamp; writing Long.MIN_VALUE keeps those keys below any
-                // eviction cutoff, so they never get evicted (live views always have one).
-                mapValue.putLong(lastActivityTsValueIndex,
-                        tsColumnIndex >= 0 ? record.getTimestamp(tsColumnIndex) : Long.MIN_VALUE);
-            }
-        }
-
-        @Override
-        public void evictStalePartitionState(long cutoffTs) {
-            if (lastActivityTsValueIndex < 0) {
-                // Non-live-view queries do not carry the lastActivityTs slot and
-                // do not exercise partition-state eviction.
-                return;
-            }
-            long size = map.size();
-            if (size == 0 || size < sizeAfterLastEvict * 2) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                scratch.setKeyCapacity((int) Math.min(size, Integer.MAX_VALUE));
-                PartitionStateEvictor.rebuildKeeping(map, scratch, lastActivityTsValueIndex, cutoffTs);
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                sizeAfterLastEvict = map.size();
-            } finally {
-                Misc.free(scratch);
-            }
         }
 
         @Override
@@ -685,7 +646,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 this.rankMaps = SortKeyEncoder.createRankMaps(orderByMetadata, compactOrderIndices);
                 if (liveView) {
                     // Capture the chain-prefix types (the compacted ORDER BY columns) before the
-                    // rank/count/lastActivityTs/tombstone slots get appended below. Snapshot/restore
+                    // rank/count/tombstone slots get appended below. Snapshot/restore
                     // reads those chain bytes back via this typed slice so the live-view checkpoint can
                     // rehydrate the recordComparator's stored "last key image".
                     chainColumnTypes = new ArrayColumnTypes();
@@ -696,12 +657,10 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 chainTypes.add(ColumnType.LONG); // rank
                 chainTypes.add(ColumnType.LONG); // count
                 if (liveView) {
-                    chainTypes.add(ColumnType.LONG); // lastActivityTs (live view)
                     chainTypes.add(ColumnType.BYTE); // tombstone (anchor compaction)
-                    lastActivityTsValueIndex = chainTypeIndex + 2;
-                    tombstoneValueIndex = chainTypeIndex + 3;
+                    tombstoneValueIndex = chainTypeIndex + 2;
                     // Caller reuses the chainTypes buffer across window functions in the
-                    // same query; take our own copy so {@link #evictStalePartitionState}
+                    // same query; take our own copy so {@link #retainPartitions}
                     // can allocate a scratch Map with the exact same value layout.
                     mapValueTypes = new ArrayColumnTypes();
                     mapValueTypes.addAll(chainTypes);
@@ -766,7 +725,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 map.reopen();
             }
             rank = 0;
-            sizeAfterLastEvict = 0;
             tombstoneCount = 0;
         }
 
@@ -776,7 +734,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             compactionScratch = Misc.free(compactionScratch);
             Misc.freeObjListAndKeepObjects(rankMaps);
             rank = 0;
-            sizeAfterLastEvict = 0;
         }
 
         @Override
@@ -786,10 +743,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             offset += Long.BYTES;
             value.putLong(chainTypeIndex + 1, source.getLong(offset));
             offset += Long.BYTES;
-            if (lastActivityTsValueIndex >= 0) {
-                value.putLong(lastActivityTsValueIndex, source.getLong(offset));
-                offset += Long.BYTES;
-            }
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
@@ -823,9 +776,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             LiveViewSnapshotKeyCodec.writeKey(sink, value, chainColumnTypes, 0);
             sink.putLong(value.getLong(chainTypeIndex));
             sink.putLong(value.getLong(chainTypeIndex + 1));
-            if (lastActivityTsValueIndex >= 0) {
-                sink.putLong(value.getLong(lastActivityTsValueIndex));
-            }
         }
 
         @Override
@@ -851,7 +801,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             super.toTop();
             Misc.clear(map);
             rank = 0;
-            sizeAfterLastEvict = 0;
             tombstoneCount = 0;
         }
     }
