@@ -46,11 +46,12 @@ import io.questdb.std.ObjList;
  * Implements {@code int > (sub-query)} where the right-hand operand is a cursor (scalar sub-query)
  * providing exactly one column and (conceptually) one row.
  * <p>
- * Unlike {@link GtDoubleCursorFunctionFactory}, the left operand is <b>coerced up to the width of the
- * cursor scalar</b> so that no precision is lost: comparing an {@code int} column with a {@code long}
- * sub-query is performed as a {@code long} comparison, and comparing with a {@code float}/{@code double}
- * sub-query is performed as a {@code double} comparison. The comparison width is the higher precision of
- * {@code int} and the cursor column type.
+ * Unlike {@link GtDoubleCursorFunctionFactory}, the comparison is performed at the higher precision of the
+ * {@code int} left operand and the cursor scalar so that no precision is lost: comparing against a
+ * {@code long} sub-query is performed as a {@code long} comparison, and comparing against a
+ * {@code float}/{@code double} sub-query is performed as a {@code double} comparison. A
+ * {@code byte}/{@code short}/{@code int} (or {@code null}) cursor scalar already fits into an {@code int}
+ * comparison, so no widening is applied in that case.
  * <p>
  * The sub-query is executed once per query execution - not per row - in {@link Function#init} and its
  * value is cached as a scalar. An empty cursor or a {@code null} value matches no rows (SQL
@@ -93,35 +94,27 @@ public class GtIntCursorFunctionFactory implements FunctionFactory {
                         .put(ColumnType.nameOf(arg0.getType()));
         }
         final int cursorTag = ColumnType.tagOf(metadata.getColumnType(0));
-        switch (cursorTag) {
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.NULL:
+        return switch (cursorTag) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.NULL ->
+                // left operand is BYTE/SHORT/INT, so a narrow cursor scalar fits into an int comparison
+                    new IntCursorFunc(factory, arg0, args.getQuick(1), cursorTag);
+            case ColumnType.LONG ->
                 // widen the comparison to long so a wide cursor scalar is not narrowed to int
-                return new LongCursorFunc(factory, arg0, args.getQuick(1), cursorTag);
-            case ColumnType.FLOAT:
-            case ColumnType.DOUBLE:
-                return new DoubleCursorFunc(factory, arg0, args.getQuick(1), cursorTag);
-            default:
-                throw SqlException.$(argPositions.getQuick(1), "cannot compare INT and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
-        }
+                    new LongCursorFunc(factory, arg0, args.getQuick(1));
+            case ColumnType.FLOAT, ColumnType.DOUBLE ->
+                    new DoubleCursorFunc(factory, arg0, args.getQuick(1), cursorTag);
+            default ->
+                    throw SqlException.$(argPositions.getQuick(1), "cannot compare INT and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
+        };
     }
 
-    private static long readScalarLong(Record record, int cursorTag) {
-        switch (cursorTag) {
-            case ColumnType.BYTE:
-                return record.getByte(0);
-            case ColumnType.SHORT:
-                return record.getShort(0);
-            case ColumnType.INT:
-                return Numbers.intToLong(record.getInt(0));
-            case ColumnType.LONG:
-                return record.getLong(0);
-            default:
-                return Numbers.LONG_NULL;
-        }
+    private static int readScalarInt(Record record, int cursorTag) {
+        return switch (cursorTag) {
+            case ColumnType.BYTE -> record.getByte(0);
+            case ColumnType.SHORT -> record.getShort(0);
+            case ColumnType.INT -> record.getInt(0);
+            default -> Numbers.INT_NULL;
+        };
     }
 
     private static class DoubleCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
@@ -205,8 +198,86 @@ public class GtIntCursorFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class LongCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
+    private static class IntCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
         private final int cursorTag;
+        private final RecordCursorFactory factory;
+        private final Function leftFunc;
+        private final Function rightFunc;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
+        private int value;
+
+        public IntCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorTag) {
+            this.factory = factory;
+            this.leftFunc = leftFunc;
+            this.rightFunc = rightFunc;
+            this.cursorTag = cursorTag;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return Numbers.lessThan(value, leftFunc.getInt(rec), negated);
+        }
+
+        @Override
+        public Function getLeft() {
+            return leftFunc;
+        }
+
+        @Override
+        public Function getRight() {
+            return rightFunc;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                if (cursor.hasNext()) {
+                    value = readScalarInt(cursor.getRecord(), cursorTag);
+                } else {
+                    value = Numbers.INT_NULL;
+                }
+            }
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return leftFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof IntCursorFunc thatF) {
+                thatF.value = value;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(leftFunc);
+            if (leftFunc.isThreadSafe()) {
+                sink.val(" [thread-safe]");
+            }
+            if (negated) {
+                sink.val(" <= ");
+            } else {
+                sink.val(" > ");
+            }
+            sink.val(rightFunc);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
+        }
+    }
+
+    private static class LongCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
         private final RecordCursorFactory factory;
         private final Function leftFunc;
         private final Function rightFunc;
@@ -214,11 +285,10 @@ public class GtIntCursorFunctionFactory implements FunctionFactory {
         private boolean stateShared = false;
         private long value;
 
-        public LongCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorTag) {
+        public LongCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc) {
             this.factory = factory;
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
-            this.cursorTag = cursorTag;
         }
 
         @Override
@@ -245,7 +315,7 @@ public class GtIntCursorFunctionFactory implements FunctionFactory {
             this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
-                    value = readScalarLong(cursor.getRecord(), cursorTag);
+                    value = cursor.getRecord().getLong(0);
                 } else {
                     value = Numbers.LONG_NULL;
                 }

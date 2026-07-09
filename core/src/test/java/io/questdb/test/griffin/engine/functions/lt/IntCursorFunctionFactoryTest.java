@@ -187,11 +187,10 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
 
             // the int/cursor predicate is pushed into the parallel (async) group by filter;
             // max(qty)/2 = 50000 is an int cursor scalar -> long comparison mode
-            assertQuery("explain select grp, count() c from trades where qty > (select max(qty) / 2 from trades) order by grp")
+            assertQuery("select grp, count() c from trades where qty > (select max(qty) / 2 from trades) order by grp")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Encode sort light
                               keys: [grp]
                                 Async Group By workers: 4
@@ -216,7 +215,8 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select grp, count() c from trades where qty > (select max(qty) / 2 from trades) order by grp")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             grp\tc
                             0\t5000
                             1\t5000
@@ -268,11 +268,10 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
             );
 
             // (1) a plain filter with the int/cursor predicate must run on the async filter concurrently
-            assertQuery("explain select ts, qty from trades where qty < (select max(qty) / 2 from trades)")
+            assertQuery("select ts, qty from trades where qty < (select max(qty) / 2 from trades)")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 4
                               filter: qty [thread-safe] < cursor\s
                                 VirtualRecord
@@ -293,14 +292,15 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select count() c from trades where qty < (select max(qty) / 2 from trades)")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("c\n49999\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n49999\n");
 
             // (2) a keyed aggregate (sum) over the same predicate must stay parallel (Async Group By workers: 4)
-            assertQuery("explain select grp, sum(qty) s from trades where qty < (select max(qty) / 2 from trades) order by grp")
+            assertQuery("select grp, sum(qty) s from trades where qty < (select max(qty) / 2 from trades) order by grp")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Encode sort light
                               keys: [grp]
                                 Async Group By workers: 4
@@ -324,7 +324,8 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select grp, sum(qty) s from trades where qty < (select max(qty) / 2 from trades) order by grp")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             grp	s
                             0	124975000
                             1	124980000

@@ -224,11 +224,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
             );
 
             // plan: the cursor predicate is pushed into the parallel (async) group by filter
-            assertQuery("explain select grp, count() c from trades where price > (select avg(price) from trades) order by grp")
+            assertQuery("select grp, count() c from trades where price > (select avg(price) from trades) order by grp")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Encode sort light
                               keys: [grp]
                                 Async Group By workers: 4
@@ -251,7 +250,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select grp, count() c from trades where price > (select avg(price) from trades) order by grp")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             grp\tc
                             0\t5000
                             1\t5000
@@ -327,11 +327,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
             );
 
             // (1) a plain filter with the cursor predicate must run on the async filter concurrently
-            assertQuery("explain select ts, price from trades where price < (select avg(price) from trades)")
+            assertQuery("select ts, price from trades where price < (select avg(price) from trades)")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Async Filter workers: 4
                               filter: price [thread-safe] < cursor\s
                                 Async Group By workers: 4
@@ -350,14 +349,15 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select count() c from trades where price < (select avg(price) from trades)")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("c\n50000\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n50000\n");
 
             // (2) a keyed aggregate (sum) over the same predicate must stay parallel (Async Group By workers: 4)
-            assertQuery("explain select grp, sum(price) s from trades where price < (select avg(price) from trades) order by grp")
+            assertQuery("select grp, sum(price) s from trades where price < (select avg(price) from trades) order by grp")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
-                            QUERY PLAN
+                    .assertsPlan("""
                             Encode sort light
                               keys: [grp]
                                 Async Group By workers: 4
@@ -379,7 +379,8 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select grp, sum(price) s from trades where price < (select avg(price) from trades) order by grp")
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             grp	s
                             0	1.25025E8
                             1	1.2498E8
