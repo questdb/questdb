@@ -377,6 +377,17 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         this.inlineSchemaBytes = QwpVarint.encodedLength(columnCount) + inlineColumnsSize();
     }
 
+    /**
+     * Like {@link #resetForNewQuery} but without the buffer-size shrink pass, so a
+     * following {@code beginStreaming} owns the single shrink and the previous
+     * query's sizing isn't discarded.
+     */
+    public void clearConnKeyMaps() {
+        for (int i = 0, n = scratches.size(); i < n; i++) {
+            scratches.getQuick(i).clearConnKeyMap();
+        }
+    }
+
     @Override
     public void close() {
         // Misc.freeObjListIfCloseable iterates and frees in a try/finally pattern,

@@ -17437,6 +17437,44 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProtectedOutputAliasSurfacesClean() throws Exception {
+        // Regression: generateSelectWindow builds the window column's metadata name through
+        // SqlUtil.toColumnName, so a quote-protected window output alias (a dotted name or an operator
+        // token) must surface clean, with no leaked double quotes. Exercises the row_number / rank
+        // window paths (rank also drives RankFunctionFactory.initRecordComparator).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (10), (20), (30)");
+
+            // dotted output alias -> clean a.b
+            assertQuery("""
+                    SELECT x, row_number() OVER (ORDER BY x) AS "a.b" FROM t ORDER BY x
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\ta.b
+                            10\t1
+                            20\t2
+                            30\t3
+                            """);
+
+            // operator-token output alias -> clean in
+            assertQuery("""
+                    SELECT x, rank() OVER (ORDER BY x) AS "in" FROM t ORDER BY x
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tin
+                            10\t1
+                            20\t2
+                            30\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testRangeFrameTimestampIndexInCachedWindow() throws Exception {
         // A RANGE-framed window function reads the designated timestamp from the record it is
         // given. When two window functions order differently (here count by ts DESC, min by ts

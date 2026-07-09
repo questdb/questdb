@@ -220,7 +220,16 @@ public final class TimerShards {
             while (running) {
                 try {
                     DelayedFireable e = shard.take();
-                    if (e == PoisonSentinel.INSTANCE || !running) {
+                    if (e == PoisonSentinel.INSTANCE) {
+                        return;
+                    }
+                    if (!running) {
+                        // shutdown() flipped running after take() already removed e from the
+                        // heap, so its drain snapshot will never see e. Fire e's shutdown hook
+                        // here instead of dropping it, otherwise the continuation bound to e is
+                        // never resumed and its context (and socket fd) leaks. We are the sole
+                        // owner post-take(), so this is exactly one terminal call.
+                        e.shutdown();
                         return;
                     }
                     e.expire();

@@ -145,7 +145,10 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
                 final CharSequence symbol = symbolFunc.getStrA(null);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    deferredSymbolKeys.add(TableUtils.toIndexKey(symbolKey));
+                    int indexKey = TableUtils.toIndexKey(symbolKey);
+                    if (!symbolKeys.contains(indexKey)) {
+                        deferredSymbolKeys.add(indexKey);
+                    }
                 }
             }
         }

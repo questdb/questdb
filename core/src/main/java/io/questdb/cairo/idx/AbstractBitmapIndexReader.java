@@ -55,6 +55,9 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
     private long columnTxn;
     private int keyCountIncludingNulls;
     private long keyFileSequence = -1;
+    // Id of the thread that last checked a cursor out of this reader; see
+    // isOperatingThread(). Mirrors AbstractPostingIndexReader's gate.
+    private long operatingThreadId = -1L;
     private long partitionTxn;
     private long valueMemSize = -1;
 
@@ -250,5 +253,29 @@ public abstract class AbstractBitmapIndexReader implements IndexReader {
 
             Os.pause();
         }
+    }
+
+    // Single-owner pooling gate for the plain (unsynchronized) free-cursor
+    // ObjLists. One logical owner drives this reader at a time, but that owner
+    // is not pinned to one OS thread: suspendable queries (HTTP exports, pgwire
+    // fragments) migrate the owning TableReader across worker threads between
+    // fragments, so a cursor checked out on one worker can legitimately close
+    // on another. getCursor()/getFrameCursor() record the vending thread via
+    // stampOperatingThread(); each cursor close() re-pools only when it runs on
+    // that thread, keeping the "size() check then add()" serialized with the
+    // pop in getCursor(). An off-thread close skips pooling and lets the cursor
+    // be GC'd -- bitmap/null cursors hold no native memory, so nothing strands.
+    //
+    // Fail-safe: a stamp mismatch only skips reuse, it can never corrupt the
+    // list. The field is a plain long (like the posting gate): the race is
+    // otherwise fenced by the serialized dispatcher handoff, so this is
+    // defense-in-depth, not a concurrency primitive; volatile would add cost
+    // without closing the before-re-stamp timing hole.
+    protected boolean isOperatingThread() {
+        return operatingThreadId == Thread.currentThread().threadId();
+    }
+
+    protected void stampOperatingThread() {
+        operatingThreadId = Thread.currentThread().threadId();
     }
 }

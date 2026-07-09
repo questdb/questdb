@@ -1241,6 +1241,14 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                         s.table(t).uuidColumn("v", uuid.getLeastSignificantBits(), uuid.getMostSignificantBits()).at(1_000_000, ChronoUnit.MICROS);
                     },
                     "cannot write UUID", "DECIMAL");
+            // A value whose precision exceeds the column's is a deterministic overflow.
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(1000, 1)).at(1_000_000, ChronoUnit.MICROS),
+                    "decimal value overflows", "column=v");
+            // A value with more scale than the column cannot rescale without loss.
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).decimalColumn("v", Decimal64.fromLong(15, 2)).at(1_000_000, ChronoUnit.MICROS),
+                    "decimal value causes precision loss", "column=v");
         });
     }
 
@@ -1458,6 +1466,48 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             assertCoercionError(port, "test_da_from_str",
                     (s, t) -> s.table(t).stringColumn("v", "not an array").at(1_000_000, ChronoUnit.MICROS),
                     "cannot write VARCHAR", "DOUBLE[]");
+        });
+    }
+
+    @Test
+    public void testArrayDimensionalityMismatchRejected() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_arr_dim_err";
+            execute("CREATE TABLE " + table + " (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // The column is 1-D; a 2-D array is a deterministic dimensionality mismatch.
+            assertCoercionError(port, table,
+                    (s, t) -> s.table(t).doubleArray("v", new double[][]{{1.0, 2.0}, {3.0, 4.0}}).at(1_000_000, ChronoUnit.MICROS),
+                    "array dimensionality mismatch", "column=v");
+        });
+    }
+
+    @Test
+    public void testArrayBatchDimensionalityMismatchRejected() throws Exception {
+        runInContext((port) -> {
+            // Rows with differing array dimensionality in one flush hit the within-batch
+            // getArrayBatchDimensionality guard, not the single-row validateArrayColumnType
+            // guard that testArrayDimensionalityMismatchRejected covers. The guard lives at
+            // two sites; which one throws depends on whether the target table exists.
+
+            // Existing table: QwpWalAppender scans the batch during WAL append.
+            String existing = "test_qwp_arr_batch_dim_existing";
+            execute("CREATE TABLE " + existing + " (v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertCoercionError(port, existing,
+                    (s, t) -> {
+                        s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS);
+                        s.table(t).doubleArray("v", new double[][]{{3.0, 4.0}}).at(2_000_000, ChronoUnit.MICROS);
+                    },
+                    "array dimensionality mismatch in QWP batch", "column=v");
+
+            // Non-existent table: QwpTudCache scans the batch while resolving the
+            // auto-created table structure.
+            String autoCreate = "test_qwp_arr_batch_dim_autocreate";
+            assertCoercionError(port, autoCreate,
+                    (s, t) -> {
+                        s.table(t).doubleArray("v", new double[]{1.0, 2.0}).at(1_000_000, ChronoUnit.MICROS);
+                        s.table(t).doubleArray("v", new double[][]{{3.0, 4.0}}).at(2_000_000, ChronoUnit.MICROS);
+                    },
+                    "array dimensionality mismatch in QWP batch", "column=v");
         });
     }
 
@@ -4824,22 +4874,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
             String expectedMsgPart1, String expectedMsgPart2
     ) {
-        // NACK policy v2 (java-questdb-client): there is no drop policy.
-        // Server-side rejections end in a latched terminal instead of a
-        // silently discarded batch:
-        //   - WRITE_ERROR is RETRIABLE -- the client dispatches each strike
-        //     to the error handler informationally and replays the frame; a
-        //     rejection that is deterministic under byte-identical replay
-        //     escalates to a TERMINAL PROTOCOL_VIOLATION through the
-        //     poison-frame detector after max_frame_rejections consecutive
-        //     strikes on the same head frame with no ack progress. We pin
-        //     max_frame_rejections=1 so the escalation is immediate.
-        //   - SCHEMA_MISMATCH is deterministic by definition and latches
-        //     TERMINAL on the first strike, no replay.
-        // Either way we assert both observables: the first handler dispatch
-        // carries the server's rejection message, and the latched terminal
-        // surfaces loudly -- through the handler or, when the producer
-        // thread's error poll wins the race, from flush()/close() (close()
+        // A deterministic wire-value/column-type mismatch is a terminal SCHEMA_MISMATCH:
+        // the client latches TERMINAL on the first strike, no replay. We assert both
+        // observables: the first handler dispatch carries the server's rejection message,
+        // and the latched terminal surfaces loudly -- through the handler or, when the
+        // producer thread's error poll wins the race, from flush()/close() (close()
         // suppresses the double-signal once the handler owns the terminal).
         CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
         CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
@@ -4868,15 +4907,12 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             } catch (Exception e) {
                 throw new AssertionError("Did not receive a SenderError within 10s for table " + table, e);
             }
-            SenderError.Category terminalCategory;
-            if (err.getCategory() == SenderError.Category.WRITE_ERROR) {
-                Assert.assertSame(SenderError.Policy.RETRIABLE, err.getAppliedPolicy());
-                terminalCategory = SenderError.Category.PROTOCOL_VIOLATION;
-            } else {
-                Assert.assertSame(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
-                Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
-                terminalCategory = SenderError.Category.SCHEMA_MISMATCH;
-            }
+            Assert.assertSame(
+                    "coercion/type/value-conversion rejects must be a deterministic terminal"
+                            + " SCHEMA_MISMATCH, not a retriable WRITE_ERROR",
+                    SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+            Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
+            SenderError.Category terminalCategory = SenderError.Category.SCHEMA_MISMATCH;
             if (publishedFsn >= 0) {
                 Assert.assertTrue("error fsn span [" + err.getFromFsn() + ',' + err.getToFsn()
                                 + "] should cover published " + publishedFsn,

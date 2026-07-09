@@ -1314,6 +1314,29 @@ public class SqlOptimiser implements Mutable {
         ObjList<PivotForColumn> pivotForColumns = model.getPivotForColumns();
         ObjList<QueryColumn> pivotAggregates = model.getPivotGroupByColumns();
         int forColumnCount = pivotForColumns.size();
+        int aggregateCount = pivotAggregates.size();
+
+        // Precompute the clean (quote-stripped) display names once. toColumnName re-scans the alias
+        // and allocates a String on each call, and the combination loop below would otherwise repeat
+        // that per combination: an aggregate alias is invariant across combinations, and a value alias
+        // recurs across the combinations of a multi-FOR pivot. Cleaning them up front drops the
+        // toColumnName calls from O(totalCombinations * (forColumnCount + aggregateCount)) to
+        // O(sum(valueCounts) + aggregateCount). A quote-protected component ("in", "FNCL 2.5") cannot
+        // be stripped once embedded mid-composite, so each is cleaned before concatenation;
+        // protectColumnAlias below re-protects the assembled name as a whole when it still needs it.
+        ObjList<CharSequence> cleanAggAliases = new ObjList<>(aggregateCount);
+        for (int k = 0; k < aggregateCount; k++) {
+            cleanAggAliases.add(SqlUtil.toColumnName(pivotAggregates.getQuick(k).getAlias()));
+        }
+        ObjList<ObjList<CharSequence>> cleanValueAliases = new ObjList<>(forColumnCount);
+        for (int i = 0; i < forColumnCount; i++) {
+            ObjList<CharSequence> valueAliases = pivotForColumns.getQuick(i).getValueAliases();
+            ObjList<CharSequence> cleaned = new ObjList<>(valueAliases.size());
+            for (int v = 0, vn = valueAliases.size(); v < vn; v++) {
+                cleaned.add(SqlUtil.toColumnName(valueAliases.getQuick(v)));
+            }
+            cleanValueAliases.add(cleaned);
+        }
 
         IntList indices = tempCrosses;
         indices.clear();
@@ -1322,7 +1345,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         for (int combo = 0; combo < totalCombinations; combo++) {
-            for (int k = 0, p = pivotAggregates.size(); k < p; k++) {
+            for (int k = 0; k < aggregateCount; k++) {
                 QueryColumn aggColumn = pivotAggregates.getQuick(k);
                 CharSequence aggAlias = aggColumn.getAlias();
                 int position = aggColumn.getAst().position;
@@ -1338,7 +1361,6 @@ public class SqlOptimiser implements Mutable {
                     colCondition.paramCount = 2;
                     colCondition.lhs = expressionNodePool.next().of(LITERAL, pivotForColumn.getInExprAlias(), 0, position);
                     colCondition.rhs = valueExpr;
-                    CharSequence colAlias = pivotForColumn.getValueAliases().getQuick(valueIndex);
 
                     if (conditionNode == null) {
                         conditionNode = colCondition;
@@ -1353,11 +1375,11 @@ public class SqlOptimiser implements Mutable {
                     if (i > 0) {
                         cse.put('_');
                     }
-                    cse.put(colAlias);
+                    cse.put(cleanValueAliases.getQuick(i).getQuick(valueIndex));
                 }
 
                 if (!model.isPivotGroupByColumnHasNoAlias()) {
-                    cse.put('_').put(aggAlias);
+                    cse.put('_').put(cleanAggAliases.getQuick(k));
                 }
 
                 // Use switch when: single FOR column, single constant value (not ELSE mode)
@@ -1398,7 +1420,11 @@ public class SqlOptimiser implements Mutable {
                 aggNode.paramCount = 1;
                 aggNode.rhs = caseNode;
 
-                outerModel.addBottomUpColumn(queryColumnPool.next().of(cse.toImmutable(), aggNode));
+                // Re-protect the assembled composite as a whole: a dotted content (FNCL 2.5_s) would
+                // otherwise be mis-split by later table.column resolution, and an operator-token content
+                // (in) would collide - matching how a single-value pivot column is protected.
+                CharSequence colName = SqlUtil.protectColumnAlias(characterStore, cse.toImmutable());
+                outerModel.addBottomUpColumn(queryColumnPool.next().of(colName, aggNode));
             }
 
             for (int i = forColumnCount - 1; i >= 0; i--) {

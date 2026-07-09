@@ -174,7 +174,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             CharSequence name,
             RecordMetadata metadata
     ) throws SqlException {
-        final int index = metadata.getColumnIndexQuiet(name);
+        final int index = SqlUtil.getColumnIndexQuiet(metadata, name);
 
         if (index == -1) {
             throw SqlException.invalidColumn(position, name);

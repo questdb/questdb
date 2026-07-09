@@ -765,7 +765,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
             ExpressionNode tok = orderBy.getQuick(i);
-            int index = m.getColumnIndexQuiet(tok.token);
+            int index = SqlUtil.getColumnIndexQuiet(m, tok.token);
             if (index == -1) {
                 throw SqlException.invalidColumn(tok.position, tok.token);
             }
@@ -793,7 +793,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ExpressionNode node = column.getAst();
 
             if (node.type == LITERAL) {
-                int idx = metadata.getColumnIndex(node.token);
+                int idx = SqlUtil.getColumnIndex(metadata, node.token);
                 int columnType = metadata.getColumnType(idx);
                 if (isTimestamp(columnType)) {
                     if (idx != timestampIdx) {
@@ -818,7 +818,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (columnAst.rhs.type != LITERAL) {
                     return false;
                 }
-                int argColIndex = metadata.getColumnIndex(columnAst.rhs.token);
+                int argColIndex = SqlUtil.getColumnIndex(metadata, columnAst.rhs.token);
                 if (argColIndex < 0) {
                     return false;
                 }
@@ -892,7 +892,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 CharSequence tableAlias = fullName.subSequence(0, dotIndex);
                 CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
                 if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
-                    int colIdx = masterMetadata.getColumnIndexQuiet(columnName);
+                    int colIdx = SqlUtil.getColumnIndexQuiet(masterMetadata, columnName);
                     if (colIdx < 0) {
                         throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
                     }
@@ -912,7 +912,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     continue;
                 }
                 if (slaveAlias != null && Chars.equalsIgnoreCase(tableAlias, slaveAlias)) {
-                    int colIdx = slaveMetadata.getColumnIndexQuiet(columnName);
+                    int colIdx = SqlUtil.getColumnIndexQuiet(slaveMetadata, columnName);
                     if (colIdx < 0) {
                         throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
                     }
@@ -934,13 +934,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 columnIndices[i] = 1;
                 continue;
             }
-            int idx = slaveMetadata.getColumnIndexQuiet(fullName);
+            int idx = SqlUtil.getColumnIndexQuiet(slaveMetadata, fullName);
             if (idx >= 0) {
                 columnSources[i] = HorizonJoinRecord.SOURCE_SLAVE;
                 columnIndices[i] = idx;
                 continue;
             }
-            idx = masterMetadata.getColumnIndexQuiet(fullName);
+            idx = SqlUtil.getColumnIndexQuiet(masterMetadata, fullName);
             if (idx >= 0) {
                 columnSources[i] = HorizonJoinRecord.SOURCE_MASTER;
                 columnIndices[i] = idx;
@@ -970,7 +970,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 CharSequence columnName = fullName.subSequence(dotIndex + 1, fullName.length());
 
                 if (masterAlias != null && Chars.equalsIgnoreCase(tableAlias, masterAlias)) {
-                    int colIdx = masterMetadata.getColumnIndexQuiet(columnName);
+                    int colIdx = SqlUtil.getColumnIndexQuiet(masterMetadata, columnName);
                     if (colIdx < 0) {
                         throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
                     }
@@ -992,7 +992,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 boolean found = false;
                 for (int s = 0; s < slaveAliases.length; s++) {
                     if (slaveAliases[s] != null && Chars.equalsIgnoreCase(tableAlias, slaveAliases[s])) {
-                        int colIdx = slaveMetadatas[s].getColumnIndexQuiet(columnName);
+                        int colIdx = SqlUtil.getColumnIndexQuiet(slaveMetadatas[s], columnName);
                         if (colIdx < 0) {
                             throw SqlException.$(queryPosition, "failed to resolve table.column: ").put(fullName);
                         }
@@ -1021,7 +1021,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             boolean found = false;
             for (int s = 0; s < slaveMetadatas.length; s++) {
-                int idx = slaveMetadatas[s].getColumnIndexQuiet(fullName);
+                int idx = SqlUtil.getColumnIndexQuiet(slaveMetadatas[s], fullName);
                 if (idx >= 0) {
                     columnSources[i] = MultiHorizonJoinRecord.SOURCE_SLAVE_BASE + s;
                     columnIndices[i] = idx;
@@ -1032,7 +1032,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (found) {
                 continue;
             }
-            int idx = masterMetadata.getColumnIndexQuiet(fullName);
+            int idx = SqlUtil.getColumnIndexQuiet(masterMetadata, fullName);
             if (idx >= 0) {
                 columnSources[i] = MultiHorizonJoinRecord.SOURCE_MASTER;
                 columnIndices[i] = idx;
@@ -1087,11 +1087,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.type == LITERAL) {
-                    int index = metadata.getColumnIndexQuiet(node.token);
+                    int index = SqlUtil.getColumnIndexQuiet(metadata, node.token);
                     if (index < 0) {
                         int dot = Chars.indexOfLastUnquoted(node.token, '.');
                         if (dot > -1) {
-                            index = metadata.getColumnIndexQuiet(node.token, dot + 1, node.token.length());
+                            final int len = node.token.length();
+                            index = metadata.getColumnIndexQuiet(node.token, dot + 1, len);
+                            // Strip the protective quotes off the column part only against verbatim
+                            // metadata: a split-on-dot join would re-split a stripped dotted interior
+                            // and mis-bind, and it already resolved the composed reference above.
+                            if (index < 0 && !metadata.splitsOnDot() && SqlUtil.isQuoteProtectedAlias(node.token, dot + 1, len)) {
+                                index = metadata.getColumnIndexQuiet(node.token, dot + 2, len - 1);
+                            }
                         }
                     }
                     if (index >= 0) {
@@ -1421,9 +1428,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
+        // Vector aggregation runs over base-table page frames, so every ast.rhs.token below names a
+        // physical column (unquoted). getColumnIndex's protected-alias strip-retry is defensive
+        // uniformity here, not reachable with a protected token, and is not exercised by a test.
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
-            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (ast.type == FUNCTION && isCountKeyword(ast.token)
@@ -1432,27 +1442,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             tempVecConstructorArgIndexes.add(-1);
             return COUNT_CONSTRUCTOR;
         } else if (isSingleColumnFunction(ast, "count")) {
-            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return countConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "ksum")) {
-            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return ksumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "nsum")) {
-            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return nsumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "avg")) {
-            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return avgConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "min")) {
-            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return minConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "max")) {
-            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
             tempVecConstructorArgIndexes.add(columnIndex);
             return maxConstructors.get(metadata.getColumnType(columnIndex));
         }
@@ -1478,7 +1488,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // when "hour" index is not set (-1) we assume we should be looking for
                 // intrinsic cases, such as "columnRef, sum(col)"
                 if (hourFunctionIndex == -1) {
-                    final int columnIndex = metadata.getColumnIndexQuiet(ast.token);
+                    final int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, ast.token);
                     if (columnIndex < 0) {
                         throw SqlException.invalidColumn(ast.position, ast.token);
                     }
@@ -1615,7 +1625,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
                 for (int i = 0; i < topDownColumnCount; i++) {
                     QueryColumn column = topDownColumns.getQuick(i);
-                    int columnIndex = metadata.getColumnIndexQuiet(column.getName());
+                    int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, column.getName());
                     if (columnIndex == -1) {
                         throw SqlException.invalidColumn(column.getAst().position, column.getName());
                     }
@@ -2602,7 +2612,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // Check if LHS is the designated timestamp column from master
         if (lhs.type == ExpressionNode.LITERAL) {
-            int colIndex = masterMetadata.getColumnIndexQuiet(lhs.token);
+            int colIndex = SqlUtil.getColumnIndexQuiet(masterMetadata, lhs.token);
             if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
                 timestampColumnIndex = colIndex;
                 slaveColumnNode = rhs;
@@ -2611,7 +2621,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // If not found, check if RHS is the designated timestamp column from master and LHS is from slave
         if (timestampColumnIndex == -1 && rhs.type == ExpressionNode.LITERAL) {
-            int colIndex = masterMetadata.getColumnIndexQuiet(rhs.token);
+            int colIndex = SqlUtil.getColumnIndexQuiet(masterMetadata, rhs.token);
             if (colIndex >= 0 && colIndex == designatedTimestampIndex) {
                 timestampColumnIndex = colIndex;
                 slaveColumnNode = lhs;
@@ -2621,7 +2631,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (slaveColumnNode == null || slaveColumnNode.type != ExpressionNode.LITERAL) {
             return null;
         }
-        int slaveColumnIndex = slaveMetadata.getColumnIndexQuiet(slaveColumnNode.token);
+        int slaveColumnIndex = SqlUtil.getColumnIndexQuiet(slaveMetadata, slaveColumnNode.token);
         if (slaveColumnIndex == -1) {
             return null; // Slave column not found
         }
@@ -3594,7 +3604,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             final RecordMetadata baseMeta = groupByFactory.getMetadata();
-            int timestampIndex = baseMeta.getColumnIndexQuiet(alias);
+            int timestampIndex = SqlUtil.getColumnIndexQuiet(baseMeta, alias);
             // The alias may resolve to a non-TIMESTAMP column after outer projection
             // (e.g. SELECT ts::LONG AS ts, ...). Reset so the fallback below can try
             // the raw timestamp token and getTimestampDriver doesn't trip its tag
@@ -3607,7 +3617,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // the alias may land on a renamed duplicate. Prefer the original token if
             // it yields an earlier TIMESTAMP-typed index.
             if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
-                int origIndex = baseMeta.getColumnIndexQuiet(timestamp.token);
+                int origIndex = SqlUtil.getColumnIndexQuiet(baseMeta, timestamp.token);
                 if (origIndex >= 0
                         && ColumnType.isTimestamp(baseMeta.getColumnType(origIndex))
                         && (timestampIndex < 0 || origIndex < timestampIndex)) {
@@ -3704,8 +3714,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if ((ast.type == ExpressionNode.FUNCTION || ast.type == ExpressionNode.OPERATION)
                         && !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
                     assert qc.getAlias() != null
-                            && groupByMetadata.getColumnIndexQuiet(qc.getAlias()) >= 0
-                            && groupByMetadata.getColumnIndexQuiet(qc.getAlias()) != timestampIndex
+                            && SqlUtil.getColumnIndexQuiet(groupByMetadata, qc.getAlias()) >= 0
+                            && SqlUtil.getColumnIndexQuiet(groupByMetadata, qc.getAlias()) != timestampIndex
                             : "generateFill: non-aggregate FUNCTION/OPERATION in bottomUpCols must resolve to a non-timestamp factory key";
                     continue;
                 }
@@ -3716,7 +3726,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // land on the correct slot, even when outer projection drops this column.
                 final CharSequence qcAlias = qc.getAlias();
                 if (qcAlias != null) {
-                    final int factoryIdx = groupByMetadata.getColumnIndexQuiet(qcAlias);
+                    final int factoryIdx = SqlUtil.getColumnIndexQuiet(groupByMetadata, qcAlias);
                     if (factoryIdx >= 0 && factoryIdx != timestampIndex) {
                         factoryColToUserFillIdx.setQuick(factoryIdx, userFillIdx);
                     }
@@ -3831,7 +3841,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         if (isPrevWithLiteralArg) {
                             CharSequence srcAlias = fillExpr.rhs.token;
-                            int srcColIdx = groupByMetadata.getColumnIndexQuiet(srcAlias);
+                            int srcColIdx = SqlUtil.getColumnIndexQuiet(groupByMetadata, srcAlias);
                             if (srcColIdx < 0) {
                                 throw SqlException.$(fillExpr.rhs.position,
                                         "PREV(col): column not found in output: ").put(srcAlias);
@@ -5699,7 +5709,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     for (int j = 0, m = columns.size(); j < m; j++) {
                                         ExpressionNode ast = columns.get(j).getAst();
                                         if (!functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
-                                            int colIndex = joinMetadata.getColumnIndexQuiet(ast.token);
+                                            int colIndex = SqlUtil.getColumnIndexQuiet(joinMetadata, ast.token);
                                             if (colIndex >= splitIndex) {
                                                 throw SqlException.position(ast.position).put("WINDOW join cannot reference right table non-aggregate column: ").put(ast.token);
                                             }
@@ -5724,7 +5734,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     for (int j = 0, m = columns.size(); j < m; j++) {
                                         final ExpressionNode ast = columns.get(j).getAst();
                                         if (!functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
-                                            int colIndex = joinMetadata.getColumnIndexQuiet(ast.token);
+                                            int colIndex = SqlUtil.getColumnIndexQuiet(joinMetadata, ast.token);
                                             if (colIndex == -1) {
                                                 throw SqlException.invalidColumn(ast.position, ast.token);
                                             }
@@ -5820,8 +5830,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 final ExpressionNode l = nn.lhs;
                                                 final ExpressionNode r = nn.rhs;
                                                 if (l != null && r != null && l.type == ExpressionNode.LITERAL && r.type == ExpressionNode.LITERAL) {
-                                                    final int leftColumnIndex = joinMetadata.getColumnIndexQuiet(l.token);
-                                                    final int rightColumnIndex = joinMetadata.getColumnIndexQuiet(r.token);
+                                                    final int leftColumnIndex = SqlUtil.getColumnIndexQuiet(joinMetadata, l.token);
+                                                    final int rightColumnIndex = SqlUtil.getColumnIndexQuiet(joinMetadata, r.token);
                                                     if (leftColumnIndex >= 0 && rightColumnIndex >= 0) {
                                                         final boolean leftIsSymbol = joinMetadata.getColumnType(leftColumnIndex) == ColumnType.SYMBOL;
                                                         final boolean rightIsSymbol = joinMetadata.getColumnType(rightColumnIndex) == ColumnType.SYMBOL;
@@ -5892,7 +5902,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             } else {
                                                 GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(masterMetadata);
                                                 for (int k = 0, m = aggregateCols.size(); k < m; k++) {
-                                                    metadata.add(new TableColumnMetadata(aggregateCols.get(k).getAlias().toString(), groupByFunctions.get(k).getType()));
+                                                    metadata.add(new TableColumnMetadata(SqlUtil.toColumnName(aggregateCols.get(k).getAlias()), groupByFunctions.get(k).getType()));
                                                 }
                                                 factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master));
                                             }
@@ -6527,7 +6537,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<ExpressionNode> latestBy = new ObjList<>(model.getLatestBy().size());
             latestBy.addAll(model.getLatestBy());
             final ExpressionNode latestByNode = latestBy.get(0);
-            final int latestByIndex = metadata.getColumnIndexQuiet(latestByNode.token);
+            final int latestByIndex = SqlUtil.getColumnIndexQuiet(metadata, latestByNode.token);
             final boolean indexed = IndexType.isIndexed(metadata.getColumnIndexType(latestByIndex))
                     && !SqlHints.hasNoIndexHint(model);
 
@@ -6580,7 +6590,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (intrinsicModel.keyColumn != null) {
                 // key column must always be the same as latest by column
-                assert latestByIndex == metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
+                assert latestByIndex == SqlUtil.getColumnIndexQuiet(metadata, intrinsicModel.keyColumn);
 
                 if (intrinsicModel.keySubQuery != null) {
                     RecordCursorFactory rcf = null;
@@ -7424,7 +7434,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // therefore, 0 index is not allowed
                 for (int i = 0; i < orderByColumnCount; i++) {
                     final CharSequence column = orderByColumnNames.getQuick(i);
-                    int index = metadata.getColumnIndexQuiet(column);
+                    int index = SqlUtil.getColumnIndexQuiet(metadata, column);
 
                     // check if the column type is supported
                     final int columnType = metadata.getColumnType(index);
@@ -7462,7 +7472,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // 2. metadata of the new cursor will have the timestamp
                 if (timestampIndex != -1) {
                     CharSequence column = orderByColumnNames.getQuick(0);
-                    int index = metadata.getColumnIndexQuiet(column);
+                    int index = SqlUtil.getColumnIndexQuiet(metadata, column);
                     if (index == timestampIndex) {
                         if (orderByColumnCount == 1) {
                             if (orderByColumnNameToIndexMap.get(column) == IQueryModel.ORDER_DIRECTION_ASCENDING
@@ -7480,7 +7490,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 GenericRecordMetadata orderedMetadata;
-                int firstOrderByColumnIndex = metadata.getColumnIndexQuiet(orderByColumnNames.getQuick(0));
+                int firstOrderByColumnIndex = SqlUtil.getColumnIndexQuiet(metadata, orderByColumnNames.getQuick(0));
                 if (firstOrderByColumnIndex == timestampIndex) {
                     orderedMetadata = GenericRecordMetadata.copyOf(metadata);
                 } else {
@@ -8366,7 +8376,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = columns.size(); i < n; i++) {
                 QueryColumn queryColumn = columns.getQuick(i);
                 CharSequence columnName = queryColumn.getAlias();
-                int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+                int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
                 assert index > -1 : "wtf? " + queryColumn.getAst().token;
 
                 int updateColumnIndex = updateColumnNames.indexOf(columnName);
@@ -8451,7 +8461,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         boolean timestampSet = false;
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = columns.getQuick(i);
-            int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
+            int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
             assert index > -1 : "wtf? " + queryColumn.getAst().token;
             columnCrossIndex.add(index);
 
@@ -8459,7 +8469,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
                 TableColumnMetadata aliasedColumn = new TableColumnMetadata(
-                        Chars.toString(queryColumn.getAlias()),
+                        SqlUtil.toColumnName(queryColumn.getAlias()),
                         metadata.getColumnType(index),
                         metadata.getColumnIndexType(index),
                         metadata.getIndexValueBlockCapacity(index),
@@ -8573,7 +8583,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // check if count() was not aliased, if it was, we need to generate new baseMetadata, bummer
                     final RecordMetadata metadata = isCountKeyword(columnName)
                             ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
-                            new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), LONG));
+                            new GenericRecordMetadata().add(new TableColumnMetadata(SqlUtil.toColumnName(columnName), LONG));
                     return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
                 }
             }
@@ -8597,7 +8607,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (tableToken != null) {
                         try (TableReader reader = executionContext.getReader(tableToken, tableModel.getMetadataVersion())) {
                             TableRecordMetadata tableMeta = reader.getMetadata();
-                            int colIdx = tableMeta.getColumnIndexQuiet(colName);
+                            int colIdx = SqlUtil.getColumnIndexQuiet(tableMeta, colName);
                             if (colIdx >= 0 && ColumnType.tagOf(tableMeta.getColumnType(colIdx)) == ColumnType.SYMBOL
                                     && IndexType.isPosting(tableMeta.getColumnIndexType(colIdx))) {
 
@@ -8638,7 +8648,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     TableColumnMetadata srcCol = tableMeta.getColumnMetadata(colIdx);
                                     GenericRecordMetadata distinctMeta = new GenericRecordMetadata();
                                     distinctMeta.add(new TableColumnMetadata(
-                                            Chars.toString(outColName),
+                                            SqlUtil.toColumnName(outColName),
                                             tableMeta.getColumnType(colIdx),
                                             tableMeta.getColumnIndexType(colIdx),
                                             tableMeta.getIndexValueBlockCapacity(colIdx),
@@ -8744,7 +8754,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (pageFramingSupported) {
                     columnExpr = columns.getQuick(hourIndex).getAst();
                     // find position of the hour() argument in the factory meta
-                    tempKeyIndexesInBase.add(factory.getMetadata().getColumnIndex(columnExpr.rhs.token));
+                    tempKeyIndexesInBase.add(SqlUtil.getColumnIndex(factory.getMetadata(), columnExpr.rhs.token));
                     tempKeyIndex.add(hourIndex);
                     // storage dimension for Rosti is INT when we use hour(). This function produces INT.
                     tempKeyKinds.add(getTimestampDriver(timestampType).getGKKHourInt());
@@ -8785,7 +8795,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         meta.add(
                                 indexInThis,
                                 new TableColumnMetadata(
-                                        Chars.toString(columns.getQuick(indexInThis).getName()),
+                                        SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
                                         type,
                                         IndexType.NONE,
                                         0,
@@ -8797,7 +8807,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         meta.add(
                                 indexInThis,
                                 new TableColumnMetadata(
-                                        Chars.toString(columns.getQuick(indexInThis).getName()),
+                                        SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
                                         type,
                                         null
                                 )
@@ -8820,7 +8830,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     meta.add(
                             indexInThis,
                             new TableColumnMetadata(
-                                    Chars.toString(columns.getQuick(indexInThis).getName()),
+                                    SqlUtil.toColumnName(columns.getQuick(indexInThis).getName()),
                                     vaf.getType(),
                                     null
                             )
@@ -9225,7 +9235,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (columnType == SYMBOL) {
                     if (function instanceof SymbolFunction) {
                         m = new TableColumnMetadata(
-                                Chars.toString(column.getAlias()),
+                                SqlUtil.toColumnName(column.getAlias()),
                                 function.getType(),
                                 IndexType.NONE,
                                 0,
@@ -9234,7 +9244,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     } else if (function instanceof NullConstant) {
                         m = new TableColumnMetadata(
-                                Chars.toString(column.getAlias()),
+                                SqlUtil.toColumnName(column.getAlias()),
                                 SYMBOL,
                                 IndexType.NONE,
                                 0,
@@ -9246,7 +9256,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 } else if (columnType == TIMESTAMP && (function.getType() == STRING || function.getType() == VARCHAR)) {
                     m = new TableColumnMetadata(
-                            Chars.toString(column.getAlias()),
+                            SqlUtil.toColumnName(column.getAlias()),
                             function.getType(),
                             IndexType.NONE,
                             0,
@@ -9255,7 +9265,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 } else {
                     m = new TableColumnMetadata(
-                            Chars.toString(column.getAlias()),
+                            SqlUtil.toColumnName(column.getAlias()),
                             columnType,
                             function.getMetadata()
                     );
@@ -9298,7 +9308,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         functions.add(timestampFunction);
                         virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
                         final TableColumnMetadata m = new TableColumnMetadata(
-                                Chars.toString(qc.getAlias()),
+                                SqlUtil.toColumnName(qc.getAlias()),
                                 timestampType,
                                 timestampFunction.getMetadata()
                         );
@@ -9338,7 +9348,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         virtualMetadata.setTimestampIndex(virtualMetadata.getColumnCount());
                         TableColumnMetadata m;
                         m = new TableColumnMetadata(
-                                Chars.toString(qc.getAlias()),
+                                SqlUtil.toColumnName(qc.getAlias()),
                                 timestampFunction.getType(),
                                 timestampFunction.getMetadata()
                         );
@@ -9514,7 +9524,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                         int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
-                        if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
+                        if (SqlUtil.getColumnIndexQuiet(baseMetadata, orderByNode.token) == timestampIdx &&
                                 ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
                                         (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
                             dismissOrder = true;
@@ -9566,7 +9576,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     windowFunction.setColumnIndex(i);
 
                     factoryMetadata.add(new TableColumnMetadata(
-                            Chars.toString(qc.getAlias()),
+                            SqlUtil.toColumnName(qc.getAlias()),
                             windowFunction.getType(),
                             IndexType.NONE,
                             0,
@@ -9574,7 +9584,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             null
                     ));
                 } else { // column
-                    final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                    final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
 
                     Function function = functionParser.parseFunction(
@@ -9592,7 +9602,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
                         factoryMetadata.add(i, new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
+                                        SqlUtil.toColumnName(qc.getAlias()),
                                         m.getColumnType(),
                                         m.getIndexType(),
                                         m.getIndexValueBlockCapacity(),
@@ -9641,14 +9651,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
                 if (!qc.isWindowExpression()) {
-                    final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                    final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                     chainMetadata.addIfNotExists(i, m);
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
                         factoryMetadata.add(i, new TableColumnMetadata(
-                                        Chars.toString(qc.getAlias()),
+                                        SqlUtil.toColumnName(qc.getAlias()),
                                         m.getColumnType(),
                                         m.getIndexType(),
                                         m.getIndexValueBlockCapacity(),
@@ -9761,7 +9771,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                         int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
-                        if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx
+                        if (SqlUtil.getColumnIndexQuiet(baseMetadata, orderByNode.token) == timestampIdx
                                 && ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
                                 || (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
                             dismissOrder = true;
@@ -9839,7 +9849,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         windowFunction.setColumnIndex(i);
 
                         deferredWindowMetadata.extendAndSet(i, new TableColumnMetadata(
-                                Chars.toString(qc.getAlias()),
+                                SqlUtil.toColumnName(qc.getAlias()),
                                 windowFunction.getType(),
                                 IndexType.NONE,
                                 0,
@@ -10394,7 +10404,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (intrinsicModel.keyColumn != null) {
                     // existence of column would have been already validated
-                    final int keyColumnIndex = queryMeta.getColumnIndexQuiet(intrinsicModel.keyColumn);
+                    final int keyColumnIndex = SqlUtil.getColumnIndexQuiet(queryMeta, intrinsicModel.keyColumn);
                     final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                     final int nKeyExcludedValues = intrinsicModel.keyExcludedValueFuncs.size();
 
@@ -10723,7 +10733,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         // we can only deal with 'order by symbol, timestamp' at best
                         // skip this optimisation if order by is more extensive
-                        final int columnIndex = queryMeta.getColumnIndexQuiet(model.getOrderByAdvice().getQuick(0).token);
+                        final int columnIndex = SqlUtil.getColumnIndexQuiet(queryMeta, model.getOrderByAdvice().getQuick(0).token);
                         assert columnIndex > -1;
 
                         // this is our kind of column — bitmap only (native scanner)
@@ -11230,7 +11240,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ExpressionNode node = column.getAst();
 
             if (node.type == LITERAL) {
-                int idx = metadata.getColumnIndex(node.token);
+                int idx = SqlUtil.getColumnIndex(metadata, node.token);
                 int columnType = metadata.getColumnType(idx);
 
                 if (columnType == SYMBOL) {
@@ -11249,7 +11259,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private int getTimestampIndex(IQueryModel model, RecordMetadata metadata) throws SqlException {
         final ExpressionNode timestamp = model.getTimestamp();
         if (timestamp != null) {
-            int timestampIndex = metadata.getColumnIndexQuiet(timestamp.token);
+            int timestampIndex = SqlUtil.getColumnIndexQuiet(metadata, timestamp.token);
             if (timestampIndex == -1) {
                 throw SqlException.invalidColumn(timestamp.position, timestamp.token);
             }
@@ -11304,13 +11314,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         filter.clear();
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence columnName = columnNames.getQuick(i).token;
-            int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, columnName);
             if (columnIndex > -1) {
                 filter.add(columnIndex + 1);
             } else {
                 int dot = Chars.indexOfLastUnquoted(columnName, '.');
                 if (dot > -1) {
-                    columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
+                    final int len = columnName.length();
+                    columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, len);
+                    // composed "alias.column" reference whose column part carries protective quotes;
+                    // verbatim projection metadata stores the name unquoted. Skip a split-on-dot join
+                    // (it re-splits a stripped dotted interior and mis-binds; it already resolved the
+                    // composed reference above).
+                    if (columnIndex < 0 && !metadata.splitsOnDot() && SqlUtil.isQuoteProtectedAlias(columnName, dot + 1, len)) {
+                        columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 2, len - 1);
+                    }
                     if (columnIndex > -1) {
                         filter.add(columnIndex + 1);
                         continue;
@@ -11328,7 +11346,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) {
         filter.clear();
         for (int i = 0, n = columnNames.size(); i < n; i++) {
-            filter.add(metadata.getColumnIndex(columnNames.getQuick(i)) + 1);
+            filter.add(SqlUtil.getColumnIndex(metadata, columnNames.getQuick(i)) + 1);
         }
     }
 
@@ -11352,10 +11370,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int latestByColumnCount = latestBy.size();
         if (latestByColumnCount > 0) {
             // validate the latest by against the current reader
-            // first check if column is valid
+            // first check if column is valid. LATEST BY names physical reader columns (unquoted), so
+            // getColumnIndexQuiet's protected-alias strip-retry is defensive uniformity, not reachable
+            // with a protected token and not covered by a test.
             for (int i = 0; i < latestByColumnCount; i++) {
                 final ExpressionNode latestByNode = latestBy.getQuick(i);
-                final int index = myMeta.getColumnIndexQuiet(latestByNode.token);
+                final int index = SqlUtil.getColumnIndexQuiet(myMeta, latestByNode.token);
                 if (index == -1) {
                     throw SqlException.invalidColumn(latestByNode.position, latestByNode.token);
                 }
@@ -11803,7 +11823,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return;
             }
             if (node.type == LITERAL) {
-                int columnIndex = metadata.getColumnIndexQuiet(node.token);
+                int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, node.token);
                 if (columnIndex < columnSplit) {
                     vectorized = false;
                 }
@@ -11825,7 +11845,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         @Override
         public void visit(ExpressionNode node) {
             if (node.type == LITERAL) {
-                int columnIndex = metadata.getColumnIndexQuiet(node.token);
+                int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, node.token);
                 if (columnIndex == -1) {
                     shouldInclude = false;
                 } else {
