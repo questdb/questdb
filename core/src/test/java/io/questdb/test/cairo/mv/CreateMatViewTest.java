@@ -431,6 +431,26 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewCopySymbolCapacityProtectedAlias() throws Exception {
+        // Coverage for the mat-view operator-token-alias path, previously untested: a base SYMBOL column
+        // aliased to an operator token ("in") creates cleanly and copies the base capacity (2048),
+        // exercising CreateMatViewOperationImpl's toColumnName column-model keying. The alias surfaces
+        // here as the clean "in" (a dotted alias would fail earlier as an invalid physical column, and
+        // PIVOT is not allowed in a mat view), so that keying is identity/defensive rather than
+        // load-bearing - reverting it leaves this test green. It pins the reachability boundary the
+        // change guards, not a fail-without-fix regression.
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String sql = "select ts, k as \"in\", min(v) as v from " + TABLE1 + " sample by 1h";
+            execute("create materialized view test with base " + TABLE1 + " as (" + sql + ") partition by day");
+            assertQuery("select \"column\", symbolCapacity from (show columns from test) where type = 'SYMBOL'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("column\tsymbolCapacity\nin\t2048\n");
+        });
+    }
+
+    @Test
     public void testCreateMatViewDisabled() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "false");
