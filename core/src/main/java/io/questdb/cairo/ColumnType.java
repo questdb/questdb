@@ -963,6 +963,11 @@ public final class ColumnType {
         OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + STRING] = OVERLOAD_FULL;
         // Do the same for symbol -> avoids weird null behaviour
         OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + SYMBOL] = OVERLOAD_FULL;
+        // A NULL literal is a scalar, never a cursor (scalar sub-query). Without this a bare
+        // `null` matches a CURSOR argument at distance 0, so `col <= null` (i.e. not(col > null))
+        // binds to a `>(?C)` cursor-comparison factory and blows up calling getRecordCursorFactory()
+        // on the NULL constant. Force no overload so scalar null-comparison factories are used.
+        OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * NULL + CURSOR] = OVERLOAD_NONE;
 
         GEO_TYPE_SIZE_POW2 = new int[GEOLONG_MAX_BITS + 1];
         for (int bits = 1; bits <= GEOLONG_MAX_BITS; bits++) {
