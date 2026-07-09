@@ -223,14 +223,14 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // rather than silently narrowed. Before the fix toMicros cast the value
         // through an int (fromMinutes / fromHours / fromDays), so an out-of-range
         // value wrapped to a small one and slipped through instead of being
-        // caught - 100000000000000000d overflows a long micros count.
+        // caught - 100_000_000_000_000_000d overflows a long micros count.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             assertDurationOutOfRangeRejected(
-                    "CREATE LIVE VIEW lv FLUSH EVERY 100000000000000000d AS " +
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100_000_000_000_000_000d AS " +
                             "SELECT ts, x, row_number() OVER () AS rn FROM base");
             assertDurationOutOfRangeRejected(
-                    "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 100000000000000000d AS " +
+                    "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 100_000_000_000_000_000d AS " +
                             "SELECT ts, x, row_number() OVER () AS rn FROM base");
         });
     }

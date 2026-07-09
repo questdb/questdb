@@ -10193,12 +10193,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (tableToken.isLiveView() && !model.isUpdate()) {
             // Wrap for read queries only; UPDATE goes through a different
-            // execution path that doesn't open the LV cursor.
-            return new LiveViewRecordCursorFactory(
-                    executionContext.getCairoEngine(),
-                    tableToken,
-                    result
-            );
+            // execution path that doesn't open the LV cursor. Free the base
+            // factory if the wrapper ctor throws, otherwise it leaks.
+            try {
+                return new LiveViewRecordCursorFactory(
+                        executionContext.getCairoEngine(),
+                        tableToken,
+                        result
+                );
+            } catch (Throwable th) {
+                Misc.free(result);
+                throw th;
+            }
         }
         return result;
     }

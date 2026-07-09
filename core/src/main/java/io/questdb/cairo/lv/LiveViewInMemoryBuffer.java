@@ -990,6 +990,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         lvSeqTxn = Numbers.LONG_NULL;
         leadRowCount = 0;
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            // Clear the stale per-column symbol horizon. Safe either way (every
+            // publish re-stamps it before a reader can pin the slot), but a reset
+            // buffer should not carry the previous fill's band.
+            newSymbolMaxIds[c] = 0;
             if (ColumnType.isVarSize(columnTypes.getQuick(c))) {
                 dataMem.getQuick(c).jumpTo(0);
                 auxMem.getQuick(c).jumpTo(0);

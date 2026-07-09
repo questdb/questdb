@@ -155,6 +155,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case CREATE_TABLE:
             case CREATE_MAT_VIEW:
+            case CREATE_LIVE_VIEW:
             case CREATE_TABLE_AS_SELECT:
             case DROP:
                 assert false;

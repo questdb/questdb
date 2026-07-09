@@ -1409,6 +1409,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setAppliedWatermark(effectiveSeqTxn);
             // Coupled invariant: no un-flushed lead.
             instance.setRefreshedUpToSeqTxn(effectiveSeqTxn);
+            instance.setLeadRowCount(0);
 
             boolean lvConsumedPersisted = false;
             if (appendedRows > 0) {
@@ -3898,7 +3899,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (length == 0) {
             return;
         }
-        checkpointRestoreScratch.putBlockOfBytes(block.addressOf(offsetInBlock), length);
+        checkpointRestoreScratch.putBlockOfBytes(block.addressOf(offsetInBlock, length), length);
         checkpointRestoreScratch.jumpTo(0);
     }
 
@@ -5211,6 +5212,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // getLastProcessedSeqTxn() so a partial or internal-o3Replay cycle
                                 // stays consistent.
                                 instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
+                                // Coupled invariant: no un-flushed lead on the clean raw-WAL path.
+                                instance.setLeadRowCount(0);
                                 instance.bumpDedupRawWalCleanCycles();
                             } else {
                                 // Cold signal, apply lag, or a divergence (dedup / skip / non-DATA

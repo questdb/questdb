@@ -154,9 +154,12 @@ public class LiveViewSymbolCacheConcurrencyTest {
         // is at least that long; every index stays in bounds even as the worker
         // reallocates the list under it. On a weak-memory host (ARM) a scan bounded
         // to the live size() instead could observe the bumped size with the old,
-        // shorter array and go out of bounds - the regression this guards. So this
-        // doubles as an ARM-CI canary and as a guard on the append-only id->string
-        // invariant the read path relies on.
+        // shorter array and go out of bounds - the regression this guards. This is
+        // one of several ARM-CI weak-memory guards for the bounded read path: the
+        // torn-VALUE angle is covered by testReaderPinnedToStaleHorizonSeesNoTornValue
+        // and the single-threaded overlay-bounds angle by
+        // testOverlayBoundsKeyScanToSlotHorizon. Here it also guards the append-only
+        // id->string invariant the read path relies on.
         final IntList columnTypes = new IntList();
         columnTypes.add(ColumnType.SYMBOL);
         final LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);

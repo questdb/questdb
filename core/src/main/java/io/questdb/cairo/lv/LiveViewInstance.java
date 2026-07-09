@@ -149,10 +149,10 @@ public class LiveViewInstance implements QuietCloseable {
     // Snapshot-freeze gate. DatabaseCheckpointAgent sets this true before
     // copying an LV's file set and clears it afterwards; the refresh worker
     // observes the flag at the top of refreshInstance (after the latch +
-    // dropped/invalid checks) and skips the cycle. The frozen lvSeqTxn at
-    // the time of freeze is captured so post-restore consistency can be
+    // dropped/invalid checks) and skips the cycle. The frozen appliedWatermark
+    // at the time of freeze is captured so post-restore consistency can be
     // asserted; the field is informational for tests and diagnostics.
-    private volatile long freezeFrozenLvSeqTxn = Numbers.LONG_NULL;
+    private volatile long freezeFrozenAppliedWatermark = Numbers.LONG_NULL;
     private volatile boolean freezeInProgress;
     // One-shot latch for the advisory log the refresh worker emits the first time
     // a view drops in-order rows below viewLowerBoundTimestamp. Keeps the "dropping
@@ -440,7 +440,7 @@ public class LiveViewInstance implements QuietCloseable {
     public void endCheckpoint() {
         synchronized (this) {
             freezeInProgress = false;
-            freezeFrozenLvSeqTxn = Numbers.LONG_NULL;
+            freezeFrozenAppliedWatermark = Numbers.LONG_NULL;
             notifyAll();
         }
     }
@@ -575,12 +575,12 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return the lvSeqTxn captured at {@link #startCheckpoint(long)}, or
-     * {@link Numbers#LONG_NULL} when no freeze is in progress. Useful for tests
+     * @return the {@code appliedWatermark} captured at {@link #startCheckpoint(long)},
+     * or {@link Numbers#LONG_NULL} when no freeze is in progress. Useful for tests
      * and post-restore consistency assertions.
      */
-    public long getFreezeFrozenLvSeqTxn() {
-        return freezeFrozenLvSeqTxn;
+    public long getFreezeFrozenAppliedWatermark() {
+        return freezeFrozenAppliedWatermark;
     }
 
     public long getHeadBackfillCpKey() {
@@ -1057,12 +1057,10 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
-    /**
-     * Installs the in-memory tier. Single-shot — the tier is constructed once
-     * on the first refresh cycle and lives for the LV's lifetime. Safe to call
-     * with the existing tier passed back in (no-op); a different non-null tier
-     * frees the old one first, mirroring {@link #setCompiledFactory}.
-     */
+    public void setHeadBackfillCpKey(long key) {
+        this.headBackfillCpKey = key;
+    }
+
     /**
      * Records a committed head checkpoint in one atomic store. Mirrors the
      * head metadata into the {@code live_views()} catalogue, resets the
@@ -1076,10 +1074,6 @@ public class LiveViewInstance implements QuietCloseable {
      * counters reset too so the next eligible cycle writes a fresh head
      * immediately rather than waiting for the row-count trigger to re-fire.
      */
-    public void setHeadBackfillCpKey(long key) {
-        this.headBackfillCpKey = key;
-    }
-
     public void setHeadCheckpoint(long lvSeqTxn, long baseSeqTxn, long maxTs, long stateBytes, long writtenUs) {
         // Publish the (lvSeqTxn, maxTs, stateBytes, baseSeqTxn) tuple atomically:
         // build a fresh immutable array and store the reference volatile. A reader
@@ -1090,6 +1084,12 @@ public class LiveViewInstance implements QuietCloseable {
         this.lastCheckpointWrittenUs = writtenUs;
     }
 
+    /**
+     * Installs the in-memory tier. Single-shot — the tier is constructed once
+     * on the first refresh cycle and lives for the LV's lifetime. Safe to call
+     * with the existing tier passed back in (no-op); a different non-null tier
+     * frees the old one first, mirroring {@link #setCompiledFactory}.
+     */
     public void setInMemoryTier(LiveViewInMemoryTier tier) {
         if (inMemoryTier != tier) {
             Misc.free(inMemoryTier);
@@ -1256,7 +1256,7 @@ public class LiveViewInstance implements QuietCloseable {
         // (a) commits its rewrite before the agent's file copy begins, or
         // (b) observes freezeInProgress=true and parks via waitForUnfrozen().
         synchronized (this) {
-            freezeFrozenLvSeqTxn = frozenAppliedWatermark;
+            freezeFrozenAppliedWatermark = frozenAppliedWatermark;
             freezeInProgress = true;
         }
         while (!refreshLatch.compareAndSet(false, true)) {

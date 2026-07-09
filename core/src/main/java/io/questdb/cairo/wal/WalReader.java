@@ -137,15 +137,6 @@ public class WalReader implements Closeable {
     }
 
     /**
-     * Binds {@code view} to the bytes stored for {@code key} in column {@code col}.
-     * The underlying bytes are stable for the current segment (the column's
-     * {@link DirectSymbolMap} is populated once per {@link #of} call and is read-only
-     * thereafter), so the returned view stays valid until the next {@link #of}
-     * rebinds this reader, until {@link #close()}, or until the caller rebinds the
-     * view itself via another call. Callers that need two simultaneous views on the
-     * same column must supply two distinct {@link DirectString} instances.
-     */
-    /**
      * Returns the int key whose stored value equals {@code value} in column {@code col},
      * or {@link SymbolTable#VALUE_NOT_FOUND} if no such entry exists. The cumulative
      * symbol map is populated via {@link DirectSymbolMap#put(int, CharSequence)} which
@@ -168,6 +159,15 @@ public class WalReader implements Closeable {
         return SymbolTable.VALUE_NOT_FOUND;
     }
 
+    /**
+     * Binds {@code view} to the bytes stored for {@code key} in column {@code col}.
+     * The underlying bytes are stable for the current segment (the column's
+     * {@link DirectSymbolMap} is populated once per {@link #of} call and is read-only
+     * thereafter), so the returned view stays valid until the next {@link #of}
+     * rebinds this reader, until {@link #close()}, or until the caller rebinds the
+     * view itself via another call. Callers that need two simultaneous views on the
+     * same column must supply two distinct {@link DirectString} instances.
+     */
     public CharSequence getSymbolValue(int col, int key, DirectString view) {
         DirectSymbolMap symbolMap = symbolMaps.getQuick(col);
         return symbolMap != null ? symbolMap.valueOf(key, view) : null;

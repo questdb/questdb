@@ -402,6 +402,12 @@ public class WalUtils {
                         tablePath.trimTo(tablePathLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
                         partMem.smallFile(configuration.getFilesFacade(), tablePath.$(), MemoryTag.MMAP_TX_LOG);
                         final long partTxnCount = Math.min(partSize, txnCount - part * partSize);
+                        // Mirror the V1 size guard: never read a record past the mapped
+                        // part file. A truncated or corrupt part means the log cannot be
+                        // trusted, so bail with "no info" rather than reading out of bounds.
+                        if (partMem.size() < partTxnCount * TableTransactionLogV2.RECORD_SIZE) {
+                            return -1;
+                        }
                         for (long txn = partTxnCount - 1; txn >= 0; txn--) {
                             final long offset = txn * TableTransactionLogV2.RECORD_SIZE;
                             final long result = liveViewMaxBaseSeqTxnFromRecord(partMem, offset, tablePath, tablePathLen, walEventReader);

@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -336,28 +337,42 @@ public class LiveViewCheckpointReader implements Closeable {
         private long payloadStart;
         private int type;
 
-        public long addressOf(long offset) {
-            checkBounds(offset);
+        public long addressOf(long offset, long size) {
+            checkBounds(offset, size);
             return mem.addressOf(payloadStart + offset);
         }
 
         public byte getByte(long offset) {
-            checkBounds(offset);
+            checkBounds(offset, Byte.BYTES);
             return mem.getByte(payloadStart + offset);
         }
 
         public int getInt(long offset) {
-            checkBounds(offset);
+            checkBounds(offset, Integer.BYTES);
             return mem.getInt(payloadStart + offset);
         }
 
         public long getLong(long offset) {
-            checkBounds(offset);
+            checkBounds(offset, Long.BYTES);
             return mem.getLong(payloadStart + offset);
         }
 
         public CharSequence getStr(long offset) {
-            checkBounds(offset);
+            // Bound the 4-byte length prefix, then the payload the prefix declares,
+            // so a crafted (CRC-valid) length cannot drive an out-of-bounds native
+            // read. A null STR (length -1) carries no payload bytes.
+            checkBounds(offset, Integer.BYTES);
+            final int strLen = mem.getInt(payloadStart + offset);
+            if (strLen != TableUtils.NULL_LEN) {
+                if (strLen < 0) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint block has corrupt string length, offset=")
+                            .put(offset)
+                            .put(", len=")
+                            .put(strLen);
+                }
+                checkBounds(offset + Integer.BYTES, (long) strLen * Character.BYTES);
+            }
             return mem.getStrA(payloadStart + offset);
         }
 
@@ -382,12 +397,14 @@ public class LiveViewCheckpointReader implements Closeable {
             return type;
         }
 
-        private void checkBounds(long offset) {
-            if (offset < 0 || offset >= length) {
+        private void checkBounds(long offset, long size) {
+            if (offset < 0 || size < 0 || offset + size > length) {
                 throw CairoException.critical(0)
                         .put("live view checkpoint block read out of bounds, offset=")
                         .put(offset)
                         .put(", size=")
+                        .put(size)
+                        .put(", length=")
                         .put(length);
             }
         }

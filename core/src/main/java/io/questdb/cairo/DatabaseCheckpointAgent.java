@@ -170,9 +170,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 return;
             }
             auxPath.trimTo(srcDirLen).concat(pUtf8NameZ).$();
-            // Skip .cp.tmp orphans from prior crashes - the recovery sweep
-            // would unlink them anyway.
-            if (Utf8s.endsWithAscii(auxPath, LiveViewCheckpointWriter.CP_TMP_FILE_EXT)) {
+            // Skip any in-flight temp orphans from prior crashes (.cp.tmp and
+            // .bcp.tmp) - the recovery sweep would unlink them anyway, and copying
+            // them only pollutes the backup.
+            if (Utf8s.endsWithAscii(auxPath, ".tmp")) {
                 return;
             }
             path.trimTo(dstDirLen).concat(pUtf8NameZ).$();

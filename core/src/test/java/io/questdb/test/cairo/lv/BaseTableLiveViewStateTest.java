@@ -58,7 +58,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class BaseTableLiveViewStateTest extends AbstractCairoTest {
 
-    @Test
+    @Test(timeout = 120_000)
     public void testNoMissingNotifications() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         int baseCommitThreads = 1 + rnd.nextInt(4);
