@@ -470,8 +470,48 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int recvBufferSize = context.getRecvBufferSize();
 
         try {
+            if (state.hasLostCloseEchoSync()) {
+                // Frame sync died earlier in the close-echo wait (a too-big
+                // frame jammed the recv machinery): the CLOSE echo can never
+                // be parsed, so the connection now exists only to keep the
+                // socket drained -- the eventual fd close must not RST the
+                // client's unread [durable ack][CLOSE] tail -- and to poll
+                // the echo grace budget on inbound activity. Consuming the
+                // bytes (instead of leaving them in the kernel buffer) is
+                // also what stops the dispatcher's edge-triggered oneshot
+                // re-arm from re-firing on stale readiness and spinning at
+                // full speed until the grace expires. A peer that goes fully
+                // silent after the jam stops generating recv events, so the
+                // expiry is no longer polled and the transport idle reaper
+                // collects the connection -- the same policy every other
+                // silent-peer phase of the wait follows.
+                checkCloseEchoWaitExpiry(context, state);
+                discardInboundBytes(context);
+                throw PeerIsSlowToWriteException.INSTANCE;
+            }
+
             int recvBufferLen = state.getRecvBufferLen();
             if (recvBufferLen >= recvBufferSize) {
+                if (state.isAwaitingCloseEcho()) {
+                    // The recv buffer jammed while the close-echo wait was in
+                    // progress: the trailing frame can never complete, so
+                    // frame sync is unrecoverable. Enter read-and-discard
+                    // mode (see the gate above). In practice
+                    // processWebSocketFrames flags the sync loss at
+                    // header-parse time before the buffer can fill, but this
+                    // branch must not fall through to sendFatalClose's
+                    // echo-wait gate: returning normally without consuming
+                    // socket bytes leaves the dispatcher's edge-triggered
+                    // oneshot re-arm re-firing immediately -- a busy-loop
+                    // through dispatcher and worker until the grace expires.
+                    LOG.error().$("WebSocket recv buffer jammed during close echo wait, discarding inbound bytes [fd=")
+                            .$(context.getFd()).I$();
+                    state.onCloseEchoSyncLost();
+                    state.setRecvBufferLen(0);
+                    checkCloseEchoWaitExpiry(context, state);
+                    discardInboundBytes(context);
+                    throw PeerIsSlowToWriteException.INSTANCE;
+                }
                 // Buffer is full, but the parser still needs more data — the frame
                 // payload exceeds recv buffer capacity. Notify the client with
                 // a protocol-level CLOSE so it can distinguish "your frame is
@@ -481,7 +521,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 sendFatalClose(context, state,
                         WebSocketCloseCode.MESSAGE_TOO_BIG,
                         "frame payload exceeds receive buffer capacity");
-                return; // sendFatalClose throws unless the close-echo wait is in progress.
+                return; // unreachable -- sendFatalClose throws when no echo wait is in progress
             }
 
             int remaining = recvBufferSize - recvBufferLen;
@@ -790,6 +830,37 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             LOG.error().$("close echo wait expired; closing without delivery confirmation, client replay may duplicate [fd=")
                     .$(context.getFd()).I$();
             gracefulCloseAndDisconnect(context);
+        }
+    }
+
+    /**
+     * Read-and-discard loop for the sync-lost phase of the close-echo wait
+     * ({@link QwpIngressProcessorState#hasLostCloseEchoSync}): consumes
+     * whatever bytes the kernel has buffered, using the recv buffer as
+     * scratch, and throws them away -- they are mid-frame garbage that can
+     * never be parsed. Draining serves two purposes: the eventual fd close
+     * cannot turn abortive (RST) and destroy the client's unread
+     * [durable ack][CLOSE] tail, and the dispatcher's edge-triggered oneshot
+     * re-arm stops re-firing on stale readiness, so the connection wakes
+     * only on genuinely new bytes instead of spinning until the grace
+     * expires.
+     * <p>
+     * A negative read is the peer's FIN or a transport error; during the
+     * echo wait the FIN is delivery confirmation (RFC 6455 treats it as the
+     * close handshake's end), so the resulting teardown is the success path.
+     */
+    private void discardInboundBytes(HttpConnectionContext context) throws ServerDisconnectException {
+        Socket socket = context.getSocket();
+        long recvBuffer = context.getRecvBuffer();
+        int recvBufferSize = context.getRecvBufferSize();
+        int read;
+        while ((read = socket.recv(recvBuffer, recvBufferSize)) > 0) {
+            LOG.debug().$("WebSocket bytes discarded awaiting close echo [fd=").$(context.getFd())
+                    .$(", bytes=").$(read).I$();
+        }
+        if (read < 0) {
+            LOG.info().$("WebSocket peer disconnected during close echo wait [fd=").$(context.getFd()).I$();
+            throw ServerDisconnectException.INSTANCE;
         }
     }
 
@@ -1445,10 +1516,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         LOG.error().$("WebSocket frame too large [fd=").$(context.getFd())
                                 .$(", payloadLength=").$(frameParser.getPayloadLength())
                                 .$(", bufferSize=").$(recvBufferSize).I$();
+                        if (state.isAwaitingCloseEcho()) {
+                            // The frame can never complete within the buffer,
+                            // so frame sync is unrecoverable and the CLOSE
+                            // echo can never be parsed. Switch the recv path
+                            // to read-and-discard (the resumeRecv gate) and
+                            // drop everything already buffered: advancing pos
+                            // to bufferEnd makes the finally store
+                            // recvBufferLen = 0, so no mid-frame garbage is
+                            // retained that a later parse could misread as a
+                            // fake CLOSE opcode. No second CLOSE frame may go
+                            // out (RFC 6455) -- only the expiry poll remains.
+                            state.onCloseEchoSyncLost();
+                            checkCloseEchoWaitExpiry(context, state);
+                            pos = bufferEnd;
+                            return;
+                        }
                         sendFatalClose(context, state,
                                 WebSocketCloseCode.MESSAGE_TOO_BIG,
                                 "frame payload exceeds maximum size");
-                        return; // sendFatalClose throws unless the close-echo wait is in progress.
+                        return; // unreachable -- sendFatalClose throws when no echo wait is in progress
                     }
                     break;
                 }

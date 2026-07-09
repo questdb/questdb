@@ -1114,19 +1114,139 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * The defense-in-depth full-buffer branch in resumeRecv: when the recv
+     * buffer is completely full mid-frame during the echo wait, the trailing
+     * frame can never complete and frame sync is lost. In production
+     * geometry the header-parse too-big check fires first (the configured
+     * recv buffer size and the context's buffer are the same), so this
+     * branch is reached only when the two sizes diverge -- this test keeps
+     * the default (larger) configured size so the header check stays quiet
+     * and the buffer genuinely fills. Pins: the branch enters the sync-lost
+     * discard mode instead of returning normally without consuming socket
+     * bytes -- the pre-fix behavior that left the jammed frame's tail unread
+     * in the kernel buffer and spun the dispatcher's edge-triggered oneshot
+     * re-arm until the grace expired.
+     */
+    @Test
+    public void testCloseEchoWaitFullBufferJamEntersDiscardMode() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabo (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabo", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabo", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabo", 300L, 3_000_000L));
+                // Declared payload (2000 bytes) exceeds the context's recv
+                // buffer (1024) but not the configured recv buffer size (the
+                // 128K default), so the header-parse too-big check stays
+                // quiet and the frame jams the buffer at full capacity.
+                byte[] oversizedHeader = {
+                        (byte) 0x82,          // FIN | BINARY
+                        (byte) (0x80 | 126),  // MASK | 16-bit extended length
+                        0x07, (byte) 0xD0,    // payload length 2000, big-endian
+                        0x12, 0x34, 0x56, 0x78 // mask key
+                };
+                byte[] oversizedBody = new byte[RECV_BUFFER_SIZE - oversizedHeader.length];
+                byte[] wire = concat(frame0, frame1, frame2, oversizedHeader, oversizedBody);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the demote drain completes; the data-frame
+                    // re-entry completes the CLOSE and enters the echo wait.
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "test setup: connection must await the client's close echo",
+                            state.isAwaitingCloseEcho()
+                    );
+                    int framesAtClose = rawSocket.sentFrames.size();
+
+                    // Phase D: header and body fill the recv buffer to
+                    // capacity; the frame can never complete.
+                    drive(processor, context, nf, oversizedHeader.length);
+                    drive(processor, context, nf, oversizedBody.length);
+                    Assert.assertEquals(
+                            "test setup: the jammed frame must fill the recv buffer",
+                            RECV_BUFFER_SIZE, state.getRecvBufferLen()
+                    );
+                    Assert.assertFalse(
+                            "test setup: the full buffer, not the header check, must detect the jam in this geometry",
+                            state.hasLostCloseEchoSync()
+                    );
+
+                    // Phase E: the next readable event hits the full-buffer
+                    // branch, which must enter the sync-lost discard mode:
+                    // drop the unparseable bytes and re-arm for read.
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("resumeRecv must throw PeerIsSlowToWriteException after entering discard mode");
+                    } catch (PeerIsSlowToWriteException expected) {
+                    }
+                    Assert.assertTrue(
+                            "the full-buffer jam must flip the connection into the sync-lost discard mode",
+                            state.hasLostCloseEchoSync()
+                    );
+                    Assert.assertEquals(
+                            "sync loss must drop the unparseable buffered bytes",
+                            0, state.getRecvBufferLen()
+                    );
+                    Assert.assertTrue(
+                            "echo wait must survive the full-buffer jam",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertEquals(
+                            "the full-buffer branch must not emit a CLOSE during the echo wait",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * The oversized-frame paths during the echo wait: a frame whose declared
      * payload exceeds the recv buffer can never be parsed, so the CLOSE echo
-     * behind it is unreachable and the discard gate in the frame dispatch
-     * never runs -- the too-big branch in processWebSocketFrames (header
-     * parse) and the full-buffer branch in resumeRecv are the only code that
-     * ever sees this connection again, and both route to sendFatalClose.
-     * Ungated, each inbound event emitted another MESSAGE_TOO_BIG CLOSE
-     * after our role-change CLOSE and never polled the expiry: only peer
-     * death or the idle reaper ended the cycle. Pins: both branches send
-     * nothing during the wait, the wait survives each re-entry, and the
-     * cycle stays bounded by CLOSE_ECHO_WAIT_GRACE_MICROS -- the first
-     * re-entry past the deadline tears down with the duplicate-risk
-     * diagnostic.
+     * behind it is unreachable -- frame sync is lost for good. Two pre-fix
+     * failure modes are pinned here. First, ungated, the too-big branches
+     * routed to sendFatalClose and each inbound event emitted another
+     * MESSAGE_TOO_BIG CLOSE after our role-change CLOSE. Second, gated but
+     * without consuming socket bytes, resumeRecv returned normally while the
+     * jammed frame's tail sat unread in the kernel buffer: the dispatcher's
+     * edge-triggered oneshot re-arm re-fired on the stale readiness
+     * immediately, spinning dispatcher and worker at full speed until the
+     * grace expired. Pins: the sync-lost paths send nothing, drop the
+     * unparseable buffered bytes, read-and-discard every subsequent socket
+     * byte (empty kernel buffer = no stale-readiness re-fire), re-arm via
+     * PeerIsSlowToWriteException, and stay bounded by
+     * CLOSE_ECHO_WAIT_GRACE_MICROS -- the first re-entry past the deadline
+     * tears down with the duplicate-risk diagnostic.
      */
     @Test
     public void testCloseEchoWaitOversizedFrameBoundedByEchoGrace() throws Exception {
@@ -1135,7 +1255,15 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
             final AtomicBoolean readOnly = new AtomicBoolean(false);
             final AtomicLong durableWatermark = new AtomicLong(-1L);
             final long[] nowMicros = {0L};
-            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            // Production geometry: the processor's configured recv buffer
+            // size (the header-parse too-big threshold) must equal the
+            // context's actual recv buffer, as it does in a real server.
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return RECV_BUFFER_SIZE;
+                }
+            };
 
             execute("create table tabk (v long, ts timestamp) timestamp(ts) partition by day wal");
 
@@ -1146,9 +1274,10 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabk", 200L, 2_000_000L));
                 byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabk", 300L, 3_000_000L));
                 // A frame whose declared payload (2000 bytes) exceeds the
-                // recv buffer (1024): header alone trips the too-big branch
-                // at parse time; the body then fills the buffer so the
-                // full-buffer branch in resumeRecv takes over.
+                // recv buffer (1024): the header alone trips the too-big
+                // branch at parse time and flips the connection into the
+                // sync-lost discard mode; the body then streams into the
+                // discard gate.
                 byte[] oversizedHeader = {
                         (byte) 0x82,          // FIN | BINARY
                         (byte) (0x80 | 126),  // MASK | 16-bit extended length
@@ -1189,30 +1318,55 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     int framesAtClose = rawSocket.sentFrames.size();
 
                     // Phase D: the oversized header lands inside the echo
-                    // window -- the too-big branch fires at header parse.
-                    // No CLOSE may go out; the wait must survive.
+                    // window -- the too-big branch fires at header parse and
+                    // declares frame sync lost. No CLOSE may go out; the
+                    // wait must survive; the unparseable buffered bytes must
+                    // be dropped, not retained for a later misparse.
                     drive(processor, context, nf, oversizedHeader.length);
                     Assert.assertTrue(
                             "echo wait must survive the too-big frame header",
                             state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertTrue(
+                            "the too-big header must flip the connection into the sync-lost discard mode",
+                            state.hasLostCloseEchoSync()
+                    );
+                    Assert.assertEquals(
+                            "sync loss must drop the unparseable buffered bytes",
+                            0, state.getRecvBufferLen()
                     );
                     Assert.assertEquals(
                             "the too-big branch must not emit a CLOSE during the echo wait",
                             framesAtClose, rawSocket.sentFrames.size()
                     );
 
-                    // Phase E: the body fills the recv buffer; the frame can
-                    // never complete. Re-parse hits the too-big branch again;
-                    // a further readable event hits resumeRecv's full-buffer
-                    // branch. Still nothing may go out.
-                    drive(processor, context, nf, oversizedBody.length);
-                    processor.resumeRecv(context); // full-buffer branch, within grace
+                    // Phase E: the body streams in behind the jammed header.
+                    // The sync-lost gate must read-and-discard every byte --
+                    // an empty kernel buffer is what stops the edge-triggered
+                    // oneshot re-arm from re-firing on stale readiness and
+                    // spinning until the grace expires -- and re-arm for read
+                    // via PeerIsSlowToWriteException. Still nothing may go
+                    // out.
+                    nf.release(oversizedBody.length);
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("resumeRecv must throw PeerIsSlowToWriteException after discarding the jammed bytes");
+                    } catch (PeerIsSlowToWriteException expected) {
+                    }
+                    Assert.assertEquals(
+                            "the sync-lost gate must consume every pending socket byte",
+                            0, nf.pendingBytes()
+                    );
+                    Assert.assertEquals(
+                            "discarded bytes must not accumulate in the recv buffer",
+                            0, state.getRecvBufferLen()
+                    );
                     Assert.assertTrue(
-                            "echo wait must survive the full-buffer re-entries",
+                            "echo wait must survive the discard re-entries",
                             state.isAwaitingCloseEcho()
                     );
                     Assert.assertEquals(
-                            "the full-buffer branch must not emit a CLOSE during the echo wait",
+                            "the discard gate must not emit a CLOSE during the echo wait",
                             framesAtClose, rawSocket.sentFrames.size()
                     );
 
@@ -1234,6 +1388,108 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     }
 
                     capture.assertLogged("close echo wait expired");
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * Peer FIN during the sync-lost phase of the echo wait: the
+     * read-and-discard loop observes recv < 0 and tears the connection down.
+     * During the echo wait the FIN is delivery confirmation -- the client
+     * consumed the [durable ack][CLOSE] tail and closed its end -- so this
+     * teardown is the success path, not an error: the wait must not linger
+     * for the rest of the grace budget once the peer is gone.
+     */
+    @Test
+    public void testCloseEchoWaitSyncLostPeerFinEndsWait() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            // Production geometry: configured recv buffer size == context
+            // recv buffer, so the header-parse too-big branch declares the
+            // sync loss (see testCloseEchoWaitOversizedFrameBoundedByEchoGrace).
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return RECV_BUFFER_SIZE;
+                }
+            };
+
+            execute("create table tabn (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabn", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabn", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabn", 300L, 3_000_000L));
+                // Declared payload (2000 bytes) exceeds the recv buffer
+                // (1024): the header alone trips the too-big branch and
+                // flips the connection into sync-lost discard mode.
+                byte[] oversizedHeader = {
+                        (byte) 0x82,          // FIN | BINARY
+                        (byte) (0x80 | 126),  // MASK | 16-bit extended length
+                        0x07, (byte) 0xD0,    // payload length 2000, big-endian
+                        0x12, 0x34, 0x56, 0x78 // mask key
+                };
+                byte[] wire = concat(frame0, frame1, frame2, oversizedHeader);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the demote drain completes; the data-frame
+                    // re-entry completes the CLOSE and enters the echo wait.
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "test setup: connection must await the client's close echo",
+                            state.isAwaitingCloseEcho()
+                    );
+                    int framesAtClose = rawSocket.sentFrames.size();
+
+                    // Phase D: the oversized header lands; frame sync is lost.
+                    drive(processor, context, nf, oversizedHeader.length);
+                    Assert.assertTrue(
+                            "test setup: the too-big header must flip the connection into the sync-lost discard mode",
+                            state.hasLostCloseEchoSync()
+                    );
+
+                    // Phase E: the peer closes its end. The discard loop must
+                    // treat the FIN as the end of the close handshake and
+                    // tear down -- not park for the rest of the grace budget.
+                    nf.closePeer();
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("Expected ServerDisconnectException (peer FIN ends the sync-lost echo wait)");
+                    } catch (ServerDisconnectException expected) {
+                    }
+                    Assert.assertEquals(
+                            "no frame may follow the role-change CLOSE",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
                     assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
@@ -1824,6 +2080,7 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     private static class PhasedNetworkFacade extends NetworkFacadeImpl {
         private final byte[] data;
         private int limit;
+        private boolean peerClosed;
         private int pos;
 
         PhasedNetworkFacade(byte[] data) {
@@ -1838,13 +2095,21 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         @Override
         public int recvRaw(long fd, long buffer, int bufferLen) {
             if (pos >= limit) {
-                return 0; // would block
+                return peerClosed ? -1 : 0; // peer FIN / would block
             }
             int n = Math.min(bufferLen, limit - pos);
             for (int i = 0; i < n; i++) {
                 Unsafe.putByte(buffer + i, data[pos++]);
             }
             return n;
+        }
+
+        void closePeer() {
+            peerClosed = true;
+        }
+
+        int pendingBytes() {
+            return limit - pos;
         }
 
         void release(int bytes) {

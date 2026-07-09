@@ -175,6 +175,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // flushed. Survives per-message clear()/clearMessageState(); reset only on
     // onDisconnected().
     private long closeEchoDeadline = -1;
+    // Set when WebSocket frame sync is lost during the close-echo wait: an
+    // inbound frame's declared payload exceeds the recv buffer, so the frame
+    // can never be parsed to completion and the client's CLOSE echo can never
+    // be recognised. While set, the recv path must not parse buffered bytes
+    // (they are mid-frame garbage; a re-parse could misread a byte as a fake
+    // CLOSE opcode and tear the wait down prematurely) and instead
+    // read-and-discards inbound bytes to keep the socket drained until the
+    // echo grace expires or the peer's FIN arrives. Reset only on
+    // onDisconnected(), like closeEchoDeadline.
+    private boolean hasLostCloseEchoSync;
     // Deadline (MicrosecondClock ticks) for a deferred role-change close, or -1
     // when no deferral is in progress. Unlike roleChangeClosePending this survives
     // per-message clear()/clearMessageState(): the deferral spans multiple inbound
@@ -438,6 +448,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * True when frame sync was lost during the close-echo wait and the recv
+     * path is in read-and-discard mode -- see {@link #onCloseEchoSyncLost}.
+     */
+    public boolean hasLostCloseEchoSync() {
+        return hasLostCloseEchoSync;
+    }
+
+    /**
      * Returns true if there are successfully processed messages that haven't been
      * ACKed yet and the send buffer is clear (READY state).
      */
@@ -641,6 +659,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Records that WebSocket frame sync died during the close-echo wait: a
+     * too-big inbound frame jammed the recv machinery, so the CLOSE echo can
+     * never be parsed. The recv path switches to read-and-discard until the
+     * echo grace expires or the peer's FIN arrives.
+     */
+    public void onCloseEchoSyncLost() {
+        hasLostCloseEchoSync = true;
+    }
+
+    /**
      * Records that the close response to a client-initiated CLOSE was
      * partially flushed to the OS buffer. The framework's send buffer holds
      * the rest; the resume path finishes the flush and disconnects
@@ -721,6 +749,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         clearDeferredError();
         clearDeferredClose();
         closeEchoDeadline = -1;
+        hasLostCloseEchoSync = false;
         roleChangeCloseDeferredDeadline = -1;
         roleChangeCloseReason.clear();
         firstUnresolvedSequence = -1;
