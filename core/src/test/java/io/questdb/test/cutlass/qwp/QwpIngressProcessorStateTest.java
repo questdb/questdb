@@ -2710,6 +2710,67 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseEchoWaitLifecycle() throws Exception {
+        assertMemoryLeak(() -> {
+            long[] nowMicros = {0L};
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                        @Override
+                        public MicrosecondClock getMicrosecondClock() {
+                            return () -> nowMicros[0];
+                        }
+                    };
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // No wait in progress: neither awaiting nor expired.
+                Assert.assertFalse(state.isAwaitingCloseEcho());
+                Assert.assertFalse(state.isCloseEchoWaitExpired());
+
+                // Arm the wait at t=0. Deadline lands at CLOSE_ECHO_WAIT_GRACE_MICROS.
+                state.beginCloseEchoWait();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+                Assert.assertFalse(state.isCloseEchoWaitExpired());
+
+                // Idempotency: a follow-on beginCloseEchoWait at a LATER time
+                // must NOT push the deadline out. If it did, the deadline
+                // would move to (GRACE-1)+GRACE and the expiry assertion at
+                // exactly GRACE below would fail.
+                nowMicros[0] = QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS - 1;
+                state.beginCloseEchoWait();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+                Assert.assertFalse(state.isCloseEchoWaitExpired());
+
+                // The wait spans messages: per-message resets must not drop it.
+                state.clear();
+                state.clearMessageState();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+
+                // Grace budget exhausts exactly at the original deadline --
+                // proving the follow-on arm did not extend it.
+                nowMicros[0] = QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS;
+                Assert.assertTrue(state.isCloseEchoWaitExpired());
+                Assert.assertTrue("expiry does not clear the awaiting flag", state.isAwaitingCloseEcho());
+
+                // Connection recycle resets the wait (the only reset point).
+                state.onDisconnected();
+                Assert.assertFalse(state.isAwaitingCloseEcho());
+                Assert.assertFalse(state.isCloseEchoWaitExpired());
+
+                // Post-recycle the clock is far past the old deadline, yet a
+                // fresh arm starts a new grace window relative to "now".
+                state.beginCloseEchoWait();
+                Assert.assertTrue(state.isAwaitingCloseEcho());
+                Assert.assertFalse("fresh arm must not inherit the stale deadline", state.isCloseEchoWaitExpired());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testRoleChangeCloseDeferralLifecycle() throws Exception {
         assertMemoryLeak(() -> {
             long[] nowMicros = {0L};
