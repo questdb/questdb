@@ -4683,7 +4683,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             TableToken baseToken = instance.getDefinition().getBaseTableToken();
             if (baseToken == null) {
-                continue;
+                // Unresolved base token: on a read-only replica the LV's files can download and
+                // register BEFORE its base table's (object-store ordering), so the registration-time
+                // lookup froze null into the definition. Re-resolve by name each tick; until the
+                // base lands the view serves disk-only, and once it registers the heal below lets
+                // this same tick proceed to reconstruct the lead.
+                baseToken = engine.getTableTokenIfExists(instance.getDefinition().getBaseTableName());
+                if (baseToken == null) {
+                    continue;
+                }
+                instance.getDefinition().resolveBaseTableToken(baseToken);
+                LOG.info().$("resolved live view base table token after registration [view=")
+                        .$(instance.getLiveViewToken())
+                        .$(", base=").$(baseToken)
+                        .I$();
             }
             // Replica anti-spin: skip a view whose lead loop armed a publish-stall back-off that has not
             // elapsed, so the worker idles instead of re-draining into the same stall every tick.
@@ -4852,6 +4865,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.forceSetLatestSeenTs(Numbers.LONG_NULL);
             instance.setLeadRowCount(0);
             instance.setTierStale(true);
+            // Rewind so the promised next tick actually happens: if this cycle was triggered by a
+            // slot-stale reconcile (head == refreshedUpTo), leaving refreshedUpTo in place closes
+            // the scanForLaggingViews gate (every other trigger needs the leadRowCount just zeroed)
+            // and the re-derive never runs. Rewinding to lastProcessed reopens it exactly when an
+            // un-flushed lead can exist; the cold-start drain cannot O3 (latestSeenTs is unset).
+            instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
             LOG.info().$("live view base table metadata changed, lead re-derives on next tick [view=")
                     .$(viewName).I$();
             return null;
@@ -5350,6 +5369,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewInstance instance = viewInstanceSink.getQuick(i);
             if (instance.isDropped() || instance.isInvalid()) {
                 continue;
+            }
+            if (instance.getDefinition().getBaseTableToken() == null) {
+                // A definition registered before its base table resolved (replica download-order
+                // race) can reach this path after a promote. The notification carries the base
+                // token, so heal the definition before refreshInstance dereferences it.
+                instance.getDefinition().resolveBaseTableToken(baseTableToken);
             }
             if (seqTxn > instance.getLastProcessedSeqTxn()) {
                 refreshInstance(instance, seqTxn);

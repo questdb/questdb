@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -247,9 +248,15 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             yield tier == null ? 0L : tier.publishedRowCount();
                         }
                         case COLUMN_LAG_SEQTXN -> {
-                            // base.sequencer.head - last_processed
-                            SeqTxnTracker tracker = engine.getTableSequencerAPI()
-                                    .getTxnTracker(definition.getBaseTableToken());
+                            // base.sequencer.head - last_processed. The base token can be
+                            // transiently unresolved on a replica whose LV registered before
+                            // its base table downloaded (the refresh scan heals it); report
+                            // an unknown lag rather than NPE into the tracker lookup.
+                            TableToken baseToken = definition.getBaseTableToken();
+                            if (baseToken == null) {
+                                yield Numbers.LONG_NULL;
+                            }
+                            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
                             long head = tracker.getWriterTxn();
                             long lp = instance.getLastProcessedSeqTxn();
                             yield head < 0 || lp < 0 ? Numbers.LONG_NULL : Math.max(0, head - lp);

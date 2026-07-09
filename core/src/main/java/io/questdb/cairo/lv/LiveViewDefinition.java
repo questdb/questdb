@@ -86,7 +86,11 @@ public class LiveViewDefinition {
     // BACKFILL was specified at CREATE.
     private final boolean backfillRequested;
     private final String baseTableName;
-    private final TableToken baseTableToken;
+    // Not final: on a read-only replica the LV's files can download and register BEFORE its base
+    // table's, so the registration-time name lookup resolves to null. The refresh scan heals it
+    // via resolveBaseTableToken once the base registers; until then the view serves disk-only.
+    // Volatile: the healing write happens on a refresh worker while other workers read it.
+    private volatile TableToken baseTableToken;
     private final int baseTimestampType;
     // Base-column names the SELECT depends on (filter inputs + window inputs +
     // designated ts). ApplyWal2TableJob's schema-change hook narrows invalidation
@@ -523,6 +527,17 @@ public class LiveViewDefinition {
 
     public long getViewLowerBoundTimestamp() {
         return viewLowerBoundTimestamp;
+    }
+
+    /**
+     * Heals a definition whose base-table token was unresolved at registration time. On a
+     * read-only replica the LV's files can download and register before its base table's, so
+     * the registration-time name lookup returns null and the refresh scan would skip the view
+     * forever. The scan calls this once the base table registers; the token for a name is
+     * stable, so a concurrent duplicate resolve writes the same value.
+     */
+    public void resolveBaseTableToken(TableToken baseTableToken) {
+        this.baseTableToken = baseTableToken;
     }
 
     /**
