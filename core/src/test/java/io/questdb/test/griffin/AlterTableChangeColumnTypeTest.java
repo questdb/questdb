@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
@@ -45,6 +46,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -1631,6 +1633,40 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("k\n1\n2\n");
+        });
+    }
+
+    @Test
+    public void testReconcileColumnTopsResolvesByWriterIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN c INT");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-01T02:00:00', 30, 100), ('2024-01-01T03:00:00', 40, 200)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 50, 300)");
+            drainWalQueue();
+            execute("ALTER TABLE t DROP COLUMN a");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tt)) {
+                reader.openPartition(0);
+
+                final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                final int cDense = reader.getMetadata().getColumnIndex("c");
+                final int cWriter = reader.getMetadata().getColumnMetadata(cDense).getWriterIndex();
+                final ColumnVersionReader cvr = reader.getColumnVersionReader();
+
+                Assert.assertNotEquals(cDense, cWriter);
+                Assert.assertNotEquals(cvr.getColumnTop(partitionTs, cDense), cvr.getColumnTop(partitionTs, cWriter));
+
+                final LongList partitionTimestamps = new LongList();
+                partitionTimestamps.add(partitionTs);
+                Assert.assertTrue(DebugUtils.reconcileColumnTops(1, partitionTimestamps, cvr, reader));
+            }
         });
     }
 

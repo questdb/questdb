@@ -1880,8 +1880,12 @@ public final class TableUtils {
                     // column is dropped or re-keyed by ALTER COLUMN TYPE. Mirror TableReader.
                     final int writerIndex = tableColumnMetadata.getWriterIndex();
 
-                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                    final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
+                    long columnNameTxn = columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex);
+                    if (columnNameTxn == -1) {
+                        columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+                    }
+                    final long columnTop = columnVersionReader.getColumnTopByIndexOrDefault(versionRecordIndex, partitionTimestamp, writerIndex, -1L);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
                     final int parquetEncodingConfig = tableColumnMetadata.getParquetEncodingConfig();
 
