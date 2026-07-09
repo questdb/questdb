@@ -480,6 +480,133 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Eligibility TOCTOU on the grace-expired path. {@code sendFatalClose}
+     * flushes the final durable ack (T1) against a registry that still lags,
+     * sends the CLOSE, then {@code beginCloseEchoWaitIfEligible} decides the
+     * echo wait (T2). The demote drain advances the registry concurrently, so
+     * an upload can land in the (T1, T2] window. Pre-fix, T2 re-read the live
+     * registry: the late advance made it arm the echo wait with the pending
+     * durable maps still non-empty (T1 could not prune them), which both held
+     * a 5s wait open on the path the design tears down immediately AND left a
+     * STATUS_DURABLE_ACK frame primed to slip behind our CLOSE via the next
+     * recv-driven flush (RFC 6455: nothing may follow the CLOSE).
+     * <p>
+     * The fix decides eligibility from local pending state
+     * ({@code hasPendingDurableWork}), never a fresh registry read, so the
+     * concurrent advance cannot change the decision: pending maps non-empty at
+     * T2 means immediate teardown.
+     * <p>
+     * The race is reproduced deterministically by flipping the registry
+     * watermark to fully-covered exactly when the recording socket observes
+     * the CLOSE send -- which is emitted between T1 and T2. Pre-fix this arms
+     * the wait (no {@code ServerDisconnectException}, {@code isAwaitingCloseEcho}
+     * true); post-fix the connection tears down and the CLOSE stays final.
+     */
+    @Test
+    public void testGraceExpiredEligibilityIgnoresRacingRegistryAdvance() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            // Lags through T1; the recording socket flips it to MAX when it
+            // sees the CLOSE send, i.e. inside the (T1, T2] window.
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabp (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabp", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabp", 200L, 2_000_000L));
+                byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+                byte[] wire = concat(frame0, frame1, ping);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                // Arm the deterministic (T1, T2] registry advance.
+                rawSocket.flipWatermarkToMaxOnCloseSend = durableWatermark;
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+                    Assert.assertTrue(
+                            "test setup: durable work must be pending (uploads lag)",
+                            state.hasPendingDurableWork()
+                    );
+
+                    // Phase C: uploads stall past the grace budget; committed
+                    // work is still not durably uploaded (watermark lags).
+                    nowMicros[0] += QwpIngressProcessorState.ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS;
+                    Assert.assertTrue(
+                            "test setup: grace budget must be exhausted",
+                            state.isRoleChangeCloseGraceExpired()
+                    );
+
+                    // Phase D: the keepalive PING drives the grace-expired
+                    // close. sendFatalClose flushes at T1 (watermark still
+                    // lags -> nothing to ack, maps stay non-empty), sends the
+                    // CLOSE (the socket flips the watermark to MAX here), then
+                    // reaches T2. The fix must decide eligibility from the
+                    // still-non-empty maps, NOT the now-advanced registry, and
+                    // tear down immediately.
+                    capture.start();
+                    try {
+                        nf.release(ping.length);
+                        try {
+                            processor.resumeRecv(context);
+                            Assert.fail("Expected ServerDisconnectException; a racing registry advance must NOT arm the echo wait");
+                        } catch (ServerDisconnectException expected) {
+                        }
+                        drainLogQueue(capture, "sentinel: grace-expired eligibility race done");
+                    } finally {
+                        capture.stop();
+                    }
+
+                    Assert.assertFalse(
+                            "the racing registry advance must NOT arm the close-echo wait",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertEquals(
+                            "test integrity: the registry advance must have actually landed in the (T1, T2] window",
+                            Long.MAX_VALUE, durableWatermark.get()
+                    );
+                    // The core invariant: no STATUS_DURABLE_ACK frame slipped
+                    // behind the CLOSE.
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                    int closeIdx = indexOfCloseFrame(rawSocket.sentFrames);
+                    Assert.assertTrue("CLOSE frame must be sent", closeIdx >= 0);
+                    Assert.assertEquals(
+                            "CLOSE frame must carry the reconnect-eligible close code",
+                            1000 /* NORMAL_CLOSURE */, closeCode(rawSocket.sentFrames.getQuick(closeIdx))
+                    );
+                    // The alarm fires at T1 (watermark still lagging), before
+                    // the CLOSE-triggered flip -- the operator still sees the
+                    // one close they must see.
+                    capture.assertLogged("role-change close upload grace expired");
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * Grace-expiry diagnostics, false alarm: {@code roleChangeCloseWithUploadGrace}
      * raises "closing with un-acked durable work, client replay may duplicate"
      * purely on grace expiry, without consulting
@@ -2040,6 +2167,12 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         final ObjList<byte[]> sentFrames = new ObjList<>();
         private final long bufferAddress;
         private final int bufferSize;
+        // When set, the observed send of a server CLOSE frame flips this
+        // watermark to Long.MAX_VALUE. The CLOSE leaves sendFatalClose AFTER
+        // the final durable-ack flush (T1) and BEFORE the eligibility check
+        // (T2), so this reproduces the (T1, T2] registry-advance race
+        // deterministically -- no fragile call-counting.
+        AtomicLong flipWatermarkToMaxOnCloseSend;
         int sendCallCount;
         int throwSlowToReadOnCall = -1;
 
@@ -2065,6 +2198,11 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 copy[i] = Unsafe.getByte(bufferAddress + i);
             }
             sentFrames.add(copy);
+            if (flipWatermarkToMaxOnCloseSend != null
+                    && size >= 1
+                    && (copy[0] & 0x0F) == WebSocketOpcode.CLOSE) {
+                flipWatermarkToMaxOnCloseSend.set(Long.MAX_VALUE);
+            }
             if (++sendCallCount == throwSlowToReadOnCall) {
                 throw PeerIsSlowToReadException.INSTANCE;
             }

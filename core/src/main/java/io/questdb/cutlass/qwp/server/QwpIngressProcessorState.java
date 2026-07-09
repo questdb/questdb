@@ -464,6 +464,20 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * True when this connection has committed seqTxns whose durable-upload
+     * coverage has not yet been fully acked (the {@code pendingDurableSeqTxns}
+     * map is non-empty). Unlike {@link #isDurableWorkFullyUploaded}, this reads
+     * only local state -- it never queries the registry -- so it is immune to
+     * the registry advancing concurrently under a demote drain. Once every
+     * pending table is pruned by {@link #onDurableAckSent}, a durable ack sent
+     * right now would carry nothing new: the final ack the client will consume
+     * already covers all of this connection's work.
+     */
+    public boolean hasPendingDurableWork() {
+        return pendingDurableSeqTxns.size() > 0;
+    }
+
+    /**
      * True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
      * uncommitted. While true, no cumulative OK ack may cover the deferred
      * frames' sequences -- see {@link #setHighestProcessedSequence}.

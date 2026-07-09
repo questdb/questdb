@@ -2646,6 +2646,70 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHasPendingDurableWork() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+                FakeDurableAckRegistry registry = new FakeDurableAckRegistry();
+
+                // Nothing committed -> no pending durable work.
+                Assert.assertFalse(state.hasPendingDurableWork());
+
+                fake.queueCommit(
+                        new String[]{"t1", "t2"},
+                        new String[]{"t1~1", "t2~1"},
+                        new long[]{10L, 20L}
+                );
+                state.setHighestProcessedSequence(0);
+                state.commit();
+
+                // Committed work is pending regardless of the registry: this
+                // predicate reads only local state, so a racing upload cannot
+                // flip it. Register full coverage and confirm the answer does
+                // NOT change until the durable ack actually prunes the maps.
+                Assert.assertTrue(state.hasPendingDurableWork());
+                registry.set("t1~1", 10L);
+                registry.set("t2~1", 20L);
+                Assert.assertTrue(
+                        "registry coverage alone must not clear pending durable work",
+                        state.hasPendingDurableWork()
+                );
+
+                // The durable-ack send is what prunes the pending maps.
+                state.collectDurableProgress(registry);
+                state.onDurableAckSent();
+                Assert.assertFalse(
+                        "pending durable work must clear once the ack prunes the maps",
+                        state.hasPendingDurableWork()
+                );
+
+                // A fresh commit re-opens pending work; registry state is
+                // irrelevant to the predicate.
+                fake.queueCommit(new String[]{"t1"}, new String[]{"t1~1"}, new long[]{11L});
+                state.setHighestProcessedSequence(1);
+                state.commit();
+                Assert.assertTrue(state.hasPendingDurableWork());
+                registry.set("t1~1", 11L);
+                Assert.assertTrue(
+                        "still pending until the next durable ack prunes it",
+                        state.hasPendingDurableWork()
+                );
+                state.collectDurableProgress(registry);
+                state.onDurableAckSent();
+                Assert.assertFalse(state.hasPendingDurableWork());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testRoleChangeCloseDeferralLifecycle() throws Exception {
         assertMemoryLeak(() -> {
             long[] nowMicros = {0L};

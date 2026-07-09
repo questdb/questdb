@@ -805,9 +805,24 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * teardown
      */
     private boolean beginCloseEchoWaitIfEligible(HttpConnectionContext context, QwpIngressProcessorState state) {
+        // Eligibility is decided from local pending state, NOT a fresh registry
+        // read. sendFatalClose flushed the final durable ack (T1) immediately
+        // before this call; if that flush covered every committed seqTxn, the
+        // pending durable maps are now empty and the client's echo will confirm
+        // delivery of an ack that leaves no replay window. Re-querying the
+        // registry here (as isDurableWorkFullyUploaded does) would instead see a
+        // watermark that the concurrent demote drain may have advanced in the
+        // (T1, now] window: on the grace-expired path -- where T1 could NOT
+        // cover everything and the "client replay may duplicate" alarm already
+        // fired -- that late advance would arm the wait with pending work still
+        // in the maps, both stranding a durable-ack frame behind our CLOSE
+        // (RFC 6455: nothing may follow it) and holding a 5s wait open on the
+        // path that must tear down immediately. hasPendingDurableWork is the
+        // race-free predicate: empty maps == the ack the client will consume
+        // covers all of this connection's work.
         if (state.isDurableAckEnabled()
                 && state.isRoleChangeCloseDeferred()
-                && state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())) {
+                && !state.hasPendingDurableWork()) {
             state.beginCloseEchoWait();
             LOG.info().$("role-change CLOSE sent, awaiting client close echo [fd=").$(context.getFd()).I$();
             return true;
@@ -955,6 +970,20 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void flushPendingAck(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.isAwaitingCloseEcho()) {
+            // Our role-change CLOSE is already on the wire and RFC 6455 forbids
+            // any frame following it. The final durable ack went out with the
+            // CLOSE (sendFatalClose's T1 flush); this gate makes "no ack after
+            // CLOSE" structural rather than dependent on the pending maps being
+            // empty by coincidence. It closes the two recv-driven vectors that
+            // would otherwise leak a STATUS_DURABLE_ACK behind the CLOSE: the
+            // trailing flush after a discarded inbound frame, and the
+            // onConnectionClosed teardown flush. The direct trySendDurableAck
+            // calls in resumeSend's RESUME_ACK/RESUME_DURABLE_ACK branches
+            // bypass this method but cannot run during the wait: it arms only
+            // from a READY send state and nothing re-enters a send state after.
+            return;
+        }
         if (state.hasPendingAck()) {
             trySendAck(context, state);
         }
