@@ -1504,7 +1504,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1841,7 +1843,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -2518,7 +2522,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -3199,7 +3205,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -3498,7 +3506,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -4098,7 +4108,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -4838,7 +4850,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -5202,7 +5216,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -5905,7 +5921,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -6593,7 +6611,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -6892,7 +6912,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -7492,7 +7514,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -8169,7 +8193,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -8481,7 +8507,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -9112,7 +9140,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -9782,7 +9812,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -10081,7 +10113,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -10681,7 +10715,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override

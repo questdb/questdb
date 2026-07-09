@@ -907,21 +907,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         @Override
-        public int snapshotFormatVersion() {
-            // Bumped from the inherited v1 (which serialized in logical order via
-            // (firstIdx + i) % capacity and so read garbage when firstIdx was used
-            // as the 0/1 capture flag) to the full physical-ring layout.
-            return 2;
-        }
-
-        @Override
-        public int snapshotMinSupportedVersion() {
-            // The v1 blocks captured garbage in the flag path, so there is nothing
-            // safe to decode; reject them and let the LV recompute from scratch.
-            return 2;
-        }
-
-        @Override
         public void snapshotPartitionState(MemoryA sink, MapValue value) {
             // Full physical-ring snapshot. The unbounded-lo IGNORE NULLS path uses
             // firstIdx as a 0/1 capture flag (the captured value lives at physical
@@ -1008,16 +993,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                     value.putByte(tombstoneValueIndex, (byte) 0);
                 }
                 loIdx = 0;
-                final int freeN = freeList.size();
-                if (freeN > 0) {
-                    // Reuse a slab reclaimed from a tombstoned partition. The
-                    // capacity slot is always bufferSize here, so only the
-                    // startOffset matters.
-                    startOffset = freeList.getQuick(freeN - 1);
-                    freeList.setPos(freeN - 2);
-                } else {
-                    startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
-                }
+                startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
                 value.putLong(1, startOffset);
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
@@ -2235,14 +2211,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final int frameSize;
-        // (capacity, startOffset) pairs marking free space within memory. Each
-        // entry is a ring slab evicted from a tombstoned partition by
-        // retainPartitions (via newCompactionScratch). computeNext's isNew
-        // branch (in both this class and the FirstNotNullValue subclass) pops
-        // the last pair before falling back to memory.appendAddressFor. The
-        // capacity slot mirrors the bounded-RANGE freeList convention; bounded
-        // ROWS slabs are always bufferSize longs.
-        protected final LongList freeList = new LongList();
         protected final ArrayColumnTypes keyColumnTypes;
         protected final boolean liveView;
         protected final ArrayColumnTypes mapValueTypes;
@@ -2315,7 +2283,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         public void close() {
             super.close();
             memory.close();
-            freeList.clear();
         }
 
         @Override
@@ -2341,16 +2308,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 }
                 loIdx = 0;
                 count = 0;
-                final int freeN = freeList.size();
-                if (freeN > 0) {
-                    // Reuse a slab reclaimed from a tombstoned partition. The
-                    // capacity slot is always bufferSize here, so only the
-                    // startOffset matters.
-                    startOffset = freeList.getQuick(freeN - 1);
-                    freeList.setPos(freeN - 2);
-                } else {
-                    startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
-                }
+                startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
                 value.putLong(1, startOffset);
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
@@ -2418,7 +2376,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         public void onSnapshotRestoreBegin() {
             super.onSnapshotRestoreBegin();
             memory.truncate();
-            freeList.clear();
         }
 
         @Override
@@ -2430,7 +2387,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         @Override
         public void reopen() {
             super.reopen();
-            freeList.clear();
             tombstoneCount = 0;
             // memory will allocate on first use
         }
@@ -2439,7 +2395,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         public void reset() {
             super.reset();
             memory.close();
-            freeList.clear();
             tombstoneCount = 0;
         }
 
@@ -2536,7 +2491,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         public void toTop() {
             super.toTop();
             memory.truncate();
-            freeList.clear();
             tombstoneCount = 0;
         }
     }
@@ -3233,7 +3187,9 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override

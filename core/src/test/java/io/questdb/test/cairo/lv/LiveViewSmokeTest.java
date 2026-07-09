@@ -344,7 +344,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -400,7 +400,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -454,7 +454,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -506,7 +506,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -618,7 +618,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -670,7 +670,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -720,7 +720,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -776,7 +776,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -907,7 +907,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1057,7 +1057,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1106,7 +1106,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1158,7 +1158,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1210,7 +1210,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1257,7 +1257,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1402,7 +1402,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -7872,7 +7872,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -7935,7 +7935,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -12090,7 +12090,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -12987,7 +12987,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(x, 2) is 50.0, 'b' is 11.0. Sum 61.0.
@@ -13037,7 +13037,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(x, 2) is 50, 'b' is 11. Sum 61.
@@ -13529,7 +13529,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(ts, 2) is 2026-08-01T01:00:00 (3_600_000_000us),
@@ -13583,7 +13583,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is the value at count == n == 2: 'a' -> 50.0, 'b' -> 11.0. Sum 61.0.
@@ -13635,7 +13635,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is the value at count == n == 2: 'a' -> 50, 'b' -> 11. Sum 61.
@@ -13687,7 +13687,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is ts at count == 2 = '2026-08-01T01:00:00' for both partitions.
@@ -13741,7 +13741,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // After 3 rows per partition, both rings hold (val_0, val_1, val_2) with count=3.
@@ -13796,7 +13796,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -13848,7 +13848,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -13901,7 +13901,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // All 3 rows per partition land inside the 5-hour window, so
@@ -13957,7 +13957,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -14011,7 +14011,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -14861,7 +14861,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // Clear the function's map and restore from the captured bytes.
                 rankFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, rankFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(buf, 0L, rankFn, rankFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(buf, 0L, snapshotBytes, rankFn, rankFn.snapshotFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
@@ -14910,7 +14910,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
                 lagFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, lagFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(buf, 0L, lagFn, lagFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(buf, 0L, snapshotBytes, lagFn, lagFn.snapshotFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,

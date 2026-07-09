@@ -780,10 +780,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public boolean supportsSnapshot() {
+            // The chain-prefix restores through MapValue slot setters, which have no
+            // STRING variant - the chain types must be fixed-width, not merely
+            // codec-supported (the codec admits STRING for partition keys only).
             return liveView
                     && chainColumnTypes != null
                     && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes)
-                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(chainColumnTypes);
+                    && LiveViewSnapshotKeyCodec.isAllTypesFixedWidth(chainColumnTypes);
         }
 
         @Override

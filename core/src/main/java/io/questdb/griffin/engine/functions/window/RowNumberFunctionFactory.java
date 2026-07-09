@@ -337,7 +337,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            // tombstoneValueIndex >= 0 marks a live-view compile; this class has no
+            // dedicated liveView flag, so it stands in for the guard the other
+            // window families carry.
+            return tombstoneValueIndex >= 0
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override

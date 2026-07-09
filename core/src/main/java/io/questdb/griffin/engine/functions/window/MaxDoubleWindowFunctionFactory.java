@@ -1036,22 +1036,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final int bufferSize;
         private final DoubleComparator comparator;
         private final int dequeBufferSize;
-        // (capacity, startOffset) pairs marking free space within dequeMemory.
-        // Mirrors freeList for the monotonic deque slab; only populated when
-        // frameLoBounded is true.
-        private final LongList dequeFreeList = new LongList();
         // holds another resizable ring buffers as monotonically decreasing deque
         private final MemoryARW dequeMemory;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        // (capacity, startOffset) pairs marking free space within memory. Each
-        // entry is a primary-ring slab released by a dropped partition.
-        // computeNext's isNew branch pops the last pair before falling back to
-        // memory.appendAddressFor. The capacity slot mirrors the bounded-RANGE
-        // freeList convention; bounded ROWS slabs are always bufferSize doubles
-        // long.
-        private final LongList freeList = new LongList();
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
@@ -1123,8 +1112,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
-            freeList.clear();
-            dequeFreeList.clear();
         }
 
         @Override
@@ -1156,16 +1143,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     value.putByte(tombstoneValueIndex, (byte) 0);
                 }
                 loIdx = 0;
-                final int freeN = freeList.size();
-                if (freeN > 0) {
-                    // Reuse a primary slab reclaimed from a tombstoned
-                    // partition. Capacity is always bufferSize; only the
-                    // startOffset matters.
-                    startOffset = freeList.getQuick(freeN - 1);
-                    freeList.setPos(freeN - 2);
-                } else {
-                    startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
-                }
+                startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
                     this.maxMin = d;
                 } else {
@@ -1176,15 +1154,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
                 }
                 if (frameLoBounded) {
-                    final int dequeFreeN = dequeFreeList.size();
-                    if (dequeFreeN > 0) {
-                        // Reuse a deque slab reclaimed from a tombstoned
-                        // partition. Capacity is always dequeBufferSize.
-                        dequeStartOffset = dequeFreeList.getQuick(dequeFreeN - 1);
-                        dequeFreeList.setPos(dequeFreeN - 2);
-                    } else {
-                        dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Double.BYTES) - dequeMemory.getPageAddress(0);
-                    }
+                    dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * Double.BYTES) - dequeMemory.getPageAddress(0);
                     if (Numbers.isFinite(d) && frameIncludesCurrentValue) {
                         dequeMemory.putDouble(dequeStartOffset, d);
                         dequeEndIndex++;
@@ -1288,8 +1258,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.truncate();
             }
-            freeList.clear();
-            dequeFreeList.clear();
         }
 
         @Override
@@ -1301,8 +1269,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void reopen() {
             super.reopen();
-            freeList.clear();
-            dequeFreeList.clear();
             tombstoneCount = 0;
         }
 
@@ -1313,8 +1279,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.close();
             }
-            freeList.clear();
-            dequeFreeList.clear();
             tombstoneCount = 0;
         }
 
@@ -1456,8 +1420,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (dequeMemory != null) {
                 dequeMemory.truncate();
             }
-            freeList.clear();
-            dequeFreeList.clear();
             tombstoneCount = 0;
         }
     }
@@ -2131,7 +2093,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override

@@ -66,6 +66,25 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
     private static final int CODEC_BUF_MAX_PAGES = 4;
 
     @Test
+    public void testIsAllTypesFixedWidth() {
+        // The value-slot reader (readValueSlots) has no STRING case - MapValue
+        // exposes no STRING setter - so callers snapshotting value slots (rank's
+        // chain-prefix) must gate on isAllTypesFixedWidth, which rejects the
+        // STRING exception isAllTypesSupported admits for partition keys.
+        ArrayColumnTypes fixedOnly = new ArrayColumnTypes();
+        fixedOnly.add(ColumnType.LONG);
+        fixedOnly.add(ColumnType.TIMESTAMP);
+        fixedOnly.add(ColumnType.DOUBLE);
+        Assert.assertTrue(LiveViewSnapshotKeyCodec.isAllTypesFixedWidth(fixedOnly));
+
+        ArrayColumnTypes withString = new ArrayColumnTypes();
+        withString.add(ColumnType.LONG);
+        withString.add(ColumnType.STRING);
+        Assert.assertTrue(LiveViewSnapshotKeyCodec.isAllTypesSupported(withString));
+        Assert.assertFalse(LiveViewSnapshotKeyCodec.isAllTypesFixedWidth(withString));
+    }
+
+    @Test
     public void testIsAllTypesSupportedNewTypes() {
         ArrayColumnTypes supported = new ArrayColumnTypes();
         supported.add(ColumnType.IPv4);

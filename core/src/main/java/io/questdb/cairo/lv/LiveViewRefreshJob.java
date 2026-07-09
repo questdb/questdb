@@ -3891,7 +3891,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long payloadStart = offset;
         final long payloadLength = block.size() - payloadStart;
         copyBlockToScratch(block, payloadStart, payloadLength);
-        LiveViewFunctionSnapshot.restore(checkpointRestoreScratch, 0L, match, formatVersion);
+        LiveViewFunctionSnapshot.restore(checkpointRestoreScratch, 0L, payloadLength, match, formatVersion);
     }
 
     private void copyBlockToScratch(LiveViewCheckpointReader.ReadableBlock block, long offsetInBlock, long length) {
@@ -3904,8 +3904,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     private static long strByteSize(LiveViewCheckpointReader.ReadableBlock block, long offset) {
-        // STR encoding: INT length prefix + length * CHAR (2 bytes each).
+        // STR encoding: INT length prefix + length * CHAR (2 bytes each). A null
+        // STR encodes length -1 with no char bytes; windowName/factoryName are
+        // never null today, but mis-sizing a null as prefix-minus-2 would
+        // misalign every field after it, so guard.
         final int len = block.getInt(offset);
+        if (len < 0) {
+            return Integer.BYTES;
+        }
         return Integer.BYTES + (long) len * Character.BYTES;
     }
 
