@@ -1661,12 +1661,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             // True once the auth-rollback branch below defers this invalidate itself (see the finally).
             boolean isSelfDeferred = false;
+            // True once setInvalidState persisted the invalid mint; gates the dependent cascade below.
+            boolean isInvalidated = false;
             try {
                 // Seam: a concurrent INVALIDATE deferring while THIS invalidateView holds the lock (see the
                 // method-top comment); the finally must finalize it.
                 runHoldingLockSeamForTesting();
 
-                // Mark the view invalid only if the operation is forced or the view was never refreshed.
+                // Mark the view invalid only if the operation is forced or the view has been incrementally
+                // refreshed before; a non-forced invalidate declines a never-refreshed view and leaves it valid.
                 if (force || viewState.getLastRefreshBaseTxn() != -1) {
                     final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                     while (true) {
@@ -1680,6 +1683,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     .I$();
 
                             setInvalidState(viewState, walWriter, invalidationReason, invalidationTimestamp);
+                            isInvalidated = true;
                             break;
                         } catch (CairoException ex) {
                             if (isTableSuspendedError(ex)) {
@@ -1729,8 +1733,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     finalizeAndUnlock(viewToken, viewState, false);
                 }
             }
-            // Invalidate dependent views recursively.
-            enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
+            // Invalidate dependent views recursively -- only after an actual mint. The force=false decline
+            // above (a never-incrementally-refreshed view) leaves this view valid, and a valid parent must
+            // not cascade: the per-child tasks re-deliver as force=true (see invalidate()), which would
+            // hard-mint chained views invalid under a reason claiming this parent was invalidated. The
+            // suspended/read-only/auth exits already return before reaching here, and the truncate-barrier
+            // twin cascades only on a successful mint -- the decline was the one fall-through.
+            if (isInvalidated) {
+                enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
+            }
         }
     }
 

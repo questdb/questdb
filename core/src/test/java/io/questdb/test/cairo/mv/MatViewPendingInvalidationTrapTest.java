@@ -304,6 +304,63 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeclinedInvalidationDoesNotCascadeToChainedView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (" +
+                    "sym varchar, price double, amount int, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL");
+            // A MANUAL DEFERRED parent never refreshes incrementally, so lastRefreshBaseTxn stays -1 and an
+            // apply-time base-table invalidation (delivered force=false) declines to invalidate it.
+            execute("create materialized view price_1h refresh manual deferred as (" +
+                    "select sym, last(price) as price, ts from base_price sample by 1h" +
+                    ") partition by DAY");
+            // A chained child on the parent view: its only invalidation route is the parent's cascade.
+            execute("create materialized view price_1d refresh manual deferred as (" +
+                    "select sym, last(price) as price, ts from price_1h sample by 1d" +
+                    ") partition by DAY");
+            execute("insert into base_price (sym, price, ts) values" +
+                    "('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')");
+            drainWalQueue(); // apply the base rows; MANUAL DEFERRED views do not refresh on base writes
+
+            // A rows-affected UPDATE fires an apply-time INVALIDATE task for the base table's dependents.
+            execute("update base_price set amount = 42;");
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            // The parent declines the non-forced invalidation (never incrementally refreshed) and stays
+            // valid, so nothing may cascade: the chained child must stay valid too. Pre-fix, the decline
+            // still fell through to enqueueInvalidateDependentViews, and the per-child task re-delivered
+            // force=true, hard-minting the child invalid under a reason claiming the parent was invalidated.
+            assertQuery("select view_name, base_table_name, view_status from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            price_1d\tprice_1h\tvalid
+                            price_1h\tbase_price\tvalid
+                            """);
+
+            // Positive control: a real (force=true, view-scoped) invalidation of the parent must still
+            // cascade -- the guard must not suppress the legitimate post-mint cascade.
+            engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("price_1h"), "test invalidation");
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            drainMatViewQueue(engine);
+            drainWalQueue();
+
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1d\tprice_1h\tinvalid\tbase materialized view is invalidated
+                            price_1h\tbase_price\tinvalid\ttest invalidation
+                            """);
+        });
+    }
+
+    @Test
     public void testDroppedViewLeavesDeferredInvalidationUntouched() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base_price (" +
