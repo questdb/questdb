@@ -1640,6 +1640,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
                 walNameSink.clear();
                 walNameSink.put(WAL_NAME_BASE).put(walId);
+                // walFrameCursor.of throws TableReferenceOutOfDateException when the
+                // segment's schema has drifted from the compiled projection - a
+                // referenced base column retyped/dropped/renamed by a structural commit
+                // this raw-WAL drain walked past (the non-data continue above) but which
+                // ApplyWal2TableJob has not applied yet, since the sequencer notifies
+                // live views at COMMIT time. Reading the segment through the stale
+                // columnSizeShifts strides would be an OOB native read (narrowing /
+                // fixed<->var) or wrong values (widening). Let it propagate to the
+                // refresh worker's recompile-and-recover path (recoverFromBaseMetadataDrift).
                 walFrameCursor.of(
                         baseToken,
                         walNameSink,

@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.SymbolMapDiff;
@@ -69,8 +70,10 @@ import org.jetbrains.annotations.Nullable;
  * pinned buffer to match the layout downstream readers expect.
  * <p>
  * Column tops are not considered: WAL segments are always written with a fixed
- * schema, so any schema drift between segments triggers a full recompute in the
- * caller rather than being handled here.
+ * schema. When a segment's schema has drifted from the caller's compile-time
+ * projection (a referenced base column retyped/dropped/renamed), {@link #of}
+ * throws {@link TableReferenceOutOfDateException} before mapping the frame, so
+ * the caller recompiles rather than reading through a stale column layout.
  * <p>
  * This cursor yields at most one frame per call to {@link #of}; iteration of
  * larger-than-page-frame row ranges is not supported yet.
@@ -197,6 +200,11 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
      * <p>
      * Reuses internal buffers across calls; callers should {@link #close()} the
      * cursor when all segments have been consumed.
+     *
+     * @throws TableReferenceOutOfDateException when the opened segment's schema no longer
+     *                                          matches {@code metadata} - a referenced base
+     *                                          column was retyped/dropped/renamed - so the
+     *                                          caller must recompile before reading.
      */
     public WalSegmentPageFrameCursor of(
             @NotNull TableToken tableToken,
@@ -229,6 +237,20 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         reader.of(tableToken, walName, segmentId, segmentRowCount);
         this.rowLo = rowLo;
         this.rowHi = rowHi;
+        // Guard against a base-schema drift before mapping the frame. columnIndexes /
+        // columnSizeShifts were built from the caller's compile-time projection; a
+        // referenced base column retyped/dropped/renamed since then (committed but not
+        // yet applied) leaves this segment carrying a different layout. Mapping it would
+        // deref a missing column or stride a stale width - an OOB native read. The
+        // segment's own metadata is authoritative for the bytes about to be read, so
+        // reconcile the projection against it by name and bail before computeFrame.
+        final RecordMetadata segmentMetadata = reader.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int segmentIndex = segmentMetadata.getColumnIndexQuiet(metadata.getColumnName(i));
+            if (segmentIndex < 0 || segmentMetadata.getColumnType(segmentIndex) != metadata.getColumnType(i)) {
+                throw TableReferenceOutOfDateException.of(tableToken);
+            }
+        }
         buildTxnSymbolDiffs(txnDiffs);
         computeFrame(metadata);
         toTop();

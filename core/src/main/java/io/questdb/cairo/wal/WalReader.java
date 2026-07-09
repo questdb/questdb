@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
@@ -116,6 +117,15 @@ public class WalReader implements Closeable {
     public WalDataCursor getDataCursor() {
         dataCursor.toTop();
         return dataCursor;
+    }
+
+    /**
+     * Returns the open segment's schema, reflecting the actual on-disk column layout of
+     * the mapped bytes - which can be newer than the base table's applied metadata when
+     * a structural change is committed but not yet applied.
+     */
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     public int getRealColumnCount() {

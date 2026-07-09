@@ -84,6 +84,23 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentRefreshOverRetypedReferencedColumnRecoversThenInvalidates() throws Exception {
+        // C1 regression. The raw-WAL lead drain runs at base COMMIT time (the sequencer
+        // notifies live views independent of ApplyWal2TableJob), so it can reach data a
+        // structural commit wrote AFTER retyping a referenced column - before apply-time
+        // invalidation fires. Reading that segment through the cached compile-time stride
+        // is the failure mode below. The drain must detect the drift and bail to the
+        // recompile-and-recover path (no crash, no drifted rows leaking into the view),
+        // and the view must flip INVALID once apply lands the structural change.
+        //   LONG->INT    - narrowing: stride 8 over 4-byte data (OOB read).
+        //   INT->LONG    - widening: stride 4 over 8-byte data (wrong values).
+        //   INT->VARCHAR - fixed->var: var aux offsets over fixed bytes (wild pointer).
+        assertConcurrentRetypeRefreshRecoversThenInvalidates("LONG", "INT", "30", "40");
+        assertConcurrentRetypeRefreshRecoversThenInvalidates("INT", "LONG", "30", "40");
+        assertConcurrentRetypeRefreshRecoversThenInvalidates("INT", "VARCHAR", "'30'", "'40'");
+    }
+
+    @Test
     public void testAlterUnreferencedColumnTypeIsTransparent() throws Exception {
         // Changing the TYPE of a column the LV never reads must NOT invalidate it, and
         // the view must keep refreshing correctly across the change (documents the
@@ -531,6 +548,80 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
                     "wrong invalidation reason [" + transition + ", reason=" + instance.getInvalidationReason() + ']',
                     Chars.contains(instance.getInvalidationReason(), "change column type operation")
             );
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    private void assertConcurrentRetypeRefreshRecoversThenInvalidates(
+            String initialType,
+            String newType,
+            String postValue1,
+            String postValue2
+    ) throws Exception {
+        final String transition = initialType + "->" + newType;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x " + initialType + ", y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Activate the view over pre-retype data and flush it to disk.
+                execute("INSERT INTO base (ts, x, y) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 10, 1), " +
+                        "('2026-01-01T00:00:02.000000Z', 20, 2)");
+                driveRefreshToQuiescence(job);
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertFalse("LV must start valid [" + transition + ']', instance.isInvalid());
+
+                // Commit the retype + post-retype data to the sequencer WITHOUT applying, so
+                // the base seqTxn is committed but unapplied - no apply-time invalidation yet.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("ALTER TABLE base ALTER COLUMN x TYPE " + newType);
+                execute("INSERT INTO base (ts, x, y) VALUES " +
+                        "('2026-01-01T00:00:03.000000Z', " + postValue1 + ", 3), " +
+                        "('2026-01-01T00:00:04.000000Z', " + postValue2 + ", 4)");
+
+                // Race the refresh worker against the un-applied structural change: the drain
+                // reaches the post-retype segment at COMMIT time. Without the guard this is the
+                // OOB read; the guard bails to recompile instead of draining the drifted segment.
+                drainJob(job);
+
+                // Deferred, not crashed: the view still serves exactly the pre-retype rows -
+                // the post-retype commit did not leak into it - and is not yet invalid.
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-01-01T00:00:01.000000Z\t10\t1\n" +
+                                "2026-01-01T00:00:02.000000Z\t20\t2\n");
+                Assert.assertFalse("LV must not be invalid before apply [" + transition + ']', instance.isInvalid());
+                // The drift must route through the recompile-and-recover path, not surface
+                // as a refresh fault. Without the guard the drain maps the drifted segment
+                // and dereferences a missing column / strides a stale width, which the
+                // refresh loop records as a failure (or, worse, corrupts the lead above).
+                Assert.assertEquals(
+                        "drift must be handled cleanly, not recorded as a refresh failure [" + transition + ']',
+                        0,
+                        instance.getFlushRetryCount()
+                );
+
+                // Apply the structural change: it invalidates the view with the type-change reason.
+                drainWalQueue();
+                drainJob(job);
+
+                Assert.assertTrue(
+                        "retype must invalidate the LV once applied [" + transition + ']',
+                        instance.isInvalid()
+                );
+                Assert.assertTrue(
+                        "wrong invalidation reason [" + transition + ", reason=" + instance.getInvalidationReason() + ']',
+                        Chars.contains(instance.getInvalidationReason(), "change column type operation")
+                );
+            }
 
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
