@@ -2871,8 +2871,9 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     @Test
     public void testOnFatalCloseBlockedTransitionTableCoversAllSendStates() throws Exception {
         // Exhaustive transition table for onFatalCloseBlocked across every input sendState. Pins the
-        // full routing contract, including the RESUME_CLOSE idempotent branch and the ack/durable-ack
-        // collapse-to-*_THEN_CLOSE arms that keep the deferred code/reason for the resume path.
+        // full routing contract, including the RESUME_CLOSE / RESUME_CLOSE_RESPONSE idempotent branch and
+        // the ack/durable-ack collapse-to-*_THEN_CLOSE arms that keep the deferred code/reason for the
+        // resume path.
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
@@ -2891,6 +2892,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 final int RESUME_DURABLE_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE");
                 final int RESUME_PONG = sendStateConst("SEND_STATE_RESUME_PONG");
                 final int RESUME_DRAIN_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DRAIN_THEN_CLOSE");
+                final int RESUME_CLOSE_RESPONSE = sendStateConst("SEND_STATE_RESUME_CLOSE_RESPONSE");
 
                 // ACK-family inputs collapse to RESUME_ACK_THEN_CLOSE, RETAINING the deferred code/reason.
                 for (int in : new int[]{RESUME_ACK, RESUME_ACK_THEN_ERROR, RESUME_ACK_THEN_CLOSE}) {
@@ -2910,12 +2912,17 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     Assert.assertEquals("input=" + in, "later", state.getDeferredCloseReason().toString());
                 }
 
-                // RESUME_CLOSE stays put and CLEARS the redundant code/reason (parked bytes ARE the CLOSE).
-                setSendState(state, RESUME_CLOSE);
-                state.onFatalCloseBlocked(1011, "boom");
-                Assert.assertEquals(RESUME_CLOSE, state.getSendState());
-                Assert.assertEquals(-1, state.getDeferredCloseCode());
-                Assert.assertEquals(0, state.getDeferredCloseReason().length());
+                // Close-family inputs stay put and CLEAR the redundant code/reason: the parked bytes ARE
+                // a CLOSE frame -- a fatal CLOSE (RESUME_CLOSE) or the close response to a client-initiated
+                // CLOSE (RESUME_CLOSE_RESPONSE) -- and nothing may follow it (RFC 6455), so the resume path
+                // just finishes that flush and disconnects; the just-stored code/reason are redundant.
+                for (int in : new int[]{RESUME_CLOSE, RESUME_CLOSE_RESPONSE}) {
+                    setSendState(state, in);
+                    state.onFatalCloseBlocked(1011, "boom");
+                    Assert.assertEquals("input=" + in, in, state.getSendState());
+                    Assert.assertEquals("input=" + in, -1, state.getDeferredCloseCode());
+                    Assert.assertEquals("input=" + in, 0, state.getDeferredCloseReason().length());
+                }
 
                 // All other inputs park behind a non-ack response: drain-then-close, RETAINING code/reason.
                 for (int in : new int[]{READY, RESUME_ERROR, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE}) {
@@ -2937,7 +2944,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         // Property fuzz over onFatalCloseBlocked: for a random input sendState, random close code and
         // random reason (null / empty / non-empty), the method must never throw, must always leave the
         // connection in a terminal close-bearing state, and must obey the retain-vs-clear contract:
-        //   RESUME_CLOSE   -> stays RESUME_CLOSE, deferred code/reason CLEARED
+        //   CLOSE family   -> stays put (RESUME_CLOSE / RESUME_CLOSE_RESPONSE), deferred code/reason CLEARED
         //   ACK family     -> RESUME_ACK_THEN_CLOSE, code/reason RETAINED
         //   DURABLE family -> RESUME_DURABLE_ACK_THEN_CLOSE, code/reason RETAINED
         //   everything else-> RESUME_DRAIN_THEN_CLOSE, code/reason RETAINED
@@ -2959,11 +2966,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 final int RESUME_DURABLE_ACK_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE");
                 final int RESUME_PONG = sendStateConst("SEND_STATE_RESUME_PONG");
                 final int RESUME_DRAIN_THEN_CLOSE = sendStateConst("SEND_STATE_RESUME_DRAIN_THEN_CLOSE");
+                final int RESUME_CLOSE_RESPONSE = sendStateConst("SEND_STATE_RESUME_CLOSE_RESPONSE");
 
                 final int[] inputs = {
                         READY, RESUME_ACK, RESUME_ERROR, RESUME_ACK_THEN_ERROR, RESUME_DURABLE_ACK,
                         RESUME_DURABLE_ACK_THEN_ERROR, RESUME_CLOSE, RESUME_ACK_THEN_CLOSE,
-                        RESUME_DURABLE_ACK_THEN_CLOSE, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE
+                        RESUME_DURABLE_ACK_THEN_CLOSE, RESUME_PONG, RESUME_DRAIN_THEN_CLOSE,
+                        RESUME_CLOSE_RESPONSE
                 };
 
                 final long seed = System.nanoTime();
@@ -2987,8 +2996,8 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                         Assert.assertEquals(msg, RESUME_DURABLE_ACK_THEN_CLOSE, out);
                         Assert.assertEquals(msg, code, state.getDeferredCloseCode());
                         assertReason(msg, reason, state.getDeferredCloseReason());
-                    } else if (in == RESUME_CLOSE) {
-                        Assert.assertEquals(msg, RESUME_CLOSE, out);
+                    } else if (in == RESUME_CLOSE || in == RESUME_CLOSE_RESPONSE) {
+                        Assert.assertEquals(msg, in, out);
                         Assert.assertEquals(msg, -1, state.getDeferredCloseCode());
                         Assert.assertEquals(msg, 0, state.getDeferredCloseReason().length());
                     } else {
