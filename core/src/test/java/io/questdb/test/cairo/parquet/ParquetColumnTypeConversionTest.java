@@ -1950,6 +1950,58 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterParquetRebuildsIndexForRekeyedSymbolColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (k STRING, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO pt VALUES
+                        ('A', 10, '2024-01-01T00:00:01.000000Z'),
+                        ('B', 20, '2024-01-01T00:00:02.000000Z'),
+                        ('A', 30, '2024-01-01T00:00:03.000000Z'),
+                        (NULL, 40, '2024-01-01T00:00:04.000000Z')""");
+                drainWalQueue();
+
+                // Re-key k: its current writer index no longer matches the original writer
+                // index stored as the parquet column id.
+                execute("ALTER TABLE pt ALTER COLUMN k TYPE SYMBOL INDEX");
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                // Rewrite the parquet partition for a different column. The rewrite must rebuild
+                // k's symbol index by originalWriterIndex, otherwise it publishes a txn directory
+                // whose metadata says k is indexed but whose sidecars are missing.
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE LONG");
+                drainWalQueue();
+
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+                assertParquetColumnTag("pt", "v", ColumnType.LONG);
+
+                assertQuery("SELECT /*+ no_index */ count() c, sum(v) s FROM pt WHERE k = 'A'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                c\ts
+                                2\t40
+                                """);
+                assertQuery("SELECT count() c, sum(v) s FROM pt WHERE k = 'A'")
+                        .withPlanContaining("Index forward scan on: k")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                c\ts
+                                2\t40
+                                """);
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
     public void testAlterParquetFooterStringToVarchar() throws Exception {
         assertAlterReencodesParquet("STRING", "VARCHAR", ColumnType.VARCHAR,
                 "('alpha', '2024-01-01T00:00:01.000000Z'), ('beta', '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");

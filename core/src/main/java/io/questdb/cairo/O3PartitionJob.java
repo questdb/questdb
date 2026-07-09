@@ -4303,9 +4303,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
 
                         int parquetColumnIndex = -1;
-                        final int writerIndex = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                        final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
                         for (int idx = 0, cnt = parquetMetadata.getColumnCount(); idx < cnt; idx++) {
-                            if (parquetMetadata.getColumnId(idx) == writerIndex) {
+                            if (parquetMetadata.getColumnId(idx) == columnId) {
                                 parquetColumnIndex = idx;
                                 break;
                             }
