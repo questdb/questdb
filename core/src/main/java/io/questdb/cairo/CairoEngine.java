@@ -936,7 +936,16 @@ public class CairoEngine implements Closeable, WriterSource {
                             // synthesize "base table does not exist" when nothing was persisted.
                             if (!instance.isInvalid()) {
                                 long nowUs = configuration.getMicrosecondClock().getTicks();
-                                if (!baseTableExists) {
+                                if (!baseTableExists && isReadOnlyMode()) {
+                                    // Read-only replica: the LV can download/register before its base
+                                    // (object-store ordering). Invalidating is terminal here (no DROP+CREATE
+                                    // on a replica), so leave the token null for scanForLaggingViews to
+                                    // re-resolve once the base lands. A primary keeps invalidating below.
+                                    LOG.info().$("live view base table not yet resolved on read-only node, deferring to runtime heal [table=")
+                                            .$safe(definition.getBaseTableName())
+                                            .$(", view=").$(tableToken)
+                                            .I$();
+                                } else if (!baseTableExists) {
                                     LOG.info().$("base table for live view does not exist [table=").$safe(definition.getBaseTableName())
                                             .$(", view=").$(tableToken)
                                             .I$();

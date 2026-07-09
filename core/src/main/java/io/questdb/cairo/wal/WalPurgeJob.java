@@ -556,6 +556,17 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             if (lvConsumed > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, lvConsumed);
             }
+            // Read-only replica only: lvConsumed tracks the PRIMARY's flush watermark, but the
+            // replica drains base WAL-E forward from refreshedUpToSeqTxn, which lags lvConsumed
+            // while the lead trails the flushed point (Case B). Purging (refreshedUpToSeqTxn,
+            // lvConsumed] would delete WAL-E a seeded drain still reads, so floor at the frontier.
+            // No-op on a primary (lead leads lvConsumed); the cross-thread long read only min-combines.
+            if (engine.isReadOnlyMode()) {
+                final long refreshedUpTo = instance.getRefreshedUpToSeqTxn();
+                if (refreshedUpTo > -1) {
+                    safeToPurgeTxn = Math.min(safeToPurgeTxn, refreshedUpTo);
+                }
+            }
             // Hold the base WAL back to the durable head checkpoint's base commit,
             // not the applied point. On restart tryRestoreFromHead replays the
             // (headBaseSeqTxn, applied] base WAL to advance the accumulators restored
