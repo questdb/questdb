@@ -576,6 +576,210 @@ public class QwpEgressRequestDecoderTest {
         });
     }
 
+    /**
+     * The optional {@code query_flags} trailer is parsed after the bind
+     * section. A request that carries a non-empty bind section AND a trailer
+     * must decode both correctly -- the trailer is read from where the last
+     * bind body left off.
+     */
+    @Test
+    public void testDecodeQueryFlagsAfterBinds() throws Exception {
+        runWithBuf(128, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 1);
+            long p = buf + len;
+            p = writeNonNullBind(p, QwpConstants.TYPE_INT);
+            Unsafe.putInt(p, 99);
+            p += 4;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(99, bindVars.getFunction(0).getInt(null));
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+        });
+    }
+
+    /**
+     * Unlike {@code initial_credit} and {@code sql_len}, {@code query_flags} is
+     * NOT range-validated: it is consumed purely as a bitmask, so even a value
+     * with the sign bit set decodes without error and the RESET_DICT bit is
+     * still detectable. Pins the deliberate asymmetry with
+     * {@link #testRejectsNegativeInitialCredit}.
+     */
+    @Test
+    public void testDecodeQueryFlagsHighBitsAccepted() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            // 10-byte LEB128 with the sign bit set; bit 0 (RESET_DICT) is set too.
+            for (int i = 0; i < 9; i++) {
+                Unsafe.putByte(p++, (byte) 0xFF);
+            }
+            Unsafe.putByte(p++, (byte) 0x01);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertTrue("sign-bit-set query_flags must decode, not be rejected",
+                    decoder.queryFlags < 0);
+            Assert.assertTrue("RESET_DICT bit must survive in a sign-bit-set value",
+                    (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0);
+        });
+    }
+
+    /**
+     * A malformed {@code query_flags} trailer (a lone continuation byte) must
+     * surface as a clean {@link QwpParseException}, not read past the frame.
+     */
+    @Test
+    public void testDecodeQueryFlagsMalformedTrailerThrows() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            Unsafe.putByte(p++, (byte) 0x80);
+            try {
+                decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+                Assert.fail("malformed query_flags trailer must throw");
+            } catch (QwpParseException expected) {
+            }
+        });
+    }
+
+    /**
+     * A multi-byte varint trailer (value &gt; 127) must be consumed in full so
+     * the decoded flags carry every bit. Guards against reading only the first
+     * continuation byte.
+     */
+    @Test
+    public void testDecodeQueryFlagsMultiByteVarint() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, 300L); // > 127 => 2-byte varint
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(300L, decoder.queryFlags);
+        });
+    }
+
+    /**
+     * Happy path: a trailer carrying {@link QwpEgressMsgKind#QUERY_FLAG_RESET_DICT}
+     * surfaces on {@link QwpEgressRequestDecoder#queryFlags} with the reset bit set.
+     */
+    @Test
+    public void testDecodeQueryFlagsResetDictBit() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+            Assert.assertTrue("RESET_DICT bit must be set",
+                    (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0);
+        });
+    }
+
+    /**
+     * A trailer that sets only other (reserved) bits must leave the RESET_DICT
+     * bit clear -- the server tests that exact bit, so an adjacent bit must not
+     * accidentally trigger a reset.
+     */
+    @Test
+    public void testDecodeQueryFlagsResetDictBitClearWhenOtherBitsSet() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, 0x02L); // a reserved bit, NOT RESET_DICT
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(0x02L, decoder.queryFlags);
+            Assert.assertEquals("RESET_DICT must read clear when only other bits are set",
+                    0, decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
+        });
+    }
+
+    /**
+     * Forward compatibility: unknown high bits in {@code query_flags} are
+     * preserved verbatim. A newer client can co-set the RESET_DICT bit with a
+     * future bit and the server still detects RESET_DICT.
+     */
+    @Test
+    public void testDecodeQueryFlagsUnknownBitsPreserved() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            // bit0 (RESET_DICT) + bit2 (reserved/unknown) = 0x05
+            p = QwpVarint.encode(p, 0x05L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(0x05L, decoder.queryFlags);
+            Assert.assertTrue("RESET_DICT bit must be detectable alongside unknown bits",
+                    (decoder.queryFlags & QwpEgressMsgKind.QUERY_FLAG_RESET_DICT) != 0);
+        });
+    }
+
+    /**
+     * Backward compatibility: a baseline client that predates the trailer leaves
+     * {@code p == limit} after the bind section. The decoder must default
+     * {@code queryFlags} to 0 rather than reading past the frame.
+     */
+    @Test
+    public void testDecodeQueryFlagsZeroWhenAbsent() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            byte[] sql = "SELECT 1".getBytes(StandardCharsets.UTF_8);
+            int len = writeQueryRequest(buf, 1L, sql, 0L, 0);
+            decoder.decodeQueryRequest(buf, len, bindVars);
+            Assert.assertEquals("no trailer => flags default to 0", 0L, decoder.queryFlags);
+        });
+    }
+
+    /**
+     * An explicit zero trailer decodes to 0, indistinguishable in effect from
+     * an absent trailer.
+     */
+    @Test
+    public void testDecodeQueryFlagsZeroWhenExplicitlyZero() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, 0L);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(0L, decoder.queryFlags);
+        });
+    }
+
+    /**
+     * The decoder is pooled and reused across queries on a connection. A query
+     * that sets {@code query_flags} must not bleed the flag into a subsequent
+     * baseline query that carries no trailer -- {@code queryFlags} is reset at
+     * the start of trailer parsing on every decode.
+     */
+    @Test
+    public void testQueryFlagsResetBetweenDecodes() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            // First request carries the reset flag.
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+
+            // Second request is a baseline frame with no trailer.
+            int len2 = writeBindScaffold(buf, 0);
+            decoder.decodeQueryRequest(buf, len2, bindVars);
+            Assert.assertEquals("flags must not bleed across pooled decodes", 0L, decoder.queryFlags);
+        });
+    }
+
+    /**
+     * {@link QwpEgressRequestDecoder#reset()} clears the staged flags so a
+     * recycled decoder starts clean.
+     */
+    @Test
+    public void testResetClearsQueryFlags() throws Exception {
+        runWithBuf(64, (buf, bindVars, decoder) -> {
+            int len = writeBindScaffold(buf, 0);
+            long p = buf + len;
+            p = QwpVarint.encode(p, QwpEgressMsgKind.QUERY_FLAG_RESET_DICT);
+            decoder.decodeQueryRequest(buf, (int) (p - buf), bindVars);
+            Assert.assertEquals(QwpEgressMsgKind.QUERY_FLAG_RESET_DICT, decoder.queryFlags);
+            decoder.reset();
+            Assert.assertEquals(0L, decoder.queryFlags);
+        });
+    }
+
     @Test
     public void testRejectsArrayBind() throws Exception {
         runWithBuf(128, (buf, bindVars, decoder) -> {

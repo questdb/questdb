@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.griffin.CompiledQuery;
@@ -192,83 +193,6 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 Assert.assertEquals(1, rowDims.getQuick(1));
                 Assert.assertArrayEquals(new double[]{1.0, 2.0, 3.0}, rowElements.getQuick(0), 0.0);
                 Assert.assertArrayEquals(new double[]{4.0, 5.0}, rowElements.getQuick(1), 0.0);
-            }
-        });
-    }
-
-    /**
-     * Empty arrays vs NULL arrays over QWP egress. QuestDB stores a non-null
-     * empty array (cardinality 0) distinct from a NULL array, and the server's
-     * egress encoder emits the empty array inline (nDims >= 1 with a 0-length
-     * dimension), reserving the null bitmap for genuine NULLs. The client
-     * decoder must round-trip all three of: a regular array, an empty array,
-     * and a NULL -- keeping empty and NULL distinct.
-     */
-    @Test
-    public void testEmptyAndNullArrayColumns() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startEgressServer()) {
-                serverMain.execute("CREATE TABLE arr_e(d DOUBLE[], ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                // Monotonic designated timestamps keep WAL scan order aligned with
-                // insert order (DOUBLE[] columns cannot be ORDER BY'd).
-                // Row 0: regular array. Row 1: empty array. Row 2: NULL.
-                serverMain.execute("INSERT INTO arr_e VALUES (ARRAY[1.0, 2.0], 1::TIMESTAMP)");
-                serverMain.execute("INSERT INTO arr_e VALUES (ARRAY[]::DOUBLE[], 2::TIMESTAMP)");
-                serverMain.execute("INSERT INTO arr_e VALUES (NULL, 3::TIMESTAMP)");
-                serverMain.awaitTable("arr_e");
-
-                final int[] count = {0};
-                final boolean[] isNull = {false, false, false};
-                final int[] nDims = {-1, -1, -1};
-                final double[][] elems = new double[3][];
-                final String[] errMsg = {null};
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-                    client.execute("SELECT d FROM arr_e", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            for (int r = 0; r < batch.getRowCount(); r++) {
-                                int row = count[0]++;
-                                isNull[row] = batch.isNull(0, r);
-                                if (!isNull[row]) {
-                                    nDims[row] = batch.getArrayNDims(0, r);
-                                    elems[row] = batch.getDoubleArrayElements(0, r);
-                                }
-                            }
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            errMsg[0] = message;
-                        }
-                    });
-                } catch (Throwable th) {
-                    // A decode failure may surface as a thrown exception rather than
-                    // onError, depending on where in the pipeline it trips.
-                    errMsg[0] = String.valueOf(th.getMessage());
-                }
-
-                // The crux: with the current decoder the empty-array row makes
-                // QwpResultBatchDecoder reject the server's own frame
-                // ("ARRAY dim 0 must be >= 1: 0").
-                Assert.assertNull("egress decode rejected the server's empty-array frame: " + errMsg[0], errMsg[0]);
-                Assert.assertEquals(3, count[0]);
-
-                // Row 0: regular 1-D array round-trips.
-                Assert.assertFalse(isNull[0]);
-                Assert.assertEquals(1, nDims[0]);
-                Assert.assertArrayEquals(new double[]{1.0, 2.0}, elems[0], 0.0);
-                // Row 1: empty array -> non-null, 1-D, zero elements (distinct from NULL).
-                Assert.assertFalse("empty array must NOT be null", isNull[1]);
-                Assert.assertEquals(1, nDims[1]);
-                Assert.assertEquals(0, elems[1].length);
-                // Row 2: NULL array -> null.
-                Assert.assertTrue("NULL array must be null", isNull[2]);
             }
         });
     }
@@ -696,6 +620,83 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                         assertSelectReturnsOneRow(trigger, "trigger-" + i);
                     }
                 }
+            }
+        });
+    }
+
+    /**
+     * Empty arrays vs NULL arrays over QWP egress. QuestDB stores a non-null
+     * empty array (cardinality 0) distinct from a NULL array, and the server's
+     * egress encoder emits the empty array inline (nDims >= 1 with a 0-length
+     * dimension), reserving the null bitmap for genuine NULLs. The client
+     * decoder must round-trip all three of: a regular array, an empty array,
+     * and a NULL -- keeping empty and NULL distinct.
+     */
+    @Test
+    public void testEmptyAndNullArrayColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE arr_e(d DOUBLE[], ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Monotonic designated timestamps keep WAL scan order aligned with
+                // insert order (DOUBLE[] columns cannot be ORDER BY'd).
+                // Row 0: regular array. Row 1: empty array. Row 2: NULL.
+                serverMain.execute("INSERT INTO arr_e VALUES (ARRAY[1.0, 2.0], 1::TIMESTAMP)");
+                serverMain.execute("INSERT INTO arr_e VALUES (ARRAY[]::DOUBLE[], 2::TIMESTAMP)");
+                serverMain.execute("INSERT INTO arr_e VALUES (NULL, 3::TIMESTAMP)");
+                serverMain.awaitTable("arr_e");
+
+                final int[] count = {0};
+                final boolean[] isNull = {false, false, false};
+                final int[] nDims = {-1, -1, -1};
+                final double[][] elems = new double[3][];
+                final String[] errMsg = {null};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT d FROM arr_e", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                int row = count[0]++;
+                                isNull[row] = batch.isNull(0, r);
+                                if (!isNull[row]) {
+                                    nDims[row] = batch.getArrayNDims(0, r);
+                                    elems[row] = batch.getDoubleArrayElements(0, r);
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            errMsg[0] = message;
+                        }
+                    });
+                } catch (Throwable th) {
+                    // A decode failure may surface as a thrown exception rather than
+                    // onError, depending on where in the pipeline it trips.
+                    errMsg[0] = String.valueOf(th.getMessage());
+                }
+
+                // The crux: with the current decoder the empty-array row makes
+                // QwpResultBatchDecoder reject the server's own frame
+                // ("ARRAY dim 0 must be >= 1: 0").
+                Assert.assertNull("egress decode rejected the server's empty-array frame: " + errMsg[0], errMsg[0]);
+                Assert.assertEquals(3, count[0]);
+
+                // Row 0: regular 1-D array round-trips.
+                Assert.assertFalse(isNull[0]);
+                Assert.assertEquals(1, nDims[0]);
+                Assert.assertArrayEquals(new double[]{1.0, 2.0}, elems[0], 0.0);
+                // Row 1: empty array -> non-null, 1-D, zero elements (distinct from NULL).
+                Assert.assertFalse("empty array must NOT be null", isNull[1]);
+                Assert.assertEquals(1, nDims[1]);
+                Assert.assertEquals(0, elems[1].length);
+                // Row 2: NULL array -> null.
+                Assert.assertTrue("NULL array must be null", isNull[2]);
             }
         });
     }
@@ -1388,6 +1389,100 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         });
     }
 
+    @Test
+    public void testRepeatedStalePlanRecompilesDoNotLeakToClient() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startEgressServer()) {
+                final String table = "qwp_retry_multi_stale_t";
+                final String createSql = "CREATE TABLE " + table
+                        + "(id LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                final String selectSql = "SELECT id FROM " + table;
+
+                serverMain.execute(createSql);
+                serverMain.execute("INSERT INTO " + table + " VALUES (42, 0::TIMESTAMP)");
+                serverMain.awaitTable(table);
+
+                // Deterministically model two consecutive table-schema races at
+                // cursor open. The old retry-once loop would surface the second
+                // TableReferenceOutOfDateException to the client; the bounded
+                // recompile loop should keep retrying and return the row.
+                QwpEgressUpgradeProcessor.DEBUG_FORCE_STALE_PLAN_RECOMPILES = 2;
+                try {
+                    try (QwpQueryClient trigger = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                        trigger.connect();
+                        assertSelectIdReturns(trigger, selectSql, 42L, "multi-stale");
+                    }
+                    Assert.assertEquals(0, QwpEgressUpgradeProcessor.DEBUG_FORCE_STALE_PLAN_RECOMPILES);
+                } finally {
+                    QwpEgressUpgradeProcessor.DEBUG_FORCE_STALE_PLAN_RECOMPILES = 0;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStalePlanRecompileExhaustionReturnsParseError() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startServerWithRetry(
+                    PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS.getEnvVarName(),
+                    "2"
+            )) {
+                final String table = "qwp_retry_exhaust_stale_t";
+                final String createSql = "CREATE TABLE " + table
+                        + "(id LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                final String selectSql = "SELECT id FROM " + table;
+
+                serverMain.execute(createSql);
+                serverMain.execute("INSERT INTO " + table + " VALUES (42, 0::TIMESTAMP)");
+                serverMain.awaitTable(table);
+
+                final byte[] errorStatus = {-1};
+                final String[] errorMsg = {null};
+                final long[] rows = {0};
+                final boolean[] endSeen = {false};
+
+                // With maxSqlRecompileAttempts=2, three stale cursor opens exhaust
+                // the loop and must surface as a clean query error before any row is
+                // streamed. A raw TableReferenceOutOfDateException would map to
+                // STATUS_INTERNAL_ERROR instead.
+                QwpEgressUpgradeProcessor.DEBUG_FORCE_STALE_PLAN_RECOMPILES = 3;
+                try {
+                    try (QwpQueryClient trigger = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                        trigger.connect();
+                        trigger.execute(selectSql, new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                                rows[0] += batch.getRowCount();
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                                endSeen[0] = true;
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                errorStatus[0] = status;
+                                errorMsg[0] = message;
+                            }
+                        });
+                    }
+                    Assert.assertEquals(0, QwpEgressUpgradeProcessor.DEBUG_FORCE_STALE_PLAN_RECOMPILES);
+                } finally {
+                    QwpEgressUpgradeProcessor.DEBUG_FORCE_STALE_PLAN_RECOMPILES = 0;
+                }
+
+                Assert.assertEquals("exhausted stale-plan retries must be a parse/query error",
+                        QwpConstants.STATUS_PARSE_ERROR, errorStatus[0]);
+                Assert.assertNotNull("expected error message", errorMsg[0]);
+                Assert.assertTrue("message should explain stale cached plan, got: " + errorMsg[0],
+                        errorMsg[0].contains("cached query plan cannot be used"));
+                Assert.assertEquals("no rows should be streamed after retry exhaustion", 0, rows[0]);
+                Assert.assertFalse("query must not end successfully after retry exhaustion", endSeen[0]);
+            }
+        });
+    }
+
     /**
      * Boundary: exactly MAX_ROWS_PER_BATCH rows. Streams in a single full batch;
      * RESULT_END arrives with the same row count and no trailing empty batch.
@@ -1972,10 +2067,10 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         });
     }
 
-    private static void assertSelectReturnsOneRow(QwpQueryClient client, String label) {
+    private static void assertSelectIdReturns(QwpQueryClient client, String sql, long expected, String label) {
         final long[] sum = {0};
         final long[] rows = {0};
-        client.execute("SELECT v FROM schema_cache_retry_t", new QwpColumnBatchHandler() {
+        client.execute(sql, new QwpColumnBatchHandler() {
             @Override
             public void onBatch(QwpColumnBatch batch) {
                 int n = batch.getRowCount();
@@ -1995,7 +2090,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
             }
         });
         Assert.assertEquals(label + ": row count", 1L, rows[0]);
-        Assert.assertEquals(label + ": sum of v", 1L, sum[0]);
+        Assert.assertEquals(label + ": sum", expected, sum[0]);
+    }
+
+    private static void assertSelectReturnsOneRow(QwpQueryClient client, String label) {
+        assertSelectIdReturns(client, "SELECT v FROM schema_cache_retry_t", 1L, label);
     }
 
     private void runBatchBoundary(TestServerMain serverMain, int totalRows) throws Exception {
