@@ -538,8 +538,8 @@ public class FuzzRunner {
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
         // getTableMetadata reloads the table _meta and can hit the same transient read timeout as a
-        // reader open while a structural change applies; getLegacyMetadata reads the sequencer from
-        // memory and cannot, so only the table-metadata open needs the retry.
+        // reader open while a structural change applies; for a WAL table getLegacyMetadata reads the
+        // sequencer from memory and cannot, so only the table-metadata open needs the retry.
         try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
              TableMetadata tableMetadata = openWithRetries(() -> engine.getTableMetadata(tableToken), false)
         ) {
@@ -1241,7 +1241,7 @@ public class FuzzRunner {
     // tolerateTableRecreate it also waits out a dropped / name-reserved / entry-locked table; otherwise
     // those surface immediately, so setup and verify callers - whose table is never concurrently dropped -
     // fail fast on a genuine error instead of spinning forever.
-    private <T> T openWithRetries(Supplier<T> open, boolean tolerateTableRecreate) {
+    <T> T openWithRetries(Supplier<T> open, boolean tolerateTableRecreate) {
         int readTimeoutRetries = 10;
         while (true) {
             try {
