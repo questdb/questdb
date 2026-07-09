@@ -65,16 +65,11 @@ public class LiveViewDefinition {
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
     // Format version stamped as the first field of the CORE block. A reader that
     // finds a higher value refuses to load the view and surfaces it as
-    // version_unsupported. Bump this when the CORE layout changes incompatibly;
-    // each bump needs explicit per-version read handling.
-    //
-    // Version history:
-    //   1 - initial CORE layout.
-    //   2 - appends the dependency columns' compile-time types after their names,
-    //       so a referenced base column whose TYPE changes invalidates the view.
-    //       A version-1 block has no types; readFrom leaves the type list empty and
-    //       the invalidation gate falls back to name-only checking for it.
-    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 2;
+    // version_unsupported. Live views ship at version 1: while the feature is
+    // unreleased, any CORE layout change edits the v1 layout in place with no
+    // back-compat read path. Bump this only for a post-release incompatible
+    // change, and add explicit per-version read handling then.
+    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 1;
     // _lv.drop is the durable "DROP in progress" sentinel. dropLiveView creates
     // it (and fsyncs it) before any in-memory or on-disk teardown so a crash
     // mid-drop leaves an unambiguous signal for the startup loader to reap.
@@ -170,12 +165,12 @@ public class LiveViewDefinition {
         for (int i = 0; i < depCount; i++) {
             block.putStr(definition.dependencyColumnNames.getQuick(i));
         }
-        // Version 2+: the dependency columns' compile-time types, positionally
-        // parallel to the names above (same count). Read back only when the CORE
-        // block stamps version >= 2. The reader pulls exactly depCount types, so a
-        // types list shorter than the names list would both read OOB here and emit a
-        // malformed block; the two are always built together at CREATE, and this
-        // assert pins that invariant against any future re-append path.
+        // The dependency columns' compile-time types, positionally parallel to
+        // the names above (same count). The reader pulls exactly depCount types,
+        // so a types list shorter than the names list would both read OOB here
+        // and emit a malformed block; the two are always built together at
+        // CREATE, and this assert pins that invariant against any future
+        // re-append path.
         assert definition.dependencyColumnTypes.size() == depCount
                 : "dependencyColumnTypes count (" + definition.dependencyColumnTypes.size()
                 + ") must equal dependencyColumnNames count (" + depCount + ")";
@@ -381,16 +376,12 @@ public class LiveViewDefinition {
                     offset += Vm.getStorageLength(colNameCs);
                     dependencyColumnNames.add(Chars.toString(colNameCs));
                 }
-                // Version 2+ appends one int per dependency column: its compile-time
-                // type, parallel to the names just read. A version-1 block has none,
-                // so the type list stays empty and the invalidation gate degrades to
-                // name-only checking for that view.
-                if (onDiskVersion >= 2) {
-                    dependencyColumnTypes = new IntList(depCount);
-                    for (int i = 0; i < depCount; i++) {
-                        dependencyColumnTypes.add(block.getInt(offset));
-                        offset += Integer.BYTES;
-                    }
+                // One int per dependency column: its compile-time type, parallel
+                // to the names just read.
+                dependencyColumnTypes = new IntList(depCount);
+                for (int i = 0; i < depCount; i++) {
+                    dependencyColumnTypes.add(block.getInt(offset));
+                    offset += Integer.BYTES;
                 }
             } else if (block.type() == LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE) {
                 // block.getStr returns a flyweight backed by the block's memory; subsequent
