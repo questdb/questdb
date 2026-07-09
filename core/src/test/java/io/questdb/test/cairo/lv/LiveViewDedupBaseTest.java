@@ -28,6 +28,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Job;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -372,6 +373,10 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
                 drainJob(job);
                 drainWalQueue();
                 Assert.assertFalse("view must stay valid after the drain converges", instance.isInvalid());
+                // recordRefreshSuccess must clear the back-off floor once the drain
+                // converges. Deleting that clear leaves the stale floor here, so this fails.
+                Assert.assertEquals("a converged refresh must clear the back-off floor",
+                        Numbers.LONG_NULL, instance.getApplyLagDeferUntilUs());
             }
             // All three rows land in ts order with a gapless row_number sequence.
             assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts")

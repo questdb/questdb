@@ -2036,8 +2036,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
         // Read the applied LV-table seqTxn only AFTER applyWalDirect: restampSlotAfterFlush
         // below stamps the slot with it, and the getCursor staleness retry depends on the
-        // slot's seqTxn never exceeding what an applied-base reader can observe. Stamp it
-        // before the apply and a racing cursor that re-opened disk would spin (see
+        // slot's seqTxn never exceeding what an applied-base reader can observe. Reading it
+        // before the apply would under-stamp the slot: a racing cursor that re-opened disk
+        // at the freshly applied seqTxn would see isSlotNewerThanDisk() false and disengage
+        // the slot/disk seam, falling back to stale disk-only content (see
         // LiveViewRecordCursor.isSlotNewerThanDisk).
         final long lvAppliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn();
         boolean lvConsumedPersisted = false;
