@@ -243,6 +243,16 @@ public class LiveViewInstance implements QuietCloseable {
     // it without extra synchronisation; mutated only under the refresh latch.
     private volatile boolean leadEligible;
     private volatile boolean leadEligibilityComputed;
+    // Read-only-replica O3 catch-up floor: the base seqTxn the LV table's applied watermark must reach
+    // before the lead loop resumes staging after an out-of-order base commit reset it to cold start.
+    // The primary handles an O3 base commit with o3Replay, which rewrites the on-disk symbol id space
+    // and replicates the correction as an LV flush. Until that flush applies here (appliedWatermark >=
+    // this seqTxn), a re-derive would re-intern a resequenced value at a fresh lead symbol id above the
+    // still-lagging committed count -- a stranded id the disk never assigns, which breaks the read
+    // path's symbol-table keyOf/valueOf agreement. Deferring staging until the disk catches up serves
+    // reads disk-only meanwhile (correct, at worst one flush cycle stale). LONG_NULL means "not
+    // waiting". In-RAM only; mutated under the refresh latch only.
+    private long leadO3CatchupSeqTxn = Numbers.LONG_NULL;
     // Read-only-replica lead catch-up seam: the on-disk (LV table) maximum timestamp the lead
     // loop's window accumulators must reach before the drain resumes staging rows into the lead.
     // A replicated flush can advance the on-disk tier (and the applied watermark) past the point
@@ -626,6 +636,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getLastRefreshTimeUs() {
         return lastRefreshTimeUs;
+    }
+
+    /**
+     * @return the read-only-replica O3 catch-up floor (the base seqTxn the applied watermark must reach
+     * before the lead loop resumes staging after an O3 reset), or {@link Numbers#LONG_NULL} when not
+     * waiting. See {@link #leadO3CatchupSeqTxn}.
+     */
+    public long getLeadO3CatchupSeqTxn() {
+        return leadO3CatchupSeqTxn;
     }
 
     /**
@@ -1114,6 +1133,13 @@ public class LiveViewInstance implements QuietCloseable {
     public void setLeadEligible(boolean value) {
         this.leadEligible = value;
         this.leadEligibilityComputed = true;
+    }
+
+    /**
+     * Sets the read-only-replica O3 catch-up floor. See {@link #leadO3CatchupSeqTxn}.
+     */
+    public void setLeadO3CatchupSeqTxn(long leadO3CatchupSeqTxn) {
+        this.leadO3CatchupSeqTxn = leadO3CatchupSeqTxn;
     }
 
     /**
