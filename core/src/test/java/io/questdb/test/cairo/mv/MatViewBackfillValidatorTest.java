@@ -24,15 +24,20 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewBackfillValidator;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -307,6 +312,133 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
             final long boundary = MatViewBackfillValidator.boundaryFromAnchor(driver, anchor, limit);
             Assert.assertTrue("boundary must be at-or-before the anchor for limit=" + limit, boundary <= anchor);
         }
+    }
+
+    @Test
+    public void testComputeFrozenBoundaryBucketFloorStaticOverloads() throws Exception {
+        // Direct coverage for the public static computeFrozenBoundaryBucketFloor overloads.
+        // Production only calls the 5-arg overload from the materialized_views() cursor, so
+        // the 3-arg/4-arg entry points and their LIMIT==0 / escape-hatch guard branches are
+        // reachable only from a direct caller. The 3-arg overload builds the sampler and opens
+        // the base reader; the 4-arg applies the guards before delegating.
+        assertMemoryLeak(() -> {
+            createBaseAndView();
+            execute("INSERT INTO base_price VALUES('a', 9.0, '2024-09-10T12:00')");
+            drainWalAndMatViewQueues();
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+
+            // No REFRESH LIMIT yet: the 3-arg overload builds a sampler, then the 4-arg
+            // overload short-circuits on LIMIT == 0. The 5-arg overload's own LIMIT==0 guard
+            // does the same when a caller reuses a sampler.
+            MatViewDefinition def = state.getViewDefinition();
+            final TimestampSampler noLimitSampler = MatViewBackfillValidator.createBucketSampler(def);
+            Assert.assertNotNull(noLimitSampler);
+            Assert.assertEquals(
+                    Numbers.LONG_NULL,
+                    MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, def, state)
+            );
+            Assert.assertEquals(
+                    Numbers.LONG_NULL,
+                    MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, def, state, noLimitSampler, Long.MIN_VALUE)
+            );
+
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            def = state.getViewDefinition();
+
+            // LIMIT 1h, anchor = min(max(base_ts)=12:00, now=12:30) = 12:00, boundary = 11:00,
+            // snapped to the 1h bucket floor = 11:00 (base driver units == micros here). The
+            // 3-arg overload opens the base reader itself to read max(base_ts).
+            final long expectedFloor = parseFloorPartialTimestamp("2024-09-10T11:00:00.000000Z");
+            Assert.assertEquals(
+                    expectedFloor,
+                    MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, def, state)
+            );
+
+            // 5-arg overload with a caller-managed sampler + max(base_ts) snapshot: same floor.
+            final TimestampSampler sampler = MatViewBackfillValidator.createBucketSampler(def);
+            Assert.assertNotNull(sampler);
+            final long maxBaseTs = parseFloorPartialTimestamp("2024-09-10T12:00:00.000000Z");
+            Assert.assertEquals(
+                    expectedFloor,
+                    MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, def, state, sampler, maxBaseTs)
+            );
+
+            // Escape hatch on: every overload surfaces LONG_NULL so the gate and the metadata
+            // stay consistent, no matter the LIMIT.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+            Assert.assertEquals(
+                    Numbers.LONG_NULL,
+                    MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, def, state)
+            );
+            Assert.assertEquals(
+                    Numbers.LONG_NULL,
+                    MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, def, state, sampler, maxBaseTs)
+            );
+        });
+    }
+
+    @Test
+    public void testIsBackfillableMatViewGate() throws Exception {
+        // Entry-point gate contract (CairoEngine.isBackfillableMatView): a plain table is never
+        // backfillable-as-a-mat-view; a mat view is backfillable only with a non-zero REFRESH
+        // LIMIT and the wall-clock escape hatch off.
+        assertMemoryLeak(() -> {
+            createBaseAndView();
+            drainWalAndMatViewQueues();
+
+            final TableToken baseToken = engine.verifyTableName("base_price");
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+
+            // Non-mat-view token -> false.
+            Assert.assertFalse(engine.isBackfillableMatView(baseToken));
+            // Mat view without REFRESH LIMIT -> false.
+            Assert.assertFalse(engine.isBackfillableMatView(viewToken));
+
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            // Mat view with a non-zero REFRESH LIMIT -> true.
+            Assert.assertTrue(engine.isBackfillableMatView(viewToken));
+
+            // Escape hatch on -> false regardless of LIMIT.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+            Assert.assertFalse(engine.isBackfillableMatView(viewToken));
+        });
+    }
+
+    @Test
+    public void testValidatePassthroughOnWallClockEscapeHatch() throws Exception {
+        // With the wall-clock escape hatch on the whole frozen-zone feature is off: the
+        // entry-point gate already rejects user backfills, so the validator must pass DATA
+        // txns through (computeBoundaryBucketFloor surfaces LONG_NULL) rather than enforce the
+        // bucket-whole rule on a boundary the feature no longer publishes. Exercised directly
+        // because the SQL path never reaches the validator once the gate is closed.
+        assertMemoryLeak(() -> {
+            createBaseAndView();
+            execute("INSERT INTO base_price VALUES('a', 9.0, '2024-09-10T12:00')");
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            final MatViewBackfillValidator validator = newValidator();
+
+            // Sanity: with the hatch off the managed-zone row (bucket [11:00,12:00), end 12:00
+            // past boundary floor 11:00) is rejected.
+            final long managedZoneTs = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            try {
+                validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, managedZoneTs, managedZoneTs);
+                Assert.fail("expected bucket-whole rejection with the escape hatch off");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Escape hatch on: the same row now passes through.
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, managedZoneTs, managedZoneTs);
+        });
     }
 
     private static void createBaseAndView() throws Exception {

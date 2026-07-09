@@ -8643,6 +8643,47 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterializedViewsBackfillMaxTsSharedBaseReusesReader() throws Exception {
+        // Two mat views over the SAME base table: the cursor resolves max(base_ts) once and
+        // memoizes it by (base token, base writer txn), so the second row reuses the cached
+        // value instead of opening a second base reader. Both views are manual-deferred and
+        // never refreshed, so they share the same applied base txn and therefore the same
+        // cache key. backfill_max_ts must still be correct on the memo-hit row.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view view_a refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute(
+                    "create materialized view view_b refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view view_a set refresh limit 1 hour;");
+            execute("alter materialized view view_b set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // Both views: anchor = min(12:00, 12:30) = 12:00, boundary = 11:00, snapped
+            // (1h bucket) = 11:00. The second row (view_b) is served from the base-reader memo.
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "view_a\t2024-09-10T11:00:00.000000Z\n" +
+                            "view_b\t2024-09-10T11:00:00.000000Z\n",
+                    "select view_name, backfill_max_ts from materialized_views() order by view_name",
+                    null
+            );
+        });
+    }
+
+    @Test
     public void testValidatorPicksUpBaseDropRecreate() throws Exception {
         // The validator caches (baseToken, baseTxn, maxBaseTs) by reference
         // identity of the base token. After DROP TABLE + CREATE TABLE with
