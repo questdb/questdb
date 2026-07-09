@@ -159,6 +159,33 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepLatestEmptyPartitionListRejected() throws Exception {
+        // PARTITION BY with no column list before the next boundary (CLEANUP here) must be rejected, not
+        // silently treated as an empty key set.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            assertCreateFails(
+                    "create materialized view mvbad as (select * from base) expire rows keep latest partition by cleanup every 1h",
+                    "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list"
+            );
+        });
+    }
+
+    @Test
+    public void testKeepLatestWithoutPartitionRejected() throws Exception {
+        // KEEP LATEST requires an explicit PARTITION BY; a bare column where 'partition' is expected fails.
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+            assertCreateFails(
+                    "create materialized view mvbad as (select * from base) expire rows keep latest k",
+                    "'partition' expected"
+            );
+        });
+    }
+
+    @Test
     public void testKeepLatestSetViaAlter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");

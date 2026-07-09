@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.mp.Job;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.Test;
@@ -389,6 +391,24 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreatePassthroughMatViewMirrorsHourlyBasePartitioning() throws Exception {
+        // A passthrough view with no explicit PARTITION BY mirrors the base table's partitioning (here HOUR),
+        // so refresh REPLACE_RANGE and expiry DROP/REPLACE align to base partitions. Exercises the non-DAY
+        // passthrough chunk-interval path.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by hour wal");
+            execute("insert into base values ('AAA', 1.0, '2024-01-05T00:30:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                assertEquals(PartitionBy.HOUR, metadata.getPartitionBy());
+                assertEquals("v < 2.0", metadata.getExpiryPredicate());
+            }
+        });
+    }
+
+    @Test
     public void testCreatePassthroughMatViewWithExpire() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
@@ -719,6 +739,188 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "create materialized view mv as select * from base EXPIRE ROWS WHEN v < 2.0",
                     57,
                     "unexpected token [ROWS]"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testAlterMatViewDropExpireUnexpectedTokenRejected() throws Exception {
+        // DROP EXPIRE [ROWS] accepts nothing else after it; a trailing token is a clear syntax error, not
+        // silently ignored (which could mask a typo intended as a different clause).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv drop expire foo",
+                    39,
+                    "unexpected token [foo] while trying to drop row-expiry policy"
+            );
+            // The policy is untouched.
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                org.junit.Assert.assertNotNull(metadata.getExpiryPredicate());
+            }
+        });
+    }
+
+    @Test
+    public void testAlterMatViewDropNonExpireRejected() throws Exception {
+        // ALTER MATERIALIZED VIEW ... DROP is only valid as DROP EXPIRE; any other continuation (or none)
+        // must report "'expire' expected".
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv drop ttl",
+                    32,
+                    "'expire' expected"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv drop",
+                    31,
+                    "'expire' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterMatViewSetExpireInvalidPredicateRejected() throws Exception {
+        // ALTER ... SET EXPIRE validates the predicate by probing it against the (existing) view; an unknown
+        // column surfaces as "invalid EXPIRE ROWS predicate" and the policy is not applied.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when no_such < 2.0",
+                    48,
+                    "invalid EXPIRE ROWS predicate"
+            );
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                org.junit.Assert.assertNull(metadata.getExpiryPredicate());
+            }
+        });
+    }
+
+    @Test
+    public void testAlterMatViewSetExpireTrailingTokenRejected() throws Exception {
+        // A well-formed clause followed by a stray token (after CLEANUP EVERY here) is a syntax error, so a
+        // typo cannot silently persist a truncated policy.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when v < 2.0 cleanup every 1h foo",
+                    73,
+                    "unexpected token [foo] while trying to set row-expiry policy"
+            );
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                org.junit.Assert.assertNull(metadata.getExpiryPredicate());
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableDropExpireRejected() throws Exception {
+        // EXPIRE ROWS is materialized-view-only, so ALTER TABLE ... DROP EXPIRE on a plain table must give the
+        // specific message rather than a generic one.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "alter table base drop expire",
+                    22,
+                    "EXPIRE ROWS is only supported on materialized views"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableSetExpireRejected() throws Exception {
+        // Same for ALTER TABLE ... SET EXPIRE on a plain table.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "alter table base set expire rows when v < 2.0",
+                    21,
+                    "EXPIRE ROWS is only supported on materialized views"
+            );
+        });
+    }
+
+    @Test
+    public void testCleanupIntervalTooLargeRejected() throws Exception {
+        // A CLEANUP EVERY multiple that overflows when converted to micros must fail cleanly at parse time
+        // rather than persisting a garbage (possibly negative) cadence.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < 2.0 cleanup every 999999999w",
+                    91,
+                    "cleanup interval is too large"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testCleanupIntervalUnsupportedUnitRejected() throws Exception {
+        // CLEANUP EVERY accepts s/m/h/d/w; a month/year unit is a valid stride unit elsewhere but not a
+        // cleanup cadence, so it is rejected with the specific message.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when v < 2.0 cleanup every 1y",
+                    91,
+                    "unsupported cleanup interval unit, expected s/m/h/d/w"
+            );
+            org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testCleanupJobRunSeriallyReclaimsOldPartition() throws Exception {
+        // Drive the background job via run() (the discovery sweep) rather than calling cleanupTable directly:
+        // runSerially() must find the policied view through the metadata cache and reclaim its wholly-expired
+        // non-active partition.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')," +
+                    "('C', 3.0, '2024-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+            // Read the view so it is hydrated into the metadata cache the discovery sweep scans.
+            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                assertTrue("discovery sweep should reclaim", job.run(Job.RUNNING_STATUS));
+            }
+            drainWalAndMatViewQueues();
+
+            assertSql("p\n2\n", "select count() p from table_partitions('mv')");
+            assertSql(
+                    "sym\tv\n" +
+                            "B\t2.0\n" +
+                            "C\t3.0\n",
+                    "select sym, v from mv order by sym"
+            );
+        });
+    }
+
+    @Test
+    public void testEmptyWhenPredicateRejected() throws Exception {
+        // WHEN with no predicate text before the next boundary (CLEANUP here) is a syntax error.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select * from base) expire rows when cleanup every 1h",
+                    69,
+                    "EXPIRE ROWS WHEN predicate is empty"
             );
             org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
         });

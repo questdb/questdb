@@ -381,6 +381,30 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepInvalidModeTokenRejected() throws Exception {
+        // The token after KEEP must be 'latest', 'highest', 'lowest' or a row count; anything else fails.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertCreateFails(
+                    "create materialized view mvbad as (select * from base) expire rows keep bogus v partition by k",
+                    "'latest', 'highest', 'lowest' or a row count expected"
+            );
+        });
+    }
+
+    @Test
+    public void testKeepNWithoutHighestLowestRejected() throws Exception {
+        // KEEP <N> must be followed by 'highest' or 'lowest'.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertCreateFails(
+                    "create materialized view mvbad as (select * from base) expire rows keep 3 bogus v partition by k",
+                    "'highest' or 'lowest' expected"
+            );
+        });
+    }
+
+    @Test
     public void testRejectedEmptyPartitionBy() throws Exception {
         // KEEP HIGHEST/LOWEST with a PARTITION BY keyword but no column list must be rejected, not silently
         // treated as a global (un-partitioned) window (which would change the retention semantics).
