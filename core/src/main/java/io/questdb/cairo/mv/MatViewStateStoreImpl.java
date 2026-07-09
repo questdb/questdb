@@ -128,9 +128,13 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     @Override
     public void close() {
+        // Idempotent: the switch-cascade unwind and CairoEngine.close() can both reach
+        // this when a close-rendezvous budget expires mid-view-load; clearing the map
+        // after the free loop makes the second close a no-op instead of a double-free.
         for (MatViewState state : stateByTableDirName.values()) {
             Misc.free(state);
         }
+        stateByTableDirName.clear();
     }
 
     @Override
