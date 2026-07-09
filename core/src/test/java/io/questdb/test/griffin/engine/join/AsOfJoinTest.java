@@ -6425,4 +6425,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testSubqueryExplicitTimestampToNonTimestampColumnRejected() throws Exception {
+        // applyExplicitTimestamp resolves the redesignation against the generated factory's
+        // metadata; a timestamp() naming a non-TIMESTAMP column is rejected, and the subquery
+        // factory it wraps is freed on the way out (assertMemoryLeak proves no leak).
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v int) timestamp(ts) partition by DAY");
+            assertException("SELECT * FROM (SELECT ts, v FROM tab) timestamp(v)", 48, "not a TIMESTAMP");
+        });
+    }
 }
