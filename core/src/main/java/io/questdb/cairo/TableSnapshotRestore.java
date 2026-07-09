@@ -148,27 +148,6 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Copies all live view metadata files from source to destination.
-     * Includes: _meta, _name (optional), _lv
-     *
-     * @param srcPath            source path (will be modified)
-     * @param dstPath            destination path (will be modified)
-     * @param recoveredMetaFiles counter for recovered meta files
-     */
-    public void copyLiveViewMetadataFiles(Path srcPath, Path dstPath, AtomicInteger recoveredMetaFiles) {
-        int srcPathLen = srcPath.size();
-        int dstPathLen = dstPath.size();
-        try {
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.META_FILE_NAME, false);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, TableUtils.TABLE_NAME_FILE, true);
-            copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME, false);
-        } finally {
-            srcPath.trimTo(srcPathLen);
-            dstPath.trimTo(dstPathLen);
-        }
-    }
-
-    /**
      * Copies all metadata files for a table from source to destination.
      * Includes: _meta, _name (optional), _txn, _cv, mat view state (optional), mat view definition (optional),
      * live view definition (optional), live view state (optional)
@@ -504,15 +483,16 @@ public class TableSnapshotRestore implements QuietCloseable {
         int srcPathLen = srcPath.size();
         int dstPathLen = dstPath.size();
 
-        // Detect table type from definition files present in the checkpoint.
-        boolean isLiveView = ff.exists(srcPath.trimTo(srcPathLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
-        srcPath.trimTo(srcPathLen);
-        boolean isView = !isLiveView && ff.exists(srcPath.trimTo(srcPathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
+        // Detect a plain (non-materialized) view from the definition file present in the
+        // checkpoint. A plain view has no storage, so restore copies its definition only.
+        // A live view is a materialized WAL-backed table (like a mat view): it advances its own
+        // _txn / _cv / _lv.s and partition data while ingestion runs, so it must go through the
+        // standard path below to roll all of that back to the checkpoint and rebuild its symbol
+        // and partition files. copyMetadataFiles already restores the _lv / _lv.s sidecars.
+        boolean isView = ff.exists(srcPath.trimTo(srcPathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME).$());
         srcPath.trimTo(srcPathLen);
 
-        if (isLiveView) {
-            copyLiveViewMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
-        } else if (isView) {
+        if (isView) {
             copyViewMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
         } else {
             // Copy metadata files from source to the destination table location

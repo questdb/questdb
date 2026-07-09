@@ -404,6 +404,70 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoresLiveViewAdvancedPastCheckpoint() throws Exception {
+        // Regression for routing live views through the full table restore path (copyMetadataFiles +
+        // resetTodoLog + rebuildTableFiles) rather than a metadata-only copy. A live view keeps
+        // refreshing after CHECKPOINT CREATE returns - the freeze is released once the checkpoint
+        // finishes - so its own _txn / _cv / _lv.s and partition data advance past the checkpoint in
+        // the normal live-ingestion window. Restore must roll the view back to the checkpoint just
+        // like its base. Pre-fix, restore copied only _meta / _name / _lv for a live view and skipped
+        // _txn / _cv / _lv.s plus the partition rebuild, so the view kept its post-checkpoint rows
+        // while the base rolled back, diverging from the recompute.
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                        "('2026-01-01T00:00:02.000000Z', 'b', 2.0), " +
+                        "('2026-01-01T00:00:03.000000Z', 'a', 3.0), " +
+                        "('2026-01-01T00:00:04.000000Z', 'b', 4.0), " +
+                        "('2026-01-01T00:00:05.000000Z', 'a', 5.0)");
+                // Converge and flush the lead to disk so the checkpoint captures the view at 1..5.
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+                assertLiveViewRowCount(5);
+
+                execute("CHECKPOINT CREATE");
+
+                // Advance the base past the checkpoint AND materialize it into the live view's own
+                // table, so the view's _txn / _cv / _lv.s and partition data all move past the
+                // checkpoint. CHECKPOINT CREATE has returned, so the view is unfrozen and the refresh
+                // worker is free to run here.
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-01-01T00:00:06.000000Z', 'a', 6.0), " +
+                        "('2026-01-01T00:00:07.000000Z', 'b', 7.0)");
+                driveRefreshToQuiescence(job);
+                // The view really did advance past the checkpoint before the restore.
+                assertViewMatchesRecompute(viewSql);
+                assertLiveViewRowCount(7);
+            }
+
+            restoreFromCheckpoint();
+
+            // Immediately after restore, before any refresh: the restored view must be rolled back to
+            // the checkpoint (5 rows), matching the recompute over the rolled-back base. Pre-fix the
+            // view kept its 7 post-checkpoint rows and this diverged.
+            drainWalQueue();
+            assertLiveViewRowCount(5);
+            assertViewMatchesRecompute(viewSql);
+
+            // A refresh over the restored (rolled-back) base is a no-op: the base has no rows past the
+            // checkpoint, so the view stays converged at 5 rows.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertLiveViewRowCount(5);
+            assertViewMatchesRecompute(viewSql);
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
     public void testCheckpointRestoresNonEmptyLiveView() throws Exception {
         // Create a live view with data and let it fully flush to disk, CHECKPOINT CREATE, then
         // advance the base past the checkpoint (rows that restore must roll back), restore, and
@@ -816,6 +880,13 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
 
             execute("CHECKPOINT RELEASE");
         });
+    }
+
+    // Asserts the live view currently holds exactly the given row count. Complements the recompute
+    // oracle with an unambiguous check that restore rolled the view's own table back to the
+    // checkpoint rather than keeping its post-checkpoint rows.
+    private void assertLiveViewRowCount(long expected) throws Exception {
+        assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n" + expected + "\n");
     }
 
     // The live view must equal the same window recomputed directly over the base table. The view's
