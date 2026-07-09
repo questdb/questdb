@@ -1354,6 +1354,56 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testConvertPartitionsPluralKeyword() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute(
+                    "create table x as (select" +
+                            " x id," +
+                            " rnd_boolean() a_boolean," +
+                            " rnd_byte() a_byte," +
+                            " timestamp_sequence('2024-06', 500)::" + timestampType.getTypeName() + " designated_ts" +
+                            " from long_sequence(10)" +
+                            ") timestamp(designated_ts) partition by month"
+            );
+
+            execute("ALTER TABLE x CONVERT PARTITIONS TO PARQUET LIST '2024-06'");
+            assertPartitionDoesNotExist("x", "2024-06.1");
+
+            execute("ALTER TABLE x CONVERT PARTITIONS TO NATIVE LIST '2024-06'");
+            assertPartitionDoesNotExist("x", "2024-06.1");
+        });
+    }
+
+    @Test
+    public void testConvertPartitionsPluralKeywordWhere() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute(
+                    "create table x as (select" +
+                            " x id," +
+                            " rnd_boolean() a_boolean," +
+                            " rnd_byte() a_byte," +
+                            " timestamp_sequence('2024-06', 500)::" + timestampType.getTypeName() + " designated_ts" +
+                            " from long_sequence(10)" +
+                            ") timestamp(designated_ts) partition by month"
+            );
+
+            execute("ALTER TABLE x CONVERT PARTITIONS TO PARQUET WHERE designated_ts > 0");
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
+
+            execute("ALTER TABLE x CONVERT PARTITIONS TO NATIVE WHERE designated_ts > 0");
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
+        });
+    }
+
     private void assertPartitionDoesNotExist(String tableName, String partition) {
         assertPartitionOnDisk0(tableName, false, partition);
     }

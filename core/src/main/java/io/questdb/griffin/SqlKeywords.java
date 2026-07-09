@@ -1768,7 +1768,7 @@ public class SqlKeywords {
     }
 
     public static boolean isPartitionKeyword(CharSequence tok) {
-        return tok.length() == 9
+        return (tok.length() == 9 || tok.length() == 10)
                 && (tok.charAt(0) | 32) == 'p'
                 && (tok.charAt(1) | 32) == 'a'
                 && (tok.charAt(2) | 32) == 'r'
@@ -1777,7 +1777,8 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 't'
                 && (tok.charAt(6) | 32) == 'i'
                 && (tok.charAt(7) | 32) == 'o'
-                && (tok.charAt(8) | 32) == 'n';
+                && (tok.charAt(8) | 32) == 'n'
+                && (tok.length() == 9 || (tok.charAt(9) | 32) == 's');
     }
 
     public static boolean isPartitionsKeyword(CharSequence tok) {
