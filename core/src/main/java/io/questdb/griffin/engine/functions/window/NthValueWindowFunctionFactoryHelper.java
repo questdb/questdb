@@ -1010,11 +1010,6 @@ public class NthValueWindowFunctionFactoryHelper {
         protected final int excludeCount;
         protected final boolean frameIncludesCurrentValue;
         protected final int frameSize;
-        // (capacity, startOffset) pairs marking free space within memory. Each
-        // entry is a ring slab evicted from a tombstoned partition by
-        // retainPartitions. computeNext's isNew branch pops the last pair
-        // before falling back to memory.appendAddressFor.
-        protected final LongList freeList = new LongList();
         protected final ArrayColumnTypes keyColumnTypes;
         protected final boolean liveView;
         // Full value layout (including tombstone slot) for the snapshot codec.
@@ -1066,7 +1061,6 @@ public class NthValueWindowFunctionFactoryHelper {
         public void close() {
             super.close();
             memory.close();
-            freeList.clear();
         }
 
         @Override
@@ -1088,13 +1082,7 @@ public class NthValueWindowFunctionFactoryHelper {
                 }
                 loIdx = 0;
                 count = 0;
-                final int freeN = freeList.size();
-                if (freeN > 0) {
-                    startOffset = freeList.getQuick(freeN - 1);
-                    freeList.setPos(freeN - 2);
-                } else {
-                    startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
-                }
+                startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
                 mapValue.putLong(1, startOffset);
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
@@ -1174,7 +1162,6 @@ public class NthValueWindowFunctionFactoryHelper {
         public void onSnapshotRestoreBegin() {
             super.onSnapshotRestoreBegin();
             memory.truncate();
-            freeList.clear();
         }
 
         @Override
@@ -1186,7 +1173,6 @@ public class NthValueWindowFunctionFactoryHelper {
         @Override
         public void reopen() {
             super.reopen();
-            freeList.clear();
             // memory will allocate on first use
         }
 
@@ -1194,7 +1180,6 @@ public class NthValueWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             memory.close();
-            freeList.clear();
         }
 
         @Override
@@ -1260,7 +1245,9 @@ public class NthValueWindowFunctionFactoryHelper {
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -1285,7 +1272,6 @@ public class NthValueWindowFunctionFactoryHelper {
         public void toTop() {
             super.toTop();
             memory.truncate();
-            freeList.clear();
         }
     }
 
@@ -1447,7 +1433,9 @@ public class NthValueWindowFunctionFactoryHelper {
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -2069,7 +2057,9 @@ public class NthValueWindowFunctionFactoryHelper {
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override

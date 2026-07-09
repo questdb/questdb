@@ -182,6 +182,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             "('2026-08-02T01:00:00.000000Z', 'b', 50.0, 0.0, 0.0), " +
             "('2026-08-02T02:00:00.000000Z', 'b', 75.0, 0.0, 0.0)";
 
+    // Renders an integer as a decimal literal/expected-output string at the
+    // given scale, e.g. (10, 3) -> "10.000". The restart helpers use it to
+    // drive the same test across every DECIMAL storage width.
+    private static String decimalText(int units, int scale) {
+        return scale == 0 ? Integer.toString(units) : units + "." + "0".repeat(scale);
+    }
+
     private static boolean drainJob(Job job) {
         boolean any = false;
         for (int i = 0; i < 64 && job.run(); i++) {
@@ -337,7 +344,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -393,7 +400,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -447,7 +454,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -499,7 +506,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -611,7 +618,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -663,7 +670,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -713,7 +720,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -769,7 +776,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -778,6 +785,82 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     }
                 }
             }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // Drives last_value(DECIMAL) over ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+    // (the bounded-rows value ring) across a simulated restart: the head .cp
+    // must round-trip the ring so the first post-restart row still reports the
+    // newest pre-restart value. The restore-succeeded + seqTxn asserts prove
+    // the asserted cells flow from the restored ring, not from a head-miss
+    // replay recompute. Uses an INT partition key to side-step the
+    // per-WAL-segment SYMBOL index collision.
+    private void assertLastValueDecimalRestoresRingAcrossRestart(String decimalType, int scale) throws Exception {
+        final String v10 = decimalText(10, scale);
+        final String v20 = decimalText(20, scale);
+        final String v30 = decimalText(30, scale);
+        final String v90 = decimalText(90, scale);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, last_value(d) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING)");
+
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, " + v10 + "m), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, " + v20 + "m), " +
+                        "('2026-10-01T02:00:00.000000Z', 1, " + v30 + "m)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp written before restart",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
+
+            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Pure-restore tick (no new commits) fires tryRestoreFromHead.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "head .cp restore must rehydrate the last_value ring, not fall back to a head-miss replay",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            // The new row's frame holds exactly the three pre-restart rows, so
+            // its cell is the restored ring's newest value; a ring lost in the
+            // restore would leave null.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T03:00:00.000000Z', 1, " + v90 + "m)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
+                    "2026-10-01T00:00:00.000000Z\t1\t\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t" + v10 + "\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t" + v20 + "\n" +
+                    "2026-10-01T03:00:00.000000Z\t1\t" + v30 + "\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -824,7 +907,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -833,6 +916,104 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     }
                 }
             }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // Drives min/max over bounded and unbounded-lower RANGE frames (the
+    // MaxMinOverPartitionRangeFrameFunction deque and scalar shapes) across a
+    // simulated restart: the head .cp must round-trip the monotonic deque so
+    // the first post-restart row still reports pre-restart extrema, including
+    // one cell (sym=2 max) that requires the restored deque to expire its head
+    // as the frame slides. The restore-succeeded + seqTxn asserts prove the
+    // asserted cells flow from the restored deque, not from a head-miss replay
+    // recompute. Uses an INT partition key to side-step the per-WAL-segment
+    // SYMBOL index collision. suffix is the printed fraction of the value type
+    // (".0" for DOUBLE, "" for LONG).
+    private void assertMaxMinBoundedRangeRestoresDequeAcrossRestart(String valueType, String suffix) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  min(x) OVER w1 AS mn, " +
+                    "  max(x) OVER w1 AS mx, " +
+                    "  min(x) OVER w2 AS mnu, " +
+                    "  max(x) OVER w2 AS mxu " +
+                    "FROM base " +
+                    "WINDOW " +
+                    "  w1 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW), " +
+                    "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '1' HOUR PRECEDING)");
+
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Rows are ordered by ts across both partitions: an O3 commit
+                // would invalidate the head checkpoint and route the refresh
+                // through a full head-miss replay, making the restore asserts
+                // below vacuous.
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 5), " +
+                        "('2026-10-01T00:00:00.000000Z', 2, 10), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 1), " +
+                        "('2026-10-01T01:00:00.000000Z', 2, 2), " +
+                        "('2026-10-01T02:00:00.000000Z', 1, 9), " +
+                        "('2026-10-01T02:00:00.000000Z', 2, 8)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp written before restart",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
+
+            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Pure-restore tick (no new commits) fires tryRestoreFromHead.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "head .cp restore must rehydrate the MaxMin RANGE state, not fall back to a head-miss replay",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            // sym=1 new row (4): w1 frame [01:00..03:00] = {1, 9, 4} -> 1/9,
+            // both from the restored deque. sym=2 new row (5): w1 frame
+            // {2, 8, 5} -> 2/8 - the max is 8 only if the restored deque
+            // expired the pre-restart head (10) as the frame slid past 00:00.
+            // w2 cells at 03:00 cover the unbounded-lower scalar shape: all
+            // three pre-restart rows, none of them the new row.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-10-01T03:00:00.000000Z', 1, 4), " +
+                    "('2026-10-01T03:00:00.000000Z', 2, 5)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, mn, mx, mnu, mxu FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns("ts\tsym\tmn\tmx\tmnu\tmxu\n" +
+                    "2026-10-01T00:00:00.000000Z\t1\t5" + suffix + "\t5" + suffix + "\tnull\tnull\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t1" + suffix + "\t5" + suffix + "\t5" + suffix + "\t5" + suffix + "\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t1" + suffix + "\t9" + suffix + "\t1" + suffix + "\t5" + suffix + "\n" +
+                    "2026-10-01T03:00:00.000000Z\t1\t1" + suffix + "\t9" + suffix + "\t1" + suffix + "\t9" + suffix + "\n" +
+                    "2026-10-01T00:00:00.000000Z\t2\t10" + suffix + "\t10" + suffix + "\tnull\tnull\n" +
+                    "2026-10-01T01:00:00.000000Z\t2\t2" + suffix + "\t10" + suffix + "\t10" + suffix + "\t10" + suffix + "\n" +
+                    "2026-10-01T02:00:00.000000Z\t2\t2" + suffix + "\t10" + suffix + "\t2" + suffix + "\t10" + suffix + "\n" +
+                    "2026-10-01T03:00:00.000000Z\t2\t2" + suffix + "\t8" + suffix + "\t2" + suffix + "\t10" + suffix + "\n");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -876,7 +1057,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -925,7 +1106,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -977,7 +1158,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1029,7 +1210,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1076,7 +1257,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -1098,6 +1279,87 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     // window and a plain PARTITION BY ... ORDER BY ts unbounded-preceding window
     // resolve to the identical migrated function class, so the recompute is a
     // bit-exact oracle - no hand-computed Welford/EMA expectations needed.
+    // Drives nth_value(v, 2) over ROWS BETWEEN UNBOUNDED PRECEDING AND
+    // 1 PRECEDING (the O(1) [count, lockedValue] shape) across a simulated
+    // restart: the head .cp must round-trip the position bookkeeping so the
+    // first post-restart row still reports the value locked by the 2nd
+    // pre-restart row. The restore-succeeded + seqTxn asserts prove the
+    // asserted cells flow from the restored state, not from a head-miss replay
+    // recompute. Uses an INT partition key to side-step the per-WAL-segment
+    // SYMBOL index collision.
+    private void assertNthValueRestoresLockedValueAcrossRestart(
+            String valueType,
+            String v0,
+            String v1,
+            String v2,
+            String v3,
+            String lockedText,
+            String nullText
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, nth_value(v, 2) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
+
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, v) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, " + v0 + "), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, " + v1 + "), " +
+                        "('2026-10-01T02:00:00.000000Z', 1, " + v2 + ")");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp written before restart",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
+
+            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Pure-restore tick (no new commits) fires tryRestoreFromHead.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "head .cp restore must rehydrate the nth_value state, not fall back to a head-miss replay",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            // The new row's frame holds the three pre-restart rows, so its cell
+            // is the locked 2nd value; a count/lockedValue pair lost in the
+            // restore would restart the position bookkeeping and leave null.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, v) VALUES ('2026-10-01T03:00:00.000000Z', 1, " + v3 + ")");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, a FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ta\n" +
+                    "2026-10-01T00:00:00.000000Z\t1\t" + nullText + "\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t" + nullText + "\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t" + lockedText + "\n" +
+                    "2026-10-01T03:00:00.000000Z\t1\t" + lockedText + "\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
     private void assertStatefulAnchorRoundTrip(
             String fnExpr,
             String oracleWindow,
@@ -1140,7 +1402,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -7610,7 +7872,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -7673,7 +7935,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     final long len = s1.getAppendOffset();
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
@@ -8917,6 +9179,36 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "2026-08-01T01:00:00.000000Z\tb\t6\n" +
                         "2026-08-01T02:00:00.000000Z\tb\t12\n"
         );
+    }
+
+    @Test
+    public void testLastValueDecimal8RestoresRingAcrossRestart() throws Exception {
+        assertLastValueDecimalRestoresRingAcrossRestart("DECIMAL(2, 0)", 0);
+    }
+
+    @Test
+    public void testLastValueDecimal16RestoresRingAcrossRestart() throws Exception {
+        assertLastValueDecimalRestoresRingAcrossRestart("DECIMAL(4, 1)", 1);
+    }
+
+    @Test
+    public void testLastValueDecimal32RestoresRingAcrossRestart() throws Exception {
+        assertLastValueDecimalRestoresRingAcrossRestart("DECIMAL(9, 3)", 3);
+    }
+
+    @Test
+    public void testLastValueDecimal64RestoresRingAcrossRestart() throws Exception {
+        assertLastValueDecimalRestoresRingAcrossRestart("DECIMAL(18, 2)", 2);
+    }
+
+    @Test
+    public void testLastValueDecimal128RestoresRingAcrossRestart() throws Exception {
+        assertLastValueDecimalRestoresRingAcrossRestart("DECIMAL(38, 6)", 6);
+    }
+
+    @Test
+    public void testLastValueDecimal256RestoresRingAcrossRestart() throws Exception {
+        assertLastValueDecimalRestoresRingAcrossRestart("DECIMAL(60, 0)", 0);
     }
 
     @Test
@@ -11750,6 +12042,154 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKsumOverPartitionBoundedRowsSnapshotRoundTrip() throws Exception {
+        // ksum over a bounded ROWS frame routes to
+        // KSumOverPartitionRowsFrameFunction, which keeps [sum, compensation,
+        // count, loIdx] plus a bufferSize-slot value ring per partition -
+        // unlike testKsumOverUnboundedPartitionRowsSnapshotRoundTrip, whose
+        // unbounded class has no ring. Four rows per partition wrap the ring
+        // before the byte-exact write -> toTop -> restore -> write round-trip.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, ksum(x) OVER w AS k FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS 2 PRECEDING)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a', 4.0), " +
+                        "('2026-08-01T03:00:00.000000Z', 'a', 8.0), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b', 10.0), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b', 20.0), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b', 40.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertQuery("SELECT ts, sym, k FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns("ts\tsym\tk\n" +
+                        "2026-08-01T00:00:00.000000Z\ta\t1.0\n" +
+                        "2026-08-01T01:00:00.000000Z\ta\t3.0\n" +
+                        "2026-08-01T02:00:00.000000Z\ta\t7.0\n" +
+                        "2026-08-01T03:00:00.000000Z\ta\t14.0\n" +
+                        "2026-08-01T00:00:00.000000Z\tb\t10.0\n" +
+                        "2026-08-01T01:00:00.000000Z\tb\t30.0\n" +
+                        "2026-08-01T02:00:00.000000Z\tb\t70.0\n");
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(fn.supportsSnapshot());
+                Map fnMap = fn.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    LiveViewFunctionSnapshot.write(s1, fn);
+                    final long len = s1.getAppendOffset();
+                    fn.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+                    LiveViewFunctionSnapshot.write(s2, fn);
+                    Assert.assertEquals(len, s2.getAppendOffset());
+                    for (long i = 0; i < len; i++) {
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                    }
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testKsumBoundedRowsRestoresRingAcrossRestart() throws Exception {
+        // KSumOverPartitionRowsFrameFunction (ROWS 2 PRECEDING) must write its
+        // [sum, compensation, count, loIdx] slots plus the value ring into the
+        // head .cp and rehydrate them on restart, so the first post-restart row
+        // still sums the two pre-restart ring values. Uses an INT partition key
+        // to side-step the per-WAL-segment SYMBOL index collision.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, ksum(x) OVER w AS k FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS 2 PRECEDING)");
+
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Rows are ordered by ts across both partitions: an O3 commit
+                // would invalidate the head checkpoint and route the refresh
+                // through a full head-miss replay, making the restore asserts
+                // below vacuous.
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 1.0), " +
+                        "('2026-10-01T00:00:00.000000Z', 2, 10.0), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 2.0), " +
+                        "('2026-10-01T01:00:00.000000Z', 2, 20.0), " +
+                        "('2026-10-01T02:00:00.000000Z', 1, 4.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp written before restart",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
+
+            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Pure-restore tick (no new commits) fires tryRestoreFromHead. The
+            // success + seqTxn asserts prove the values below flow from the
+            // restored ring, not from a head-miss replay recompute.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "head .cp restore must rehydrate the ksum ring, not fall back to a head-miss replay",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            // sym=1 frame for the new row is {2, 4, 8} -> 14; a ring lost in the
+            // restore would leave 8. sym=2 frame is {10, 20, 40} -> 70. The new
+            // rows are in ts order at/above the head's max ts, so the commit is
+            // an in-order append processed over the restored state.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-10-01T02:30:00.000000Z', 2, 40.0), " +
+                    "('2026-10-01T03:00:00.000000Z', 1, 8.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, k FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns("ts\tsym\tk\n" +
+                    "2026-10-01T00:00:00.000000Z\t1\t1.0\n" +
+                    "2026-10-01T01:00:00.000000Z\t1\t3.0\n" +
+                    "2026-10-01T02:00:00.000000Z\t1\t7.0\n" +
+                    "2026-10-01T03:00:00.000000Z\t1\t14.0\n" +
+                    "2026-10-01T00:00:00.000000Z\t2\t10.0\n" +
+                    "2026-10-01T01:00:00.000000Z\t2\t30.0\n" +
+                    "2026-10-01T02:30:00.000000Z\t2\t70.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testVarSampOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
         // var_samp reuses the univariate Welford accumulator migrated for live
         // views; multi-day data also exercises the anchor reset.
@@ -12547,7 +12987,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(x, 2) is 50.0, 'b' is 11.0. Sum 61.0.
@@ -12597,7 +13037,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(x, 2) is 50, 'b' is 11. Sum 61.
@@ -13031,6 +13471,31 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueDoubleRestoresLockedValueAcrossRestart() throws Exception {
+        assertNthValueRestoresLockedValueAcrossRestart("DOUBLE", "5.0", "50.0", "20.0", "13.0", "50.0", "null");
+    }
+
+    @Test
+    public void testNthValueLongRestoresLockedValueAcrossRestart() throws Exception {
+        assertNthValueRestoresLockedValueAcrossRestart("LONG", "5", "50", "20", "13", "50", "null");
+    }
+
+    @Test
+    public void testNthValueDecimal64RestoresLockedValueAcrossRestart() throws Exception {
+        assertNthValueRestoresLockedValueAcrossRestart("DECIMAL(18, 2)", "5.00m", "50.00m", "20.00m", "13.00m", "50.00", "");
+    }
+
+    @Test
+    public void testNthValueDecimal128RestoresLockedValueAcrossRestart() throws Exception {
+        assertNthValueRestoresLockedValueAcrossRestart("DECIMAL(38, 6)", "5.000000m", "50.000000m", "20.000000m", "13.000000m", "50.000000", "");
+    }
+
+    @Test
+    public void testNthValueDecimal256RestoresLockedValueAcrossRestart() throws Exception {
+        assertNthValueRestoresLockedValueAcrossRestart("DECIMAL(60, 0)", "5m", "50m", "20m", "13m", "50", "");
+    }
+
+    @Test
     public void testNthValueTimestampOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
         // nth_value() Step 1 — TIMESTAMP variant. State per partition is
         // [value: TIMESTAMP, count: LONG, tombstone: BYTE]. The value column
@@ -13064,7 +13529,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(ts, 2) is 2026-08-01T01:00:00 (3_600_000_000us),
@@ -13118,7 +13583,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is the value at count == n == 2: 'a' -> 50.0, 'b' -> 11.0. Sum 61.0.
@@ -13170,7 +13635,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is the value at count == n == 2: 'a' -> 50, 'b' -> 11. Sum 61.
@@ -13222,7 +13687,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is ts at count == 2 = '2026-08-01T01:00:00' for both partitions.
@@ -13276,7 +13741,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // After 3 rows per partition, both rings hold (val_0, val_1, val_2) with count=3.
@@ -13331,7 +13796,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -13383,7 +13848,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -13436,7 +13901,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // All 3 rows per partition land inside the 5-hour window, so
@@ -13492,7 +13957,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -13546,7 +14011,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, sink.getAppendOffset(), nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -14396,7 +14861,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // Clear the function's map and restore from the captured bytes.
                 rankFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, rankFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(buf, 0L, rankFn, rankFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(buf, 0L, snapshotBytes, rankFn, rankFn.snapshotFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
@@ -14445,7 +14910,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
                 lagFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, lagFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(buf, 0L, lagFn, lagFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(buf, 0L, snapshotBytes, lagFn, lagFn.snapshotFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
@@ -14590,6 +15055,209 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }
             Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testWelfordFamilyRestoresRunningStateAcrossRestart() throws Exception {
+        // stddev_samp/var_samp share the univariate Welford accumulator
+        // [mean, m2, count]; covar_samp/corr share the bivariate one. The
+        // head .cp must round-trip every slot bit-exactly: a symmetric
+        // snapshot/restore defect (e.g. count truncated on both sides)
+        // survives a byte round-trip yet skews the first post-restart cell, so
+        // the oracle below recomputes each cell from scratch over the base.
+        // All rows sit in one day, so the anchor never fires and the oracle is
+        // a plain PARTITION BY window. Uses an INT partition key to side-step
+        // the per-WAL-segment SYMBOL index collision.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  stddev_samp(x) OVER w AS sd, " +
+                    "  var_samp(x) OVER w AS va, " +
+                    "  covar_samp(x, y) OVER w AS cv, " +
+                    "  corr(x, y) OVER w AS cr " +
+                    "FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Rows are ordered by ts across both partitions: an O3 commit
+                // would invalidate the head checkpoint and route the refresh
+                // through a full head-miss replay, making the restore asserts
+                // below vacuous.
+                execute("INSERT INTO base (ts, sym, x, y) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 10.0, 100.0), " +
+                        "('2026-10-01T00:00:00.000000Z', 2, 5.0, 50.0), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 20.0, 250.0), " +
+                        "('2026-10-01T01:00:00.000000Z', 2, 15.0, 130.0), " +
+                        "('2026-10-01T02:00:00.000000Z', 1, 30.0, 400.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp written before restart",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
+
+            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Pure-restore tick (no new commits) fires tryRestoreFromHead. The
+            // success + seqTxn asserts prove the cells below flow from the
+            // restored accumulators, not from a head-miss replay recompute.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "head .cp restore must rehydrate the Welford accumulators, not fall back to a head-miss replay",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            // The new rows are in ts order above the head's max ts, so the
+            // commit is an in-order append processed over the restored state.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, x, y) VALUES " +
+                    "('2026-10-01T02:30:00.000000Z', 2, 25.0, 300.0), " +
+                    "('2026-10-01T03:00:00.000000Z', 1, 40.0, 470.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // The incremental cells over the restored state must equal a
+            // from-scratch recompute of the same windows over the base. Both
+            // sides run the same Welford sequence in ts order, so a correct
+            // restore is bit-identical.
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(SELECT ts, sym, " +
+                            "stddev_samp(x) OVER (PARTITION BY sym ORDER BY ts) AS sd, " +
+                            "var_samp(x) OVER (PARTITION BY sym ORDER BY ts) AS va, " +
+                            "covar_samp(x, y) OVER (PARTITION BY sym ORDER BY ts) AS cv, " +
+                            "corr(x, y) OVER (PARTITION BY sym ORDER BY ts) AS cr " +
+                            "FROM base) ORDER BY 2, 1",
+                    "(SELECT ts, sym, sd, va, cv, cr FROM lv) ORDER BY 2, 1",
+                    LOG,
+                    true
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testEmaVwemaRestoresRunningStateAcrossRestart() throws Exception {
+        // EmaOverPartitionFunction / EmaTimeWeightedOverPartitionFunction keep
+        // [ema, prevTimestamp, hasValue]; the vwema variants keep the
+        // [numerator, denominator] pair plus [prevTimestamp, hasValue] - the
+        // exact symmetric-drop shape a byte round-trip cannot catch. The
+        // head .cp must round-trip all of it so the first post-restart cell
+        // continues the decay from the pre-restart state; the oracle below
+        // recomputes each cell from scratch over the base. All rows sit in one
+        // day, so the anchor never fires and the oracle is a plain PARTITION BY
+        // window. Uses an INT partition key to side-step the per-WAL-segment
+        // SYMBOL index collision.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE, vol DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  avg(x, 'period', 5) OVER w AS ep, " +
+                    "  avg(x, 'minute', 5) OVER w AS et, " +
+                    "  avg(x, 'period', 5, vol) OVER w AS vp, " +
+                    "  avg(x, 'minute', 5, vol) OVER w AS vt " +
+                    "FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Rows are ordered by ts across both partitions: an O3 commit
+                // would invalidate the head checkpoint and route the refresh
+                // through a full head-miss replay, making the restore asserts
+                // below vacuous.
+                execute("INSERT INTO base (ts, sym, x, vol) VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 1, 10.0, 100.0), " +
+                        "('2026-10-01T00:00:00.000000Z', 2, 5.0, 300.0), " +
+                        "('2026-10-01T01:00:00.000000Z', 1, 20.0, 200.0), " +
+                        "('2026-10-01T01:00:00.000000Z', 2, 15.0, 120.0), " +
+                        "('2026-10-01T02:00:00.000000Z', 1, 30.0, 150.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp written before restart",
+                        Numbers.LONG_NULL,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
+
+            // Simulate restart: drop the in-memory registry, rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            // Pure-restore tick (no new commits) fires tryRestoreFromHead. The
+            // success + seqTxn asserts prove the cells below flow from the
+            // restored state, not from a head-miss replay recompute.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertTrue(
+                    "head .cp restore must rehydrate the ema/vwema state, not fall back to a head-miss replay",
+                    reloaded.isCheckpointRestoreSucceeded()
+            );
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            // The new rows are in ts order above the head's max ts, so the
+            // commit is an in-order append processed over the restored state.
+            setCurrentMicros(200_000L);
+            execute("INSERT INTO base (ts, sym, x, vol) VALUES " +
+                    "('2026-10-01T02:30:00.000000Z', 2, 25.0, 180.0), " +
+                    "('2026-10-01T03:00:00.000000Z', 1, 40.0, 250.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // The incremental cells over the restored state must equal a
+            // from-scratch recompute of the same windows over the base. Both
+            // sides apply the same decay sequence in ts order, so a correct
+            // restore is bit-identical.
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(SELECT ts, sym, " +
+                            "avg(x, 'period', 5) OVER (PARTITION BY sym ORDER BY ts) AS ep, " +
+                            "avg(x, 'minute', 5) OVER (PARTITION BY sym ORDER BY ts) AS et, " +
+                            "avg(x, 'period', 5, vol) OVER (PARTITION BY sym ORDER BY ts) AS vp, " +
+                            "avg(x, 'minute', 5, vol) OVER (PARTITION BY sym ORDER BY ts) AS vt " +
+                            "FROM base) ORDER BY 2, 1",
+                    "(SELECT ts, sym, ep, et, vp, vt FROM lv) ORDER BY 2, 1",
+                    LOG,
+                    true
+            );
 
             execute("DROP LIVE VIEW lv");
         });
@@ -14880,6 +15548,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testMaxMinDoubleBoundedRangeRestoresDequeAcrossRestart() throws Exception {
+        assertMaxMinBoundedRangeRestoresDequeAcrossRestart("DOUBLE", ".0");
+    }
+
+    @Test
+    public void testMaxMinLongBoundedRangeRestoresDequeAcrossRestart() throws Exception {
+        assertMaxMinBoundedRangeRestoresDequeAcrossRestart("LONG", "");
     }
 
     @Test

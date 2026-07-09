@@ -206,6 +206,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 ignoreNulls,
                 nullsDescPos
         );
+        // Re-stamp the live-view flag on every configuration: the code generator
+        // clears the window context after each window function it compiles (and
+        // clear() resets the flag), while setLiveViewCompile scopes the flag to
+        // the whole statement - so a multi-window-function live view must have
+        // the flag re-applied per function, not rely on the first stamp surviving.
+        windowContext.setLiveView(liveViewCompile);
     }
 
     @Override

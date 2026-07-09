@@ -65,4 +65,26 @@ public class InformationSchemaTablesFunctionFactoryTest extends AbstractCairoTes
                             """);
         });
     }
+
+    @Test
+    public void testTableTypesForViewKinds() throws Exception {
+        // PG tooling and BI clients key on table_type / is_insertable_into: a
+        // materialized view must report "MATERIALIZED VIEW", a view "VIEW", a
+        // live view "LIVE VIEW", and none of the three accept INSERTs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mat_v AS (SELECT ts, max(v) FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("CREATE VIEW plain_v AS (SELECT ts, max(v) FROM base SAMPLE BY 1h)");
+            execute("CREATE LIVE VIEW live_v FLUSH EVERY 1s AS SELECT ts, v, row_number() OVER () AS rn FROM base");
+
+            assertQuery("SELECT table_name, table_type, is_insertable_into FROM information_schema.tables() ORDER BY table_name")
+                    .returns("""
+                            table_name\ttable_type\tis_insertable_into
+                            base\tBASE TABLE\ttrue
+                            live_v\tLIVE VIEW\tfalse
+                            mat_v\tMATERIALIZED VIEW\tfalse
+                            plain_v\tVIEW\tfalse
+                            """);
+        });
+    }
 }

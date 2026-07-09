@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.table.PageFrameRecordCursor;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -396,10 +397,17 @@ public class LiveViewRecordCursor implements RecordCursor {
             // size() = disk.size() + (rowCount - leadStart) = disk.size() +
             // leadRowCount. When the slot holds no lead this collapses to
             // disk.size(). Returning -1 (unknown) would defeat LIMIT pushdown.
+            final long diskSize = diskCursor.size();
+            if (diskSize < 0) {
+                // Never negative for the plain entity scan the fence admits, but
+                // propagate "unknown" rather than fold -1 into the seam sum
+                // (skipRows guards the same way).
+                return -1;
+            }
             // leadStart <= rowCount under a passing fence; assert to fail safe.
             assert leadStart <= pinnedSlot.rowCount()
                     : "leadStart " + leadStart + " exceeds slot rowCount " + pinnedSlot.rowCount();
-            return diskCursor.size() + (pinnedSlot.rowCount() - leadStart);
+            return diskSize + (pinnedSlot.rowCount() - leadStart);
         }
         // Disk-only: the fence did not engage, so the read serves the applied
         // prefix straight from disk.
@@ -475,15 +483,23 @@ public class LiveViewRecordCursor implements RecordCursor {
     }
 
     // Returns the disk cursor's LV-table seqTxn, or LONG_NULL when the cursor is
-    // not a plain FULL table-reader scan we can fence cheaply. An interval filter
-    // (e.g. a WHERE on the designated timestamp, pushed into the scan) makes the
-    // disk side return only a sub-range, so disk[ts < seamTs] would be missing
-    // rows while the unfiltered slot over-returns - seam routing must not engage.
-    // A non-page-frame plan (LATEST BY, complex factory) returns LONG_NULL too.
+    // not a plain FULL table-reader scan we can fence cheaply. Seam routing
+    // assumes the disk side yields every LV-table row below the seam in ascending
+    // ts order, so any scan shape that under-returns or reorders rows must
+    // disengage the fence (fail safe to disk-only): an interval filter (e.g. a
+    // WHERE on the designated timestamp, pushed into the scan) makes disk[ts <
+    // seamTs] miss rows while the unfiltered slot over-returns; a non-entity row
+    // cursor (an indexed or row-filtered scan, should a future change push either
+    // into the LV base) or an active parquet pushdown filter under-returns the
+    // same way; a backward scan breaks the ascending assumption. A non-page-frame
+    // plan (LATEST BY, complex factory) returns LONG_NULL too.
     private static long diskReaderSeqTxn(RecordCursor diskCursor) {
-        if (diskCursor instanceof PageFrameRecordCursor pfrc
+        if (diskCursor instanceof PageFrameRecordCursorImpl pfrc
+                && pfrc.getRowCursorFactory().isEntity()
+                && pfrc.getRowCursorFactory().isForwardScan()
                 && pfrc.getPageFrameCursor() instanceof TablePageFrameCursor tpfc
-                && !tpfc.hasIntervalFilter()) {
+                && !tpfc.hasIntervalFilter()
+                && !tpfc.hasActivePushdownFilter()) {
             TableReader reader = tpfc.getTableReader();
             if (reader != null) {
                 return reader.getSeqTxn();

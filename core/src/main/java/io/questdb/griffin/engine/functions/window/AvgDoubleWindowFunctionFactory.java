@@ -888,13 +888,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        // (capacity, startOffset) pairs marking free space within memory. Each
-        // entry is a ring slab freed from an evicted partition. computeNext's
-        // isNew branch pops the last pair before falling back to
-        // memory.appendAddressFor. The capacity slot mirrors the bounded-RANGE
-        // freeList convention; bounded ROWS slabs are always bufferSize doubles
-        // long.
-        private final LongList freeList = new LongList();
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
         // Deep copy of the partition-by key column types. The factory's
@@ -959,7 +952,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void close() {
             super.close();
             memory.close();
-            freeList.clear();
         }
 
         @Override
@@ -987,16 +979,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     value.putByte(tombstoneValueIndex, (byte) 0);
                 }
                 loIdx = 0;
-                final int freeN = freeList.size();
-                if (freeN > 0) {
-                    // Reuse a slab reclaimed from a tombstoned partition. The
-                    // capacity slot is always bufferSize here, so only the
-                    // startOffset matters.
-                    startOffset = freeList.getQuick(freeN - 1);
-                    freeList.setPos(freeN - 2);
-                } else {
-                    startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
-                }
+                startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
                     sum = d;
                     count = 1;
@@ -1103,7 +1086,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void onSnapshotRestoreBegin() {
             super.onSnapshotRestoreBegin();
             memory.truncate();
-            freeList.clear();
         }
 
         @Override
@@ -1115,7 +1097,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void reopen() {
             super.reopen();
-            freeList.clear();
             tombstoneCount = 0;
             // memory will allocate on first use
         }
@@ -1124,7 +1105,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void reset() {
             super.reset();
             memory.close();
-            freeList.clear();
             tombstoneCount = 0;
         }
 
@@ -1233,7 +1213,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void toTop() {
             super.toTop();
             memory.truncate();
-            freeList.clear();
             tombstoneCount = 0;
         }
     }
@@ -1849,7 +1828,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override

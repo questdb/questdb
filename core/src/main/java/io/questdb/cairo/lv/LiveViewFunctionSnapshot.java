@@ -71,13 +71,24 @@ public final class LiveViewFunctionSnapshot {
      * with errno 0 (structural corruption that passed CRC) so the caller unlinks the
      * head checkpoint and head-miss-replays rather than invalidating the view -
      * distinct from a version-too-old break, which invalidates.
+     * <p>
+     * After the last partition the consumed byte count must reconcile with
+     * {@code payloadLength} - the restore-side mirror of the writer's
+     * emitted-vs-live-count check. A function-level offset drift (a
+     * restorePartitionState that reads more or fewer bytes than its writer
+     * emitted) would otherwise silently decode the next partition - or, since
+     * the scratch buffer is reused across blocks, a previous block's stale
+     * bytes - from the wrong offset.
      *
      * @param source        positioned at the payload start (just past the prelude)
      * @param offset        byte offset within {@code source} of the payload start
+     * @param payloadLength exact byte length of the payload; restore must consume
+     *                      all of it
      * @param f             the running function the stored block resolved to
      * @param formatVersion the per-function snapshot version recorded in the prelude
      */
-    public static void restore(MemoryR source, long offset, WindowFunction f, int formatVersion) {
+    public static void restore(MemoryR source, long offset, long payloadLength, WindowFunction f, int formatVersion) {
+        final long payloadStart = offset;
         final ColumnTypes keyTypes = f.getSnapshotKeyColumnTypes();
         final int expectedKeyColumnCount = keyTypes == null ? 0 : keyTypes.getColumnCount();
         final int storedKeyColumnCount = source.getInt(offset);
@@ -113,14 +124,23 @@ public final class LiveViewFunctionSnapshot {
         final Map map = f.getPartitionMap();
         if (map == null) {
             // Scalar no-map function: a single keyless partition.
-            f.restorePartitionState(source, offset, null, formatVersion);
-            return;
+            offset = f.restorePartitionState(source, offset, null, formatVersion);
+        } else {
+            for (long p = 0; p < partitionCount; p++) {
+                final MapKey key = map.withKey();
+                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyTypes);
+                final MapValue value = key.createValue();
+                offset = f.restorePartitionState(source, offset, value, formatVersion);
+            }
         }
-        for (long p = 0; p < partitionCount; p++) {
-            final MapKey key = map.withKey();
-            offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyTypes);
-            final MapValue value = key.createValue();
-            offset = f.restorePartitionState(source, offset, value, formatVersion);
+        final long consumed = offset - payloadStart;
+        if (consumed != payloadLength) {
+            throw CairoException.critical(0)
+                    .put("live view function snapshot payload length mismatch [expected=")
+                    .put(payloadLength)
+                    .put(", consumed=")
+                    .put(consumed)
+                    .put(']');
         }
     }
 

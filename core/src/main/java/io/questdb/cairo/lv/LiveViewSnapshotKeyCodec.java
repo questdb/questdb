@@ -93,6 +93,18 @@ public final class LiveViewSnapshotKeyCodec {
         return total;
     }
 
+    /**
+     * Like {@link #isAllTypesSupported(ColumnTypes)} but without the STRING
+     * exception. {@link MapValue} exposes no STRING slot setter, so value-slot
+     * ranges restored via {@link #readValueSlots} must be fixed-width only;
+     * callers that snapshot value slots (e.g. the rank function's
+     * chain-prefix) must gate {@code supportsSnapshot()} on this method, not
+     * on {@link #isAllTypesSupported(ColumnTypes)}.
+     */
+    public static boolean isAllTypesFixedWidth(ColumnTypes types) {
+        return byteSizeOf(types) >= 0;
+    }
+
     public static boolean isAllTypesSupported(ColumnTypes keyTypes) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             if (!isSupportedKeyType(keyTypes.getColumnType(i))) {
@@ -183,6 +195,12 @@ public final class LiveViewSnapshotKeyCodec {
      * accessors. Used to restore a window function's value-side prefix (e.g.
      * the rank function's chain-prefix bytes that
      * {@link io.questdb.griffin.engine.RecordComparator} reads back).
+     * <p>
+     * Unlike {@link #readKey}, STRING is not supported here: {@link MapValue}
+     * has no STRING slot setter. Callers must reject STRING slot types up
+     * front via {@link #isAllTypesFixedWidth(ColumnTypes)} — otherwise
+     * {@link #writeKey} would happily serialise the STRING slot and this
+     * method would fail the restore.
      */
     public static long readValueSlots(MapValue dst, int slotStartIndex, MemoryR source, long offset, ColumnTypes slotTypes) {
         for (int i = 0, n = slotTypes.getColumnCount(); i < n; i++) {

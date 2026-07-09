@@ -500,9 +500,7 @@ public class LiveViewInstance implements QuietCloseable {
      * an out-of-bounds native read on a narrowing or fixed&lt;-&gt;var-size change.
      * <p>
      * An empty dependency set returns {@code false} (defensive: we don't know what the
-     * view reads, so we leave invalidation to the broader path). A version-1 definition
-     * carries no persisted types, so its type list is empty and the check degrades to
-     * name-only for that view.
+     * view reads, so we leave invalidation to the broader path).
      */
     public boolean dependsOnMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
         return findFirstMissingOrRetypedColumn(baseMetadata) != null;
@@ -519,8 +517,7 @@ public class LiveViewInstance implements QuietCloseable {
      * Returns the interned dependency name straight from the definition, so it allocates
      * nothing on the schema-change path. An empty dependency set returns {@code null}
      * (defensive: with no known deps we leave invalidation to the broader
-     * base-DROP/RENAME path). A version-1 definition carries no persisted types, so its
-     * type list is empty and the check degrades to name-only for that view.
+     * base-DROP/RENAME path).
      */
     public @Nullable String findFirstMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
         ObjList<String> deps = definition.getDependencyColumnNames();
@@ -531,6 +528,8 @@ public class LiveViewInstance implements QuietCloseable {
         if (deps.size() == 0) {
             return null;
         }
+        // The definition writer and reader keep the types list positionally
+        // parallel to the names list (same count), so the two index together.
         IntList depTypes = definition.getDependencyColumnTypes();
         for (int i = 0, n = deps.size(); i < n; i++) {
             final String depName = deps.getQuick(i);
@@ -538,8 +537,7 @@ public class LiveViewInstance implements QuietCloseable {
             if (columnIndex < 0) {
                 return depName;
             }
-            // depTypes is empty for a version-1 definition; skip the type check then.
-            if (i < depTypes.size() && baseMetadata.getColumnType(columnIndex) != depTypes.getQuick(i)) {
+            if (baseMetadata.getColumnType(columnIndex) != depTypes.getQuick(i)) {
                 return depName;
             }
         }

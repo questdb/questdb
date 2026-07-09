@@ -14128,7 +14128,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         LAST_NOT_NULL_VALUE_DECIMAL128_PARTITION_ROWS_TYPES_LV.add(ColumnType.DECIMAL128); // slot 0: lastValue
         LAST_NOT_NULL_VALUE_DECIMAL128_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 1: loIdx
         LAST_NOT_NULL_VALUE_DECIMAL128_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 2: startOffset
-        LAST_NOT_NULL_VALUE_DECIMAL128_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 3: idle
+        LAST_NOT_NULL_VALUE_DECIMAL128_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 3: unused (mirrors the non-LV layout above)
         LAST_NOT_NULL_VALUE_DECIMAL128_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE);       // slot 4: tombstone (anchor-driven compaction)
 
         LAST_VALUE_DECIMAL256_TYPES = new ArrayColumnTypes();
@@ -14144,7 +14144,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         LAST_NOT_NULL_VALUE_DECIMAL256_PARTITION_ROWS_TYPES_LV.add(ColumnType.DECIMAL256); // slot 0: lastValue
         LAST_NOT_NULL_VALUE_DECIMAL256_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 1: loIdx
         LAST_NOT_NULL_VALUE_DECIMAL256_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 2: startOffset
-        LAST_NOT_NULL_VALUE_DECIMAL256_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 3: idle
+        LAST_NOT_NULL_VALUE_DECIMAL256_PARTITION_ROWS_TYPES_LV.add(ColumnType.LONG);       // slot 3: unused (mirrors the non-LV layout above)
         LAST_NOT_NULL_VALUE_DECIMAL256_PARTITION_ROWS_TYPES_LV.add(ColumnType.BYTE);       // slot 4: tombstone (anchor-driven compaction)
     }
 }

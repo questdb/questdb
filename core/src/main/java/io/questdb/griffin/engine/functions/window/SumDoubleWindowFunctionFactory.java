@@ -679,7 +679,9 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public boolean supportsSnapshot() {
-            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
