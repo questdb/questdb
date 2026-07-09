@@ -2463,19 +2463,44 @@ public class CairoEngine implements Closeable, WriterSource {
             // the snapshot reflects the pre-invalidation state and the agent's
             // _lv.s copy is not raced by this rewrite.
             instance.waitForUnfrozen();
-            instance.markInvalid(reason, invalidationTimestampUs);
+            final LiveViewStateReader reader = instance.getStateReader();
+            // Persist _lv.s BEFORE flipping the in-memory invalid bit. WalPurgeJob releases this
+            // view's base-WAL purge floor as soon as it observes the in-memory bit (an unsynchronized
+            // read), so writing the durable state first closes the window where a concurrent purge
+            // could release the floor while _lv.s still records the view as valid, then a crash leaves
+            // it that way. Mirrors the persist-before-publish rule in advanceLiveViewConsumedSeqTxn.
+            //
+            // On persist failure the view still flips invalid in-memory: invalidation is a terminal
+            // circuit-breaker that must stop the refresh worker even when _lv.s is unwritable (a broken
+            // disk is exactly what exhausts the flush-retry budget driving this call). A view
+            // invalidated in-memory only re-derives the same invalid state on restart - it loads valid,
+            // resumes, and hits the same failure - so the terminal outcome is unchanged.
             try (
                     BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
                     Path path = new Path()
             ) {
                 path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                 blockFileWriter.of(path.$());
-                LiveViewState.append(instance.getStateReader(), blockFileWriter);
+                LiveViewState.append(
+                        true,
+                        reason,
+                        invalidationTimestampUs,
+                        reader.getSubscribeFromSeqTxn(),
+                        reader.getLastProcessedSeqTxn(),
+                        reader.getAppliedWatermark(),
+                        reader.getLvConsumedSeqTxn(),
+                        reader.getBackfillState(),
+                        reader.getBackfillTargetSeqTxn(),
+                        blockFileWriter
+                );
             } catch (Throwable t) {
                 LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
                         .$(", reason=").$safe(reason)
                         .$(", error=").$(t).I$();
             }
+            // Publish the in-memory flip after the persist attempt: on the happy path the durable
+            // state already leads it; if the persist failed the terminal circuit-breaker still fires.
+            instance.markInvalid(reason, invalidationTimestampUs);
         }
         // Free refresh-worker-internal runtime state now that the view is
         // INVALID. Best-effort: if a refresh cycle is in flight the latch CAS
@@ -2547,16 +2572,34 @@ public class CairoEngine implements Closeable, WriterSource {
                     // state and the agent's _lv.s copy is not raced by this
                     // rewrite.
                     instance.waitForUnfrozen();
-                    instance.markInvalid(viewReason, invalidationTimestampUs);
+                    final LiveViewStateReader reader = instance.getStateReader();
+                    // Persist _lv.s before flipping the in-memory invalid bit, matching
+                    // invalidateLiveView: WalPurgeJob releases the floor on the in-memory bit, so
+                    // writing the durable state first keeps a concurrent purge from releasing the
+                    // floor while _lv.s still records the view as valid. On persist failure the view
+                    // still flips invalid in-memory (best-effort, terminal) and re-derives the same
+                    // state on restart.
                     path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                     try {
                         blockFileWriter.of(path.$());
-                        LiveViewState.append(instance.getStateReader(), blockFileWriter);
+                        LiveViewState.append(
+                                true,
+                                viewReason,
+                                invalidationTimestampUs,
+                                reader.getSubscribeFromSeqTxn(),
+                                reader.getLastProcessedSeqTxn(),
+                                reader.getAppliedWatermark(),
+                                reader.getLvConsumedSeqTxn(),
+                                reader.getBackfillState(),
+                                reader.getBackfillTargetSeqTxn(),
+                                blockFileWriter
+                        );
                     } catch (Throwable t) {
                         LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
                                 .$(", reason=").$safe(viewReason)
                                 .$(", error=").$(t).I$();
                     }
+                    instance.markInvalid(viewReason, invalidationTimestampUs);
                 }
                 // Free refresh-worker-internal runtime state now that the view
                 // is INVALID. Best-effort: a refresh cycle in flight defers the

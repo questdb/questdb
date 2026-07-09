@@ -28,14 +28,21 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * DDL-on-base-table behaviour for live views. Focuses on schema changes that are
@@ -286,6 +293,54 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
                             "2026-01-03T00:00:01.000000Z\tc\t3.0\t3\n" +
                             "2026-01-04T00:00:01.000000Z\td\t4.0\t4\n");
 
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testInvalidationStillFlipsWhenStatePersistFails() throws Exception {
+        // M4 / terminal-circuit-breaker lock for the DDL (multi-view) invalidation path.
+        // invalidateLiveViewsForBaseTable0 writes _lv.s durably BEFORE flipping the in-memory
+        // invalid bit - WalPurgeJob releases a view's base-WAL purge floor the moment it observes
+        // that bit (an unsynchronized read), so persisting first closes the window where a
+        // concurrent purge could release the floor while _lv.s still records the view as valid.
+        //
+        // But when the _lv.s write itself fails - a broken disk - the view must STILL flip invalid
+        // in-memory: invalidation is terminal and cannot be blocked by an unwritable state file, or
+        // a broken disk would strand the view valid against a base whose referenced column is gone
+        // (and would busy-loop the refresh worker). The durable record is re-derived on restart.
+        // This locks the flip-even-on-persist-failure behavior for the DDL path (the refresh-worker
+        // path is covered by LiveViewSmokeTest#testFlushRetryBudgetExhaustionInvalidatesView).
+        final AtomicBoolean failLvStateWrite = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failLvStateWrite.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, price INT, size INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, price, row_number() OVER () AS rn FROM base WHERE price > 0");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertFalse("LV must start valid", instance.isInvalid());
+
+            // Fault every _lv.s write, then drop a referenced column to trigger invalidation.
+            failLvStateWrite.set(true);
+            execute("ALTER TABLE base DROP COLUMN price");
+            drainWalQueue();
+
+            // The durable write failed, but the terminal invalidation still flips the in-memory bit.
+            Assert.assertTrue(
+                    "invalidation must still flip the in-memory bit when the _lv.s persist fails",
+                    instance.isInvalid()
+            );
+
+            failLvStateWrite.set(false);
             execute("DROP LIVE VIEW lv");
         });
     }
