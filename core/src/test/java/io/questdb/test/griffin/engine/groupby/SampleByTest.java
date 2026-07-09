@@ -117,6 +117,22 @@ public class SampleByTest extends AbstractCairoTest {
             "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;";
 
     @Test
+    public void testSampleByKeyOnQuoteProtectedAlias() throws Exception {
+        // A SAMPLE BY key that is a compiler-protected alias (dotted or operator token), referenced
+        // through the qualified subquery form, must resolve and surface a clean column name.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, g INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES " +
+                    "('2020-01-01T00:00:00', 1, 10.0), " +
+                    "('2020-01-01T00:30:00', 1, 20.0), " +
+                    "('2020-01-01T00:15:00', 2, 30.0)");
+            assertQuery("SELECT sub.\"a.b\", sum(v) FROM (SELECT ts, g AS \"a.b\", v FROM t) sub SAMPLE BY 1h ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("a.b\tsum\n1\t30.0\n2\t30.0\n");
+        });
+    }
+
+    @Test
     public void testBadFunction() throws Exception {
         assertQuery("select b, sum(a), sum(c), k from x sample by 3h fill(20.56)")
                 .ddl("create table x as " +
