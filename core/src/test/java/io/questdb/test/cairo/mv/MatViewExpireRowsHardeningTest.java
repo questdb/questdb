@@ -268,6 +268,67 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         );
     }
 
+    // M1 GATE deterministic pin (writer caught up + policy change lands MID-SWEEP). The two
+    // testCleanupWithStalePredicate... tests above leave the change committed-but-not-applied (writerTxn <
+    // seqTxn), so they exercise the coarser racyOpsAllowed guard (the bounds-DROP branch is never even
+    // entered). This test pins the M1 per-commit sequencer gate itself: the view is fully applied so
+    // racyOpsAllowed == true and the bounds-DROP fast path IS entered, and an in-job barrier injects the
+    // loosening ALTER exactly before the first destructive commit — advancing the sequencer past the sweep's
+    // expectedSeqTxn while the writer was caught up. Only the M1 per-commit gate on the bounds-DROP fast path
+    // can defer here; reverting that one-liner makes this test fail (the bounds-DROP would wipe OLD1/OLD2
+    // against the stale strict predicate before the loosened policy applies).
+    @Test
+    public void testM1BoundsDropGateDefersOnMidSweepPolicyChange() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('OLD1', 1.0, '2024-01-05T00:00:00.000000Z')," + // ts < now() -> strict-expired, bounds-DROP eligible
+                    "('OLD2', 2.0, '2024-01-08T00:00:00.000000Z')," + // ts < now() -> strict-expired, bounds-DROP eligible
+                    "('NEW', 3.0, '2024-01-20T00:00:00.000000Z')");   // active partition
+            drainWalAndMatViewQueues();
+            // Strict "ts < now()" routes cleanup through the bounds-DROP fast path.
+            execute("create materialized view mv as (select * from base) expire rows when ts < now()");
+            drainWalAndMatViewQueues();
+
+            // Under the strict policy both old partitions are expired; only NEW is visible.
+            assertSql("sym\nNEW\n", "select sym from mv order by sym");
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String stalePredicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                stalePredicate = m.getExpiryPredicate();
+            }
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            // Writer caught up -> racyOpsAllowed == true at sweep start -> the bounds-DROP fast path is entered.
+            Assert.assertEquals("precondition: view fully applied (writer caught up)",
+                    tracker.getSeqTxn(), tracker.getWriterTxn());
+
+            final boolean reclaimed;
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                // Inject the loosening policy change at the first bounds-DROP commit point (before the walWriter
+                // is acquired, so no writer-lock contention). It advances the sequencer past expectedSeqTxn while
+                // the writer was caught up, so ONLY the M1 per-commit gate can defer -- racyOpsAllowed does not.
+                job.setTestBoundsDropCommitBarrier(() -> {
+                    try {
+                        execute("alter materialized view mv set expire rows when ts < '2024-01-01T00:00:00.000000Z'");
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+                reclaimed = job.cleanupTable(token, stalePredicate);
+            }
+            Assert.assertFalse("M1 gate must defer the bounds-DROP wipe when a policy change lands mid-sweep", reclaimed);
+
+            // Apply the loosened policy. Nothing was reclaimed; every row it keeps (all three -- ts < 2024-01-01 is
+            // false for all) must survive. OLD1/OLD2 would be physically gone had the bounds-DROP committed.
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("ts < '2024-01-01T00:00:00.000000Z'", expiryPredicate("mv"));
+            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertSql("sym\nNEW\nOLD1\nOLD2\n", "select sym from mv order by sym");
+        });
+    }
+
     // M1/M6 DETERMINISTIC data-loss guard (non-fuzz): a cleanup sweep that snapshotted a now-STALE (stricter)
     // predicate must not physically delete rows the CURRENT (loosened / dropped) policy keeps. TableWriter's
     // policy-change apply path does not take the MatViewState lock the sweep holds, so a policy change can

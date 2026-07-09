@@ -92,9 +92,12 @@ public class MatViewTest extends AbstractCairoTest {
     private final int rowsPerQuery;
 
     // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returnsOnce() so the row-expiry passthrough tests work.
+    // builder (OSS #7195). The passthrough queries here are deterministic, so drive the builder via
+    // returns() (NOT returnsOnce) to keep the second cursor pass, calculateSize() cross-check, and
+    // variable-column check; sizeMayVary().inferRandomAccess().inferTimestamp() accommodate the
+    // heterogeneous passthrough/ORDER-BY factory (matches the six row-expiry bridges).
     private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().returnsOnce(expected);
+        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 
     private final TestTimestampType timestampType;

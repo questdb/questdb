@@ -50,6 +50,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -128,6 +129,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final LongList partitionSurvivors = new LongList();
     private long lastGlobalCheckMicros = NO_LAST_RUN;
     private SqlExecutionContextImpl sqlExecutionContext;
+    // Test-only barrier: when set, fired exactly once (one-shot) immediately before the bounds-DROP fast path
+    // evaluates its per-commit sequencer gate, with the writer caught up (racyOpsAllowed == true). Lets a test
+    // inject a mid-sweep policy change at that instant so the M1 gate — not the coarser racyOpsAllowed guard —
+    // is what defers the wipe; reverting the gate then makes the test fail. Null (never fired) in production.
+    private Runnable testBoundsDropCommitBarrier;
 
     public RowExpiryCleanupJob(CairoEngine engine) {
         this.engine = engine;
@@ -145,6 +151,16 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // row-expiry filter on this context so the survivor query is not ALSO wrapped by it (which would
         // be redundant, and would couple physical deletion to any read-filter change).
         this.sqlExecutionContext.setExpiryReadFilterEnabled(false);
+    }
+
+    /**
+     * Test-only: installs a one-shot barrier fired immediately before the bounds-DROP fast path evaluates its
+     * per-commit sequencer gate (see {@code cleanupTable0}). A test uses it to advance the sequencer mid-sweep
+     * (a concurrent policy change) with the writer caught up, so the M1 gate is the thing that defers the wipe.
+     */
+    @TestOnly
+    public void setTestBoundsDropCommitBarrier(Runnable barrier) {
+        this.testBoundsDropCommitBarrier = barrier;
     }
 
     /**
@@ -391,6 +407,13 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         // Bounds wipe: the whole logical partition is below the designated-ts threshold, so
                         // every row (incl. any concurrent back-fill) is expired. Reclaim with a no-scan empty
                         // REPLACE_RANGE (pure delete of the range).
+                        if (testBoundsDropCommitBarrier != null) {
+                            // One-shot: fired before the walWriter is acquired so an injected mid-sweep policy
+                            // change (which advances the sequencer) never contends with our writer lock.
+                            final Runnable barrier = testBoundsDropCommitBarrier;
+                            testBoundsDropCommitBarrier = null;
+                            barrier.run();
+                        }
                         if (walWriter == null) {
                             walWriter = engine.getWalWriter(tableToken);
                         }
