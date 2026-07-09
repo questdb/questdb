@@ -3903,8 +3903,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * (data + aux) in {@code covMmaps} grows via mmap extend; the caller
      * passes the final base addresses to PostingIndexWriter after the loop.
      *
-     * <p>{@code covSlotMeta} layout per slot (3 longs):
-     * [0] decodedChunkIdx (-1 if skipped), [1] colType, [2] dataVecBytesWritten.
+     * <p>{@code covSlotMeta} layout per slot (4 longs):
+     * [0] decodedChunkIdx (-1 if skipped), [1] colType, [2] dataVecBytesWritten,
+     * [3] parquetColType (the parquet-stored type, which differs from colType
+     * when a lazy ALTER COLUMN TYPE is pending on the covered column).
      */
     private void accumulateCoveredColumnsFromRowGroup(
             IntList coveringColumnIndices,
@@ -3974,18 +3976,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if ((ColumnType.isVarSize(srcTag) || ColumnType.isSymbol(srcTag))
                         && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
                     final int effectiveSrcType = ColumnType.isSymbol(srcTag) ? ColumnType.VARCHAR : parquetColType;
+                    // Convert straight into the destination mmap. The fixed output size is
+                    // exact (rowCount * entrySize) and convertVarColumnToFixed writes every
+                    // row positionally (a value or a null sentinel), so the whole region is
+                    // filled with no intermediate buffer or copy.
                     final long fixSize = rowGroupRowCount * ColumnType.sizeOf(columnType);
-                    final long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_TABLE_WRITER);
-                    try {
-                        O3PartitionJob.convertVarColumnToFixed(
-                                effectiveSrcType, columnType, srcDataPtr, srcAuxPtr,
-                                (int) rowGroupRowCount, fixBuf,
-                                utf8Sink, utf16Sink,
-                                coveringDecimal64, coveringDecimal128, coveringDecimal256);
-                        dataMem.putBlockOfBytes(fixBuf, fixSize);
-                    } finally {
-                        Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_TABLE_WRITER);
-                    }
+                    final long dstPtr = dataMem.appendAddressFor(fixSize);
+                    O3PartitionJob.convertVarColumnToFixed(
+                            effectiveSrcType, columnType, srcDataPtr, srcAuxPtr,
+                            (int) rowGroupRowCount, dstPtr,
+                            utf8Sink, utf16Sink,
+                            coveringDecimal64, coveringDecimal128, coveringDecimal256);
                 } else {
                     dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
                 }
@@ -9191,9 +9192,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * to the configured data-append page size for var-size data, whose
      * decoded size is not derivable from metadata.
      *
-     * <p>{@code covSlotMeta} is filled with 3 longs per slot:
-     * [decodedChunkIdx, colType, dataVecBytesWritten].
+     * <p>{@code covSlotMeta} is filled with 4 longs per slot:
+     * [decodedChunkIdx, colType, dataVecBytesWritten, parquetColType].
      * Slots whose column is absent from parquet get decodedChunkIdx == -1.
+     * parquetColType is the parquet-stored type, which differs from colType
+     * when a lazy ALTER COLUMN TYPE is pending on the covered column.
      *
      * <p>{@code covMmaps} is filled with 2 entries per slot:
      * [auxMem (null for fixed-size), dataMem]. Both are null for skipped slots.

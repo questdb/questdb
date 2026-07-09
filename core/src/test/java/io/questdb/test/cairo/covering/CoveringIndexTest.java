@@ -1302,6 +1302,69 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPostingCoveringIndexWithPendingLazyConversionAllNullColumnWal() throws Exception {
+        // Every converting covered column is fully NULL across the whole partition, so each
+        // parquet row group decodes to an all-null chunk. This exercises the all-null routing
+        // in accumulateCoveredColumnsFromRowGroup for converting columns: the size-based
+        // detection (srcDataSize == 0 && srcAuxSize == 0) must route SYMBOL->LONG and
+        // VARCHAR->LONG to accumulateAllNullFixedChunk and INT->VARCHAR / INT->STRING to
+        // accumulateAllNullVarSizeChunk instead of into the conversion arms. Tiny row groups
+        // place several all-null row groups back to back, covering the cross-row-group
+        // all-null aux rebase as well.
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_lazy_conv_allnull (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        c_sym_long SYMBOL,
+                        c_int_vc INT,
+                        c_int_str INT,
+                        c_vc_long VARCHAR,
+                        c_keep DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_lazy_conv_allnull
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        NULL::STRING,
+                        NULL::INT,
+                        NULL::INT,
+                        NULL::VARCHAR,
+                        x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_allnull CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN c_sym_long TYPE LONG");
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN c_int_vc TYPE VARCHAR");
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN c_int_str TYPE STRING");
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN c_vc_long TYPE LONG");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_lazy_conv_allnull ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep)");
+            drainWalQueue();
+
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_lazy_conv_allnull'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("suspended\nfalse\n");
+            assertSqlCursors(
+                    "SELECT ts, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_allnull WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_allnull WHERE sym = 'A0' ORDER BY ts"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sym, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_allnull ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, c_sym_long, c_int_vc, c_int_str, c_vc_long, c_keep FROM t_lazy_conv_allnull ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testAddPostingCoveringIndexWithPendingLazyConversionNullsAndVarcharSpillWal() throws Exception {
         // Stresses the pending-lazy-conversion covered columns on their hardest inputs:
         // NULLs in every converting column (exercises the null branch of each converter --
