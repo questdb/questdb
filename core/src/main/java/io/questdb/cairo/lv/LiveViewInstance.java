@@ -84,6 +84,12 @@ public class LiveViewInstance implements QuietCloseable {
     // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
     // per-row resetPartition dispatch when the LV has an anchored named WINDOW.
     private LiveViewWindow anchorWindow;
+    // Base seqTxn the deferred cycle waited on when it armed applyLagDeferUntilUs. The pre-latch
+    // guard clears the floor early once the base applies past this point, so a caught-up view
+    // converges without waiting out the wall-clock floor (which a frozen clock never crosses).
+    // LONG_NULL when unarmed; volatile and armed before applyLagDeferUntilUs so a guard that sees
+    // the floor also sees a published target.
+    private volatile long applyLagDeferTargetSeqTxn = Numbers.LONG_NULL;
     // Wall-clock (micros) floor before which the refresh worker skips this view after a
     // cooperative apply-lag deferral, bounding the re-drain rate so it does not hot-spin the
     // window recompute while the transient lag clears. LONG_NULL until armed;
@@ -446,6 +452,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public LiveViewWindow getAnchorWindow() {
         return anchorWindow;
+    }
+
+    public long getApplyLagDeferTargetSeqTxn() {
+        return applyLagDeferTargetSeqTxn;
     }
 
     public long getApplyLagDeferUntilUs() {
@@ -938,6 +948,7 @@ public class LiveViewInstance implements QuietCloseable {
         flushRetryCount = 0;
         flushRetryStartUs = Numbers.LONG_NULL;
         applyLagDeferUntilUs = Numbers.LONG_NULL;
+        applyLagDeferTargetSeqTxn = Numbers.LONG_NULL;
     }
 
     /**
@@ -968,6 +979,10 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setAppliedWatermark(long appliedWatermark) {
         stateReader.setAppliedWatermark(appliedWatermark);
+    }
+
+    public void setApplyLagDeferTargetSeqTxn(long applyLagDeferTargetSeqTxn) {
+        this.applyLagDeferTargetSeqTxn = applyLagDeferTargetSeqTxn;
     }
 
     public void setApplyLagDeferUntilUs(long applyLagDeferUntilUs) {

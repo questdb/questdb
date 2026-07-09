@@ -4857,7 +4857,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long deferUntilUs = instance.getApplyLagDeferUntilUs();
         if (deferUntilUs != Numbers.LONG_NULL
                 && engine.getConfiguration().getMicrosecondClock().getTicks() < deferUntilUs) {
-            return;
+            // The wall-clock floor is only an anti-spin bound; the real precondition is the base
+            // applying past the seqTxn that forced the defer. Re-check it cheaply (an O(1) tracker
+            // read). If apply has caught up, the lag is resolved - clear the floor and drain now
+            // instead of waiting out the fixed floor, which a frozen test clock never crosses. If
+            // it still lags, skip cheaply as before so the drain does not hot-spin.
+            final LiveViewDefinition definition = instance.getDefinition();
+            final TableToken baseToken = definition != null ? definition.getBaseTableToken() : null;
+            if (baseToken == null
+                    || engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn()
+                    < instance.getApplyLagDeferTargetSeqTxn()) {
+                return;
+            }
+            instance.setApplyLagDeferUntilUs(Numbers.LONG_NULL);
         }
         // Live-view WAL apply back-off: the refresh worker drives the view's OWN WAL apply
         // inline (applyWalDirect) after committing a flushed lead or a coupled-drain batch.
@@ -5164,7 +5176,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Not counting this toward the flush-retry budget is deliberate:
                 // apply lag is transient and self-heals, unlike a refresh fault.
                 // Arm a short back-off so the next scans skip this view instead of
-                // re-draining the whole window every tick until apply lands.
+                // re-draining the whole window every tick until apply lands. Record the
+                // target seqTxn first so the pre-latch guard, which reads it once it sees
+                // the floor, can clear the floor early the moment the base applies past it.
+                instance.setApplyLagDeferTargetSeqTxn(e.getTargetSeqTxn());
                 instance.setApplyLagDeferUntilUs(
                         engine.getConfiguration().getMicrosecondClock().getTicks() + APPLY_LAG_DEFER_BACKOFF_US);
                 LOG.debug().$("live view O3 replay deferred, base apply lag [view=")
