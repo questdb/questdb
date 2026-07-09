@@ -148,6 +148,52 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return 1;
     }
 
+    /**
+     * Completes a {@link MatViewState#tryLock()} hold: clears the marker of any invalidation that
+     * deferred while the caller held the latch (see {@link #finalizeDeferredInvalidation}), unlocks,
+     * then re-enqueues that INVALIDATE. Every lock-holder must route its unlock through here --
+     * including holders outside this class, such as the {@code REFRESH ... STATS} reset in
+     * {@code SqlCompilerImpl} -- or a deferral landing during its hold freezes the view
+     * valid-but-stale. The one deliberate exception is {@code invalidateView}'s auth-rollback
+     * self-deferral ({@code isSelfDeferred}), which unlocks inline: finalizing there would clear the
+     * marker that branch just set and busy-spin against the sticky read-only writer refusal.
+     * {@code shouldIncrementRefreshSeq} additionally bumps {@link MatViewState#incrementRefreshSeq()}
+     * before the unlock: data-refresh completions (incremental, full) pass {@code true} so
+     * {@code MatViewTimerJob} skips enqueueing refreshes made redundant by the one that just ran; the
+     * other holders pass {@code false}.
+     */
+    public static void finalizeAndUnlock(
+            CairoEngine engine,
+            MatViewStateStore stateStore,
+            TableToken viewToken,
+            MatViewState viewState,
+            boolean shouldIncrementRefreshSeq
+    ) {
+        assert viewState.isLocked() : "finalizeAndUnlock requires the caller to hold the view latch";
+        // Only an OutOfMemoryError can throw out of finalizeDeferredInvalidation, but if one does, unlock()
+        // must still run: a skipped unlock wedges the latch forever and leaks the parked cursorFactory at
+        // teardown (close/tryCloseIf* all need the latch). The marker clear runs under the latch (inner
+        // try); the INVALIDATE enqueue runs after the unlock, so a sibling worker that dequeues the
+        // re-enqueued task can win the freed latch instead of re-deferring against this still-held one
+        // (enqueueing under the latch would re-open that self-fed lost-update variant). An OOM thrown
+        // between the clear and the enqueue still drops the deferral outright (marker cleared, no task
+        // queued: the view reads healthy while stale); enqueue-before-clear would be no better -- a second
+        // worker could dequeue and swallow the task against the still-set marker -- and under OOM the
+        // process is lost anyway.
+        String deferredInvalidationReason = null;
+        try {
+            deferredInvalidationReason = finalizeDeferredInvalidation(engine, viewState);
+        } finally {
+            if (shouldIncrementRefreshSeq) {
+                viewState.incrementRefreshSeq();
+            }
+            unlockAndTryClose(viewState);
+        }
+        if (deferredInvalidationReason != null) {
+            stateStore.enqueueInvalidate(viewToken, deferredInvalidationReason);
+        }
+    }
+
     @Override
     public Job cloneInstance() {
         return new MatViewRefreshJob(engine, sharedQueryWorkerCount);
@@ -369,6 +415,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // Shared unlock tail for every latch hold: the tryCloseIf* calls free the parked cursor factory
+    // when a teardown (close/drop) raced this hold and lost the latch to it.
+    private static void unlockAndTryClose(MatViewState viewState) {
+        viewState.unlock();
+        viewState.tryCloseIfDropped();
+        viewState.tryCloseIfClosed();
+    }
+
     private boolean checkIfBaseTableDropped(MatViewRefreshTask refreshTask) {
         final TableToken baseTableToken = refreshTask.baseTableToken;
         final TableToken viewToken = refreshTask.matViewToken;
@@ -494,52 +548,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    /**
-     * Completes a {@link MatViewState#tryLock()} hold: clears the marker of any invalidation that
-     * deferred while the caller held the latch (see {@link #finalizeDeferredInvalidation}), unlocks,
-     * then re-enqueues that INVALIDATE. Every
-     * lock-holder must route its unlock through here -- including holders outside this class, such as
-     * the {@code REFRESH ... STATS} reset in {@code SqlCompilerImpl} -- or a deferral landing during
-     * its hold freezes the view valid-but-stale. The one deliberate exception is {@code invalidateView}'s
-     * auth-rollback self-deferral ({@code isSelfDeferred}), which unlocks inline: finalizing there would
-     * clear the marker that branch just set and busy-spin against the sticky read-only writer refusal.
-     * {@code shouldIncrementRefreshSeq} additionally bumps {@link MatViewState#incrementRefreshSeq()}
-     * before the unlock: data-refresh completions (incremental, full) pass {@code true} so
-     * {@code MatViewTimerJob} skips enqueueing refreshes made redundant by the one that just ran; the
-     * other holders pass {@code false}.
-     */
-    public static void finalizeAndUnlock(
-            CairoEngine engine,
-            MatViewStateStore stateStore,
-            TableToken viewToken,
-            MatViewState viewState,
-            boolean shouldIncrementRefreshSeq
-    ) {
-        assert viewState.isLocked() : "finalizeAndUnlock requires the caller to hold the view latch";
-        // Only an OutOfMemoryError can throw out of finalizeDeferredInvalidation, but if one does, unlock()
-        // must still run: a skipped unlock wedges the latch forever and leaks the parked cursorFactory at
-        // teardown (close/tryCloseIf* all need the latch). The marker clear runs under the latch (inner
-        // try); the INVALIDATE enqueue runs after the unlock, so a sibling worker that dequeues the
-        // re-enqueued task can win the freed latch instead of re-deferring against this still-held one
-        // (enqueueing under the latch would re-open that self-fed lost-update variant). An OOM thrown
-        // between the clear and the enqueue still drops the deferral outright (marker cleared, no task
-        // queued: the view reads healthy while stale); enqueue-before-clear would be no better -- a second
-        // worker could dequeue and swallow the task against the still-set marker -- and under OOM the
-        // process is lost anyway.
-        String deferredInvalidationReason = null;
-        try {
-            deferredInvalidationReason = finalizeDeferredInvalidation(engine, viewState);
-        } finally {
-            if (shouldIncrementRefreshSeq) {
-                viewState.incrementRefreshSeq();
-            }
-            unlockAndTryClose(viewState);
-        }
-        if (deferredInvalidationReason != null) {
-            stateStore.enqueueInvalidate(viewToken, deferredInvalidationReason);
-        }
-    }
-
     private void finalizeAndUnlock(TableToken viewToken, MatViewState viewState, boolean shouldIncrementRefreshSeq) {
         finalizeAndUnlock(engine, stateStore, viewToken, viewState, shouldIncrementRefreshSeq);
     }
@@ -582,14 +590,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
         viewState.clearPendingInvalidation();
         return invalidationReason;
-    }
-
-    // Shared unlock tail for every latch hold: the tryCloseIf* calls free the parked cursor factory
-    // when a teardown (close/drop) raced this hold and lost the latch to it.
-    private static void unlockAndTryClose(MatViewState viewState) {
-        viewState.unlock();
-        viewState.tryCloseIfDropped();
-        viewState.tryCloseIfClosed();
     }
 
     private RefreshContext findRefreshIntervals(

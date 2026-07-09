@@ -1394,7 +1394,7 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h stats");
             // Not a data refresh: the STATS holder passes shouldIncrementRefreshSeq=false, so the seq that
             // MatViewTimerJob reads for refresh dedup must not move.
-            Assert.assertEquals(refreshSeqBefore, state.getRefreshSeq());
+            Assert.assertEquals("the STATS holder must not bump the refresh seq", refreshSeqBefore, state.getRefreshSeq());
             drainMatViewQueue(engine);
             drainWalQueue();
 
