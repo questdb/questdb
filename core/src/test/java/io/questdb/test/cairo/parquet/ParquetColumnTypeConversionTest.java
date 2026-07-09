@@ -1950,6 +1950,50 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterParquetRebuildsCoveringPostingSidecars() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("""
+                        CREATE TABLE pt (
+                            sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                            price DOUBLE,
+                            v INT,
+                            ts TIMESTAMP
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                execute("""
+                        INSERT INTO pt VALUES
+                        ('A', 10.5, 1, '2024-01-01T00:00:01.000000Z'),
+                        ('B', 20.5, 2, '2024-01-01T00:00:02.000000Z'),
+                        ('A', 30.5, 3, '2024-01-01T00:00:03.000000Z')
+                        """);
+                drainWalQueue();
+
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE LONG");
+                drainWalQueue();
+
+                assertQuery("SELECT price FROM pt WHERE sym = 'A'")
+                        .noLeakCheck()
+                        .withPlanContaining("CoveringIndex on: sym")
+                        .returns("""
+                                price
+                                10.5
+                                30.5
+                                """);
+                assertSqlCursors(
+                        "SELECT price FROM pt WHERE sym = 'A'",
+                        "SELECT /*+ no_covering */ price FROM pt WHERE sym = 'A'"
+                );
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
     public void testAlterParquetRebuildsIndexForRekeyedSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -2202,6 +2246,51 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testAlterReencodesSplitParquetPartitionsByPhysicalTimestamp() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 3);
+        assertMemoryLeak(() -> {
+            try {
+                execute("""
+                        CREATE TABLE pt AS (
+                            SELECT
+                                cast(x AS INT) v,
+                                timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1000000L) ts
+                            FROM long_sequence(60 * 36)
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
+                drainWalQueue();
+
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                execute("""
+                        INSERT INTO pt
+                        SELECT
+                            cast(1000000 + x AS INT) v,
+                            timestamp_sequence('2024-01-01T20:01:00.000000Z', 1000000L) ts
+                        FROM long_sequence(200)""");
+                drainWalQueue();
+
+                final long dayTwoTimestamp = parseFloorPartialTimestamp("2024-01-02");
+                assertSplitDayOneParquetPartitions("pt", dayTwoTimestamp, ColumnType.INT);
+
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE LONG");
+                drainWalQueue();
+
+                assertSplitDayOneParquetPartitions("pt", dayTwoTimestamp, ColumnType.LONG);
+                assertQuery("SELECT count(), min(v), max(v) FROM pt WHERE ts < '2024-01-02'")
+                        .noLeakCheck()
+                        .returns("""
+                                count\tmin\tmax
+                                1640\t1\t1000200
+                                """);
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
     // Creates a native reference table nt and a parquet table pt with identical data, converts
     // pt's single partition to parquet, then ALTERs column v on both. Asserts pt's partition
     // stays PARQUET with the footer physically carrying expectedDstTag right after the ALTER
@@ -2238,6 +2327,25 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
             int colIdx = writer.getMetadata().getColumnIndex(columnName);
             Assert.assertEquals(expectedTag, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
+        }
+    }
+
+    private void assertSplitDayOneParquetPartitions(String tableName, long dayTwoTimestamp, int expectedType) {
+        try (TableWriter writer = getWriter(tableName)) {
+            int colIdx = writer.getMetadata().getColumnIndex("v");
+            int dayOneParquetPartitions = 0;
+            for (int i = 0, n = writer.getPartitionCount(); i < n; i++) {
+                if (writer.getPartitionTimestamp(i) >= dayTwoTimestamp) {
+                    continue;
+                }
+                Assert.assertEquals("partition " + i, PartitionFormat.PARQUET, writer.getPartitionFormat(i));
+                Assert.assertEquals("partition " + i, expectedType, ColumnType.tagOf(writer.getParquetColumnType(i, colIdx)));
+                dayOneParquetPartitions++;
+            }
+            Assert.assertTrue(
+                    "expected at least two parquet physical partitions before 2024-01-02, got " + dayOneParquetPartitions,
+                    dayOneParquetPartitions >= 2
+            );
         }
     }
 

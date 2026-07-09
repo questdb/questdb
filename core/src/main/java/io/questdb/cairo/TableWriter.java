@@ -3188,19 +3188,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * does not commit: the surrounding ALTER's structure-version commit persists it atomically
      * with the new {@code _meta}, and {@link #cleanupParquetReencodedOldDirs()} removes the
      * old directories afterwards. A no-op when the column is not stored in this
-     * partition's parquet file (its rows are all NULL there regardless of type).
+     * partition's parquet file (its rows are all NULL there regardless of type). The caller
+     * passes the physical partition entry because split partitions share the same logical floor.
      */
-    public void rewriteParquetPartitionWithConversions(long partitionTimestamp, int overrideColumnIndex, int newType) {
+    public void rewriteParquetPartitionWithConversions(int partitionIndex, long partitionTimestamp, long partitionNameTxn, int overrideColumnIndex, int newType) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
-        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0 || !txWriter.isPartitionParquet(partitionIndex)) {
+        if (partitionIndex < 0 || partitionIndex >= txWriter.getPartitionCount() || !txWriter.isPartitionParquet(partitionIndex)) {
             return;
         }
 
-        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        assert txWriter.getPartitionTimestampByIndex(partitionIndex) == partitionTimestamp;
+        assert txWriter.getPartitionNameTxn(partitionIndex) == partitionNameTxn;
+
         final long partitionRowCount = getPartitionSize(partitionIndex);
 
         final O3Basket o3Basket = o3BasketPool.next();
@@ -3228,10 +3229,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // row 0 now), and bump the partition table version so readers fully reconcile. The
         // commit is deferred to the ALTER's structure-version barrier so it lands atomically
         // with the new _meta; cleanupParquetReencodedOldDirs() removes the old directories.
-        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
-        txWriter.setPartitionParquetFormat(partitionTimestamp, newParquetSize);
+        final int partitionRawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionRawIndex, partitionRowCount);
+        txWriter.setPartitionParquetFormatByRawIndex(partitionRawIndex, newParquetSize, true);
         zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, true);
         txWriter.bumpPartitionTableVersion();
+
+        resealParquetCoveringForPartition(partitionTimestamp, overrideColumnIndex, newType);
 
         pendingParquetReencodes.add(partitionTimestamp);
         pendingParquetReencodes.add(partitionNameTxn);
@@ -5228,7 +5232,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolColumnIndexer indexer,
             IntList coveringColumnIndices,
             long partitionTimestamp,
-            ObjList<MemoryMARW> covMmaps
+            ObjList<MemoryMARW> covMmaps,
+            int overrideColumnIndex,
+            int overrideColumnType
     ) {
         final int coverCount = coveringColumnIndices.size();
         coveringAddrs.setPos(coverCount);
@@ -5241,7 +5247,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         for (int slot = 0; slot < coverCount; slot++) {
             int covCol = coveringColumnIndices.getQuick(slot);
-            if (covCol < 0 || metadata.getColumnType(covCol) <= 0) {
+            if (covCol < 0) {
                 coveringAddrs.setQuick(slot, 0);
                 coveringAuxAddrs.setQuick(slot, 0);
                 coveringTops.add(0);
@@ -5251,7 +5257,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 coveringNameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
                 continue;
             }
-            int covType = metadata.getColumnType(covCol);
+            int covType = getEffectiveColumnType(covCol, overrideColumnIndex, overrideColumnType);
+            if (covType <= 0) {
+                coveringAddrs.setQuick(slot, 0);
+                coveringAuxAddrs.setQuick(slot, 0);
+                coveringTops.add(0);
+                coveringShifts.add(0);
+                coveringIndices.add(-1);
+                coveringTypes.add(-1);
+                coveringNameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
+                continue;
+            }
             MemoryMARW dataMem = covMmaps.getQuick(2 * slot + 1);
             MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
             coveringAddrs.setQuick(slot, dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
@@ -6979,6 +6995,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return deferredPostingSealPurgeTaskPool;
     }
 
+    private int getEffectiveColumnType(int columnIndex, int overrideColumnIndex, int overrideColumnType) {
+        if (columnIndex < 0) {
+            return -1;
+        }
+        return columnIndex == overrideColumnIndex ? overrideColumnType : metadata.getColumnType(columnIndex);
+    }
+
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
     }
@@ -7418,7 +7441,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int plen,
             long timestamp,
             RowGroupBuffers rowGroupBuffers,
-            boolean allowDestructiveRecovery
+            boolean allowDestructiveRecovery,
+            int overrideColumnIndex,
+            int overrideColumnType
     ) {
         final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
 
@@ -7496,7 +7521,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasCovering) {
                     includedCoveredCount = prepareCoveredColumnMmaps(
                             coveringColumnIndices, timestamp, plen,
-                            parquetMetadata, partitionSize, covSlotMeta, covMmaps);
+                            parquetMetadata, partitionSize, covSlotMeta, covMmaps,
+                            overrideColumnIndex, overrideColumnType);
                 }
 
                 long rowCount = 0;
@@ -7550,7 +7576,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasCovering) {
                     configureCoveringFromMmaps(
                             indexer, coveringColumnIndices, timestamp,
-                            covMmaps);
+                            covMmaps, overrideColumnIndex, overrideColumnType);
                 }
 
                 indexWriter.setMaxValue(partitionSize - 1);
@@ -7594,7 +7620,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             // Fresh ADD INDEX over a parquet partition indexes a single column and
             // holds no live indexer, so destructive .pk recovery is permitted.
-            indexParquetColumn(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp, rowGroupBuffers, true);
+            indexParquetColumn(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp, rowGroupBuffers, true, -1, ColumnType.UNDEFINED);
         } finally {
             // Release the decoder's native state before tearing down the mmaps it
             // borrows from. ParquetPartitionDecoder documents a clear-then-munmap
@@ -9209,14 +9235,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ParquetMetaFileReader parquetMetadata,
             long partitionSize,
             DirectLongList covSlotMeta,
-            ObjList<MemoryMARW> covMmaps
+            ObjList<MemoryMARW> covMmaps,
+            int overrideColumnIndex,
+            int overrideColumnType
     ) {
         final int coverCount = coveringColumnIndices.size();
         int includedCount = 0;
 
         for (int slot = 0; slot < coverCount; slot++) {
             final int tableColIdx = coveringColumnIndices.getQuick(slot);
-            if (tableColIdx < 0 || metadata.getColumnType(tableColIdx) <= 0) {
+            if (tableColIdx < 0) {
+                covSlotMeta.add(-1L);
+                covSlotMeta.add(0L);
+                covSlotMeta.add(0L);
+                covMmaps.add(null);
+                covMmaps.add(null);
+                continue;
+            }
+            final int columnType = getEffectiveColumnType(tableColIdx, overrideColumnIndex, overrideColumnType);
+            if (columnType <= 0) {
                 covSlotMeta.add(-1L);
                 covSlotMeta.add(0L);
                 covSlotMeta.add(0L);
@@ -9243,7 +9280,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
 
-            final int columnType = metadata.getColumnType(tableColIdx);
             final boolean isVarSize = ColumnType.isVarSize(columnType);
             final CharSequence colName = metadata.getColumnName(tableColIdx);
             final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
@@ -12680,6 +12716,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if at least one covering posting column was rebuilt.
      */
     private boolean resealParquetCoveringForPartition(long partitionTimestamp) {
+        return resealParquetCoveringForPartition(partitionTimestamp, -1, ColumnType.UNDEFINED);
+    }
+
+    private boolean resealParquetCoveringForPartition(long partitionTimestamp, int overrideColumnIndex, int overrideColumnType) {
         // No covering posting index anywhere on the table: the worker-built
         // non-covering .pv already stands, so skip the path resolution + stat(2)
         // and the per-column scan entirely.
@@ -12709,7 +12749,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long parquetSize = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER)) {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                final int effectiveColumnType = getEffectiveColumnType(colIdx, overrideColumnIndex, overrideColumnType);
+                if (!ColumnType.isSymbol(effectiveColumnType) || !metadata.isColumnIndexed(colIdx)
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
                     continue;
                 }
@@ -12750,7 +12791,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 plen,
                                 partitionTimestamp,
                                 rowGroupBuffers,
-                                false
+                                false,
+                                overrideColumnIndex,
+                                overrideColumnType
                         );
                     } finally {
                         // Drain the rebuild's seal-purge outbox (the .pv/.pc its

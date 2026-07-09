@@ -280,6 +280,7 @@ public class ConvertOperatorImpl implements Closeable {
                 if (asyncProcessingErrorCount.get() == 0) {
                     if (tableWriter.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
                         final long parquetPts = tableWriter.getPartitionTimestamp(partitionIndex);
+                        final long parquetNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
                         try {
                             // Re-encode the parquet partition so its on-disk bytes carry the new
                             // column type. This runs before the new type reaches metadata, so the
@@ -288,7 +289,7 @@ public class ConvertOperatorImpl implements Closeable {
                             // parquet, so its rows are all NULL regardless of type). The commit is
                             // deferred to the ALTER's structure-version barrier, so it lands
                             // atomically with the new metadata, like the native conversions above.
-                            tableWriter.rewriteParquetPartitionWithConversions(parquetPts, existingColIndex, newType);
+                            tableWriter.rewriteParquetPartitionWithConversions(partitionIndex, parquetPts, parquetNameTxn, existingColIndex, newType);
 
                             // Propagate the column top from existingColIndex to columnIndex. A
                             // re-encoded partition has every column materialised from row 0 (top 0);

@@ -451,6 +451,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
+        setPartitionParquetFormatByRawIndex(indexRaw, fileLength, isParquetFormat);
+    }
+
+    void setPartitionParquetFormatByRawIndex(int indexRaw, long fileLength, boolean isParquetFormat) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
         int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
 
