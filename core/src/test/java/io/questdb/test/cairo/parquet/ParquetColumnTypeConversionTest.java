@@ -971,7 +971,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDecimalToDecimalLazyUnrepresentableProducesNull() throws Exception {
+    public void testDecimalToDecimalUnrepresentableProducesNull() throws Exception {
         assertMemoryLeak(() -> {
             // Decimal->decimal conversions where the source fits the target width (same width, or
             // widening) must read a value that does not fit the target as NULL on the parquet path,
@@ -2642,7 +2642,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringToUuidLazyScanAcrossParquetPartitions() throws Exception {
+    public void testStringToUuidScanAcrossParquetPartitions() throws Exception {
         // Two parquet partitions ALTERed from STRING to UUID, read frame by frame. The eager
         // re-encode stores each partition as UUID; the half-corrupt value at partition 2 row 0
         // must read NULL (matching native), and the distinct valid UUIDs across partitions must
@@ -2761,7 +2761,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * hard-coded MicrosTimestampDriver, returning values 1000x too small.
      */
     @Test
-    public void testStringToTimestampNanoLazyParquet() throws Exception {
+    public void testStringToTimestampNanoParquet() throws Exception {
         assertMemoryLeak(() -> {
             for (String source : new String[]{"STRING", "VARCHAR"}) {
                 try {

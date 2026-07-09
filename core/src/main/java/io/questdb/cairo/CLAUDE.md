@@ -1,29 +1,31 @@
 # Writing Parquet Partitions with Pending Column Conversions
 
-How O3 (out-of-order) writes land on a **parquet** partition that carries a *lazy*
-`ALTER COLUMN TYPE`, and the column conversions and native-memory allocations involved —
-with and without deduplication.
+How the parquet row-group rewrite machinery applies `ALTER COLUMN TYPE` column conversions,
+and the native-memory allocations involved — with and without deduplication.
+
+`ALTER COLUMN TYPE` re-encodes parquet **eagerly** at ALTER time (see `griffin/CLAUDE.md`);
+the eager re-encode (`O3PartitionJob.rewriteParquetPartition`) drives this machinery to decode
+the old parquet and write the new type. The same helpers back O3 (out-of-order) merges, but
+because ALTER is eager, an O3 merge onto a converted partition sees already-target-typed data
+and performs no conversion.
 
 This is the **write-path** counterpart to `griffin/CLAUDE.md`, which owns the conversion
-*semantics* (per-type cast rules, null sentinels, the `replacingIndex` chain) and the
-*read* path (`PageFrameMemoryPool` / `PageFrameMemoryRecord`). Read that first for the
-"what each cast does" rules; this file covers "how the writer materialises them during O3".
+*semantics* (per-type cast rules, null sentinels, the `replacingIndex` chain) and the direct
+read path. Read that first for the "what each cast does" rules; this file covers "how the
+writer materialises them".
 
 ## When this happens
 
-A parquet partition stores each column in the type it had when the partition was converted
-to parquet. A later `ALTER COLUMN TYPE` is **lazy** — `ConvertOperatorImpl` does *not*
-re-encode parquet (it only re-encodes native partitions, and runs a pre-pass for the two
-cases lazy decode cannot handle: target SYMBOL, or a chained conversion with a type
-mismatch — see `griffin/CLAUDE.md`). So the parquet file keeps the *source* type, and the
-conversion is deferred until something reads or rewrites the partition.
+`ALTER COLUMN TYPE` re-encodes each parquet partition eagerly (`ConvertOperatorImpl` calls
+`TableWriter.rewriteParquetPartitionWithConversions`, except for the pre-pass cases that go
+parquet→native first: target SYMBOL, or a chained conversion whose parquet no longer matches
+metadata — see `griffin/CLAUDE.md`). The re-encode decodes the old parquet and writes the new
+type using the machinery below, so the on-disk bytes always match the metadata.
 
-When O3 rows fall inside such a partition's time range, `O3PartitionJob` must merge them
-into the parquet data, which forces the lazy conversion to materialise **at write time**.
-
-There is **no conversion when O3 lands on a NATIVE partition**: `ALTER COLUMN TYPE`
-materialises eagerly into native column files, so a native O3 merge always sees
-already-target-typed columns and allocates zero conversion buffers.
+Because both native and parquet `ALTER COLUMN TYPE` are now eager, an O3 merge always sees
+already-target-typed columns and allocates zero conversion buffers — whether the partition is
+native or parquet. The merge/dedup mechanics below still describe how O3 rows land on a
+parquet partition; only the conversion step is a no-op there, having run eagerly at ALTER.
 
 ## The write paths (merge actions)
 
@@ -156,9 +158,9 @@ For a var dedup key, the comparer needs a data-length bound; the writer computes
 same value Phase 1b uses), which is correct for both a converted buffer and a raw decode. The
 native comparer only reads `var_data_len` inside debug `assert`s.
 
-`ConvertOperatorImpl` has **no dedup-key pre-pass** — the merge path above handles a dedup-key
-column whose conversion crosses the fixed↔var/symbol boundary while the partition stays lazy
-parquet, so enabling dedup or altering a dedup key never eagerly rewrites partitions.
+`ConvertOperatorImpl` has **no dedup-key-specific pre-pass** — a dedup-key column whose
+conversion crosses the fixed↔var/symbol boundary is re-encoded by the eager ALTER re-encode
+like any other column, so a later O3 merge sees an already-target-typed dedup key.
 
 ## Native-memory allocation and lifetime
 
@@ -186,8 +188,8 @@ with `freeNativePairs`; the pointer-copy lists (`srcPtrs`, `convertedPtrs`) are 
   shared by the merge and rewrite paths. Fix bugs in the helper, not in one caller.
 - **`var_data_len` is a debug-assert bound**, so a tight `getDataVectorSizeAt` extent is fine;
   do not pass a stale `getChunkDataSize` for a converted buffer.
-- **No conversion buffers on the native O3 path** — only parquet partitions with a lazy ALTER
-  allocate them.
+- **No conversion buffers on the O3 path** — ALTER re-encodes eagerly, so an O3 merge (native
+  or parquet) sees target-typed columns; the eager re-encode's rewrite arm allocates them.
 
 ## Key Files
 
