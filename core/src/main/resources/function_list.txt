@@ -100,6 +100,12 @@ io.questdb.griffin.engine.functions.conditional.NullIfDoubleFunctionFactory
 
 # '<' operator
 io.questdb.griffin.engine.functions.lt.LtDoubleVVFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtDoubleCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.GtDoubleCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtIntCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.GtIntCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.LtLongCursorFunctionFactory
+io.questdb.griffin.engine.functions.lt.GtLongCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory
 io.questdb.griffin.engine.functions.lt.LtTimestampCursorFunctionFactory
 io.questdb.griffin.engine.functions.lt.GtTimestampCursorFunctionFactory

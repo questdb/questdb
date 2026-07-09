@@ -397,8 +397,11 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (i int)");
 
+            // int left operand routes to the dedicated int/cursor overload (<(IC)); it is a valid
+            // numeric comparison (never an implicit cast to TIMESTAMP) and selects no rows here
             assertQuery("select * from tab where i < (select max(i) from tab)")
-                    .fails(24, "left operand must be a TIMESTAMP, found: INT");
+                    .noLeakCheck()
+                    .returns("i\n");
         });
     }
 
@@ -410,7 +413,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)")
-                    .fails(22, "left operand must be a TIMESTAMP, found: VARCHAR");
+                    .fails(22, "left operand must be a DOUBLE, found: VARCHAR");
         });
     }
 
