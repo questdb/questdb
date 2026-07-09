@@ -3218,16 +3218,12 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .returnsOnce("walEnabled\nfalse\n");
 
-            // Try to write to the non-WAL table via QWP. NACK policy v2:
-            // the server rejects with WRITE_ERROR, which is RETRIABLE -- the
-            // client dispatches the strike to the error handler
-            // informationally and replays the frame; the rejection is
-            // deterministic under byte-identical replay, so the poison-frame
-            // detector escalates it to a latched TERMINAL PROTOCOL_VIOLATION
-            // (max_frame_rejections=1 makes the escalation immediate). Block
-            // on the async error handler for deterministic delivery of the
-            // rejection, then expect the latched terminal to surface loudly
-            // on close.
+            // Try to write to the non-WAL table via QWP. ILP/QWP can only write
+            // WAL tables and a non-WAL table won't become writable by replaying
+            // the same frame, so the rejection is a deterministic terminal
+            // SCHEMA_MISMATCH -- the client latches TERMINAL on the first strike,
+            // no replay. Block on the async error handler for deterministic
+            // delivery, then expect the latched terminal to surface on close.
             CompletableFuture<SenderError> firstErrFut = new CompletableFuture<>();
             CompletableFuture<SenderError> terminalFut = new CompletableFuture<>();
             QwpWebSocketSender sender = connectWs(port, err -> {
@@ -3250,9 +3246,9 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                 }
 
                 SenderError err = firstErrFut.get(10, TimeUnit.SECONDS);
-                Assert.assertEquals(SenderError.Category.WRITE_ERROR, err.getCategory());
-                Assert.assertSame(SenderError.Policy.RETRIABLE, err.getAppliedPolicy());
-                expectedTerminalCategory = SenderError.Category.PROTOCOL_VIOLATION;
+                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+                Assert.assertSame(SenderError.Policy.TERMINAL, err.getAppliedPolicy());
+                expectedTerminalCategory = SenderError.Category.SCHEMA_MISMATCH;
             } finally {
                 assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory,
                         "cannot insert into non-WAL table", "non_wal_table");

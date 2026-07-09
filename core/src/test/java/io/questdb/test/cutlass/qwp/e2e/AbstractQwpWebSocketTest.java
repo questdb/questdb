@@ -106,12 +106,19 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
      * {@link SenderError.Category#PROTOCOL_VIOLATION} terminal on the first
      * strike instead of reconnect-replaying the frame
      * {@code max_frame_rejections - 1} more times.
+     * <p>
+     * The poison-min-escalation window is also pinned to {@code 0}: without it
+     * the detector waits out its default 5s wall-time gate before escalating a
+     * deterministic rejection, reconnect-replaying the doomed frame the whole
+     * time. Error tests assert the terminal, not the gate, so 0 makes each
+     * rejected sub-case escalate at once instead of after ~5s.
      */
     protected static QwpWebSocketSender connectWs(int port, SenderErrorHandler errorHandler, int maxFrameRejections) {
         return (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
                 .address("localhost:" + port)
                 .errorHandler(errorHandler)
                 .maxFrameRejections(maxFrameRejections)
+                .poisonMinEscalationWindowMillis(0)
                 .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
                 .build();
     }
