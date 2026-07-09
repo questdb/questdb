@@ -667,7 +667,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriterMetadata,
                         parquetColumns,
                         rowGroupBuffers,
-                        isRewrite
+                        isRewrite,
+                        -1,
+                        ColumnType.UNDEFINED
                 );
 
                 // Publish the new _pm last: patch its header (the MVCC commit
@@ -4002,7 +4004,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         tableWriterMetadata,
                         parquetColumns,
                         rowGroupBuffers,
-                        true
+                        true,
+                        overrideColumnIndex,
+                        overrideColumnType
                 );
 
                 // Publish the new _pm last (header patch + fsync), after the index build.
@@ -4231,7 +4235,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableRecordMetadata tableWriterMetadata,
             DirectIntList parquetColumns,
             RowGroupBuffers rowGroupBuffers,
-            boolean isRewrite
+            boolean isRewrite,
+            int overrideColumnIndex,
+            int overrideColumnType
     ) {
         long parquetAddr = 0;
         long parquetMetaAddr = 0;
@@ -4272,7 +4278,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter;
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
+                // The eager ALTER re-encode runs before the new type reaches metadata, so a column
+                // converted away from indexed SYMBOL still reads as SYMBOL here while the new file
+                // already stores the target type. Use the override type to skip its stale index.
+                final int effectiveType = columnIndex == overrideColumnIndex
+                        ? overrideColumnType
+                        : tableWriterMetadata.getColumnType(columnIndex);
+                if (effectiveType == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
                     final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(columnIndex);
                     if (indexBlockCapacity < 0) {
                         continue;
@@ -4950,7 +4962,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     metadata,
                     ctx.getParquetColumns(),
                     ctx.getRowGroupBuffers(),
-                    true
+                    true,
+                    -1,
+                    ColumnType.UNDEFINED
             );
 
             // Hand off to the consumer via the partition update sink. The

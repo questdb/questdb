@@ -1914,6 +1914,42 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterParquetFooterIndexedSymbolToFixed() throws Exception {
+        // An INDEXED symbol column converted to a fixed type on a parquet partition. The eager
+        // re-encode rewrites the column to the fixed type, so its stale symbol index must not be
+        // rebuilt against the re-encoded file - doing so decodes an INT column as SYMBOL and
+        // suspends the table on WAL apply. Regression for that suspension.
+        assertMemoryLeak(() -> {
+            try {
+                final String values = "('10', '2024-01-01T00:00:01.000000Z'), ('20', '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')";
+                execute("CREATE TABLE nt (v SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (v SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO nt VALUES " + values);
+                execute("INSERT INTO pt VALUES " + values);
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                execute("ALTER TABLE nt ALTER COLUMN v TYPE INT");
+                execute("ALTER TABLE pt ALTER COLUMN v TYPE INT");
+                drainWalQueue();
+
+                // The re-encode succeeds; the table is not suspended on the stale index rebuild.
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("pt")));
+
+                // pt's partition stays parquet and its footer physically carries the new type.
+                assertParquetColumnTag("pt", "v", ColumnType.INT);
+
+                // Values read straight from the re-encoded parquet match the native conversion.
+                assertSqlCursors("SELECT v, ts FROM nt ORDER BY ts", "SELECT v, ts FROM pt ORDER BY ts");
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
     public void testAlterParquetFooterStringToVarchar() throws Exception {
         assertAlterReencodesParquet("STRING", "VARCHAR", ColumnType.VARCHAR,
                 "('alpha', '2024-01-01T00:00:01.000000Z'), ('beta', '2024-01-01T00:00:02.000000Z'), (NULL, '2024-01-01T00:00:03.000000Z')");
