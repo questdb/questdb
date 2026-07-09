@@ -1260,6 +1260,384 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStreamingLagDateAscWithDefaultStreamsAndResolvesTypedDefault() throws Exception {
+        // ASC order keeps this as LAG (only DESC normalises to LEAD), so LagDateFunctionFactory's own
+        // streaming path runs: the 3-arg default block accepts the constant DATE default and the
+        // streaming variant's computeNext resolves it. The immediate Window plan (not deferred-emit)
+        // drives computeNext, exercising the cached-map lazy-alloc gate too.
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select dt, sym, lag(dt, 1, cast(888 as date)) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().assertsPlanNotContaining("DeferredEmitWindow");
+            assertQuery("select dt, sym, lag(dt, 1, cast(888 as date)) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(
+                            "dt\tsym\tlg\n" +
+                                    "1970-01-01T00:00:00.100Z\tA\t1970-01-01T00:00:00.888Z\n" +
+                                    "1970-01-01T00:00:00.200Z\tB\t1970-01-01T00:00:00.888Z\n" +
+                                    "1970-01-01T00:00:00.300Z\tA\t1970-01-01T00:00:00.100Z\n" +
+                                    "1970-01-01T00:00:00.400Z\tB\t1970-01-01T00:00:00.200Z\n" +
+                                    "1970-01-01T00:00:00.500Z\tA\t1970-01-01T00:00:00.300Z\n" +
+                                    "1970-01-01T00:00:00.600Z\tB\t1970-01-01T00:00:00.400Z\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingLagDateInvalidDefaultsThrowOnStreamingPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertExceptionNoLeakCheck("select dt, sym, lag(dt, x) over (partition by sym) as lg from t", 24, "offset must be a constant");
+            assertExceptionNoLeakCheck("select dt, sym, lag(dt, -1) over (partition by sym) as lg from t", 24, "offset must be a positive integer");
+            assertExceptionNoLeakCheck("select dt, sym, lag(dt, 1, 2, 3) over (partition by sym) as lg from t", 30, "too many arguments");
+            assertExceptionNoLeakCheck("select dt, sym, lag(dt, 1, sum(x)) over (partition by sym) as lg from t", 27, "default value can not be a window function");
+            assertExceptionNoLeakCheck("select dt, sym, lag(dt, 1, true) over (partition by sym order by ts asc) as lg from t", 27, "default value cannot be cast to date");
+            // Non-constant default of an incompatible type: streaming rejects (non-constant), the cached
+            // helper then rejects again on the cast, exercising both guards.
+            assertExceptionNoLeakCheck("select dt, sym, lag(dt, 1, d) over (partition by sym) as lg from t", 27, "default value cannot be cast to date");
+        });
+    }
+
+    @Test
+    public void testStreamingLagDoubleAscWithDefaultStreamsAndResolvesTypedDefault() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select d, sym, lag(d, 1, 9.99) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().assertsPlanNotContaining("DeferredEmitWindow");
+            assertQuery("select d, sym, lag(d, 1, 9.99) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(
+                            "d\tsym\tlg\n" +
+                                    "1.5\tA\t9.99\n" +
+                                    "2.5\tB\t9.99\n" +
+                                    "3.5\tA\t1.5\n" +
+                                    "4.5\tB\t2.5\n" +
+                                    "5.5\tA\t3.5\n" +
+                                    "6.5\tB\t4.5\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingLagDoubleInvalidDefaultsThrowOnStreamingPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertExceptionNoLeakCheck("select d, sym, lag(d, x) over (partition by sym) as lg from t", 22, "offset must be a constant");
+            assertExceptionNoLeakCheck("select d, sym, lag(d, -1) over (partition by sym) as lg from t", 22, "offset must be a positive integer");
+            assertExceptionNoLeakCheck("select d, sym, lag(d, 1, 2, 3) over (partition by sym) as lg from t", 28, "too many arguments");
+            assertExceptionNoLeakCheck("select d, sym, lag(d, 1, sum(x)) over (partition by sym) as lg from t", 25, "default value can not be a window function");
+            assertExceptionNoLeakCheck("select d, sym, lag(d, 1, true) over (partition by sym order by ts asc) as lg from t", 25, "default value cannot be cast to double");
+            assertExceptionNoLeakCheck("select d, sym, lag(d, 1, sym) over (partition by sym) as lg from t", 25, "default value cannot be cast to double");
+        });
+    }
+
+    @Test
+    public void testStreamingLagLongAscWithDefaultStreamsAndResolvesTypedDefault() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select x, sym, lag(x, 1, 999::long) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().assertsPlanNotContaining("DeferredEmitWindow");
+            assertQuery("select x, sym, lag(x, 1, 999::long) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(
+                            "x\tsym\tlg\n" +
+                                    "10\tA\t999\n" +
+                                    "20\tB\t999\n" +
+                                    "30\tA\t10\n" +
+                                    "40\tB\t20\n" +
+                                    "50\tA\t30\n" +
+                                    "60\tB\t40\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingLagLongIgnoreNullsPartitionedFallsBackToCached() throws Exception {
+        // IGNORE NULLS is not supported on the streaming path; tryNewStreamingInstance returns null and
+        // the cached partitioned LAG runs instead. Result must still be correct.
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select x, sym, lag(x, 1) ignore nulls over (partition by sym) as lg from t")
+                    .noLeakCheck().assertsPlanNotContaining("DeferredEmitWindow");
+            assertQuery("select x, sym, lag(x, 1) ignore nulls over (partition by sym) as lg from t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(
+                            "x\tsym\tlg\n" +
+                                    "10\tA\tnull\n" +
+                                    "20\tB\tnull\n" +
+                                    "30\tA\t10\n" +
+                                    "40\tB\t20\n" +
+                                    "50\tA\t30\n" +
+                                    "60\tB\t40\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingLagLongInvalidDefaultsThrowOnStreamingPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertExceptionNoLeakCheck("select x, sym, lag(x, 1, 2, 3) over (partition by sym) as lg from t", 28, "too many arguments");
+            assertExceptionNoLeakCheck("select x, sym, lag(x, 1, 1.5) over (partition by sym order by ts asc) as lg from t", 25, "default value cannot be cast to long");
+            assertExceptionNoLeakCheck("select x, sym, lag(x, 1, d) over (partition by sym) as lg from t", 25, "default value cannot be cast to long");
+        });
+    }
+
+    @Test
+    public void testStreamingLagOffsetAboveMaxFallsBackToCached() throws Exception {
+        // Offset above MAX_STREAMING_LAG_OFFSET is rejected by the streaming gate (per-type), leaving the
+        // cached partitioned LAG to run. With only 6 rows every value is the default (NULL here).
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select ev, sym, lag(ev, 70000) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(
+                            "ev\tsym\tlg\n" +
+                                    "1970-01-01T00:00:00.000100Z\tA\t\n" +
+                                    "1970-01-01T00:00:00.000200Z\tB\t\n" +
+                                    "1970-01-01T00:00:00.000300Z\tA\t\n" +
+                                    "1970-01-01T00:00:00.000400Z\tB\t\n" +
+                                    "1970-01-01T00:00:00.000500Z\tA\t\n" +
+                                    "1970-01-01T00:00:00.000600Z\tB\t\n"
+                    );
+            assertQuery("select dt, sym, lag(dt, 70000) over (partition by sym) as lg from t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(
+                            "dt\tsym\tlg\n" +
+                                    "1970-01-01T00:00:00.100Z\tA\t\n" +
+                                    "1970-01-01T00:00:00.200Z\tB\t\n" +
+                                    "1970-01-01T00:00:00.300Z\tA\t\n" +
+                                    "1970-01-01T00:00:00.400Z\tB\t\n" +
+                                    "1970-01-01T00:00:00.500Z\tA\t\n" +
+                                    "1970-01-01T00:00:00.600Z\tB\t\n"
+                    );
+            assertQuery("select d, sym, lag(d, 70000) over (partition by sym) as lg from t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(
+                            "d\tsym\tlg\n" +
+                                    "1.5\tA\tnull\n" +
+                                    "2.5\tB\tnull\n" +
+                                    "3.5\tA\tnull\n" +
+                                    "4.5\tB\tnull\n" +
+                                    "5.5\tA\tnull\n" +
+                                    "6.5\tB\tnull\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingLagTimestampAscWithDefaultStreamsAndResolvesTypedDefault() throws Exception {
+        // ASC keeps this as LAG; the timestamp streaming variant resolves the constant TIMESTAMP default
+        // once in init() (TimestampDriver.from), the branch that per-type LAG timestamp adds over LONG.
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select ev, sym, lag(ev, 1, cast(777 as timestamp)) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().assertsPlanNotContaining("DeferredEmitWindow");
+            assertQuery("select ev, sym, lag(ev, 1, cast(777 as timestamp)) over (partition by sym order by ts asc) as lg from t")
+                    .noLeakCheck().noRandomAccess().expectSize().returns(
+                            "ev\tsym\tlg\n" +
+                                    "1970-01-01T00:00:00.000100Z\tA\t1970-01-01T00:00:00.000777Z\n" +
+                                    "1970-01-01T00:00:00.000200Z\tB\t1970-01-01T00:00:00.000777Z\n" +
+                                    "1970-01-01T00:00:00.000300Z\tA\t1970-01-01T00:00:00.000100Z\n" +
+                                    "1970-01-01T00:00:00.000400Z\tB\t1970-01-01T00:00:00.000200Z\n" +
+                                    "1970-01-01T00:00:00.000500Z\tA\t1970-01-01T00:00:00.000300Z\n" +
+                                    "1970-01-01T00:00:00.000600Z\tB\t1970-01-01T00:00:00.000400Z\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingLagTimestampInvalidDefaultsThrowOnStreamingPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertExceptionNoLeakCheck("select ev, sym, lag(ev, x) over (partition by sym) as lg from t", 24, "offset must be a constant");
+            assertExceptionNoLeakCheck("select ev, sym, lag(ev, -1) over (partition by sym) as lg from t", 24, "offset must be a positive integer");
+            assertExceptionNoLeakCheck("select ev, sym, lag(ev, 1, 2, 3) over (partition by sym) as lg from t", 30, "too many arguments");
+            assertExceptionNoLeakCheck("select ev, sym, lag(ev, 1, sum(x)) over (partition by sym) as lg from t", 27, "default value can not be a window function");
+            assertExceptionNoLeakCheck("select ev, sym, lag(ev, 1, true) over (partition by sym order by ts asc) as lg from t", 27, "default value cannot be cast to timestamp");
+            assertExceptionNoLeakCheck("select ev, sym, lag(ev, 1, d) over (partition by sym) as lg from t", 27, "default value cannot be cast to timestamp");
+        });
+    }
+
+    @Test
+    public void testStreamingLeadDateInvalidDefaultsThrowOnStreamingPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertExceptionNoLeakCheck("select dt, lead(dt, 1, sum(x)) over (partition by sym) as ld from t", 23, "default value can not be a window function");
+            assertExceptionNoLeakCheck("select dt, lead(dt, 1, true) over () as ld from t", 23, "default value cannot be cast to date");
+            assertExceptionNoLeakCheck("select dt, lead(dt, 1, d) over () as ld from t", 23, "default value cannot be cast to date");
+        });
+    }
+
+    @Test
+    public void testStreamingLeadDoubleInvalidDefaultsThrowOnStreamingPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertExceptionNoLeakCheck("select d, lead(d, 1, sum(x)) over (partition by sym) as ld from t", 21, "default value can not be a window function");
+            assertExceptionNoLeakCheck("select d, lead(d, 1, true) over () as ld from t", 21, "default value cannot be cast to double");
+        });
+    }
+
+    @Test
+    public void testStreamingLeadLongInvalidDefaultsThrowOnStreamingPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertExceptionNoLeakCheck("select x, lead(x, 1, 2, 3) over () as ld from t", 24, "too many arguments");
+            assertExceptionNoLeakCheck("select x, lead(x, 1, 1.5) over () as ld from t", 21, "default value cannot be cast to long");
+        });
+    }
+
+    @Test
+    public void testStreamingLeadTimestampInvalidDefaultsThrowOnStreamingPath() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertExceptionNoLeakCheck("select ev, lead(ev, 1, sum(x)) over (partition by sym) as ld from t", 23, "default value can not be a window function");
+            assertExceptionNoLeakCheck("select ev, lead(ev, 1, true) over () as ld from t", 23, "default value cannot be cast to timestamp");
+            assertExceptionNoLeakCheck("select ev, lead(ev, 1, d) over () as ld from t", 23, "default value cannot be cast to timestamp");
+        });
+    }
+
+    @Test
+    public void testStreamingMixedLagLeadDatePartitionedFallsBackToCached() throws Exception {
+        // Partitioned LAG+LEAD with no ORDER BY routes to CachedWindowLight; both streaming variants run
+        // their cached fallback (LEAD's pass1 map/buffer lazy-alloc, LAG's computeNext lazy-alloc).
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select dt, sym, lag(dt, 1) over (partition by sym) as lg, lead(dt, 1) over (partition by sym) as ld from t")
+                    .noLeakCheck().assertsPlanContaining("CachedWindowLight");
+            assertQuery("select dt, sym, lag(dt, 1) over (partition by sym) as lg, lead(dt, 1) over (partition by sym) as ld from t")
+                    .noLeakCheck().expectSize().returns(
+                            "dt\tsym\tlg\tld\n" +
+                                    "1970-01-01T00:00:00.100Z\tA\t\t1970-01-01T00:00:00.300Z\n" +
+                                    "1970-01-01T00:00:00.200Z\tB\t\t1970-01-01T00:00:00.400Z\n" +
+                                    "1970-01-01T00:00:00.300Z\tA\t1970-01-01T00:00:00.100Z\t1970-01-01T00:00:00.500Z\n" +
+                                    "1970-01-01T00:00:00.400Z\tB\t1970-01-01T00:00:00.200Z\t1970-01-01T00:00:00.600Z\n" +
+                                    "1970-01-01T00:00:00.500Z\tA\t1970-01-01T00:00:00.300Z\t\n" +
+                                    "1970-01-01T00:00:00.600Z\tB\t1970-01-01T00:00:00.400Z\t\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingMixedLagLeadDoublePartitionedFallsBackToCached() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select d, sym, lag(d, 1) over (partition by sym) as lg, lead(d, 1) over (partition by sym) as ld from t")
+                    .noLeakCheck().assertsPlanContaining("CachedWindowLight");
+            assertQuery("select d, sym, lag(d, 1) over (partition by sym) as lg, lead(d, 1) over (partition by sym) as ld from t")
+                    .noLeakCheck().expectSize().returns(
+                            "d\tsym\tlg\tld\n" +
+                                    "1.5\tA\tnull\t3.5\n" +
+                                    "2.5\tB\tnull\t4.5\n" +
+                                    "3.5\tA\t1.5\t5.5\n" +
+                                    "4.5\tB\t2.5\t6.5\n" +
+                                    "5.5\tA\t3.5\tnull\n" +
+                                    "6.5\tB\t4.5\tnull\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingMixedLagLeadNonPartitionedDateFallsBackToCached() throws Exception {
+        // Non-partitioned LAG+LEAD over () routes to CachedWindowLight: the non-partitioned streaming LEAD
+        // variant's pass1 lazy-allocates its ring buffer, while non-partitioned LAG stays on plain cached.
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select dt, lag(dt, 1) over () as lg, lead(dt, 1) over () as ld from t")
+                    .noLeakCheck().assertsPlanContaining("CachedWindowLight");
+            assertQuery("select dt, lag(dt, 1) over () as lg, lead(dt, 1) over () as ld from t")
+                    .noLeakCheck().expectSize().returns(
+                            "dt\tlg\tld\n" +
+                                    "1970-01-01T00:00:00.100Z\t\t1970-01-01T00:00:00.200Z\n" +
+                                    "1970-01-01T00:00:00.200Z\t1970-01-01T00:00:00.100Z\t1970-01-01T00:00:00.300Z\n" +
+                                    "1970-01-01T00:00:00.300Z\t1970-01-01T00:00:00.200Z\t1970-01-01T00:00:00.400Z\n" +
+                                    "1970-01-01T00:00:00.400Z\t1970-01-01T00:00:00.300Z\t1970-01-01T00:00:00.500Z\n" +
+                                    "1970-01-01T00:00:00.500Z\t1970-01-01T00:00:00.400Z\t1970-01-01T00:00:00.600Z\n" +
+                                    "1970-01-01T00:00:00.600Z\t1970-01-01T00:00:00.500Z\t\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingMixedLagLeadNonPartitionedDoubleFallsBackToCached() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select d, lag(d, 1) over () as lg, lead(d, 1) over () as ld from t")
+                    .noLeakCheck().assertsPlanContaining("CachedWindowLight");
+            assertQuery("select d, lag(d, 1) over () as lg, lead(d, 1) over () as ld from t")
+                    .noLeakCheck().expectSize().returns(
+                            "d\tlg\tld\n" +
+                                    "1.5\tnull\t2.5\n" +
+                                    "2.5\t1.5\t3.5\n" +
+                                    "3.5\t2.5\t4.5\n" +
+                                    "4.5\t3.5\t5.5\n" +
+                                    "5.5\t4.5\t6.5\n" +
+                                    "6.5\t5.5\tnull\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingMixedLagLeadNonPartitionedTimestampFallsBackToCached() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select ev, lag(ev, 1) over () as lg, lead(ev, 1) over () as ld from t")
+                    .noLeakCheck().assertsPlanContaining("CachedWindowLight");
+            assertQuery("select ev, lag(ev, 1) over () as lg, lead(ev, 1) over () as ld from t")
+                    .noLeakCheck().expectSize().returns(
+                            "ev\tlg\tld\n" +
+                                    "1970-01-01T00:00:00.000100Z\t\t1970-01-01T00:00:00.000200Z\n" +
+                                    "1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000300Z\n" +
+                                    "1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000400Z\n" +
+                                    "1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000300Z\t1970-01-01T00:00:00.000500Z\n" +
+                                    "1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000400Z\t1970-01-01T00:00:00.000600Z\n" +
+                                    "1970-01-01T00:00:00.000600Z\t1970-01-01T00:00:00.000500Z\t\n"
+                    );
+        });
+    }
+
+    @Test
+    public void testStreamingMixedLagLeadTimestampPartitionedFallsBackToCached() throws Exception {
+        assertMemoryLeak(() -> {
+            createTypedTable();
+
+            assertQuery("select ev, sym, lag(ev, 1) over (partition by sym) as lg, lead(ev, 1) over (partition by sym) as ld from t")
+                    .noLeakCheck().assertsPlanContaining("CachedWindowLight");
+            assertQuery("select ev, sym, lag(ev, 1) over (partition by sym) as lg, lead(ev, 1) over (partition by sym) as ld from t")
+                    .noLeakCheck().expectSize().returns(
+                            "ev\tsym\tlg\tld\n" +
+                                    "1970-01-01T00:00:00.000100Z\tA\t\t1970-01-01T00:00:00.000300Z\n" +
+                                    "1970-01-01T00:00:00.000200Z\tB\t\t1970-01-01T00:00:00.000400Z\n" +
+                                    "1970-01-01T00:00:00.000300Z\tA\t1970-01-01T00:00:00.000100Z\t1970-01-01T00:00:00.000500Z\n" +
+                                    "1970-01-01T00:00:00.000400Z\tB\t1970-01-01T00:00:00.000200Z\t1970-01-01T00:00:00.000600Z\n" +
+                                    "1970-01-01T00:00:00.000500Z\tA\t1970-01-01T00:00:00.000300Z\t\n" +
+                                    "1970-01-01T00:00:00.000600Z\tB\t1970-01-01T00:00:00.000400Z\t\n"
+                    );
+        });
+    }
+
+    private void createTypedTable() throws Exception {
+        execute("create table t (x long, d double, dt date, ev timestamp, sym symbol, ts timestamp) timestamp(ts) partition by day");
+        execute(
+                "insert into t values " +
+                        "(10, 1.5, 100, 100, 'A', 0), (20, 2.5, 200, 200, 'B', 1000), (30, 3.5, 300, 300, 'A', 2000), " +
+                        "(40, 4.5, 400, 400, 'B', 3000), (50, 5.5, 500, 500, 'A', 4000), (60, 6.5, 600, 600, 'B', 5000)"
+        );
+    }
+
     // Bridge: AbstractCairoTest.assertQueryNoLeakCheck/assertPlanNoLeakCheck were removed in favor of
     // the QueryAssertion builder (OSS #7195). Drive the builder so the suite's calls keep working.
     private void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws Exception {
