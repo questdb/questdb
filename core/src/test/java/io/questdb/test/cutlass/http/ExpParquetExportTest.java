@@ -2002,6 +2002,194 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportPageFramePostingIndexCoveringScanMultiWorker() throws Exception {
+        // Regression for "posting index cursor closed off the reader's owning thread"
+        // (AssertionError under -ea). A POSTING-indexed covering scan (symbol IN (...))
+        // exported as parquet drives the MultiKeyCoveringPageFrameCursor. On a multi-worker
+        // HTTP server the export streams across worker threads and
+        // HttpConnectionContext.reset() closes the page-frame cursor on a worker other than
+        // the one that opened the posting index cursor. Cursor.close() used to assert
+        // same-thread and abort the close, leaking the reader; it now detects the off-thread
+        // close via AbstractPostingIndexReader.isOperatingThread() and releases the cursor's
+        // buffers directly instead of re-pooling. getExportTester() pins workerCount=1,
+        // which hides the migration; this test uses several workers so the close can land
+        // off the operating thread. The builder is hand-rolled rather than chained off
+        // getExportTester() because the helper also injects randomized 1-1024-byte forced
+        // send/recv fragmentation (documented slow on Mac/Windows), which this 300k-row,
+        // 4-client test cannot afford; the fixed 2048-byte send buffer already fragments
+        // the stream enough to force suspend/resume migrations.
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(4)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .withSendBufferSize(2048)
+                .withCopyExportRoot(root + "/export")
+                .withCopyInputRoot(root + "/export")
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE deriv (
+                                symbol SYMBOL INDEX TYPE POSTING INCLUDE (open, high, low, close, volume, timestamp),
+                                open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, volume DOUBLE,
+                                timestamp TIMESTAMP
+                            ) TIMESTAMP(timestamp) PARTITION BY MONTH""", sqlExecutionContext);
+                    // 8 symbols spread over several monthly partitions; enough rows that the
+                    // parquet stream fragments and resumes across workers.
+                    engine.execute("""
+                            INSERT INTO deriv
+                            SELECT 'S' || (x % 8),
+                                rnd_double(), rnd_double(), rnd_double(), rnd_double(), rnd_double(),
+                                timestamp_sequence('2025-01-01T00:00:00.000000Z', 60_000_000L)
+                            FROM long_sequence(300_000)""", sqlExecutionContext);
+
+                    final String query = "SELECT timestamp, open, high, low, close, symbol FROM deriv " +
+                            "WHERE symbol IN ('S0','S1','S2','S3','S4','S5','S6','S7')";
+
+                    final int threadCount = 4;
+                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                    final AtomicInteger successCount = new AtomicInteger();
+                    final AtomicInteger errorCount = new AtomicInteger();
+                    final Thread[] threads = new Thread[threadCount];
+                    for (int i = 0; i < threadCount; i++) {
+                        final int threadId = i;
+                        threads[i] = new Thread(() -> {
+                            HttpClient client = null;
+                            try {
+                                barrier.await();
+                                client = HttpClientFactory.newPlainTextInstance();
+                                HttpClient.Request req = client.newRequest("localhost", 9001);
+                                req.GET().url("/exp")
+                                        .query("query", query)
+                                        .query("fmt", "parquet")
+                                        .query("filename", "posting_covering_" + threadId);
+                                try (var respHeaders = req.send()) {
+                                    respHeaders.await();
+                                    TestUtils.assertEquals("200", respHeaders.getStatusCode());
+                                    respHeaders.getResponse().discard();
+                                    successCount.incrementAndGet();
+                                }
+                            } catch (Throwable e) {
+                                errorCount.incrementAndGet();
+                                LOG.error().$("export client failed: ").$(e).$();
+                            } finally {
+                                Misc.free(client);
+                                Path.clearThreadLocals();
+                            }
+                        });
+                        threads[i].start();
+                    }
+                    for (Thread thread : threads) {
+                        thread.join();
+                    }
+
+                    Assert.assertEquals("Expected no failed parquet exports", 0, errorCount.get());
+                    Assert.assertEquals("Expected all parquet exports to succeed", threadCount, successCount.get());
+
+                    // The concurrent phase proves the connections survive; this phase
+                    // proves the exported bytes and the plans. The IN list drives
+                    // MultiKeyCoveringPageFrameCursor and the single literal drives
+                    // SingleKeyCoveringPageFrameCursor -- both park partially-drained
+                    // posting cursors across fragments, and on a multi-worker server a
+                    // single /exp request is enough for the parquet copy to close them
+                    // off the operating thread.
+                    final String singleKeyQuery = "SELECT timestamp, open, high, low, close, symbol FROM deriv " +
+                            "WHERE symbol = 'S3'";
+                    final String[] verifyQueries = {query, singleKeyQuery};
+                    final StringSink planSink = new StringSink();
+                    for (String verifyQuery : verifyQueries) {
+                        planSink.clear();
+                        TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + verifyQuery, planSink);
+                        TestUtils.assertContains(planSink, "CoveringIndex on: symbol");
+                    }
+                    try (
+                            TestHttpClient testHttpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(1 << 20)
+                    ) {
+                        for (int i = 0; i < verifyQueries.length; i++) {
+                            HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                            req.GET().url("/exp")
+                                    .query("query", verifyQueries[i])
+                                    .query("fmt", "parquet");
+                            sink.clear();
+                            testHttpClient.reqToSink(req, sink, null, null, null, null);
+                            assertParquetMatchesQuery(
+                                    engine,
+                                    sqlExecutionContext,
+                                    sink,
+                                    verifyQueries[i],
+                                    "posting_covering_verify_" + i + ".parquet"
+                            );
+                        }
+                    }
+                });
+    }
+
+    @Test
+    public void testParquetExportCoveringScanShapes() throws Exception {
+        // Regression for covering scans exporting all-null covered columns to parquet. A
+        // single-key scan (sym = 'x') produces metadata-only page frames -- covered columns are
+        // decoded on the async reduce workers -- so every zero-copy export route that reads raw
+        // frame addresses (DIRECT_PAGE_FRAME and PAGE_FRAME_BACKED) shipped placeholders. Each
+        // shape below reaches a different route: a bare projection with a computed column reaches
+        // PAGE_FRAME_BACKED, a query through a view reaches it via StaleViewCheckFactory (whose
+        // getBaseFactory() skips its own base), and a var-size covered column falls to
+        // CURSOR_BASED. The multi-key (IN-list) merge materializes eagerly and stays on
+        // DIRECT_PAGE_FRAME -- exercised here with a var-size covered column, the shape most
+        // likely to hide a latent eager-materialization gap. All must match the source query.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE deriv (
+                                symbol SYMBOL INDEX TYPE POSTING INCLUDE (open, note, timestamp),
+                                open DOUBLE, note VARCHAR,
+                                timestamp TIMESTAMP
+                            ) TIMESTAMP(timestamp) PARTITION BY MONTH""", sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO deriv
+                            SELECT 'S' || (x % 8), rnd_double(), rnd_varchar(1, 20, 1),
+                                timestamp_sequence('2025-01-01T00:00:00.000000Z', 3_600_000_000L)
+                            FROM long_sequence(20_000)""", sqlExecutionContext);
+                    engine.execute("CREATE VIEW deriv_v AS SELECT timestamp, symbol, open, note FROM deriv", sqlExecutionContext);
+
+                    final String[] queries = {
+                            // single-key projection with a computed column over the covering scan -> PAGE_FRAME_BACKED
+                            "SELECT symbol, open + 1 AS o FROM deriv WHERE symbol = 'S3'",
+                            // single-key query through a view -> StaleViewCheckFactory wraps the covering scan directly
+                            "SELECT timestamp, symbol, open, note FROM deriv_v WHERE symbol = 'S3'",
+                            // single-key var-size covered column -> CURSOR_BASED
+                            "SELECT symbol, note FROM deriv WHERE symbol = 'S3'",
+                            // multi-key var-size covered column -> DIRECT_PAGE_FRAME (eager merge)
+                            "SELECT timestamp, symbol, note FROM deriv WHERE symbol IN ('S1', 'S3')",
+                    };
+                    try (
+                            TestHttpClient testHttpClient = new TestHttpClient();
+                            DirectUtf8Sink sink = new DirectUtf8Sink(1 << 20)
+                    ) {
+                        final StringSink planSink = new StringSink();
+                        for (int i = 0; i < queries.length; i++) {
+                            planSink.clear();
+                            TestUtils.printSql(engine, sqlExecutionContext, "EXPLAIN " + queries[i], planSink);
+                            TestUtils.assertContains(planSink, "CoveringIndex on: symbol");
+
+                            HttpClient.Request req = testHttpClient.getHttpClient().newRequest("localhost", 9001);
+                            req.GET().url("/exp")
+                                    .query("query", queries[i])
+                                    .query("fmt", "parquet");
+                            sink.clear();
+                            testHttpClient.reqToSink(req, sink, null, null, null, null);
+                            assertParquetMatchesQuery(
+                                    engine,
+                                    sqlExecutionContext,
+                                    sink,
+                                    queries[i],
+                                    "covering_shape_" + i + ".parquet"
+                            );
+                        }
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportPageFrameVarcharAndArrayColumns() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {

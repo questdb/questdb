@@ -84,12 +84,25 @@ public enum ParquetExportMode {
             return TEMP_TABLE;
         }
         RecordCursorFactory unwrapped = unwrapFactory(factory);
-        if (factory.supportsPageFrameCursor()) {
+        // A metadata-only page-frame producer (the covering-index single-key scan) emits
+        // placeholder covered-column addresses that only the async covered-decode framework
+        // fills; a DIRECT_PAGE_FRAME reader would ship all-null covered columns. Fall through
+        // to the row-wise cursor path, which drives the same covered decode the query path
+        // uses. Multi-key covering frames are materialized eagerly and stay on the fast path.
+        if (factory.supportsPageFrameCursor() && factory.producesMaterializedPageFrames()) {
             return DIRECT_PAGE_FRAME;
         }
         if (unwrapped instanceof VirtualRecordCursorFactory vf && vf.getBaseFactory().supportsPageFrameCursor()) {
             if (hasComputedBinaryColumn(vf)) {
                 return TEMP_TABLE;
+            }
+            // PAGE_FRAME_BACKED reads the base's raw page-frame addresses for the pass-through
+            // columns, so a metadata-only base (single-key covering scan under a projection, e.g.
+            // SELECT sym, price * qty FROM t WHERE sym = 'x') would ship all-null covered columns
+            // just like the DIRECT path. Only stay on the hybrid fast path when the base
+            // materializes its frames; otherwise export row-wise via CURSOR_BASED.
+            if (!vf.getBaseFactory().producesMaterializedPageFrames()) {
+                return CURSOR_BASED;
             }
             return isDescending ? CURSOR_BASED : PAGE_FRAME_BACKED;
         }
