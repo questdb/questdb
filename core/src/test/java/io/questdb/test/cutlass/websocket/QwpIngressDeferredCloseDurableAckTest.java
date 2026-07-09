@@ -1245,6 +1245,212 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * The role-change CLOSE parks mid-send while the client's CLOSE is
+     * already sitting unprocessed in the recv buffer (crossing close). The
+     * resume branch must return the send machine to READY when it arms the
+     * echo wait, so the fall-through drainBufferedFrames dispatches the
+     * buffered echo and the handshake completes immediately. The pre-fix
+     * branch left sendState parked in RESUME_CLOSE for the whole wait:
+     * drainBufferedFrames no-oped, the buffered echo was never dispatched,
+     * and -- with a conformant post-close client sending nothing more (RFC
+     * 6455 s5.5.1 has the client wait for the server to close TCP) -- the
+     * recv-driven expiry poll never ran either, so the connection outlived
+     * the echo budget until the transport idle reaper collected it.
+     */
+    @Test
+    public void testParkedRoleChangeCloseResumeMustDispatchBufferedCrossingEcho() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabl (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabl", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabl", 200L, 2_000_000L));
+                byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+                byte[] closeEcho = closeEchoFrame();
+                byte[] wire = concat(frame0, frame1, ping, closeEcho);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains
+                    // (send call 1).
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the demote drain completes.
+                    durableWatermark.set(Long.MAX_VALUE);
+
+                    // Phase D: the keepalive PING and the client's crossing
+                    // CLOSE land in the same recv chunk. The PING re-entry
+                    // flushes the final durable ack (send call 2) and exits
+                    // the deferral into sendFatalClose, whose CLOSE (send
+                    // call 3) parks mid-send -- the crossing CLOSE behind it
+                    // is compacted into the recv buffer, unprocessed.
+                    rawSocket.throwSlowToReadOnCall = 3;
+                    nf.release(ping.length + closeEcho.length);
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("Expected PeerIsSlowToReadException (parked role-change CLOSE)");
+                    } catch (PeerIsSlowToReadException expected) {
+                    }
+                    Assert.assertFalse(
+                            "test setup: echo wait must not be armed while the CLOSE tail is parked",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertEquals(
+                            "test setup: the client's crossing CLOSE must be buffered, unprocessed",
+                            closeEcho.length, state.getRecvBufferLen()
+                    );
+
+                    // Phase E: the dispatcher fires resumeSend; the CLOSE
+                    // tail flushes and the echo wait is armed. The resume
+                    // branch must return the send machine to READY so the
+                    // fall-through drainBufferedFrames dispatches the
+                    // buffered echo -- completing the handshake NOW, via
+                    // ServerDisconnectException, with no further inbound
+                    // bytes required from the (conformant, silent) client.
+                    try {
+                        processor.resumeSend(context);
+                        Assert.fail("Expected ServerDisconnectException: the buffered crossing CLOSE completes"
+                                + " the handshake at resume time; leaving it undispatched strands the"
+                                + " connection until the idle reaper (the expiry poll is recv-driven and a"
+                                + " post-close client sends nothing more)");
+                    } catch (ServerDisconnectException expected) {
+                    }
+
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * The OTHER frame kind that can park into a resume-close state: the close
+     * RESPONSE to a client-initiated CLOSE, blocked mid-send while a
+     * role-change close deferral happens to be armed. The client's CLOSE is
+     * already consumed, so the RFC 6455 handshake is complete the moment the
+     * response tail flushes: the resume path must tear the connection down
+     * immediately (s5.5.1: the server closes TCP first) and must NOT arm the
+     * close-echo wait -- no echo can ever arrive. The pre-fix code parked
+     * both frame kinds in one state (RESUME_CLOSE), and the resume branch's
+     * eligibility flags (durable-ack mode, deferral armed, uploads covered)
+     * could not tell them apart: it armed a wait for a handshake that was
+     * already complete, stranding the connection until the idle reaper.
+     */
+    @Test
+    public void testParkedCloseResponseResumeMustDisconnectWithoutEchoWait() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabm (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabm", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabm", 200L, 2_000_000L));
+                // the client's VOLUNTARY close (Sender.close() during
+                // failover), not an echo -- the server has sent no CLOSE yet
+                byte[] clientClose = closeEchoFrame();
+                byte[] wire = concat(frame0, frame1, clientClose);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Phase A: PRIMARY. seq=0 commits; cumulative ACK drains
+                    // (send call 1).
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+
+                    // Phase B: in-place demote. seq=1 is gate-rejected; the
+                    // role-change close is deferred awaiting upload coverage.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "test setup: role-change close must be deferred awaiting durable upload coverage",
+                            state.isRoleChangeCloseDeferred()
+                    );
+
+                    // Phase C: the demote drain completes -- every
+                    // eligibility flag the resume branch consults is now
+                    // true, which is exactly what made the conflated state
+                    // dangerous.
+                    durableWatermark.set(Long.MAX_VALUE);
+
+                    // Phase D: the client closes voluntarily. handleClose
+                    // flushes the final durable ack (send call 2), then the
+                    // close response (send call 3) parks mid-send.
+                    rawSocket.throwSlowToReadOnCall = 3;
+                    nf.release(clientClose.length);
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("Expected PeerIsSlowToReadException (parked close response)");
+                    } catch (PeerIsSlowToReadException expected) {
+                    }
+                    Assert.assertEquals(
+                            "test setup: the parked frame must be recorded as a close RESPONSE"
+                                    + " (SEND_STATE_RESUME_CLOSE_RESPONSE), distinct from a parked fatal CLOSE",
+                            11, state.getSendState()
+                    );
+
+                    // Phase E: the dispatcher fires resumeSend; the response
+                    // tail flushes and the handshake is complete. The resume
+                    // path must disconnect NOW and must not arm the echo
+                    // wait: the client's CLOSE was consumed in Phase D, so no
+                    // echo can ever arrive, and the recv-driven expiry poll
+                    // would never run against a conformant post-close client.
+                    try {
+                        processor.resumeSend(context);
+                        Assert.fail("Expected ServerDisconnectException: the close response tail completes the"
+                                + " client-initiated close handshake; arming an echo wait here waits for a"
+                                + " frame that can never arrive");
+                    } catch (ServerDisconnectException expected) {
+                    }
+                    Assert.assertFalse(
+                            "no close-echo wait may be armed for a client-initiated close",
+                            state.isAwaitingCloseEcho()
+                    );
+
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * The close-echo handshake's outbound half: after our CLOSE frame nothing
      * else may go out -- not a pong for a stray PING, not a close response
      * for the client's echo, not a late ack (RFC 6455: no frames after

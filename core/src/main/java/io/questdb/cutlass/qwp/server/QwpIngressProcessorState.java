@@ -97,6 +97,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
     static final int SEND_STATE_RESUME_CLOSE = 6;
+    // Parked close RESPONSE to a client-initiated CLOSE. Kept distinct from
+    // SEND_STATE_RESUME_CLOSE (a parked server-initiated fatal CLOSE): the
+    // resume path for a close response must tear the connection down
+    // unconditionally -- the client's CLOSE is already consumed, so the RFC
+    // 6455 handshake completes the instant the response tail flushes and no
+    // close-echo wait may be armed (no echo can ever arrive). Conflating the
+    // two frame kinds in one state made the resume branch arm the echo wait
+    // for a handshake that was already complete.
+    static final int SEND_STATE_RESUME_CLOSE_RESPONSE = 11;
     static final int SEND_STATE_RESUME_DRAIN_THEN_CLOSE = 10;
     static final int SEND_STATE_RESUME_DURABLE_ACK = 4;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE = 8;
@@ -632,6 +641,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Records that the close response to a client-initiated CLOSE was
+     * partially flushed to the OS buffer. The framework's send buffer holds
+     * the rest; the resume path finishes the flush and disconnects
+     * unconditionally -- the client's CLOSE is already consumed, so the close
+     * handshake is complete once the tail lands and no echo wait applies.
+     */
+    public void onCloseResponseSendBlocked() {
+        sendState = SEND_STATE_RESUME_CLOSE_RESPONSE;
+    }
+
+    /**
      * Records that a durable-ack send was blocked by a full OS buffer.
      * Transitions from READY to RESUME_DURABLE_ACK. The durableProgressSnapshot
      * is retained so onDurableAckSent() can update lastDurableSeqTxns on resume.
@@ -787,10 +807,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 || sendState == SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR
                 || sendState == SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE) {
             sendState = SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE;
-        } else if (sendState == SEND_STATE_RESUME_CLOSE) {
-            // The parked bytes ARE a CLOSE frame (a previous fatal close was
-            // partially flushed). The resume path finishes that flush and
-            // disconnects; the just-stored code/reason are redundant.
+        } else if (sendState == SEND_STATE_RESUME_CLOSE || sendState == SEND_STATE_RESUME_CLOSE_RESPONSE) {
+            // The parked bytes ARE a CLOSE frame -- a previous fatal close or
+            // the close response to a client-initiated CLOSE was partially
+            // flushed. Either way a CLOSE is already on the wire and nothing
+            // may follow it (RFC 6455); the resume path finishes that flush
+            // and disconnects, so the just-stored code/reason are redundant.
             clearDeferredClose();
         } else {
             // RESUME_PONG / RESUME_ERROR (or a re-entered DRAIN_THEN_CLOSE):
@@ -823,6 +845,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         lastAckedSequence = resumeAckSequence;
         resumeAckSequence = -1;
         resumeAckSeqTxns.clear();
+        sendState = SEND_STATE_READY;
+    }
+
+    /**
+     * Completes a resumed fatal CLOSE send that was previously blocked.
+     * Returns to READY so the recv-side drains (buffered-frame dispatch, the
+     * close-echo wait's echo/expiry handling) keep working while the
+     * connection is held open awaiting the client's CLOSE echo. Safe even
+     * when the caller proceeds to tear the connection down instead: READY is
+     * exactly the state every other completed-send path leaves behind.
+     */
+    public void onResumeCloseComplete() {
         sendState = SEND_STATE_READY;
     }
 

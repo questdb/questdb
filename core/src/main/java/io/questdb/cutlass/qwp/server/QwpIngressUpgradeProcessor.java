@@ -613,10 +613,29 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> {
                 context.resumeResponseSend();
+                // Return the send machine to READY BEFORE arming the echo
+                // wait. Every other entry into the wait leaves READY behind;
+                // staying parked in RESUME_CLOSE here disabled the
+                // drainBufferedFrames call below, so a client CLOSE already
+                // sitting in the recv buffer (crossing close) was never
+                // dispatched and the connection outlived the echo budget --
+                // the expiry poll is recv-driven and a conformant post-close
+                // client sends nothing more.
+                state.onResumeCloseComplete();
                 LOG.debug().$("Resumed CLOSE frame sent [fd=").$(context.getFd()).I$();
                 if (!beginCloseEchoWaitIfEligible(context, state)) {
                     gracefulCloseAndDisconnect(context);
                 }
+            }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE_RESPONSE -> {
+                context.resumeResponseSend();
+                LOG.debug().$("Resumed close response sent [fd=").$(context.getFd()).I$();
+                // Close response to a client-initiated CLOSE: the client's
+                // CLOSE is already consumed, so the RFC 6455 handshake is
+                // complete the moment the response tail lands. No echo can
+                // ever arrive; tear down immediately (RFC 6455 s5.5.1: the
+                // server closes the TCP connection first).
+                gracefulCloseAndDisconnect(context);
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_PONG -> {
                 context.resumeResponseSend();
@@ -811,7 +830,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE,
                  QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE,
                  QwpIngressProcessorState.SEND_STATE_RESUME_DRAIN_THEN_CLOSE,
-                 QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> // The peer is voluntarily closing, but we have a fatal CLOSE
+                 QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE,
+                 QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE_RESPONSE -> // The peer is voluntarily closing, but we have a fatal CLOSE
                 // queued. The pending response will be torn down anyway, so
                 // there is no value in attempting to flush the deferred CLOSE
                 // frame on top of an in-flight ACK. Let the caller proceed.
@@ -1146,13 +1166,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 } catch (PeerIsSlowToReadException e) {
                     // CLOSE frame was partially written under a small send
                     // fragmentation cap. The framework holds the residual
-                    // bytes; resumeSend's SEND_STATE_RESUME_CLOSE branch
-                    // finishes the flush and gracefulCloseAndDisconnect.
-                    // Swallowing PISR here -- as the original code did --
-                    // tears the connection down before the rest of the
-                    // CLOSE frame leaves the box, so the client sees EOF
-                    // mid-frame instead of the close code we promised.
-                    state.onFatalCloseSendBlocked();
+                    // bytes; resumeSend's SEND_STATE_RESUME_CLOSE_RESPONSE
+                    // branch finishes the flush and disconnects
+                    // unconditionally. NOT onFatalCloseSendBlocked: this is
+                    // the close RESPONSE to a client-initiated CLOSE, so the
+                    // handshake completes when the tail flushes -- routing it
+                    // through RESUME_CLOSE would let the resume branch arm a
+                    // close-echo wait for an echo that can never arrive (the
+                    // client's CLOSE is what brought us here). Swallowing
+                    // PISR here -- as the original code did -- tears the
+                    // connection down before the rest of the CLOSE frame
+                    // leaves the box, so the client sees EOF mid-frame
+                    // instead of the close code we promised.
+                    state.onCloseResponseSendBlocked();
                     throw e;
                 }
             }
