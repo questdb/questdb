@@ -56,6 +56,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
@@ -729,6 +730,40 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testQwpCannotIngestIntoLiveView() throws Exception {
+        // A live view is isWal()==true, isView()==false, isMatView()==false, so it
+        // slips past the view/matview-only guard. QwpTudCache must reject it with a
+        // typed CairoException (surfaced to the sender as a NACK), not silently
+        // return null. The live view already exists, so the schema/cursor arguments
+        // stay unused: the type guard fires before any create attempt.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, row_number() OVER () AS rn FROM base");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String("lv"),
+                            null,
+                            null,
+                            1
+                    );
+                    Assert.fail("expected the live view to reject the QWP write");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify live view [view=lv]");
+                }
             }
         });
     }
@@ -1907,7 +1942,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGetTableUpdateDetailsReturnsNullForMatView() throws Exception {
+    public void testGetTableUpdateDetailsRejectsMatView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE mv_base (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT ts, count() cnt FROM mv_base SAMPLE BY 1h)");
@@ -1918,14 +1953,20 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             try (QwpTudCache cache = new QwpTudCache(
                     engine, true, true, defaultColumnTypes, PartitionBy.DAY)
             ) {
-                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
-                        AllowAllSecurityContext.INSTANCE,
-                        new Utf8String("mv_target"),
-                        null,
-                        null,
-                        1
-                );
-                Assert.assertNull(tud);
+                // A materialized view must be rejected with a typed CairoException the
+                // sender surfaces as a NACK, not silently dropped via a null return.
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE,
+                            new Utf8String("mv_target"),
+                            null,
+                            null,
+                            1
+                    );
+                    Assert.fail("expected the materialized view to reject the QWP write");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=mv_target]");
+                }
             }
         });
     }
