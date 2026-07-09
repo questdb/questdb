@@ -1869,19 +1869,21 @@ public final class TableUtils {
                     }
 
                     final String columnName = metadata.getColumnName(columnIndex);
+                    final TableColumnMetadata tableColumnMetadata = metadata.getColumnMetadata(columnIndex);
+
                     // Store the original writer index in the parquet file so that a later
                     // parquet->native conversion can match columns by their original id even
                     // after a column-type conversion has re-keyed the column.
-                    final int columnId = metadata.getColumnMetadata(columnIndex).getOriginalWriterIndex();
+                    final int columnId = tableColumnMetadata.getOriginalWriterIndex();
                     // _cv entries (name txn, column top, symbol table name txn) are keyed by the
                     // current writer index, which diverges from the dense metadata index once a
                     // column is dropped or re-keyed by ALTER COLUMN TYPE. Mirror TableReader.
-                    final int writerIndex = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    final int writerIndex = tableColumnMetadata.getWriterIndex();
 
                     final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
                     final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
-                    final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
+                    final int parquetEncodingConfig = tableColumnMetadata.getParquetEncodingConfig();
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
