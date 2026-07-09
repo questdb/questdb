@@ -1192,8 +1192,8 @@ public class FuzzRunner {
     private void drainWalQueue(Rnd applyRnd, String tableName) {
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
-             TableReader rdr1 = getReaderHandleTableDropped(tableName);
-             TableReader rdr2 = getReaderHandleTableDropped(tableName)
+             TableReader rdr1 = getReaderWithRetries(tableName);
+             TableReader rdr2 = getReaderWithRetries(tableName)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             while (walApplyJob.run() || checkWalTransactionsJob.run()) {
@@ -1226,11 +1226,13 @@ public class FuzzRunner {
         return engine.getReader(engine.verifyTableName(tableName));
     }
 
-    private TableReader getReaderHandleTableDropped(String tableNameWal) {
+    // Opens a reader, retrying the transient failures seen when the table is concurrently mutated:
+    // dropped / name reserved / entry locked, or a metadata-read timeout while a structural change applies.
+    private TableReader getReaderWithRetries(String tableName) {
         int metadataTimeoutRetries = 10;
         while (true) {
             try {
-                return getReader(tableNameWal);
+                return getReader(tableName);
             } catch (CairoException e) {
                 if (Chars.contains(e.getFlyweightMessage(), "table does not exist")
                         || Chars.contains(e.getFlyweightMessage(), "table name is reserved")
@@ -1312,8 +1314,8 @@ public class FuzzRunner {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
-                    readers.add(getReaderHandleTableDropped(tableNameWal));
-                    readers.add(getReaderHandleTableDropped(tableNameWal));
+                    readers.add(getReaderWithRetries(tableNameWal));
+                    readers.add(getReaderWithRetries(tableNameWal));
                 }
 
                 while (done.get() == 0 && errors.isEmpty()) {
@@ -1322,7 +1324,7 @@ public class FuzzRunner {
                         for (int i = 0; i < readers.size(); i++) {
                             String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i / 2) : tableNameBase;
                             readers.get(i).close();
-                            readers.setQuick(i, getReaderHandleTableDropped(tableNameWal));
+                            readers.setQuick(i, getReaderWithRetries(tableNameWal));
                         }
                     }
                     int reader = runRnd.nextInt(tableCount);
@@ -1380,7 +1382,7 @@ public class FuzzRunner {
     }
 
     protected void assertStringColDensity(String tableNameWal) {
-        try (TableReader reader = getReader(tableNameWal)) {
+        try (TableReader reader = getReaderWithRetries(tableNameWal)) {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
@@ -1410,7 +1412,7 @@ public class FuzzRunner {
         String[] symbols = new String[totalSymbols];
         int symbolIndex = 0;
 
-        try (TableReader reader = getReader(baseSymbolTableName)) {
+        try (TableReader reader = getReaderWithRetries(baseSymbolTableName)) {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
