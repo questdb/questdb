@@ -125,15 +125,35 @@ public class NetTest {
         int port = assertCanBind(acceptFd);
         Net.listen(acceptFd, 1024);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
+        // Hoisted so a failed assertion in any block still reclaims the open fds and buffer in
+        // the finally rather than leaking them.
+        long clientFd = -1;
+        long serverFd = -1;
+        long buf = 0;
         try {
             // Idle, both ends open: no hangup on any platform.
-            long clientFd = Net.socketTcp(true);
+            clientFd = Net.socketTcp(true);
             TestUtils.assertConnect(clientFd, sockAddr);
-            long serverFd = Net.accept(acceptFd);
+            serverFd = Net.accept(acceptFd);
             Net.configureNonBlocking(serverFd);
             Assert.assertFalse(Net.isPeerDisconnected(serverFd));
-            Net.close(clientFd);
-            Net.close(serverFd);
+            clientFd = closeFd(clientFd);
+            serverFd = closeFd(serverFd);
+
+            // Error branch (not a bare FIN): SO_LINGER 0 makes the client's close send an RST
+            // instead of a FIN. The probe must still report a disconnect, via the error/hangup
+            // side of the mask (Linux POLLERR|POLLHUP, macOS kqueue EV_EOF, Windows recv error) --
+            // the arm the POLLRDHUP / EV_EOF FIN cases below never exercise. Detected on every
+            // platform, so it also pins the running OS's error path (a bad/closed fd would trip
+            // the fd-cache paranoia guard, so a live reset is used instead).
+            clientFd = Net.socketTcp(true);
+            TestUtils.assertConnect(clientFd, sockAddr);
+            serverFd = Net.accept(acceptFd);
+            Net.configureNonBlocking(serverFd);
+            Net.configureNoLinger(clientFd);
+            clientFd = closeFd(clientFd);
+            awaitPeerDisconnected(serverFd);
+            serverFd = closeFd(serverFd);
 
             // FIN behind a buffered byte: the whole point of the probe. Linux poll
             // and macOS kqueue report the peer's FIN even with the byte still
@@ -142,7 +162,7 @@ public class NetTest {
             TestUtils.assertConnect(clientFd, sockAddr);
             serverFd = Net.accept(acceptFd);
             Net.configureNonBlocking(serverFd);
-            long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+            buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
             Unsafe.getUnsafe().putByte(buf, (byte) 'x');
             Assert.assertEquals(1, Net.send(clientFd, buf, 1));
             Net.shutdown(clientFd, Net.SHUT_WR);
@@ -151,9 +171,9 @@ public class NetTest {
             } else {
                 awaitPeerDisconnected(serverFd);
             }
-            Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
-            Net.close(clientFd);
-            Net.close(serverFd);
+            buf = Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+            clientFd = closeFd(clientFd);
+            serverFd = closeFd(serverFd);
 
             // Bare FIN, empty buffer: detected on every platform.
             clientFd = Net.socketTcp(true);
@@ -162,9 +182,14 @@ public class NetTest {
             Net.configureNonBlocking(serverFd);
             Net.shutdown(clientFd, Net.SHUT_WR);
             awaitPeerDisconnected(serverFd);
-            Net.close(clientFd);
-            Net.close(serverFd);
+            clientFd = closeFd(clientFd);
+            serverFd = closeFd(serverFd);
         } finally {
+            if (buf != 0) {
+                Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+            }
+            closeFd(clientFd);
+            closeFd(serverFd);
             Net.freeSockAddr(sockAddr);
             Net.close(acceptFd);
         }
@@ -479,5 +504,12 @@ public class NetTest {
         Assert.assertEquals(0, Net.setReusePort(fd));
         Assert.assertTrue(Net.bindUdp(fd, 0, 18215));
         Assert.assertTrue(Net.join(fd, "0.0.0.0", "224.0.0.125"));
+    }
+
+    private long closeFd(long fd) {
+        if (fd > 0) {
+            Net.close(fd);
+        }
+        return -1;
     }
 }

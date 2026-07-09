@@ -29,12 +29,14 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -1705,6 +1707,111 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             "egress sleep(3) completed without an error; query.timeout must surface as a query error",
                             errored[0]
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSleepAbortedWhenClientDisconnects() throws Exception {
+        // Egress counterpart to ServerMainSleepTest.testSleepAbortedWhenClientClosesConnection.
+        // A parked sleep() over QWP egress must abort when the client cleanly disconnects, rather
+        // than linger until query.timeout. QwpQueryClient.close() ships a WebSocket Close frame
+        // ahead of the FIN, so the server socket carries buffered bytes in front of the FIN -- the
+        // exact shape that masks the disconnect from a recv(MSG_PEEK) probe. isPeerDisconnected
+        // (poll(POLLRDHUP) / kqueue EV_EOF) still observes the FIN, and the fd-bound egress breaker
+        // (the .of(fd) this PR adds) aborts the sleep within a wake interval.
+        //
+        // Egress does not register queries in the QueryRegistry, so the abort is observed through
+        // the egress "queries errored" metric instead: a sleep parked before streaming can only end
+        // via the breaker probe, so the counter advancing well inside the 20s deadline -- far below
+        // query.timeout=30s -- proves the disconnect was detected. A regression in the fd binding
+        // would leave the query running until the 30s timeout, past the deadline.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startServerWithRetry(
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "30s",
+                    PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100"
+            )) {
+                final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                final long startedBefore = metrics.queriesStartedCount();
+                final long erroredBefore = metrics.queriesErroredCounter().getValue();
+
+                final QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT);
+                try {
+                    client.connect();
+
+                    final java.util.concurrent.CountDownLatch sleepStarted =
+                            new java.util.concurrent.CountDownLatch(1);
+                    Thread sleeper = new Thread(() -> {
+                        try {
+                            sleepStarted.countDown();
+                            client.execute("sleep(3600)", new QwpColumnBatchHandler() {
+                                @Override
+                                public void onBatch(QwpColumnBatch batch) {
+                                }
+
+                                @Override
+                                public void onEnd(long totalRows) {
+                                }
+
+                                @Override
+                                public void onError(byte status, String message) {
+                                    // The abort surfaces to the client as a query error; expected.
+                                }
+                            });
+                        } catch (Throwable ignored) {
+                            // execute() may also throw when close() tears the connection down mid-flight.
+                        }
+                    }, "qwp-sleep-disconnect");
+                    sleeper.setDaemon(true);
+                    sleeper.start();
+
+                    Assert.assertTrue("sleep thread did not start",
+                            sleepStarted.await(5, java.util.concurrent.TimeUnit.SECONDS));
+                    // Wait until the server has begun the query, then give it a wake cycle to mount
+                    // the continuation and park.
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue("egress query never started",
+                                    metrics.queriesStartedCount() > startedBefore),
+                            10
+                    );
+                    Os.sleep(300);
+
+                    // Cleanly close the client while the sleep is parked. close() writes a WebSocket
+                    // Close frame, then FIN -- buffered bytes ahead of the FIN.
+                    client.close();
+
+                    // The "errored" counter advances when the parked sleep catches the breaker's
+                    // "remote disconnected" abort. The 20s deadline sits below query.timeout (30s),
+                    // so a fd-binding regression is caught: the counter would only advance at the
+                    // timeout.
+                    long closeMs = System.currentTimeMillis();
+                    long deadlineMs = closeMs + 20_000;
+                    long endedAfterMs = -1;
+                    while (System.currentTimeMillis() < deadlineMs) {
+                        if (metrics.queriesErroredCounter().getValue() > erroredBefore) {
+                            endedAfterMs = System.currentTimeMillis() - closeMs;
+                            break;
+                        }
+                        Os.sleep(50);
+                    }
+                    sleeper.join(5_000);
+
+                    Assert.assertTrue(
+                            "egress sleep(3600) never aborted within 20s of the client closing the connection",
+                            endedAfterMs >= 0
+                    );
+                    Assert.assertTrue(
+                            "parked egress sleep did not abort promptly after the client disconnected: ended "
+                                    + endedAfterMs + " ms later. The server only stopped it when query.timeout fired, "
+                                    + "proving it did not detect the client disconnect (masked by the buffered WebSocket Close frame).",
+                            endedAfterMs < 3_000
+                    );
+                } finally {
+                    // Idempotent: close() above is the disconnect trigger; this reclaims the client
+                    // on any early-assertion path before that point.
+                    client.close();
                 }
             }
         });

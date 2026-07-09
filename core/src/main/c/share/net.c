@@ -231,17 +231,31 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
         (JNIEnv *e, jclass cl, jint fd) {
 #if defined(__APPLE__) || defined(__FreeBSD__)
-    int kq = kqueue();
-    if (kq < 0) {
-        return JNI_FALSE;
+    // Reuse one kqueue per thread instead of creating and destroying one on every probe.
+    // isPeerDisconnected sits on a query hot path -- the parallel work-steal busy-wait probes
+    // the circuit breaker on every spin iteration -- so a per-call kqueue()+close() would add a
+    // syscall pair plus file-descriptor table churn to that loop. The kqueue is created lazily
+    // and lives for the thread's lifetime (worker threads are pooled and bounded in number).
+    static __thread int cached_kq = -1;
+    if (cached_kq < 0) {
+        cached_kq = kqueue();
+        if (cached_kq < 0) {
+            return JNI_FALSE;
+        }
     }
     struct kevent change;
-    EV_SET(&change, (uintptr_t) fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
     struct kevent event;
     struct timespec immediate = {0, 0};
-    int n = kevent(kq, &change, 1, &event, 1, &immediate);
+    int n;
+    // Register the read filter and poll for a pending EOF/error in a single call. A bad fd
+    // surfaces as an EV_ERROR event in the eventlist (kevent returns it rather than failing).
+    EV_SET(&change, (uintptr_t) fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+    RESTARTABLE(kevent(cached_kq, &change, 1, &event, 1, &immediate), n);
     jboolean disconnected = (jboolean) (n > 0 && (event.flags & (EV_EOF | EV_ERROR)) != 0);
-    close(kq);
+    // Drop the registration so a later probe of a different fd on this thread cannot pick up
+    // this fd's event by mistake. ENOENT (the socket already closed) is harmless and ignored.
+    EV_SET(&change, (uintptr_t) fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+    RESTARTABLE(kevent(cached_kq, &change, 1, NULL, 0, &immediate), n);
     return disconnected;
 #elif defined(__linux__)
     struct pollfd pfd;
