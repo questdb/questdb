@@ -4535,6 +4535,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 supportsParallelism = false;
             }
 
+            // Copy the group by key/value types and the key column filter before compiling
+            // per-worker function clones. Cloning re-parses the projection expressions, and an
+            // expression containing a scalar sub-query recursively re-enters query generation,
+            // which clears and repopulates the shared keyTypes/valueTypes/listColumnFilterA
+            // scratch fields mid-flight.
+            final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
+            final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
+            final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
+
             // Now that we know parallelism is confirmed, steal the filter from the
             // master factory. If parallelism was downgraded, the filter stays in the
             // master factory and the non-parallel path applies it correctly.
@@ -4598,9 +4607,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             }
 
-            final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
-            final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
-
             // Build column mappings from innerMetadata to source records (master, horizon, slave)
             // These mappings are needed by HorizonJoinRecord to route column accesses
             final int baseColumnCount = innerMetadata.getColumnCount();
@@ -4617,9 +4623,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndices,
                     slaveModel.getJoinKeywordPosition()
             );
-
-            // Save GROUP BY column filter before ASOF join processing overwrites it
-            final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
 
             // Process ASOF join key information for the join lookup
             ArrayColumnTypes asOfJoinKeyTypes = null;
@@ -4809,7 +4812,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
-                        new ObjList<>(outerProjectionFunctions),
+                        outerProjectionFunctions,
                         keyFunctions,
                         keyTypesCopy,
                         valueTypesCopy,
@@ -4899,7 +4902,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterTimestampColumnIndex,
                     groupByFunctions0,
                     perWorkerGroupByFunctions0,
-                    new ObjList<>(outerProjectionFunctions),
+                    outerProjectionFunctions,
                     keyFunctions,
                     perWorkerKeyFunctions,
                     keyTypesCopy,
@@ -6994,6 +6997,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 filterFactory.halfClose();
             }
 
+            // Copy the group by key/value types and the key column filter before compiling
+            // per-worker function clones. Cloning re-parses the projection expressions, and an
+            // expression containing a scalar sub-query recursively re-enters query generation,
+            // which clears and repopulates the shared keyTypes/valueTypes/listColumnFilterA
+            // scratch fields mid-flight.
+            final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
+            final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
+            final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
+
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             if (supportsParallelism) {
                 perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
@@ -7004,9 +7016,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         innerMetadata
                 );
             }
-
-            final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
-            final ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
 
             // Build column mappings for multi-slave
             final int baseColumnCount = innerMetadata.getColumnCount();
@@ -7023,8 +7032,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndices,
                     slaveModels.getQuick(0).getJoinKeywordPosition()
             );
-
-            final ListColumnFilter groupByColumnFilter = listColumnFilterA.copy();
 
             // Process ASOF join keys and create HorizonJoinSlaveState for each slave
             final int masterTsType = masterMetadata.getTimestampType();
@@ -7196,7 +7203,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsets,
                         masterTimestampColumnIndex,
                         groupByFunctions0,
-                        new ObjList<>(outerProjectionFunctions),
+                        outerProjectionFunctions,
                         keyFunctions,
                         keyTypesCopy,
                         valueTypesCopy,
@@ -7329,7 +7336,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     masterTimestampColumnIndex,
                     groupByFunctions0,
                     perWorkerGroupByFunctions0,
-                    new ObjList<>(outerProjectionFunctions),
+                    outerProjectionFunctions,
                     keyFunctions,
                     perWorkerKeyFunctions,
                     keyTypesCopy,
@@ -7995,7 +8002,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factory,
                         projectionMetadata,
                         groupByFunctions,
-                        new ObjList<>(outerProjectionFunctions),
+                        outerProjectionFunctions,
                         timestampSampler,
                         model,
                         listColumnFilterA,
@@ -9045,7 +9052,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             perWorkerInnerProjectionFunctions,
                                             GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
                                     ),
-                                    new ObjList<>(outerProjectionFunctions),
+                                    outerProjectionFunctions,
                                     compiledFilter,
                                     bindVarMemory,
                                     bindVarFunctions,
@@ -9091,7 +9098,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             outerProjectionMetadata,
                             groupByFunctions,
                             keyFunctions,
-                            new ObjList<>(outerProjectionFunctions),
+                            outerProjectionFunctions,
                             sharedOuterProjectionFunctions
                     ),
                     executionContext
