@@ -358,7 +358,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
             }
 
             try {
-                int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
+                // The fuzzer can generate a single transaction; Rnd.nextInt(0) divides by
+                // zero, so a one-transaction run takes the checkpoint after its only
+                // transaction and leaves the (already optional) after-set empty.
+                int snapshotIndex = transactions.size() > 1 ? 1 + rnd.nextInt(transactions.size() - 1) : 1;
 
                 ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();
                 beforeSnapshot.addAll(transactions, 0, snapshotIndex);
