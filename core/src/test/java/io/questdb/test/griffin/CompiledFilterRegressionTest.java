@@ -1853,6 +1853,60 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowWidenLongKeyArithElementWithFloat() throws Exception {
+        // C3 regression (level-3 review): a LONG IN key against a narrow-int COLUMN-ARITHMETIC
+        // element (a*b), inside a boolean equality with a FLOAT/DOUBLE sibling. A float suppresses
+        // the predicate-global narrow-i64 widening, so markFloatI64WidenLeaves is the only pass that
+        // can sign-extend the element. It returned at the IN FUNCTION node and never descended, so
+        // a*b wrapped at INT width (-727379968) while the Java InLong path reads it at long width
+        // (10^12) against the LONG key. inKeyWidthOverride cannot help - it fires only for a
+        // narrow-int key. markI64Widen now descends into the IN and widens each element the key
+        // reads at long width, deriving the width per element (mirroring markI64WidenFoldRoots).
+        //
+        // a*b = 10^12 wraps to INT -727379968, widens to LONG 10^12; nl matches the widened image
+        // only in row 1.
+        assertMemoryLeak(() -> {
+            execute("create table w as (select cast(1000000 as int) a, cast(1000000 as int) b," +
+                    " cast(case x when 1 then 1000000000000 when 2 then 2 else 0 end as long) nl," +
+                    " cast(1.0 as float) f32, cast(1.0 as double) f64," +
+                    " x::short cs, x::byte cbyte," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(5)) timestamp(k)");
+
+            // Primary repro: the element a*b must widen to 10^12, not wrap to -727379968. Only row 1
+            // (nl = 10^12) matches; the pre-fix JIT wrapped it and returned 0 rows.
+            assertJitMatchesJava("select cs from w where (nl in (a*b, 7)) = (f32 > 0)", true, "cs\n1\n");
+            // Single-value IN (unrolled path), operand order, non-zero float threshold, DOUBLE
+            // sibling: all read the element at long width the same way.
+            assertJitMatchesJava("select cs from w where (nl in (a*b)) = (f32 > 0)", true, "cs\n1\n");
+            assertJitMatchesJava("select cs from w where (f32 > 0) = (nl in (a*b, 7))", true, "cs\n1\n");
+            assertJitMatchesJava("select cs from w where (nl in (a*b, 7)) = (f32 > 0.5)", true, "cs\n1\n");
+            assertJitMatchesJava("select cs from w where (nl in (a*b, 7)) = (f64 > 0)", true, "cs\n1\n");
+            // NOT / not in flip the match to the complementary rows.
+            assertJitMatchesJava("select cs from w where not ((nl in (a*b, 7)) = (f32 > 0))", true,
+                    "cs\n2\n3\n4\n5\n");
+            assertJitMatchesJava("select cs from w where (nl not in (a*b, 7)) = (f32 > 0)", true,
+                    "cs\n2\n3\n4\n5\n");
+
+            // Over-widening guard: the SAME a*b appears widened inside the IN (vs the LONG key) and
+            // wrapped inside a sibling INT-width comparison. markI64WrapArithLeaves must keep the
+            // wrap-side product at INT width - both wrap to -727379968 there (RHS true every row),
+            // so parity, not just the pin, catches an over-widened wrap side.
+            assertJitMatchesJava("select cs from w where (nl in (a*b, 7)) = ((a*b) = -727379968)", true,
+                    "cs\n1\n");
+
+            // Controls that must keep passing. Plain narrow COLUMN elements sign-extend value-
+            // preservingly (row 2: nl = 2 matches cs = 2); a coexisting LONG-const element leaves
+            // the arith element widening; AND/OR split into separate float-free predicates.
+            assertJitMatchesJava("select cs from w where (nl in (cs, cbyte)) = (f32 > 0)", true, "cs\n2\n");
+            assertJitMatchesJava("select cs from w where (nl in (a*b, 999999999999)) = (f32 > 0)", true, "cs\n1\n");
+            assertJitMatchesJava("select cs from w where nl in (a*b, 7) and f32 > 0", true, "cs\n1\n");
+            assertJitMatchesJava("select cs from w where nl in (a*b, 7) or f32 > 0", true,
+                    "cs\n1\n2\n3\n4\n5\n");
+        });
+    }
+
+    @Test
     public void testInOperatorSingleValue() throws Exception {
         // Tests single-value IN() which has a special unrolled code path in CompiledFilterIRSerializer
         final String ddl = "create table x as " +

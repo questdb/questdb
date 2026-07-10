@@ -1381,8 +1381,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     // underLong: whether the parent reads `node` at 64-bit width.
     private void markI64Widen(ExpressionNode node, boolean underLong) {
-        if (node == null || node.type != ExpressionNode.OPERATION) {
+        if (node == null) {
             return; // a bare leaf is widened, if needed, by its parent below
+        }
+        // An IN / NOT IN list is a FUNCTION node, not an OPERATION; let it through so the branch
+        // below can widen a narrow-int arith element the key reads at long width. Everything else stops.
+        if (node.type != ExpressionNode.OPERATION
+                && !(node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token))) {
+            return;
         }
         if (isArithmeticOperation(node)) {
             int type = arithExprType(node);
@@ -1393,6 +1399,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
             markI64Widen(node.rhs != null ? node.rhs : node.lhs, underLong);
+            return;
+        }
+        // An IN value list (args = [elements..., key]) is an OR of independent equality checks.
+        // Derive each element's width from key-vs-that-element, NOT from one list-wide width: the
+        // Java InLong path widens the key against a LONG/TIMESTAMP element (so a narrow-int arith
+        // element there sign-extends its leaves) but wraps it against a narrow-int element - so a
+        // coexisting LONG element must not over-widen an INT-arith element the key wraps (mirrors
+        // markI64WidenFoldRoots). The single-value form keeps key / element in lhs / rhs (args
+        // empty) and falls through to the comparison handling below, which pairs exactly those two.
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token) && node.args.size() > 0) {
+            final ExpressionNode key = node.args.getLast();
+            final int keyType = genuineArithType(key);
+            for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                final ExpressionNode element = node.args.getQuick(i);
+                markI64Widen(element, foldCmpType(keyType, element) == I8_TYPE);
+            }
+            markI64Widen(key, false); // the key reads at its own genuine width; elements never promote it
             return;
         }
         // Comparison / boolean / IN / NOT: a fresh width boundary. Derive the
