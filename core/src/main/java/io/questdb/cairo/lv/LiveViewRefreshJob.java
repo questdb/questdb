@@ -4687,6 +4687,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isStub() || instance.isDropped() || instance.isInvalid()) {
                 continue;
             }
+            // CREATE deferred-name transient: createLiveView registers the refresh instance before it
+            // commits the LV table name, so a BACKFILL view firing this scan at CREATE would busy-loop
+            // refreshInstance (didWork stays true) on getWalWriter's "table does not exist", flooding the
+            // log ring and starving the name-commit thread on a few-core box. Skip until the name
+            // resolves; the pool's idle sleep throttles the retry, and gating on resolution (not a wall
+            // clock) is frozen-test-clock safe. getTableTokenIfExists returns null for a locked/absent
+            // name -- exactly the transient verifyTableToken rejects.
+            if (engine.getTableTokenIfExists(instance.getLiveViewToken().getTableName()) == null) {
+                continue;
+            }
             TableToken baseToken = instance.getDefinition().getBaseTableToken();
             if (baseToken == null) {
                 // Unresolved base token: on a read-only replica the LV's files can download and
