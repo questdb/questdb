@@ -5987,6 +5987,9 @@ public class SqlParser {
         if (Chars.equalsIgnoreCase(tok, "materialized_views")) {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_MATERIALIZED_VIEWS;
         }
+        if (Chars.equalsIgnoreCase(tok, "live_views")) {
+            return ShowCreateDatabaseRecordCursorFactory.INCLUDE_LIVE_VIEWS;
+        }
         if (Chars.equalsIgnoreCase(tok, "users")) {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_USERS;
         }
@@ -6009,7 +6012,7 @@ public class SqlParser {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
         }
         throw SqlException.position(lexer.lastTokenPosition()).put("unexpected category [category=").put(tok)
-                .put("], expected one of TABLES, VIEWS, MATERIALIZED_VIEWS, USERS, GROUPS, SERVICE_ACCOUNTS, PERMISSIONS, SCHEMA, ACL, ALL");
+                .put("], expected one of TABLES, VIEWS, MATERIALIZED_VIEWS, LIVE_VIEWS, USERS, GROUPS, SERVICE_ACCOUNTS, PERMISSIONS, SCHEMA, ACL, ALL");
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {

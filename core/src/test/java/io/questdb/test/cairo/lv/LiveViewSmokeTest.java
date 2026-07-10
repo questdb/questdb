@@ -6986,7 +6986,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // avg over {2, 6, 16} = 8.000 if the [acc, count] restored.
             setCurrentMicros(200_000L);
@@ -7031,7 +7031,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             setCurrentMicros(200_000L);
             execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T02:00:00.000000Z', 1, 16.00m)");
@@ -7077,7 +7077,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // Running count continues from 2 (the two pre-restart rows), so the
             // third row in the same day-1 bucket is count 3, not 1.
@@ -7125,7 +7125,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // Running max stays 30.000000: max(30, 20) is 30, not 20.
             setCurrentMicros(200_000L);
@@ -7171,7 +7171,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // Running max stays 30: max(30, 20) is 30 if the LONG slot restored.
             setCurrentMicros(200_000L);
@@ -7216,7 +7216,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // Running max stays 30: max(30, 20) is 30 if the DECIMAL256 slot restored.
             setCurrentMicros(200_000L);
@@ -7262,7 +7262,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // Running min stays 10.00: min(10, 20) is 10 if the LONG slot restored.
             setCurrentMicros(200_000L);
@@ -7779,7 +7779,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // Running sum continues from 30.000000, so {10, 20, 60} sums to
             // 90.000000, not 60.000000.
@@ -7825,7 +7825,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // {10, 20, 30} sums to 60 if the LONG acc restored.
             setCurrentMicros(200_000L);
@@ -7870,7 +7870,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             setCurrentMicros(200_000L);
             execute("INSERT INTO base (ts, sym, d) VALUES ('2026-10-01T02:00:00.000000Z', 1, 16.00m)");
@@ -10171,7 +10171,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
             }
-            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreAttempted());
+            Assert.assertTrue(engine.getLiveViewRegistry().getViewInstance("lv").isCheckpointRestoreSucceeded());
 
             // first_value stays 10.000000: the captured value survived the restart.
             setCurrentMicros(200_000L);

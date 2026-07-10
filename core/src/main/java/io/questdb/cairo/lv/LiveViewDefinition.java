@@ -93,12 +93,11 @@ public class LiveViewDefinition {
     // INVALID; unrelated ALTERs leave it ACTIVE.
     private final ObjList<String> dependencyColumnNames;
     // Compile-time types of the dependency columns, positionally parallel to
-    // dependencyColumnNames. ApplyWal2TableJob's schema-change hook compares these
-    // against the post-change base metadata: a referenced column whose TYPE changed
-    // (same name, different stride) must invalidate the view, since the cached
-    // compiled factory would keep reading the new on-disk bytes through the old
-    // stride. Empty for a version-1 definition read from disk (no types persisted);
-    // the gate then falls back to name-only checking for it.
+    // dependencyColumnNames (same count - writer asserts, reader restores entry-for-
+    // entry, so findFirstMissingOrRetypedColumn indexes both without a length guard).
+    // ApplyWal2TableJob's schema-change hook invalidates the view when a referenced
+    // column's TYPE changed (same name, different stride), since the cached factory
+    // would read the new bytes through the old stride.
     private final IntList dependencyColumnTypes;
     private final long flushEveryInterval;
     private final char flushEveryIntervalUnit;

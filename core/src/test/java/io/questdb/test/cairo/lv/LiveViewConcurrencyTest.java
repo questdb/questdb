@@ -329,6 +329,93 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropLiveViewFencesRefreshWorker() throws Exception {
+        // Fence proof: dropLiveView's fenceRefresh() must block until an in-flight
+        // refresh turn releases the latch. A worker holds the refresh latch; the
+        // dropper's dropLiveView must park in the fence, then complete cleanly once
+        // the latch releases (registry empty, base intact, no leak).
+        final CountDownLatch latchHeld = new CountDownLatch(1);
+        final CountDownLatch releaseLatch = new CountDownLatch(1);
+        final CountDownLatch dropStarted = new CountDownLatch(1);
+        final AtomicBoolean dropReturned = new AtomicBoolean(false);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("DROP LIVE VIEW IF EXISTS lv");
+            execute("DROP TABLE IF EXISTS base");
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " +
+                    "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            // Worker: takes the refresh latch and holds it across the whole drop
+            // attempt (mirrors refreshInstance's tryLockForRefresh .. unlockAfterRefresh
+            // turn), releasing only once the main thread has proven the drop is blocked.
+            final Thread worker = new Thread(() -> {
+                try {
+                    Assert.assertTrue(instance.tryLockForRefresh());
+                    latchHeld.countDown();
+                    releaseLatch.await();
+                    instance.unlockAfterRefresh();
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-worker");
+
+            // Dropper: runs the real engine.dropLiveView, which must park in
+            // fenceRefresh until the worker releases the latch.
+            final Thread dropper = new Thread(() -> {
+                try {
+                    dropStarted.countDown();
+                    engine.dropLiveView("lv");
+                    dropReturned.set(true);
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-dropper");
+
+            worker.start();
+            latchHeld.await();
+            dropper.start();
+            // Let the dropper enter dropLiveView and reach the fence spin, then prove
+            // it is blocked: while the worker holds the latch, fenceRefresh cannot
+            // complete, so dropLiveView cannot return. A broken fence would let the
+            // drop tear the table down and return within this window.
+            dropStarted.await();
+            Thread.sleep(250);
+            Assert.assertFalse("dropLiveView must block in fenceRefresh while the refresh latch is held",
+                    dropReturned.get());
+            Assert.assertTrue("dropper thread must still be running (parked in the fence)", dropper.isAlive());
+
+            // Release the latch: the fence completes and the drop finishes.
+            releaseLatch.countDown();
+            worker.join();
+            dropper.join(60_000);
+
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("thread failed", errors.peek());
+            }
+            Assert.assertTrue("dropLiveView must complete once the latch is released", dropReturned.get());
+            Assert.assertFalse("dropper thread must have finished", dropper.isAlive());
+
+            // Clean teardown: the view is gone from the registry, the base survived.
+            Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+            Assert.assertNull("LV name must no longer resolve after the drop", engine.getTableTokenIfExists("lv"));
+            drainWalQueue();
+            assertQuery("SELECT count(*) FROM base").noRandomAccess().expectSize().returns("count\n0\n");
+
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
     public void testMultiRefreshWorkerConvergence() throws Exception {
         // Production runs one LiveViewRefreshJob per refresh-pool worker (2-4 by
         // default, ServerMain.setupLiveViewJobs) with no per-view sharding: every

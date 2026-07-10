@@ -53,6 +53,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.TestOnly;
@@ -173,6 +174,9 @@ public class LiveViewRecordCursor implements RecordCursor {
             Misc.freeObjListIfCloseable(symbolTableOverlays);
             symbolTableOverlays.clear();
         }
+        // Per-record getSym overlays own their cloned disk tables; free them.
+        recordA.clearSymbolTables();
+        recordB.clearSymbolTables();
         symbolCache = null;
         releaseSlot();
         pinnedSlot = null;
@@ -328,6 +332,9 @@ public class LiveViewRecordCursor implements RecordCursor {
         if (symbolTableOverlays != null) {
             symbolTableOverlays.clear();
         }
+        // Prior-use overlays are stamped with the previous slot; free them.
+        recordA.clearSymbolTables();
+        recordB.clearSymbolTables();
         if (instance != null) {
             LiveViewInMemoryTier candidate = instance.getInMemoryTier();
             if (candidate != null) {
@@ -650,12 +657,12 @@ public class LiveViewRecordCursor implements RecordCursor {
      * In in-mem mode the supported fixed-width accessors read directly from
      * the pinned buffer.
      * <p>
-     * {@link #getSymA}/{@link #getSymB} resolve the buffer's stored int via the
-     * cursor's {@link RecordCursor#getSymbolTable(int)}, which while routing
-     * returns the {@link io.questdb.cairo.lv.LiveViewSymbolTable} overlay. The tier
-     * stores LV-table-consistent symbol ids (eager-interned by the refresh worker),
-     * so a committed id resolves against the disk reader's table and a lead-only id
-     * against the tier's symbol cache.
+     * {@link #getSymA}/{@link #getSymB} resolve the buffer's stored int via a
+     * per-record overlay from {@link RecordCursor#newSymbolTable(int)} (an owning
+     * clone), NOT the shared {@link RecordCursor#getSymbolTable(int)} view, so
+     * recordA and recordB never share a symbol flyweight (as PageFrameMemoryRecord
+     * caches a cloned table per record). The overlay resolves a committed id via the
+     * disk reader's table and a lead-only id via the tier's symbol cache.
      * <p>
      * The STRING, BINARY, VARCHAR and ARRAY accessors read from the pinned buffer's
      * per-row offset/header vector while in in-mem mode, mirroring the fixed-width
@@ -679,6 +686,10 @@ public class LiveViewRecordCursor implements RecordCursor {
         private final ObjList<DirectString> csViewsB = new ObjList<>();
         private final ObjList<Long256Impl> longs256A = new ObjList<>();
         private final ObjList<Long256Impl> longs256B = new ObjList<>();
+        // Per-record OWNING symbol overlays (one clone per SYMBOL column, lazily from
+        // cursor.newSymbolTable) so recordA/recordB use independent flyweights; freed
+        // via clearSymbolTables on cursor of()/close().
+        private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
         private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
         private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
         private LiveViewInMemoryBuffer buffer;
@@ -854,6 +865,13 @@ public class LiveViewRecordCursor implements RecordCursor {
         }
 
         @Override
+        public long getLongIPv4(int col) {
+            // Override DelegatingRecord's disk-record delegation so an in-mem IPv4
+            // (tier-stored as an int) resolves from RAM. No caller today; tier type.
+            return inMemMode ? Numbers.ipv4ToLong(buffer.getInt(bufferRow, col)) : super.getLongIPv4(col);
+        }
+
+        @Override
         public long getRowId() {
             // In-mem rows synthesize a tagged rowId: the sign bit set over the
             // buffer row index. recordAt() decodes it back against the still-
@@ -891,7 +909,7 @@ public class LiveViewRecordCursor implements RecordCursor {
             if (!inMemMode) {
                 return super.getSymA(col);
             }
-            return cursor.getSymbolTable(col).valueOf(buffer.getInt(bufferRow, col));
+            return recordSymbolTable(col).valueOf(buffer.getInt(bufferRow, col));
         }
 
         @Override
@@ -899,18 +917,26 @@ public class LiveViewRecordCursor implements RecordCursor {
             if (!inMemMode) {
                 return super.getSymB(col);
             }
-            // valueBOf (not valueOf) so a caller holding getSymA and getSymB of the
-            // same in-mem row - a self ASOF/LT-join RHS or an A/B comparator - sees
-            // two independent flyweights. With a non-cached SYMBOL column
-            // (cairo.default.symbol.cache.flag=false) valueOf and valueBOf return
-            // distinct reused instances, so sharing valueOf here would let the second
-            // read clobber the first.
-            return cursor.getSymbolTable(col).valueBOf(buffer.getInt(bufferRow, col));
+            // valueBOf (not valueOf) so getSymA and getSymB of the same row use two
+            // flyweights; with a NOCACHE column they are distinct reused instances.
+            // The overlay is per-record, so recordA/recordB do not clobber either.
+            return recordSymbolTable(col).valueBOf(buffer.getInt(bufferRow, col));
         }
 
         @Override
         public long getTimestamp(int col) {
             return inMemMode ? buffer.getLong(bufferRow, col) : super.getTimestamp(col);
+        }
+
+        @Override
+        public void getVarchar(int col, Utf16Sink utf16Sink) {
+            // Override DelegatingRecord's disk delegation so an in-mem varchar resolves
+            // from RAM (Record's default over getVarcharA). No caller today; tier type.
+            if (inMemMode) {
+                utf16Sink.put(getVarcharA(col));
+            } else {
+                super.getVarchar(col, utf16Sink);
+            }
         }
 
         @Override
@@ -934,6 +960,13 @@ public class LiveViewRecordCursor implements RecordCursor {
             this.buffer = buffer;
             this.bufferRow = -1;
             this.inMemMode = false;
+        }
+
+        void clearSymbolTables() {
+            // Overlays own their cloned disk tables (ownsBase=true) and are stamped
+            // with the pinned slot, so free them - they must not outlive a cursor of().
+            Misc.freeObjListIfCloseable(symbolTableCache);
+            symbolTableCache.clear();
         }
 
         Record diskRecord() {
@@ -995,6 +1028,18 @@ public class LiveViewRecordCursor implements RecordCursor {
                 longs256B.extendAndSet(col, view = new Long256Impl());
             }
             return view;
+        }
+
+        private SymbolTable recordSymbolTable(int col) {
+            SymbolTable symbolTable = symbolTableCache.getQuiet(col);
+            if (symbolTable == null) {
+                // Owning per-record overlay (disk clone + lead cache), as
+                // PageFrameMemoryRecord does, so cross-record getSymA does not tear
+                // (a NOCACHE disk table reuses one DirectString per band).
+                symbolTable = cursor.newSymbolTable(col);
+                symbolTableCache.extendAndSet(col, symbolTable);
+            }
+            return symbolTable;
         }
 
         private Utf8SplitString utf8ViewA(int col) {

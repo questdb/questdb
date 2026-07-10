@@ -446,6 +446,21 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Spin-acquires and releases the refresh latch, mirroring
+     * {@link #startCheckpoint(long)} without the freeze gate: it waits out any
+     * in-flight refresh turn and, via the CAS barrier, publishes state the caller
+     * set beforehand to the worker's next {@link #tryLockForRefresh()}. DROP pairs
+     * it with a prior {@link #markAsDropped()} so no worker is mid-commit and the
+     * next under-latch recheck sees the drop before the table is torn down.
+     */
+    public void fenceRefresh() {
+        while (!refreshLatch.compareAndSet(false, true)) {
+            Os.pause();
+        }
+        refreshLatch.set(false);
+    }
+
+    /**
      * Non-monotonic restore of {@link #getLatestSeenTs()} used by the refresh
      * worker after an O3 detect + WAL rollback to revert any in-cycle bumps
      * the discarded rows applied. The snapshot must come from the cycle's

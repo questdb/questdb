@@ -31,11 +31,19 @@ import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Stands for a WAL table, or a non-WAL table, or a materialized view.
  */
 public class TableToken implements Sinkable {
+    // Test-only: builds an isWal=false LV token. Production live views are WAL
+    // tables, so use the engine's lock/registration path to mint a real LV token.
+    @TestOnly
+    public static TableToken liveViewToken(@NotNull String name, int tableId) {
+        return new TableToken(name, new GcUtf8String(name), null, tableId, Type.LIVE_VIEW, false, false, false, false);
+    }
+
     private final String dbLogName;
     @NotNull
     private final GcUtf8String dirName;
@@ -51,10 +59,6 @@ public class TableToken implements Sinkable {
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, @Nullable String dbLogName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
         this(tableName, new GcUtf8String(dirName), dbLogName, tableId, false, false, isWal, isSystem, isProtected, false);
-    }
-
-    public static TableToken liveViewToken(@NotNull String name, int tableId) {
-        return new TableToken(name, new GcUtf8String(name), null, tableId, Type.LIVE_VIEW, false, false, false, false);
     }
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, @Nullable String dbLogName, int tableId, Type type, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
@@ -220,6 +224,7 @@ public class TableToken implements Sinkable {
                 ", tableId=" + tableId +
                 ", isView=" + isView() +
                 ", isMatView=" + isMatView() +
+                ", isLiveView=" + isLiveView() +
                 ", isWal=" + isWal +
                 ", isSystem=" + isSystem +
                 ", isProtected=" + isProtected +

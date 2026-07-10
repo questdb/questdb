@@ -169,7 +169,7 @@ public class WalReader implements Closeable {
      * same column must supply two distinct {@link DirectString} instances.
      */
     public CharSequence getSymbolValue(int col, int key, DirectString view) {
-        DirectSymbolMap symbolMap = symbolMaps.getQuick(col);
+        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
         return symbolMap != null ? symbolMap.valueOf(key, view) : null;
     }
 

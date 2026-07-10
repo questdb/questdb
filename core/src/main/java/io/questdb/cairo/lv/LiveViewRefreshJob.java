@@ -257,6 +257,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final StringSink walNameSink = new StringSink();
     private final Path walPath = new Path();
     private final WalSegmentRecordCursor walRecordCursor;
+    // True once the drain feeds a row to the incremental cursor; cleared on turn
+    // entry and on every durable commit (fencedLiveViewCommit). If set at failure
+    // time, the accumulators lead the last durable commit -> handleRefreshFailure
+    // rebuilds so the retry does not double-advance them.
+    private boolean windowStateDirty;
     private final int workerId;
 
     public LiveViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
@@ -1689,6 +1694,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 try {
                     Record outRecord = windowCursor.getRecord();
                     while (windowCursor.hasNext()) {
+                        // Accumulators advanced for this row; a failure before commit
+                        // triggers a window-state rebuild (see handleRefreshFailure).
+                        windowStateDirty = true;
                         long ts = outRecord.getTimestamp(cursorTimestampIndex);
                         if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
                             batchMaxTs = ts;
@@ -1805,6 +1813,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             engine.fireRoleSwitchMintObserver();
             commit.run();
+            // Rows are durable now, so the accumulators no longer lead durable state;
+            // a later failure must not trigger a rebuild over the committed block.
+            windowStateDirty = false;
         } finally {
             lock.unlock();
         }
@@ -2043,7 +2054,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
-        applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+        try {
+            applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+        } catch (CairoException e) {
+            // The lead is committed (durable at advanceTo) but the inline apply failed.
+            // Reset the lead so the next flush does not re-materialise the same slot
+            // rows and the committed block's eventual apply (LV apply back-off) land
+            // them twice; mark the slot stale to rebuild it once that apply lands. The
+            // watermarks already sit AT advanceTo (not past it), so the next cycle
+            // resumes from advanceTo + 1. Rethrow to charge the flush-retry budget,
+            // matching the disk-subset path.
+            instance.setLeadRowCount(0);
+            instance.setTierStale(true);
+            persistState(instance);
+            LOG.critical().$("live view inline apply failed after flush, tier marked stale, apply deferred [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", advanceTo=").$(advanceTo)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            throw e;
+        }
         // Read the applied LV-table seqTxn only AFTER applyWalDirect: restampSlotAfterFlush
         // below stamps the slot with it, and the getCursor staleness retry depends on the
         // slot's seqTxn never exceeding what an applied-base reader can observe. Reading it
@@ -4308,6 +4337,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Rebuilds an ACTIVE primary view's window state from the applied base via
+     * {@link #o3HeadMissReplay} (clearWindowState + full recompute + REPLACE_RANGE +
+     * watermark advance) and restages the in-mem tier. Idempotent on the written
+     * prefix. Shared by the base-metadata-drift and mid-drain-failure recoveries;
+     * the caller has already handled the leadReconstruction / BACKFILLING states.
+     * Returns {@code null} on success (records a refresh success), else the replay
+     * error for the caller's flush-retry accounting.
+     */
+    private Throwable rebuildActiveWindowStateFromAppliedBase(LiveViewInstance instance, String cause) {
+        final String viewName = instance.getDefinition().getViewName();
+        try {
+            final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+            final long writerTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            instance.setLeadRowCount(0);
+            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, writerTxn);
+            // REPLACE_RANGE rewrote disk, so the published slot is stale; rebuild it
+            // from the rewritten LV table or reads keep serving pre-recompute rows.
+            rebuildInMemoryTier(instance);
+            instance.setLeadRowCount(0);
+            instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
+            instance.recordRefreshSuccess();
+            LOG.info().$("live view recomputed window state from applied base [view=")
+                    .$(viewName).$(", cause=").$(cause).I$();
+            return null;
+        } catch (Throwable t) {
+            LOG.error().$("live view window-state recompute failed [view=")
+                    .$(viewName)
+                    .$(", cause=").$(cause)
+                    .$(", error=").$(t).I$();
+            return t;
+        }
+    }
+
+    /**
      * Atomic O3 in-mem tier rebuild. Runs after an O3 replay has rewritten the
      * on-disk tier (REPLACE_RANGE) and applied it inline. Instead of emptying
      * the tier - which would drop seam routing until a later normal cycle
@@ -4405,6 +4468,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         // Published a fresh disk-staged slot; the stale marking (if any) is resolved.
         instance.setTierStale(false);
+    }
+
+    /**
+     * Recovers a turn that advanced the accumulators (windowStateDirty) but failed
+     * before any durable commit - a mid-drain fault (map/staging OOM, bad segment
+     * read). The retry would re-drain and double-advance them; rebuild from the
+     * applied base so it starts clean. Returns {@code null} on success/re-arm, else
+     * the rebuild error.
+     */
+    private Throwable rebuildWindowStateAfterMidDrainFailure(LiveViewInstance instance) {
+        if (instance.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING) {
+            // Mid-backfill: re-arm the sweep resume, which rebuilds from the surviving
+            // .bcp (or re-sweeps from 0 behind the skip-write floor). Idempotent.
+            instance.resetBackfillResumeAttempted();
+            LOG.info().$("live view mid-backfill refresh failure, sweep will resume [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return null;
+        }
+        return rebuildActiveWindowStateFromAppliedBase(instance, "mid-drain refresh failure");
     }
 
     /**
@@ -4948,28 +5030,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(viewName).I$();
             return null;
         }
-        try {
-            final TableToken baseToken = instance.getDefinition().getBaseTableToken();
-            final long writerTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
-            instance.setLeadRowCount(0);
-            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, writerTxn);
-            // Mirror o3Replay's post-replay steps: the REPLACE_RANGE rewrote the
-            // on-disk tier, so the in-mem tier's published slot (pre-drift rows plus
-            // any lead) is stale and must be rebuilt from the rewritten LV table;
-            // otherwise reads keep serving the pre-recompute rows over disk.
-            rebuildInMemoryTier(instance);
-            instance.setLeadRowCount(0);
-            instance.setRefreshedUpToSeqTxn(instance.getLastProcessedSeqTxn());
-            instance.recordRefreshSuccess();
-            LOG.info().$("live view recompiled and recomputed after base table metadata change [view=")
-                    .$(viewName).I$();
-            return null;
-        } catch (Throwable t) {
-            LOG.error().$("live view recompute failed after base table metadata change [view=")
-                    .$(viewName)
-                    .$(", error=").$(t).I$();
-            return t;
-        }
+        return rebuildActiveWindowStateFromAppliedBase(instance, "base table metadata change");
     }
 
     private void refreshInstance(LiveViewInstance instance, long seqTxn) {
@@ -5021,6 +5082,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // incrementalRefresh; the budget snapshot resets per turn.
         turnStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         turnCommitsProcessed = 0;
+        // No rows fed yet, so the accumulators match the last durable commit.
+        windowStateDirty = false;
         // Lead-reconstruction mode: a read-only replica computes the un-flushed lead into RAM for
         // freshness parity but must never flush, apply, backfill, or advance a durable watermark --
         // the on-disk tier is fed by the global apply job from replicated WAL. The enterprise
@@ -5352,6 +5415,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * separate branch that never invalidates -- see {@link #onReplicaLeadRefreshFailure}.
      */
     private String handleRefreshFailure(LiveViewInstance instance, Throwable t, boolean leadReconstruction) {
+        // Captured before the metadata-drift block reassigns t: that path already
+        // rebuilds, so the mid-drain rebuild below must not fire a second time.
+        final boolean wasMetadataDrift = t instanceof TableReferenceOutOfDateException;
         if (t instanceof CairoException ce && ce.isAuthorizationError()) {
             // A demote flipped the read-only flag after this cycle acquired its WalWriter but before the
             // commit; fencedLiveViewCommit re-checked isReadOnlyMode() under the role-switch read lock and
@@ -5380,6 +5446,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 return null;
             }
             // The recovery replay itself failed; account for THAT error below.
+        }
+        // Mid-drain fault with the accumulators advanced past the last durable commit:
+        // rebuild from the applied base so the retry does not double-advance them. Skip
+        // when the drift path already rebuilt, when nothing was fed (windowStateDirty
+        // false - includes a transient table-absent during CREATE / DROP), or for a
+        // read-only replica (its lead is rebuilt every tick; it backs off below).
+        if (windowStateDirty
+                && !wasMetadataDrift
+                && !leadReconstruction
+                && !(t instanceof CairoException dce && dce.isTableDoesNotExist())) {
+            Throwable rebuildErr = rebuildWindowStateAfterMidDrainFailure(instance);
+            if (rebuildErr == null) {
+                return null;
+            }
+            // The rebuild replay itself failed; account for THAT error below.
+            t = rebuildErr;
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);

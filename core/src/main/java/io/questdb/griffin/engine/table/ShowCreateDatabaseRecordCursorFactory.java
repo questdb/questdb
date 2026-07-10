@@ -32,6 +32,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -95,7 +96,8 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     public static final int INCLUDE_GROUPS = 1 << 4;
     public static final int INCLUDE_SERVICE_ACCOUNTS = 1 << 5;
     public static final int INCLUDE_PERMISSIONS = 1 << 6;
-    public static final int INCLUDE_SCHEMA = INCLUDE_TABLES | INCLUDE_VIEWS | INCLUDE_MATERIALIZED_VIEWS;
+    public static final int INCLUDE_LIVE_VIEWS = 1 << 7;
+    public static final int INCLUDE_SCHEMA = INCLUDE_TABLES | INCLUDE_VIEWS | INCLUDE_MATERIALIZED_VIEWS | INCLUDE_LIVE_VIEWS;
     public static final int INCLUDE_ACL = INCLUDE_USERS | INCLUDE_GROUPS | INCLUDE_SERVICE_ACCOUNTS | INCLUDE_PERMISSIONS;
     public static final int INCLUDE_ALL = INCLUDE_SCHEMA | INCLUDE_ACL;
     private static final Log LOG = LogFactory.getLog(ShowCreateDatabaseRecordCursorFactory.class);
@@ -150,6 +152,10 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     // the per-object SHOW CREATE factories take a token position for error reporting; a database dump
     // has no per-object source position, so it passes 0. An object dropped between collection and emit
     // is skipped by appendObjectDdl, so this 0 surfaces only for a genuine error that aborts the dump.
+    protected RecordCursorFactory liveViewFactory(TableToken token) {
+        return new ShowCreateLiveViewRecordCursorFactory(token, 0);
+    }
+
     protected RecordCursorFactory matViewFactory(TableToken token) {
         return new ShowCreateMatViewRecordCursorFactory(token, 0);
     }
@@ -165,6 +171,9 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     private static int categoryBit(TableToken token) {
         if (token.isMatView()) {
             return INCLUDE_MATERIALIZED_VIEWS;
+        }
+        if (token.isLiveView()) {
+            return INCLUDE_LIVE_VIEWS;
         }
         if (token.isView()) {
             return INCLUDE_VIEWS;
@@ -311,6 +320,16 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     ) {
         if (token.isMatView()) {
             collectMatViewDependencies(token, engine, executionContext, out);
+        } else if (token.isLiveView()) {
+            // a live view reads exactly one base table; emit it first so the
+            // CREATE LIVE VIEW replays
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(token.getTableName());
+            if (instance != null && instance.getDefinition() != null) {
+                final TableToken base = engine.getTableTokenIfExists(instance.getDefinition().getBaseTableName());
+                if (base != null) {
+                    out.add(base);
+                }
+            }
         } else if (token.isView()) {
             final ViewDefinition definition = engine.getViewGraph().getViewDefinition(token);
             if (definition != null) {
@@ -390,6 +409,9 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     private RecordCursorFactory objectFactory(TableToken token) {
         if (token.isMatView()) {
             return matViewFactory(token);
+        }
+        if (token.isLiveView()) {
+            return liveViewFactory(token);
         }
         if (token.isView()) {
             return viewFactory(token);

@@ -1690,6 +1690,12 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         LiveViewInstance instance = liveViewRegistry.removeView(name);
         if (instance != null) {
+            // Mark dropped, then fence the refresh worker (spin-acquire+release the
+            // latch) before the table teardown below, so no in-flight refresh turn
+            // races the drop (LV-WAL commit / _lv.s rewrite -> transient errors,
+            // orphans) and the worker's next isDropped() recheck sees the drop.
+            instance.markAsDropped();
+            instance.fenceRefresh();
             // A definition-less load-failure stub was never added to the dependents
             // graph (its base table could not be resolved), so skip that cleanup for it.
             if (!instance.isStub()) {
@@ -1697,10 +1703,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 // snapshot ordering does not still see the dropped view.
                 dependentViewGraph.removeLiveView(instance.getLiveViewToken(), instance.getDefinition().getBaseTableName());
             }
-            // Mark the instance dropped and attempt an immediate free. If a refresh or
-            // reader is currently holding a lock, tryCloseIfDropped() bails and the
-            // winning party (refresh finally hook or cursor close) performs the free.
-            instance.markAsDropped();
+            // Immediate free; bails if a reader holds the lock, leaving the free to
+            // the refresh finally hook or cursor close.
             instance.tryCloseIfDropped();
         }
         if (token != null) {
@@ -1874,6 +1878,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
+    public @NotNull DependentViewGraph getDependentViewGraph() {
+        return dependentViewGraph;
+    }
+
     public @NotNull DurableAckRegistry getDurableAckRegistry() {
         return durableAckRegistry;
     }
@@ -1911,10 +1919,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public LiveViewStateStore getLiveViewStateStore() {
         return liveViewStateStore;
-    }
-
-    public @NotNull DependentViewGraph getDependentViewGraph() {
-        return dependentViewGraph;
     }
 
     public @NotNull MatViewStateStore getMatViewStateStore() {
@@ -2521,10 +2525,6 @@ public class CairoEngine implements Closeable, WriterSource {
         instance.tryFreeRuntimeStateIfInvalid();
     }
 
-    public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
-        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null);
-    }
-
     /**
      * Schema-change-aware invalidation. Iterates live views whose base is
      * {@code baseTableToken} and only invalidates those that depend on a column
@@ -2545,18 +2545,27 @@ public class CairoEngine implements Closeable, WriterSource {
         invalidateLiveViewsForBaseTable0(baseTableToken, reason, postChangeMetadata);
     }
 
+    public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
+        invalidateLiveViewsForBaseTable0(baseTableToken, reason, null);
+    }
+
     private void invalidateLiveViewsForBaseTable0(
             TableToken baseTableToken,
             String reason,
             @Nullable io.questdb.cairo.sql.RecordMetadata postChangeMetadata
     ) {
         final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
-        // Flip the in-memory bit then rewrite each affected view's _lv.s so the
-        // invalidation survives restart. The registry-only helper exists for tests
-        // that don't need durability.
+        // Persist each affected view's _lv.s before flipping its in-memory invalid
+        // bit (see the per-view block below) so the invalidation survives restart.
+        // The registry-only helper exists for tests that don't need durability.
         ObjList<LiveViewInstance> sink = tlInvalidateSink.get();
         sink.clear();
         liveViewRegistry.getViewsForBaseTable(baseTableToken.getTableName(), sink);
+        if (sink.size() == 0) {
+            // No dependent live views: skip the BlockFileWriter + Path alloc. Runs on
+            // every base-table drop / rename / schema change.
+            return;
+        }
         final StringSink reasonSink = tlInvalidationReasonSink.get();
         try (
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());

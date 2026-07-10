@@ -107,10 +107,13 @@ public class LiveViewRegistry implements QuietCloseable {
     }
 
     public void registerView(LiveViewInstance instance) {
-        viewsByName.put(instance.getDefinition().getViewName(), instance);
         DepList list = viewsByBaseTable.computeIfAbsent(instance.getDefinition().getBaseTableName(), createDepList);
         ObjList<LiveViewInstance> views = list.lockForWrite();
         try {
+            // Publish the name entry under the fan-out list's write lock so a
+            // concurrent getViewsForBaseTable reader never sees one map but not the
+            // other (matches the class contract).
+            viewsByName.put(instance.getDefinition().getViewName(), instance);
             views.add(instance);
         } finally {
             list.unlockAfterWrite();

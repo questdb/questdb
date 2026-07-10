@@ -461,6 +461,66 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInMemSymbolGetSymAIndependentAcrossRecords() throws Exception {
+        // recordA and recordB are independent random-access consumers, so a
+        // getSymA read off recordA must survive a getSymA read off recordB. The disk
+        // path honours this (each record clones its own symbol table). Routing both
+        // through the ONE cursor-level overlay shares its single valueOf flyweight -
+        // a reused DirectString with a NOCACHE column - so recordB's getSymA re-points
+        // the object recordA's getSymA still holds. Cross-record analogue of
+        // testInMemSymbolGetSymBIndependentOfGetSymA (which only covers within-cursor A/B).
+        assertMemoryLeak(() -> {
+            createSymbolSeamSplitLvNoCache();
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                LiveViewRecordCursorFactory lvf = unwrapLvFactory(factory);
+                try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) lvf.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue("view must serve the in-mem tier (Mode B)", cursor.isRoutingEligible());
+                    Record recordA = cursor.getRecord();
+
+                    LongList inMemIds = new LongList();
+                    ObjList<String> expectedSym = new ObjList<>();
+                    while (cursor.hasNext()) {
+                        long rowId = recordA.getRowId();
+                        if (rowId < 0) { // in-mem row
+                            inMemIds.add(rowId);
+                            CharSequence sym = recordA.getSymA(1);
+                            expectedSym.add(sym == null ? null : sym.toString());
+                        }
+                    }
+                    Assert.assertTrue(
+                            "need at least two in-mem rows with distinct symbols",
+                            inMemIds.size() >= 2
+                    );
+                    Assert.assertNotEquals(
+                            "the two probed in-mem symbols must differ",
+                            expectedSym.get(0), expectedSym.get(1)
+                    );
+
+                    Record recordB = cursor.getRecordB();
+
+                    // recordA reads the first in-mem row's symbol via getSymA.
+                    cursor.recordAt(recordA, inMemIds.getQuick(0));
+                    CharSequence symA = recordA.getSymA(1);
+                    Assert.assertEquals(expectedSym.get(0), symA.toString());
+
+                    // recordB reads a DIFFERENT in-mem row's symbol via getSymA (the same
+                    // accessor). If the two records shared one overlay, this re-points the
+                    // object symA still references.
+                    cursor.recordAt(recordB, inMemIds.getQuick(1));
+                    CharSequence symB = recordB.getSymA(1);
+                    Assert.assertEquals(expectedSym.get(1), symB.toString());
+
+                    // symA must be unchanged by recordB's getSymA read.
+                    Assert.assertEquals(
+                            "recordA SYMBOL clobbered by recordB getSymA (shared overlay aliasing)",
+                            expectedSym.get(0), symA.toString()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testModeBDisabledForBackwardScan() throws Exception {
         assertMemoryLeak(() -> {
             createSeamSplitLv();
