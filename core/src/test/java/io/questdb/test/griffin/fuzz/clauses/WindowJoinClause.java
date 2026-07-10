@@ -24,17 +24,14 @@
 
 package io.questdb.test.griffin.fuzz.clauses;
 
-import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.griffin.fuzz.FuzzColumn;
 import io.questdb.test.griffin.fuzz.FuzzTable;
 import io.questdb.test.griffin.fuzz.GeneratedQuery;
 import io.questdb.test.griffin.fuzz.PredicateGenerator;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
-import io.questdb.test.griffin.fuzz.types.ColumnKind;
 
 /**
  * WINDOW JOIN across two WAL tables. A WINDOW JOIN preserves the master
@@ -95,7 +92,7 @@ public final class WindowJoinClause {
         int aggCount = 1 + rnd.nextInt(3); // 1..3 slave aggregates
         for (int i = 0; i < aggCount; i++) {
             sql.put(", ");
-            appendAggregate(sql, rnd, slave);
+            JoinClauseSupport.appendAggregate(sql, rnd, slave, SLAVE_ALIAS);
             sql.put(" AS a").put(i);
         }
 
@@ -110,7 +107,7 @@ public final class WindowJoinClause {
         PredicateGenerator.appendWhere(sql, rnd, master.getColumns(), MASTER_ALIAS, 1, ctx, injectFaultFn);
 
         if (rnd.nextBoolean()) {
-            appendOrderBy(sql, rnd, masterSlots, aggCount);
+            JoinClauseSupport.appendOrderBy(sql, rnd, masterSlots, aggCount);
         }
 
         // LIMIT over a parallel WINDOW JOIN can pick a different valid subset
@@ -121,45 +118,6 @@ public final class WindowJoinClause {
             sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
         }
         return new GeneratedQuery(sql.toString(), !hasLimit);
-    }
-
-    private static void appendAggregate(StringSink sql, Rnd rnd, FuzzTable slave) {
-        int pick = rnd.nextInt(7);
-        switch (pick) {
-            case 0 -> sql.put("count(*)");
-            case 1 -> {
-                String c = pickColumn(rnd, slave, null);
-                if (c == null) {
-                    sql.put("count(*)");
-                } else {
-                    sql.put("count(").put(SLAVE_ALIAS).put('.').put(c).put(')');
-                }
-            }
-            case 2, 3 -> {
-                String c = pickColumn(rnd, slave, ColumnKind.NUMERIC);
-                if (c == null) {
-                    sql.put("count(*)");
-                } else {
-                    sql.put(rnd.nextBoolean() ? "sum(" : "avg(").put(SLAVE_ALIAS).put('.').put(c).put(')');
-                }
-            }
-            case 4 -> {
-                String c = pickOrderableColumn(rnd, slave);
-                if (c == null) {
-                    sql.put("count(*)");
-                } else {
-                    sql.put(rnd.nextBoolean() ? "min(" : "max(").put(SLAVE_ALIAS).put('.').put(c).put(')');
-                }
-            }
-            default -> {
-                String c = pickColumn(rnd, slave, null);
-                if (c == null) {
-                    sql.put("count(*)");
-                } else {
-                    sql.put(rnd.nextBoolean() ? "first(" : "last(").put(SLAVE_ALIAS).put('.').put(c).put(')');
-                }
-            }
-        }
     }
 
     /**
@@ -212,55 +170,4 @@ public final class WindowJoinClause {
         return rnd.nextBoolean() ? -mag : mag;
     }
 
-    private static void appendOrderBy(StringSink sql, Rnd rnd, int masterSlots, int aggCount) {
-        int total = masterSlots + aggCount;
-        int picks = 1 + rnd.nextInt(Math.min(2, total));
-        sql.put(" ORDER BY ");
-        for (int i = 0; i < picks; i++) {
-            if (i > 0) {
-                sql.put(", ");
-            }
-            int idx = rnd.nextInt(total);
-            if (idx < masterSlots) {
-                sql.put('e').put(idx);
-            } else {
-                sql.put('a').put(idx - masterSlots);
-            }
-            if (rnd.nextBoolean()) {
-                sql.put(rnd.nextBoolean() ? " ASC" : " DESC");
-            }
-        }
-    }
-
-    private static String pickColumn(Rnd rnd, FuzzTable table, ColumnKind kind) {
-        ObjList<String> matching = new ObjList<>();
-        for (int i = 0, n = table.getColumnCount(); i < n; i++) {
-            FuzzColumn c = table.getColumn(i);
-            ColumnKind k = c.getType().getKind();
-            if (k == ColumnKind.ARRAY) {
-                continue;
-            }
-            if (kind == null || k == kind) {
-                matching.add(c.getName());
-            }
-        }
-        if (matching.size() == 0) {
-            return null;
-        }
-        return matching.getQuick(rnd.nextInt(matching.size()));
-    }
-
-    private static String pickOrderableColumn(Rnd rnd, FuzzTable table) {
-        ObjList<String> matching = new ObjList<>();
-        for (int i = 0, n = table.getColumnCount(); i < n; i++) {
-            FuzzColumn c = table.getColumn(i);
-            if (c.getType().getKind().isOrderable()) {
-                matching.add(c.getName());
-            }
-        }
-        if (matching.size() == 0) {
-            return null;
-        }
-        return matching.getQuick(rnd.nextInt(matching.size()));
-    }
 }

@@ -640,21 +640,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 || Chars.equals(token, ">") || Chars.equals(token, ">=");
     }
 
-    /**
-     * Reports whether {@code node} is the kind of pure-constant integer
-     * arithmetic subtree that {@link #descend} collapses into a single IMM, i.e.
-     * it folds via {@link #tryFoldConstantArith} and the long-width result
-     * overflows int.
-     */
-    private boolean isFoldableOverflowConst(ExpressionNode node) {
-        try {
-            long v = tryFoldConstantArith(node);
-            return (int) v != v;
-        } catch (NumericException notConstant) {
-            return false;
-        }
-    }
-
     private static boolean isGeoHash(int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
@@ -1098,6 +1083,34 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return columnTypeTag == ColumnType.BOOLEAN;
     }
 
+    // A FLOAT column or bind-variable leaf. An out-of-INT-range integer constant compared
+    // directly against one types down to F4 (INT and FLOAT are both 4 bytes, so the observer
+    // sees no mixed size), and serializeNumber would then emit the constant as a lossy 32-bit
+    // float. The Java filter promotes both operands to double and compares exactly, so widen
+    // the constant to i64: scalar mode is forced and its convert() promotes the float column
+    // to double too. DOUBLE (F8) already compares exactly, so it is intentionally excluded.
+    private boolean isFloatLeaf(ExpressionNode node) {
+        if (node == null || (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.BIND_VARIABLE)) {
+            return false;
+        }
+        return arithExprType(node) == F4_TYPE;
+    }
+
+    /**
+     * Reports whether {@code node} is the kind of pure-constant integer
+     * arithmetic subtree that {@link #descend} collapses into a single IMM, i.e.
+     * it folds via {@link #tryFoldConstantArith} and the long-width result
+     * overflows int.
+     */
+    private boolean isFoldableOverflowConst(ExpressionNode node) {
+        try {
+            long v = tryFoldConstantArith(node);
+            return (int) v != v;
+        } catch (NumericException notConstant) {
+            return false;
+        }
+    }
+
     // Reference (not value) membership: the same node objects are marked and folded.
     private boolean isI64WidenFoldRoot(ExpressionNode node) {
         for (int i = 0, n = i64WidenFoldRoots.size(); i < n; i++) {
@@ -1135,19 +1148,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // check predicate type is timestamp
         return ColumnType.isTimestamp(predicateContext.columnType);
-    }
-
-    // A FLOAT column or bind-variable leaf. An out-of-INT-range integer constant compared
-    // directly against one types down to F4 (INT and FLOAT are both 4 bytes, so the observer
-    // sees no mixed size), and serializeNumber would then emit the constant as a lossy 32-bit
-    // float. The Java filter promotes both operands to double and compares exactly, so widen
-    // the constant to i64: scalar mode is forced and its convert() promotes the float column
-    // to double too. DOUBLE (F8) already compares exactly, so it is intentionally excluded.
-    private boolean isFloatLeaf(ExpressionNode node) {
-        if (node == null || (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.BIND_VARIABLE)) {
-            return false;
-        }
-        return arithExprType(node) == F4_TYPE;
     }
 
     // A bare or unary-minus-wrapped integer CONSTANT node (I4- or I8-typed). Returns
@@ -1361,13 +1361,27 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             markI64Widen(node.rhs != null ? node.rhs : node.lhs, underLong);
             return;
         }
-        // Comparison / boolean / IN / NOT: a narrow operand is read at 32 bits
-        // (via getInt) unless it is itself I8-typed.
-        markI64Widen(node.lhs, arithExprType(node.lhs) == I8_TYPE);
-        markI64Widen(node.rhs, arithExprType(node.rhs) == I8_TYPE);
+        // Comparison / boolean / IN / NOT: a fresh width boundary. Derive the
+        // comparison width by promoting across ALL operands (a genuine LONG
+        // sibling reads the whole comparison at long width), then read each
+        // operand at that width - mirroring markI64WrapArithLeaves and
+        // markI64WidenFoldRoots. Checking each operand against its OWN static
+        // type instead would miss a narrow-int COLUMN product read at long width
+        // because a LONG sibling promoted the comparison (e.g. (a*b) > nl inside
+        // a boolean equality with a float), leaving the product to wrap mod 2^32
+        // and diverge from the Java filter's MulInt#getLong. A FLOAT/DOUBLE
+        // sibling yields a floating cmpType (cmpLong stays false), so an int-read
+        // product still wraps there - matching getDouble()/getInt().
+        int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
+        cmpType = foldCmpType(cmpType, node.rhs);
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            ExpressionNode arg = node.args.getQuick(i);
-            markI64Widen(arg, arithExprType(arg) == I8_TYPE);
+            cmpType = foldCmpType(cmpType, node.args.getQuick(i));
+        }
+        boolean cmpLong = cmpType == I8_TYPE;
+        markI64Widen(node.lhs, cmpLong);
+        markI64Widen(node.rhs, cmpLong);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            markI64Widen(node.args.getQuick(i), cmpLong);
         }
     }
 

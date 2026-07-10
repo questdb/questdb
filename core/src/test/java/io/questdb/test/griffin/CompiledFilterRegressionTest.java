@@ -266,6 +266,64 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumnArithmeticWidthUnderBooleanEqualityWithFloat() throws Exception {
+        // A FLOAT anywhere in the predicate suppresses the predicate-global narrow-i64
+        // widening (NarrowI64WidenDetector.shouldWiden() returns false when hasFloat),
+        // so markFloatI64WidenLeaves is the ONLY pass that can sign-extend a narrow-int
+        // arithmetic subtree read at long width. It walked each comparison operand with
+        // its OWN static type, so a narrow-int COLUMN product compared against a LONG
+        // sibling - ((a*b) > nl) - was left at INT width and wrapped mod 2^32 via the
+        // JIT's int32 MUL, while the Java filter reads MulInt#getLong (no wrap). For
+        // ((a*b) > nl) = (f32 > 0) the JIT returned 0 rows and the Java filter 4. The
+        // boundary now promotes the comparison width across all operands (foldCmpType),
+        // matching markI64WrapArithLeaves / markI64WidenFoldRoots, so both agree. The
+        // widened leaf emits SX_I64 (no AVX2 path), which forces scalar mode - the query
+        // still JIT-compiles (usesCompiledFilter stays true), it just runs scalar.
+        assertMemoryLeak(() -> {
+            execute("create table p as (select cast(1000000 as int) a, cast(1000000 as int) b," +
+                    " cast(case x when 1 then 1000000000000 else 0 end as long) nl," +
+                    " cast(1.0 as float) f32, x::short cs, x::byte cbyte," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(5)) timestamp(k)");
+            // Primary repro: a narrow-int product vs a LONG column, in a boolean equality
+            // with a float sibling. a*b = 10^12 at long width but -727379968 wrapped at
+            // int32. Absolute pin: only rows where (a*b > nl) matches (f32 > 0 = true),
+            // i.e. nl = 0 (rows 2..5). The pre-fix JIT returned no rows.
+            assertJitMatchesJava("p where ((a*b) > nl) = (f32 > 0)", true,
+                    "a\tb\tnl\tf32\tcs\tcbyte\tk\n" +
+                            "1000000\t1000000\t0\t1.0\t2\t2\t1970-01-01T00:00:01.000000Z\n" +
+                            "1000000\t1000000\t0\t1.0\t3\t3\t1970-01-01T00:00:02.000000Z\n" +
+                            "1000000\t1000000\t0\t1.0\t4\t4\t1970-01-01T00:00:03.000000Z\n" +
+                            "1000000\t1000000\t0\t1.0\t5\t5\t1970-01-01T00:00:04.000000Z\n");
+            // Operand order and a non-zero float threshold: same LONG-width product.
+            assertJitMatchesJava("p where (f32 > 0) = ((a*b) > nl)", true);
+            assertJitMatchesJava("p where ((a*b) > nl) = (f32 > 0.5)", true);
+            // Narrow column read (not a product) vs a LONG column sign-extends
+            // value-preservingly; the float sibling does not change that.
+            assertJitMatchesJava("p where (cs > nl) = (f32 > 0)", true);
+            assertJitMatchesJava("p where (cbyte > nl) = (f32 > 0)", true);
+            // Over-widening guard: an INT-width comparison of the narrow product must
+            // still WRAP even with a float present - cmpType stays I4 there, so the
+            // product folds to exactly -727379968 and matches every row. Absolute pin:
+            // all 5 rows survive ((a*b) = -727379968 is true, f32 > 0 is true).
+            assertJitMatchesJava("p where ((a*b) = -727379968) = (f32 > 0)", true,
+                    "a\tb\tnl\tf32\tcs\tcbyte\tk\n" +
+                            "1000000\t1000000\t1000000000000\t1.0\t1\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "1000000\t1000000\t0\t1.0\t2\t2\t1970-01-01T00:00:01.000000Z\n" +
+                            "1000000\t1000000\t0\t1.0\t3\t3\t1970-01-01T00:00:02.000000Z\n" +
+                            "1000000\t1000000\t0\t1.0\t4\t4\t1970-01-01T00:00:03.000000Z\n" +
+                            "1000000\t1000000\t0\t1.0\t5\t5\t1970-01-01T00:00:04.000000Z\n");
+            // A pure FLOAT comparison of the product wraps (getDouble -> getInt), so no
+            // widening: cmpType is floating, cmpLong stays false.
+            assertJitMatchesJava("p where (a*b) > f32", true);
+            // Controls: single comparison and AND/OR split into separate predicate
+            // contexts, each already correct.
+            assertJitMatchesJava("p where (a*b > nl) and f32 > 0", true);
+            assertJitMatchesJava("p where (a*b > nl) or f32 > 0", true);
+        });
+    }
+
+    @Test
     public void testColumnFloatComparisonWithNulls() throws Exception {
         // Regression test for ARM64 NaN condition code handling.
         // ARM64 fcmp with NaN sets NZCV=0011. Ordered less-than must use MI (not LT),

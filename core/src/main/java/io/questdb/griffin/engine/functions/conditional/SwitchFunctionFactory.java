@@ -690,7 +690,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
         // INT_NULL, and the base IntFunction widens it through Numbers.intToLong
         // / intToDouble / intToFloat, mapping INT_NULL to the matching wide NULL.
         // A raw ternary here would widen INT_NULL to -2147483648 / -2.147e9 and
-        // corrupt wide-type CASTs that read these getters (see Bugfix 9).
+        // corrupt wide-type CASTs that read these getters. The IntFunction base
+        // getters (getLong/getDouble/getFloat/getDate/getTimestamp) map INT_NULL
+        // to the matching wide NULL; that widening must not be bypassed here.
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
