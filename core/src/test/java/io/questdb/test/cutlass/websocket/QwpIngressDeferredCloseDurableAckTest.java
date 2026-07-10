@@ -281,6 +281,107 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Client-initiated CLOSE with the pre-response ACK send itself parked:
+     * {@code [BINARY, CLOSE]} in one recv chunk, so {@code handleClose}'s
+     * {@code flushPendingAck} attempts the cumulative ACK for the committed
+     * frame and blocks. The old code swallowed the backpressure, the CLOSE
+     * dispatch threw {@code ServerDisconnectException}, and
+     * {@code onConnectionClosed}'s single best-effort flush gave up under the
+     * same backpressure -- the client's LAST cumulative ack was lost and its
+     * committed-but-unacknowledged work replayed after reconnect (duplicates
+     * on tables without DEDUP UPSERT KEYS).
+     * <p>
+     * Fixed behaviour: the backpressure propagates (the framework parks the
+     * connection for write) with an ack-then-close-response continuation
+     * armed; {@code resumeSend} finishes the ACK, emits the close response
+     * echoing the client's code, then disconnects.
+     */
+    @Test
+    public void testClientCloseAckBackpressurePreservesFinalAck() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabcc (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabcc", 100L, 1_000_000L));
+                // client-initiated CLOSE, NORMAL_CLOSURE (1000) big-endian
+                byte[] clientClose = createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
+                byte[] wire = concat(frame0, clientClose);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Both frames in one recv chunk: frame0 commits (pending
+                    // cumulative ACK, chunk-end flush not yet run), then
+                    // handleClose's flushPendingAck attempts the ACK -- and
+                    // blocks. The backpressure must PROPAGATE so the framework
+                    // parks for write; ServerDisconnectException here means
+                    // the dispatch closed the connection with the client's
+                    // last cumulative ack still parked.
+                    rawSocket.throwSlowToReadOnCall = 1;
+                    nf.release(wire.length);
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("Expected PeerIsSlowToReadException (final ACK parked behind client CLOSE)");
+                    } catch (PeerIsSlowToReadException expected) {
+                        // parked for write; the ack-then-close-response
+                        // continuation must now be armed
+                    } catch (ServerDisconnectException e) {
+                        Assert.fail("FINAL ACK LOST: the CLOSE dispatch disconnected while the client's "
+                                + "last cumulative ACK was still parked under write backpressure; "
+                                + "committed-but-unacknowledged work will replay after reconnect");
+                    }
+                    Assert.assertEquals(
+                            "client CLOSE under ack backpressure must park the "
+                                    + "ack-then-close-response continuation "
+                                    + "(SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE)",
+                            12, state.getSendState()
+                    );
+
+                    // The client drains its receive buffer; the dispatcher
+                    // fires resumeSend. The parked ACK flushes, the close
+                    // response goes out, and only then does the connection
+                    // tear down.
+                    try {
+                        processor.resumeSend(context);
+                        Assert.fail("Expected ServerDisconnectException after ack + close response");
+                    } catch (ServerDisconnectException expected) {
+                    }
+
+                    int closeIdx = indexOfCloseFrame(rawSocket.sentFrames);
+                    Assert.assertTrue("close response must be sent", closeIdx >= 0);
+                    Assert.assertEquals(
+                            "close response must echo the client's close code",
+                            1000 /* NORMAL_CLOSURE */, closeCode(rawSocket.sentFrames.getQuick(closeIdx))
+                    );
+                    int ackIdx = indexOfCumulativeAckFrame(rawSocket.sentFrames);
+                    Assert.assertTrue(
+                            "FINAL ACK LOST: no cumulative ACK precedes the close response "
+                                    + "(ackFrameIndex=" + ackIdx + ", closeFrameIndex=" + closeIdx
+                                    + ", framesSent=" + rawSocket.sentFrames.size() + "); the client "
+                                    + "never learns its committed data was persisted and replays it "
+                                    + "after reconnect",
+                            ackIdx >= 0 && ackIdx < closeIdx
+                    );
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * The deferral can also exit while a PONG (or error response) is parked:
      * {@code onFatalCloseBlocked} collapses those states to
      * {@code RESUME_CLOSE}, whose resume branch assumes the parked bytes ARE
@@ -2318,6 +2419,25 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         for (int i = 0, n = frames.size(); i < n; i++) {
             byte[] f = frames.getQuick(i);
             if (f.length >= 4 && (f[0] & 0x0F) == WebSocketOpcode.CLOSE) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Index of the first server-to-client BINARY frame whose payload status
+     * byte is {@code STATUS_OK} (a cumulative ACK), or -1. Server frames are
+     * unmasked and small in these tests, so the payload starts at offset 2.
+     */
+    private static int indexOfCumulativeAckFrame(ObjList<byte[]> frames) {
+        for (int i = 0, n = frames.size(); i < n; i++) {
+            byte[] f = frames.getQuick(i);
+            if (f.length >= 3
+                    && (f[0] & 0x0F) == WebSocketOpcode.BINARY
+                    && (f[1] & 0x80) == 0
+                    && (f[1] & 0x7F) < 126
+                    && f[2] == QwpConstants.STATUS_OK) {
                 return i;
             }
         }

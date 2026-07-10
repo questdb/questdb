@@ -106,6 +106,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // two frame kinds in one state made the resume branch arm the echo wait
     // for a handshake that was already complete.
     static final int SEND_STATE_RESUME_CLOSE_RESPONSE = 11;
+    // Continuations for a client-initiated CLOSE that arrived while (or
+    // whose pre-close ack flush left) an ack/durable-ack send parked. The
+    // parked frame carries the client's LAST cumulative/durable ack --
+    // dropping it (the old swallow-then-ServerDisconnect behaviour) makes a
+    // store-and-forward client replay committed work after reconnect
+    // (duplicates on tables without dedup keys). The resume path finishes
+    // the ack, emits the close response with the code stored in
+    // pendingCloseResponseCode, then disconnects -- mirroring the
+    // ACK_THEN_CLOSE pair, but for the client-initiated close handshake
+    // where no close-echo wait may ever be armed.
+    static final int SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE = 12;
+    static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE = 13;
     static final int SEND_STATE_RESUME_DRAIN_THEN_CLOSE = 10;
     static final int SEND_STATE_RESUME_DURABLE_ACK = 4;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE = 8;
@@ -160,6 +172,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private int pendingHandshakeBytes;
     private int recvBufferLen;
     private long resumeAckSequence = -1;
+    // Normalized close code to echo in the deferred close response once the
+    // parked ack ahead of it drains (SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE
+    // / SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE), or -1 when no
+    // client-close continuation is armed. Reset on onDisconnected().
+    private int pendingCloseResponseCode = -1;
     // Set when a batch is refused because the node just flipped to a read-only
     // replica (an in-place PRIMARY->REPLICA demote). A TRANSIENT failover, not a
     // permanent auth failure -- the upgrade processor closes the connection with a
@@ -726,6 +743,30 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Records that a client-initiated CLOSE arrived while its pre-response
+     * ack flush left an ack/durable-ack send parked. Stores the normalized
+     * close code for the response the resume path will emit after the parked
+     * ack drains, and chains the send state so the ack frame -- the client's
+     * LAST cumulative/durable ack -- is not lost to the teardown. The caller
+     * must propagate the write backpressure so the framework parks the
+     * connection for write instead of disconnecting.
+     */
+    public void onClientCloseBlockedBehindAck(int responseCode) {
+        assert sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_DURABLE_ACK
+                : "onClientCloseBlockedBehindAck called in wrong state: " + sendState;
+        pendingCloseResponseCode = responseCode;
+        if (sendState == SEND_STATE_RESUME_ACK) {
+            sendState = SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE;
+        } else if (sendState == SEND_STATE_RESUME_DURABLE_ACK) {
+            sendState = SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE;
+        }
+    }
+
+    public int getPendingCloseResponseCode() {
+        return pendingCloseResponseCode;
+    }
+
+    /**
      * Records that a durable-ack send was blocked by a full OS buffer.
      * Transitions from READY to RESUME_DURABLE_ACK. The durableProgressSnapshot
      * is retained so onDurableAckSent() can update lastDurableSeqTxns on resume.
@@ -796,6 +837,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         clearDeferredClose();
         closeEchoDeadline = -1;
         hasLostCloseEchoSync = false;
+        pendingCloseResponseCode = -1;
         roleChangeCloseDeferredDeadline = -1;
         roleChangeCloseInitiated = false;
         roleChangeCloseReason.clear();
@@ -889,6 +931,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // flushed. Either way a CLOSE is already on the wire and nothing
             // may follow it (RFC 6455); the resume path finishes that flush
             // and disconnects, so the just-stored code/reason are redundant.
+            clearDeferredClose();
+        } else if (sendState == SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE
+                || sendState == SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE) {
+            // A close response to a client-initiated CLOSE is already queued
+            // behind the parked ack. That response IS a CLOSE frame and the
+            // continuation disconnects right after it, so the fatal close is
+            // redundant: keep the continuation (it still delivers the final
+            // ack first) and drop the just-stored code/reason.
             clearDeferredClose();
         } else {
             // RESUME_PONG / RESUME_ERROR (or a re-entered DRAIN_THEN_CLOSE):
@@ -1102,6 +1152,25 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             sendState = SEND_STATE_RESUME_ACK_THEN_CLOSE;
         } else if (sendState == SEND_STATE_RESUME_DURABLE_ACK) {
             sendState = SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE;
+        }
+    }
+
+    /**
+     * Re-parks the client-close response continuation behind an
+     * ack/durable-ack send that blocked during the resume path's pre-response
+     * flush ({@code QwpIngressUpgradeProcessor#finishClientCloseResponse}).
+     * The response code is already stored from the original
+     * {@link #onClientCloseBlockedBehindAck(int)} call, so this performs only
+     * the state transition -- the client-close mirror of
+     * {@link #reArmDeferredFatalClose()}.
+     */
+    public void reArmClientCloseResponse() {
+        assert sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_DURABLE_ACK
+                : "reArmClientCloseResponse called in wrong state: " + sendState;
+        if (sendState == SEND_STATE_RESUME_ACK) {
+            sendState = SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE;
+        } else if (sendState == SEND_STATE_RESUME_DURABLE_ACK) {
+            sendState = SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE;
         }
     }
 

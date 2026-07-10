@@ -699,6 +699,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // server closes the TCP connection first).
                 gracefulCloseAndDisconnect(context);
             }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE -> {
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+                LOG.debug().$("Resumed ACK sent before client close response [fd=").$(context.getFd())
+                        .$(", upTo=").$(state.getLastAckedSequence()).I$();
+                finishClientCloseResponse(context, state);
+            }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE -> {
+                context.resumeResponseSend();
+                state.onResumeDurableAckComplete();
+                LOG.debug().$("Resumed durable ACK sent before client close response [fd=").$(context.getFd()).I$();
+                finishClientCloseResponse(context, state);
+            }
             case QwpIngressProcessorState.SEND_STATE_RESUME_PONG -> {
                 context.resumeResponseSend();
                 state.onResumePongComplete();
@@ -965,6 +978,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 state.onResumeDurableAckComplete();
                 sendDeferredErrorResponse(context, state);
             }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE_RESPONSE -> {
+                // Teardown while a client-close continuation is parked: drain
+                // the parked ack (the client's LAST cumulative ack) so a peer
+                // that is still reading gets its watermark; the close
+                // response is pointless mid-teardown and is skipped.
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+            }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE -> {
+                context.resumeResponseSend();
+                state.onResumeDurableAckComplete();
+            }
             case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE,
                  QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE,
                  QwpIngressProcessorState.SEND_STATE_RESUME_DRAIN_THEN_CLOSE,
@@ -1018,6 +1043,37 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throw e;
         }
         sendDeferredFatalClose(context, state);
+    }
+
+    /**
+     * Resume-path completion of a client-initiated CLOSE whose pre-response
+     * ack flush blocked: flushes remaining cumulative/durable ack progress,
+     * emits the close response with the code parked by
+     * {@link QwpIngressProcessorState#onClientCloseBlockedBehindAck(int)},
+     * then disconnects — the same ack-before-close ordering
+     * {@link #handleClose} guarantees on the happy path. The client-close
+     * mirror of {@link #finishDeferredFatalClose}.
+     * <p>
+     * If the flush blocks again, the continuation is re-parked behind the
+     * newly blocked ack frame and the dispatcher resumes us; every resume
+     * drains one parked frame, so the sequence terminates.
+     */
+    private void finishClientCloseResponse(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        try {
+            flushPendingAck(context, state);
+        } catch (PeerIsSlowToReadException e) {
+            state.reArmClientCloseResponse();
+            LOG.debug().$("Pre-close-response ack flush blocked, re-parking close response [fd=")
+                    .$(context.getFd()).I$();
+            throw e;
+        }
+        sendCloseResponse(context, state, state.getPendingCloseResponseCode());
+        // The client's CLOSE is already consumed and our response is fully
+        // flushed: the RFC 6455 handshake is complete, no echo can ever
+        // arrive. Tear down immediately (s5.5.1: the server closes the TCP
+        // connection first).
+        gracefulCloseAndDisconnect(context);
     }
 
     private void flushPendingAck(HttpConnectionContext context, QwpIngressProcessorState state)
@@ -1286,70 +1342,98 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
         LOG.info().$("WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
 
+        // Normalize close code for the response per RFC 6455 Section 7.4:
+        // - 1004 is reserved and has no defined meaning
+        // - 1005, 1006, 1015 must not appear on the wire
+        // - 2000-2999 are reserved for extensions (none negotiated)
+        // - codes outside the valid 1000-4999 range (including -1 for
+        //   no-payload frames) are replaced with 1000 (normal closure)
+        // Computed BEFORE the ack flush so a blocked flush can park the code
+        // with the ack-then-close-response continuation.
+        int responseCode;
+        if (closeCode == 1004 || (closeCode >= 2000 && closeCode <= 2999)) {
+            responseCode = WebSocketCloseCode.PROTOCOL_ERROR;
+        } else if (closeCode < 1000 || closeCode > 4999
+                || closeCode == 1005 || closeCode == 1006 || closeCode == 1015) {
+            responseCode = WebSocketCloseCode.NORMAL_CLOSURE;
+        } else {
+            responseCode = closeCode;
+        }
+
         // Flush any pending ACKs for already-committed data before closing.
         // The client may have sent [BINARY₁, ..., BINARYₙ, CLOSE] in the same
         // TCP segment — those messages are committed but not yet ACKed. Without
         // this flush the client would never learn that its data was persisted.
         try {
             flushPendingAck(context, state);
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Best effort — if the ACK can't be sent, proceed with close.
-            // PeerIsSlowToReadException transitions into a resume state, so the
-            // isSendReady() check below will skip the close response.
+        } catch (PeerDisconnectedException e) {
+            // Peer is gone; the response send below observes the same and the
+            // CLOSE dispatch tears the connection down.
+        } catch (PeerIsSlowToReadException e) {
+            // ACK backpressure during the client's CLOSE. The parked frame
+            // carries the client's LAST cumulative/durable ack: swallowing
+            // here (the old best-effort behaviour) let the CLOSE dispatch
+            // throw ServerDisconnectException with the ack still parked, and
+            // onConnectionClosed's single teardown flush gives up under the
+            // same backpressure -- committed-but-unacknowledged work then
+            // replays after reconnect (duplicates on tables without dedup
+            // keys). Park an ack-then-close-response continuation instead
+            // and propagate the backpressure: the framework parks the
+            // connection for write, resumeSend finishes the ack, emits the
+            // close response, then disconnects.
+            state.onClientCloseBlockedBehindAck(responseCode);
+            throw e;
         }
 
+        try {
+            sendCloseResponse(context, state, responseCode);
+        } catch (PeerDisconnectedException e) {
+            // Peer is gone, nothing more to do.
+        }
+    }
+
+    /**
+     * Writes and sends the close response to a client-initiated CLOSE.
+     * {@code responseCode} must already be normalized per RFC 6455 s7.4.
+     * On partial write the residual bytes are parked in
+     * {@code SEND_STATE_RESUME_CLOSE_RESPONSE} (flush-then-disconnect, no
+     * close-echo wait -- the client's CLOSE is already consumed) and the
+     * backpressure propagates so the framework parks for write.
+     */
+    private void sendCloseResponse(HttpConnectionContext context, QwpIngressProcessorState state, int responseCode)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Send close response only if buffer is clear
         if (!state.isSendReady()) {
             LOG.debug().$("Skipping close response, buffer busy [fd=").$(context.getFd()).I$();
             return;
         }
 
-        try {
-            HttpRawSocket rawSocket = context.getRawResponseSocket();
-            long bufferAddr = rawSocket.getBufferAddress();
-            int bufferSize = rawSocket.getBufferSize();
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufferAddr = rawSocket.getBufferAddress();
+        int bufferSize = rawSocket.getBufferSize();
 
-            // Normalize close code for the response per RFC 6455 Section 7.4:
-            // - 1004 is reserved and has no defined meaning
-            // - 1005, 1006, 1015 must not appear on the wire
-            // - 2000-2999 are reserved for extensions (none negotiated)
-            // - codes outside the valid 1000-4999 range (including -1 for
-            //   no-payload frames) are replaced with 1000 (normal closure)
-            int responseCode;
-            if (closeCode == 1004 || (closeCode >= 2000 && closeCode <= 2999)) {
-                responseCode = WebSocketCloseCode.PROTOCOL_ERROR;
-            } else if (closeCode < 1000 || closeCode > 4999
-                    || closeCode == 1005 || closeCode == 1006 || closeCode == 1015) {
-                responseCode = WebSocketCloseCode.NORMAL_CLOSURE;
-            } else {
-                responseCode = closeCode;
+        int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, responseCode, null);
+        if (written > 0) {
+            try {
+                rawSocket.send(written);
+            } catch (PeerIsSlowToReadException e) {
+                // CLOSE frame was partially written under a small send
+                // fragmentation cap. The framework holds the residual
+                // bytes; resumeSend's SEND_STATE_RESUME_CLOSE_RESPONSE
+                // branch finishes the flush and disconnects
+                // unconditionally. NOT onFatalCloseSendBlocked: this is
+                // the close RESPONSE to a client-initiated CLOSE, so the
+                // handshake completes when the tail flushes -- routing it
+                // through RESUME_CLOSE would let the resume branch arm a
+                // close-echo wait for an echo that can never arrive (the
+                // client's CLOSE is what brought us here). Swallowing
+                // PISR here -- as the original code did -- tears the
+                // connection down before the rest of the CLOSE frame
+                // leaves the box, so the client sees EOF mid-frame
+                // instead of the close code we promised.
+                state.onCloseResponseSendBlocked();
+                throw e;
             }
-
-            int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, responseCode, null);
-            if (written > 0) {
-                try {
-                    rawSocket.send(written);
-                } catch (PeerIsSlowToReadException e) {
-                    // CLOSE frame was partially written under a small send
-                    // fragmentation cap. The framework holds the residual
-                    // bytes; resumeSend's SEND_STATE_RESUME_CLOSE_RESPONSE
-                    // branch finishes the flush and disconnects
-                    // unconditionally. NOT onFatalCloseSendBlocked: this is
-                    // the close RESPONSE to a client-initiated CLOSE, so the
-                    // handshake completes when the tail flushes -- routing it
-                    // through RESUME_CLOSE would let the resume branch arm a
-                    // close-echo wait for an echo that can never arrive (the
-                    // client's CLOSE is what brought us here). Swallowing
-                    // PISR here -- as the original code did -- tears the
-                    // connection down before the rest of the CLOSE frame
-                    // leaves the box, so the client sees EOF mid-frame
-                    // instead of the close code we promised.
-                    state.onCloseResponseSendBlocked();
-                    throw e;
-                }
-            }
-        } catch (PeerDisconnectedException e) {
-            // Peer is gone, nothing more to do.
         }
     }
 
