@@ -1228,6 +1228,55 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return false;
     }
 
+    /**
+     * Reports whether an IN key takes the per-element width override that
+     * {@link #serializeIn} drives around each key = element serialization. True
+     * only for a genuine narrow INTEGER key (BYTE / SHORT / INT) - a column, a
+     * numeric bind variable, or an arithmetic subtree over them - which the Java
+     * InLong path reads per element (getInt wraps against an INT-width element,
+     * getLong widens against a LONG / TIMESTAMP / NULL one).
+     * <p>
+     * A SYMBOL / CHAR / GEOHASH / IPv4 / BOOLEAN key maps to the same narrow type
+     * code as a genuine integer (see {@link #columnTypeCode}) but routes through a
+     * different Java IN function (InSymbol / InChar / InIPv4 / ...), not the
+     * width-sensitive InLong path, so it must NOT take the numeric width override -
+     * widening its key leaf against a non-numeric element would force scalar mode
+     * and diverge from that IN function. A genuinely-LONG (I8) key is always read at
+     * long width and needs no override either.
+     * <p>
+     * An arithmetic OPERATION key is checked by {@link #genuineArithType}: the
+     * arithmetic operators (+ - * /) only ever yield a numeric result, so a narrow
+     * genuine type there is a real narrow-int subtree, never a symbol / geo leaf. A
+     * plain LITERAL / BIND_VARIABLE key is checked against its real column type tag,
+     * since {@code columnTypeCode} alone cannot tell an INT column from a SYMBOL one.
+     */
+    private boolean isWidthSensitiveInKey(ExpressionNode inKey) {
+        if (inKey == null) {
+            return false;
+        }
+        if (inKey.type == ExpressionNode.OPERATION) {
+            final int t = genuineArithType(inKey);
+            return t == I1_TYPE || t == I2_TYPE || t == I4_TYPE;
+        }
+        final int typeTag;
+        if (inKey.type == ExpressionNode.LITERAL) {
+            final int index = metadata.getColumnIndexQuiet(inKey.token);
+            if (index == -1) {
+                return false;
+            }
+            typeTag = ColumnType.tagOf(metadata.getColumnType(index));
+        } else if (inKey.type == ExpressionNode.BIND_VARIABLE) {
+            final Function fn = lookupBindVariable(inKey.token);
+            if (fn == null) {
+                return false;
+            }
+            typeTag = ColumnType.tagOf(fn.getType());
+        } else {
+            return false;
+        }
+        return typeTag == ColumnType.BYTE || typeTag == ColumnType.SHORT || typeTag == ColumnType.INT;
+    }
+
     private Function lookupBindVariable(CharSequence token) {
         BindVariableService svc = executionContext.getBindVariableService();
         if (svc == null || token == null || token.isEmpty()) {
@@ -1964,12 +2013,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // the predicate-global widening decision, which a sibling LONG comparison in a boolean
         // equality - ((a*b) in (c)) = (nl > 0) - turns on for the whole predicate, over-widening
         // the key the Java filter wraps against an INT element. A genuinely-LONG key (I8) is always
-        // read at long width and never needs the override.
+        // read at long width and never needs the override. A plain narrow-int COLUMN key needs it
+        // just as much as an arithmetic one: an overflowing INT-arith ELEMENT (j32*2) must wrap
+        // against the column key (getInt), but a coexisting LONG element turning on the global flag
+        // would otherwise sign-extend the element's narrow leaves and drop the wrap - see
+        // isWidthSensitiveInKey.
         final ExpressionNode inKey = args.size() > 0 ? args.getLast() : predicateContext.inOperationNode.lhs;
-        final int inKeyGenuineType = inKey != null ? genuineArithType(inKey) : UNDEFINED_CODE;
-        final boolean widthSensitiveKey = inKey != null
-                && inKey.type == ExpressionNode.OPERATION
-                && (inKeyGenuineType == I1_TYPE || inKeyGenuineType == I2_TYPE || inKeyGenuineType == I4_TYPE);
+        final boolean widthSensitiveKey = isWidthSensitiveInKey(inKey);
 
         if (args.size() > executionContext.getCairoEngine().getConfiguration().getSqlJitMaxInListSizeThreshold()) {
             throw SqlException.$(args.getQuick(0).position, "exceeded JIT IN list threshold [threshold=")

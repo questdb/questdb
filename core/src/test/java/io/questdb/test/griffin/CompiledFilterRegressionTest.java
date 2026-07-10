@@ -1523,6 +1523,61 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorOverflowWidenColumnKeyArithElement() throws Exception {
+        // C1 regression: a PLAIN narrow-int COLUMN key (i32/i16/i8) IN a list whose ELEMENT is an
+        // overflowing INT arithmetic (m * 3) and which also carries a coexisting genuine-LONG
+        // element (nl). The Java InLong path reads the column key per element - wrapped (getInt)
+        // against the INT-arith element, so m * 3 = 4294967301 wraps to INT 5 and matches a key
+        // holding 5. But the JIT only drove the per-element width override for an ARITHMETIC key,
+        // never a plain-column one: with a column key the override stayed unset, so the coexisting
+        // LONG element flipped the predicate-global needsNarrowI64Widening on and sign-extended the
+        // element's narrow leaf (m). The JIT then computed m * 3 at 64 bits (4294967301, no wrap)
+        // and the row that matched in Java (and under '=') matched nothing in the JIT. The key is
+        // now width-sensitive for a genuine narrow-int column too, so the arith element wraps
+        // against it, matching Java. Existing IN-key column-arith tests only used arithmetic KEYS
+        // with arithmetic/LONG elements, never a plain-column key with an arithmetic element.
+        //
+        // m * 3 = 4294967301 wraps to INT 5 (fits SHORT and BYTE); nl = 99 matches no narrow key.
+        assertMemoryLeak(() -> {
+            execute("create table t (id long, i32 int, i16 short, i8 byte, m int, nl long, k timestamp) timestamp(k)");
+            execute("insert into t values" +
+                    " (1, 5, 5, 5, 1431655767, 99, 1)," +   // key holds the WRAPPED image 5 -> matches
+                    " (2, 42, 42, 42, 1431655767, 99, 2)"); // no narrow key equals 5 or 99 -> no match
+
+            // RED on HEAD: the LONG element widened the arith element against the column key, so the
+            // wrapped match (5) was missed and the JIT returned empty where Java matched id 1.
+            assertJitMatchesJava("select id from t where i32 in (m * 3, nl)", true);        // INT key
+            assertJitMatchesJava("select id from t where i16 in (m * 3, nl)", true);        // SHORT key
+            assertJitMatchesJava("select id from t where i8 in (m * 3, nl)", true);         // BYTE key
+            assertJitMatchesJava("select id from t where i32 in (nl, m * 3)", true);        // element order swapped
+            assertJitMatchesJava("select id from t where i32 in (7, m * 3, nl)", true);     // plus a plain element
+            assertJitMatchesJava("select id from t where i32 not in (m * 3, nl)", true);    // inverse
+            // Single-value plain-column key under a boolean equality: the sibling LONG comparison
+            // (nl > 0) flips the predicate-global flag on, yet the arith element must still wrap
+            // against the column key. Needs the override on the single-value form too.
+            assertJitMatchesJava("select id from t where (i32 in (m * 3)) = (nl > 0)", true);
+
+            // The Java (JIT-disabled) path is the oracle: the wrapped element matches id 1 only.
+            Assert.assertEquals("id\n1\n", runJavaToString("select id from t where i32 in (m * 3, nl)"));
+            Assert.assertEquals("id\n1\n", runJavaToString("select id from t where i16 in (m * 3, nl)"));
+            Assert.assertEquals("id\n1\n", runJavaToString("select id from t where i8 in (m * 3, nl)"));
+            Assert.assertEquals("id\n2\n", runJavaToString("select id from t where i32 not in (m * 3, nl)"));
+            Assert.assertEquals("id\n1\n", runJavaToString("select id from t where (i32 in (m * 3)) = (nl > 0)"));
+            // IN must agree with '=' on the wrapped image (both wrap the arith element at INT width).
+            Assert.assertEquals(
+                    runJavaToString("select id from t where i32 = m * 3"),
+                    runJavaToString("select id from t where i32 in (m * 3, nl)"));
+
+            // Controls that already agreed - none mix an arith element with a LONG element: an
+            // all-narrow list wraps, '=' wraps, and a single LONG element widens the key (no match).
+            assertJitMatchesJava("select id from t where i32 in (m * 3, 7)", true);         // all-narrow list: wraps
+            assertJitMatchesJava("select id from t where i32 = m * 3", true);               // '=' wraps
+            assertJitMatchesJava("select id from t where i32 in (nl)", true);               // single LONG: widens
+            Assert.assertEquals("id\n", runJavaToString("select id from t where i32 in (nl)"));
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowWidenConstOperandKeyPerElement() throws Exception {
         // C1 regression: an IN key that is a narrow-int column arithmetic with a CONSTANT operand
         // - (a * 3), (a + const), (n - const) - whose product/sum overflows INT, in a multi-value
@@ -1739,6 +1794,42 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf(" in ", " not in ")
                 .withAnyOf("(null)", "(5)");
         assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testInOperatorSymbolAndCharKeysAreNotWidthSensitive() throws Exception {
+        // Scoping guard for the C1 fix (isWidthSensitiveInKey). SYMBOL and CHAR IN keys map to the
+        // same narrow type code as a genuine BYTE/SHORT/INT key (columnTypeCode collapses SYMBOL and
+        // IPv4 onto I4, CHAR onto I2), and both compile to the JIT. But they route through
+        // InSymbol/InChar, NOT the width-sensitive InLong path, so they must NOT take the per-element
+        // width override. isWidthSensitiveInKey keys off the real column type tag (not the collapsed
+        // code) so these stay untouched; simply dropping the OPERATION guard would flag any I4/I2 key
+        // and hand the override to symbol/char keys too. That stays result-correct (sign-extending a
+        // symbol/char key is value-preserving), so this test cannot catch it directly - but it emits
+        // an unnecessary SX_I64 that forces the whole filter onto the scalar path, a JIT performance
+        // regression for what today vectorizes. This test locks the correctness invariant: symbol and
+        // char IN keys still produce identical JIT and Java results.
+        assertMemoryLeak(() -> {
+            execute("create table s (sym symbol, ch char, ip ipv4, k timestamp) timestamp(k)");
+            execute("insert into s values ('a','x','1.1.1.1', 1)," +
+                    " ('b','y','2.2.2.2', 2)," +
+                    " ('c','z','3.3.3.3', 3)");
+
+            // SYMBOL and CHAR IN keys compile to the JIT; the result must match Java exactly.
+            assertJitMatchesJava("select k from s where sym in ('a','c')", true);
+            assertJitMatchesJava("select k from s where sym not in ('a','c')", true);
+            assertJitMatchesJava("select k from s where ch in ('x','z')", true);
+            assertJitMatchesJava("select k from s where ch not in ('x','z')", true);
+            // IPv4 IN with string constants does not compile to the JIT (unsupported string constant),
+            // so it falls back to Java; the parity check still guards the fallback path.
+            assertJitMatchesJava("select k from s where ip in ('1.1.1.1','3.3.3.3')", false);
+
+            // Absolute oracle: the symbol/char keys select the expected rows.
+            Assert.assertEquals("k\n1970-01-01T00:00:00.000001Z\n1970-01-01T00:00:00.000003Z\n",
+                    runJavaToString("select k from s where sym in ('a','c')"));
+            Assert.assertEquals("k\n1970-01-01T00:00:00.000001Z\n1970-01-01T00:00:00.000003Z\n",
+                    runJavaToString("select k from s where ch in ('x','z')"));
+        });
     }
 
     @Test
