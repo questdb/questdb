@@ -44,6 +44,17 @@ public final class WebSocketCloseCode {
      */
     public static final int PROTOCOL_ERROR = 1002;
     /**
+     * Role-change close (4001). QWP application-defined code in the RFC 6455
+     * Section 7.4.2 private-use range: the server is closing because its role
+     * changed (primary demoted); the client should reconnect to the new
+     * primary. Deliberately distinct from {@link #NORMAL_CLOSURE} so the
+     * client's CLOSE echo (RFC 6455 Section 5.5.1 echoes the received code)
+     * is distinguishable from a voluntary client CLOSE that crossed the
+     * server's CLOSE on the wire: only a client that has actually received
+     * the server's CLOSE frame can know this code.
+     */
+    public static final int ROLE_CHANGE = 4001;
+    /**
      * Unsupported data (1003).
      * The endpoint received a type of data it cannot accept
      * (e.g., a binary-only endpoint received a text message).

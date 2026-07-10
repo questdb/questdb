@@ -1409,23 +1409,38 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void handleClose(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
             throws PeerIsSlowToReadException {
-        // The client's CLOSE echo completes the role-change close handshake:
-        // in-order TCP delivery proves the client consumed everything before
-        // our CLOSE frame -- the final durable ack included, so its replay
-        // window is trimmed and the reconnect cannot duplicate. Skip the close
-        // response (our CLOSE is already on the wire; a second one would
-        // violate the protocol) and let the dispatch path disconnect: the
-        // client sends nothing after its echo, so the fd closes with no unread
-        // inbound data and no RST.
-        if (state.isAwaitingCloseEcho()) {
-            LOG.info().$("close echo received, role-change close handshake complete [fd=").$(context.getFd()).I$();
-            return;
-        }
         int closeCode = -1;
         if (length >= 2) {
             int high = Unsafe.getByte(payload) & 0xFF;
             int low = Unsafe.getByte(payload + 1) & 0xFF;
             closeCode = (high << 8) | low;
+        }
+        // While the close-echo wait is armed, our ROLE_CHANGE CLOSE is already
+        // on the wire. Only a CLOSE echoing that exact code completes the
+        // role-change close handshake: the client can have learned the code
+        // only from our CLOSE frame, so in-order TCP delivery proves it
+        // consumed everything sent before it -- the final durable ack
+        // included; its replay window is trimmed and the reconnect cannot
+        // duplicate. Any other code is NOT the echo: it is a voluntary client
+        // CLOSE that crossed our CLOSE on the wire (e.g. a client close()
+        // already queued in the kernel when the wait was armed -- the recv
+        // buffer discards at wait-arming time cannot reach kernel-queued
+        // bytes). The RFC 6455 handshake is still complete (both sides have
+        // sent and received a CLOSE, and the client sends nothing after its
+        // CLOSE, so no genuine echo can ever follow), but delivery of the
+        // final durable ack is unconfirmed -- surface the same operator alarm
+        // as the echo-wait expiry. Either way skip the close response (our
+        // CLOSE is on the wire; a second one would violate the protocol) and
+        // let the dispatch path disconnect: the fd closes with no unread
+        // inbound data and no RST.
+        if (state.isAwaitingCloseEcho()) {
+            if (closeCode == WebSocketCloseCode.ROLE_CHANGE) {
+                LOG.info().$("close echo received, role-change close handshake complete [fd=").$(context.getFd()).I$();
+            } else {
+                LOG.error().$("client CLOSE crossed role-change CLOSE, not an echo; final durable ack delivery unconfirmed, client replay may duplicate [fd=")
+                        .$(context.getFd()).$(", code=").$(closeCode).I$();
+            }
+            return;
         }
         LOG.info().$("WebSocket close [fd=").$(context.getFd()).$(", code=").$(closeCode).I$();
 
@@ -1634,7 +1649,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * cumulative ack past the silently refused frame that armed the deferral)
      * and the client's durable-ack keepalive PINGs ({@link #handlePing}). Once the registry
      * covers the connection's pending seqTxns, sendFatalClose flushes the final
-     * durable ack, emits NORMAL_CLOSURE, and then -- rather than closing the fd
+     * durable ack, emits the ROLE_CHANGE close code, and then -- rather than closing the fd
      * and racing the client's receive path -- holds the connection open in the
      * RFC 6455 close-handshake wait ({@link #beginCloseEchoWaitIfEligible})
      * until the client's CLOSE echo (or FIN) confirms the ack was consumed:
@@ -1710,10 +1725,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
                     .$(context.getFd()).I$();
         }
+        // ROLE_CHANGE (private-use 4001), not NORMAL_CLOSURE: the client
+        // echoes the received code (RFC 6455 s5.5.1), and only a code the
+        // client could not have known before reading our CLOSE lets
+        // handleClose distinguish the genuine echo from a voluntary client
+        // CLOSE that crossed this frame on the wire.
         sendFatalClose(
                 context,
                 state,
-                WebSocketCloseCode.NORMAL_CLOSURE,
+                WebSocketCloseCode.ROLE_CHANGE,
                 state.isRoleChangeCloseDeferred() ? state.getRoleChangeCloseReason() : reason
         );
     }
@@ -1878,14 +1898,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 int payloadLen = (int) frameParser.getPayloadLength();
 
                 // Unmask payload -- except while awaiting the close echo:
-                // every inbound frame in that window is either discarded
+                // every non-CLOSE inbound frame in that window is discarded
                 // without its payload being read (handleWebSocketFrame's
-                // discard gate) or is the CLOSE echo itself, whose payload
-                // handleClose ignores in that state. Skipping the O(payload)
-                // XOR pass denies a wedged-but-chatty peer free CPU: payloads
-                // can approach the configured receive-buffer size (2 MiB by
-                // default) and repeat for the lifetime of the wait.
-                if (frameParser.isMasked() && !state.isAwaitingCloseEcho()) {
+                // discard gate). Skipping the O(payload) XOR pass denies a
+                // wedged-but-chatty peer free CPU: payloads can approach the
+                // configured receive-buffer size (2 MiB by default) and
+                // repeat for the lifetime of the wait. CLOSE frames are the
+                // exception: handleClose must read the close code to tell the
+                // genuine ROLE_CHANGE echo from a voluntary client CLOSE that
+                // crossed our CLOSE on the wire, and RFC 6455 caps control
+                // frame payloads at 125 bytes, so their unmask is O(1).
+                if (frameParser.isMasked()
+                        && (!state.isAwaitingCloseEcho() || opcode == WebSocketOpcode.CLOSE)) {
                     frameParser.unmaskPayload(payloadPtr, payloadLen);
                 }
 

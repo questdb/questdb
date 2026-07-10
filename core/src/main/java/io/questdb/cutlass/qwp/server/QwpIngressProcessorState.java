@@ -1041,7 +1041,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     // gate rejects only ROLE_REPLICA / ROLE_PRIMARY_CATCHUP, and a statically
                     // read-only node keeps reporting its upgrade-eligible role (STANDALONE on
                     // OSS) forever. A store-and-forward client treats the resulting
-                    // NORMAL_CLOSURE as orderly (no NACK, no poison strike, no typed
+                    // ROLE_CHANGE close as orderly (no NACK, no poison strike, no typed
                     // terminal) and would reconnect-replay in a silent infinite loop, its
                     // producer never learning of the misconfiguration. Answer with the typed
                     // SECURITY_ERROR NACK instead: the client latches it as terminal and
