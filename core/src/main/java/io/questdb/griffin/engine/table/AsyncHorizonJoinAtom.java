@@ -223,6 +223,19 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
         if (ownerKeyFunctions != null) {
             Function.init(ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext, null);
+            // Donate the initialized owner key functions' state to the aligned per-worker clones
+            // before they initialize. Stateful key functions, such as cursor comparisons caching
+            // a scalar sub-query result, must run their expensive and potentially nondeterministic
+            // initialization exactly once per query, not once per worker, and every worker must
+            // observe the same state as the owner.
+            if (perWorkerKeyFunctions != null) {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    final ObjList<Function> workerKeyFunctions = perWorkerKeyFunctions.getQuick(i);
+                    for (int j = 0, m = workerKeyFunctions.size(); j < m; j++) {
+                        ownerKeyFunctions.getQuick(j).offerStateTo(workerKeyFunctions.getQuick(j));
+                    }
+                }
+            }
         }
 
         if (perWorkerKeyFunctions != null) {

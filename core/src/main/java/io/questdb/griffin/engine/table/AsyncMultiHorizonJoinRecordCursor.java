@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.mp.SOUnboundedCountDownLatch;
@@ -308,7 +309,17 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
             symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
-            Function.init(recordFunctions, symbolTableSource, executionContext, null);
+            // Skip the group by functions: the atom initializes them in initGroupByFunctions(),
+            // before any frame is dispatched, and donates the owner state to the per-worker
+            // clones. Re-initializing them here would re-run stateful initialization, such as a
+            // cursor comparison re-executing its scalar sub-query, and could diverge from the
+            // state the workers observe.
+            for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+                final Function function = recordFunctions.getQuick(i);
+                if (!(function instanceof GroupByFunction)) {
+                    function.init(symbolTableSource, executionContext);
+                }
+            }
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);
             throw th;

@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.mp.SOUnboundedCountDownLatch;
@@ -269,10 +270,19 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
         // Initialize record functions with a symbol table source that routes lookups
-        // to the correct source (master or slave) based on column mappings
+        // to the correct source (master or slave) based on column mappings. Skip the group by
+        // functions: the atom initializes them in initTimeFrameCursors(), before any frame is
+        // dispatched, and donates the owner state to the per-worker clones. Re-initializing them
+        // here would re-run stateful initialization, such as a cursor comparison re-executing its
+        // scalar sub-query, and could diverge from the state the workers observe.
         final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
-        Function.init(recordFunctions, symbolTableSource, executionContext, null);
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            final Function function = recordFunctions.getQuick(i);
+            if (!(function instanceof GroupByFunction)) {
+                function.init(symbolTableSource, executionContext);
+            }
+        }
 
         isDataMapBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

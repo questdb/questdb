@@ -562,6 +562,17 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             ownerGroupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
         }
         if (perWorkerGroupByFunctions != null) {
+            // Donate the initialized owner state to the aligned per-worker clones before they
+            // initialize. Stateful functions inside aggregate arguments, such as cursor comparisons
+            // caching a scalar sub-query result, must run their expensive and potentially
+            // nondeterministic initialization exactly once per query, not once per worker, and
+            // every worker must observe the same state as the owner.
+            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
+                for (int j = 0, m = functions.size(); j < m; j++) {
+                    ownerGroupByFunctions.getQuick(j).offerStateTo(functions.getQuick(j));
+                }
+            }
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
