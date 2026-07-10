@@ -113,4 +113,52 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
         });
     }
+
+    @Test
+    public void testReplaceRangeEmptyDeleteAllTruncates() throws Exception {
+        assertMemoryLeak(() -> {
+            // 100 rows spanning a single partition.
+            execute("create table src (ts timestamp, x long) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into src select (x*60*1000000L)::timestamp, x from long_sequence(100)");
+            // Reference: empty table (no rows satisfy the NOT BETWEEN constraint that covers all).
+            execute("create table ref (ts timestamp, x long) timestamp(ts) partition by DAY BYPASS WAL");
+
+            TableToken tt = engine.verifyTableName("src");
+            long lo = MicrosTimestampDriver.floor("1970-01-01T00:00:00.000000Z");
+            long hiExcl = MicrosTimestampDriver.floor("1970-01-02T00:00:00.000000Z");
+            long deleted;
+            try (TableWriter w = getWriter(tt)) {
+                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex());
+            }
+
+            // All 100 rows should be deleted.
+            Assert.assertEquals(100, deleted);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeEmptyRangeOutsideDataNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            // 48 rows on 1970-01-01 (hourly from 00:00 to 47:59, mapping to 2 days).
+            execute("create table src (ts timestamp, x long) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into src select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x " +
+                    "from long_sequence(48)");
+            // Reference: identical to src (no rows deleted).
+            execute("create table ref as (select * from src) timestamp(ts) partition by DAY BYPASS WAL");
+
+            TableToken tt = engine.verifyTableName("src");
+            // Range entirely after the data: 1970-01-03 00:00 onwards.
+            long lo = MicrosTimestampDriver.floor("1970-01-03T00:00:00.000000Z");
+            long hiExcl = MicrosTimestampDriver.floor("1970-01-03T12:00:00.000000Z");
+            long deleted;
+            try (TableWriter w = getWriter(tt)) {
+                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex());
+            }
+
+            // No rows in the range, so nothing is deleted.
+            Assert.assertEquals(0, deleted);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
+        });
+    }
 }
