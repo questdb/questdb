@@ -1307,8 +1307,8 @@ public final class TableUtils {
                 case '\u001c':
                 case '\u001d':
                 case '\u001e':
-                // 0x1f (the following case label) is the row-expiry policy sentinel (RowExpiryUtil.POLICY_SENTINEL);
-                // embedding it in an identifier would corrupt the encoded EXPIRE policy string.
+                    // 0x1f (the following case label) is the row-expiry policy sentinel (RowExpiryUtil.POLICY_SENTINEL);
+                    // embedding it in an identifier would corrupt the encoded EXPIRE policy string.
                 case '\u001f':
                 case '\u007f':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
@@ -1385,8 +1385,8 @@ public final class TableUtils {
                 case '\u001c':
                 case '\u001d':
                 case '\u001e':
-                // 0x1f (the following case label) is the row-expiry policy sentinel (RowExpiryUtil.POLICY_SENTINEL);
-                // embedding it in an identifier would corrupt the encoded EXPIRE policy string.
+                    // 0x1f (the following case label) is the row-expiry policy sentinel (RowExpiryUtil.POLICY_SENTINEL);
+                    // embedding it in an identifier would corrupt the encoded EXPIRE policy string.
                 case '\u001f':
                 case '\u007f':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
