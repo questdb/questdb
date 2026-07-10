@@ -2208,6 +2208,52 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNarrowIntChainOverflowUnderLong() throws Exception {
+        // C2: a narrow-int (SHORT / BYTE) arithmetic CHAIN that overflows int32 was
+        // computed at int32 by the JIT and wrapped, while the Java filter read it at
+        // long width (MulInt#getLong recurses through getLong, so the whole chain is
+        // 64-bit). NarrowI64WidenDetector.shouldWiden() required hasI4(): a narrow-only
+        // product observes only I2/I1 + I8 (no I4), so the widening never fired. A
+        // 2-factor narrow product stays inside int32 (32767^2 < 2^31), but 3+ factors
+        // overflow (1500^3 = 3_375_000_000 wraps to -919_967_296). shouldWiden() now
+        // also triggers on hasNarrowInt(), so the JIT widens the chain to match Java.
+        assertMemoryLeak(() -> {
+            execute("create table nchain as (select" +
+                    " x rid," +
+                    " cast(case x when 1 then 1500 when 2 then 1000 when 3 then 1500 when 4 then 2000 else 1500 end as short) cs," +
+                    " cast(case x when 1 then 100 when 2 then 10 when 3 then 100 when 4 then 50 else 100 end as byte) cbyte," +
+                    " cast(case x when 1 then 3_375_000_000 when 2 then 1_000_000_000 when 3 then 0 when 4 then 8_000_000_000 else -919_967_296 end as long) nl," +
+                    " cast(case x when 1 then 10_000_000_000 when 2 then 100_000 when 3 then 0 when 4 then 312_500_000 else 1_410_065_408 end as long) nb," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(5)) timestamp(k)");
+            // Primary repro (SHORT, 3-factor). nl holds the true long-width cube for rows
+            // 1,2,4; row 5 holds the int32-wrapped cube (-919_967_296) the pre-fix JIT
+            // would spuriously match, and row 3 holds 0. Absolute pin: {1,2,4}. The pre-fix
+            // JIT returned {2,5} (row 1 and 4 cubes wrapped, row 5's wrapped value matched).
+            assertJitMatchesJava("select rid from nchain where nl = cs * cs * cs", true,
+                    "rid\n1\n2\n4\n");
+            // BYTE, 5-factor (127^3 still fits int32, so a byte chain needs 5 factors to
+            // overflow). nb holds the true long-width 5th power for rows 1,2,4; row 5 holds
+            // the int32-wrapped 100^5 (1_410_065_408). Absolute pin: {1,2,4}.
+            assertJitMatchesJava("select rid from nchain where nb = cbyte * cbyte * cbyte * cbyte * cbyte", true,
+                    "rid\n1\n2\n4\n");
+            // Operand order and a wider chain still agree.
+            assertJitMatchesJava("nchain where cs * cs * cs = nl", true);
+            assertJitMatchesJava("nchain where cs * cs * cs * cs > nl", true);
+            // Over-widening guard: a boolean equality mixes the LONG-width comparison
+            // (nl = cs*cs*cs, widens) with an INT-width one (cs*cs*cs = 0, must still wrap
+            // mod 2^32). markI64WrapArithLeaves marks the wrap-side leaves per-comparison,
+            // so the newly-triggered predicate-global widening does not over-widen them.
+            assertJitMatchesJava("nchain where (nl = cs * cs * cs) = (cs * cs * cs = 0)", true);
+            // Controls: an INT-width narrow chain with no LONG operand wraps on both paths
+            // (shouldWiden stays off without an I8), and a 2-factor narrow product never
+            // overflows int32 so both paths agree regardless.
+            assertJitMatchesJava("nchain where cs * cs * cs = 0", true);
+            assertJitMatchesJava("nchain where nl = cs * cs", true);
+        });
+    }
+
+    @Test
     public void testNotInOperatorFloat() throws Exception {
         // Tests NOT IN operator with floats
         final String ddl = "create table x as " +

@@ -2865,13 +2865,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Per-predicate pre-pass that decides whether the JIT IR emitter should
      * widen narrow integer operands to i64 before arithmetic ops. Triggers when
-     * the predicate has integer arithmetic AND an I8 operand AND an I4 operand
-     * (BYTE / SHORT alone never overflow int32 and stay correct under int32
-     * arithmetic; INT can overflow). When triggered, the IR emitter wraps each
-     * narrow column / bind variable with `IMM I8 0 + ADD`, which makes the C++
+     * the predicate has integer arithmetic AND an I8 operand AND a narrow-or-INT
+     * operand (an I4, or a BYTE / SHORT column / bind variable). A 2-factor
+     * BYTE / SHORT product stays inside int32 (32767^2 < 2^31), but a chain of
+     * 3+ narrow factors overflows it (e.g. SHORT * SHORT * SHORT for 1500 is
+     * 3_375_000_000, which wraps to -919_967_296 at int32), so a narrow-only
+     * arithmetic subtree must widen too once a LONG operand pulls the comparison
+     * to long width. When triggered, the IR emitter wraps each narrow column /
+     * bind variable with `IMM I8 0 + ADD`, which makes the C++
      * convert() promote the value to i64 before mul / add / sub / div
      * dispatches to int64_*. This matches the Java filter's
      * MulInt.getLong / AddInt.getLong, which compute via ((long) l) OP r.
+     * <p>
+     * An INT-width comparison on the wrap-side of a boolean equality still needs
+     * its narrow-int arithmetic operands to wrap mod 2^32; {@link
+     * #markI64WrapArithLeaves} marks exactly those leaves per-comparison (it runs
+     * unconditionally), overriding this predicate-global decision, so a
+     * narrow-only chain feeding an INT-width comparison is never over-widened.
      * <p>
      * A FLOAT or DOUBLE operand anywhere in the predicate suppresses the
      * widening: in that case the int-arithmetic subtree gets consumed by
@@ -2968,7 +2978,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         boolean shouldWiden() {
-            return hasArithmetic && typesObserver.hasI4() && typesObserver.hasI8()
+            return hasArithmetic
+                    && (typesObserver.hasI4() || typesObserver.hasNarrowInt())
+                    && typesObserver.hasI8()
                     && !typesObserver.hasFloat();
         }
     }
