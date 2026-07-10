@@ -88,6 +88,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.DropAllOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperation;
 import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
@@ -3079,6 +3080,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     optimiser.optimiseUpdate(queryModel, executionContext, metadata, this);
                     return model;
                 }
+            case ExecutionModel.DELETE: {
+                final IQueryModel deleteQueryModel = (IQueryModel) model;
+                TableToken deleteTableToken = executionContext.getTableToken(deleteQueryModel.getTableName());
+                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(deleteTableToken)) {
+                    IQueryModel optimisedNested = optimiser.optimise(deleteQueryModel.getNestedModel(), executionContext, this);
+                    deleteQueryModel.setNestedModel(optimisedNested);
+                    return model;
+                }
+            }
             default:
                 return model;
         }
@@ -3954,6 +3964,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
+                    break;
+                case ExecutionModel.DELETE:
+                    compiledQuery.ofDelete(generateDelete((QueryModel) executionModel, executionContext));
                     break;
                 case ExecutionModel.EXPLAIN:
                     sqlId = queryRegistry.register(sqlText, executionContext);
@@ -4863,6 +4876,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             Misc.free(queryModel.getTableNameFunction());
             queryModel.setTableNameFunction(null);
         } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
+    }
+
+    private DeleteOperation generateDelete(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        TableToken tableToken = executionContext.getTableToken(model.getTableName());
+        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
+            if (!metadata.isWalEnabled()) {
+                throw SqlException.$(model.getModelPosition(), "DELETE is only supported on WAL tables");
+            }
+            checkMatViewModification(tableToken);
+
+            // Validate that the WHERE predicate compiles against the table by building (and immediately
+            // discarding) a real factory over the already-optimised nested model (see compileExecutionModel0).
+            // v1 does not need the factory itself: on WAL tables the DELETE is stored as SQL text and the
+            // survivor factory is recompiled by the executor at apply time (Task 1.8+).
+            RecordCursorFactory factory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
+            factory.close();
+
+            return new DeleteOperation(
+                    tableToken,
+                    metadata.getTableId(),
+                    metadata.getMetadataVersion(),
+                    model.getModelPosition(),
+                    null
+            );
+        }
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {

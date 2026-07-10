@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
@@ -124,6 +125,8 @@ public interface CompiledQuery {
     short getType();
 
     UpdateOperation getUpdateOperation();
+
+    DeleteOperation getDeleteOperation();
 
     boolean isCacheable();
 

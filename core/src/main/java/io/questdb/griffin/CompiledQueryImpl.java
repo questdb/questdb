@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -46,12 +47,14 @@ import org.jetbrains.annotations.Nullable;
 
 public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
+    private final OperationDispatcher<DeleteOperation> deleteOperationDispatcher;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
     private boolean cacheable;
+    private DeleteOperation deleteOp;
     private boolean done;
     private InsertOperation insertOp;
     private boolean isExecutedAtParseTime;
@@ -85,6 +88,16 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
                 }
             }
         };
+        deleteOperationDispatcher = new OperationDispatcher<>(engine, "sync 'DELETE' execution") {
+            @Override
+            protected long apply(DeleteOperation operation, TableWriterAPI writerAPI) {
+                try {
+                    return writerAPI.apply(operation);
+                } finally {
+                    operation.clearSecurityContext();
+                }
+            }
+        };
     }
 
     @Override
@@ -95,6 +108,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.insertOp = null;
         this.alterOp = null;
         this.updateOp = null;
+        this.deleteOp = null;
         this.statementName = null;
         this.operation = null;
         this.cacheable = false;
@@ -111,6 +125,9 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
                 break;
             case CompiledQuery.UPDATE:
                 Misc.free(updateOp);
+                break;
+            case CompiledQuery.DELETE:
+                Misc.free(deleteOp);
                 break;
             case CompiledQuery.ALTER:
                 Misc.free(alterOp);
@@ -150,6 +167,9 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
+            case DELETE:
+                deleteOp.withSqlStatement(sqlStatement);
+                return deleteOperationDispatcher.execute(deleteOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
@@ -177,6 +197,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     @Override
     public AlterOperation getAlterOperation() {
         return alterOp;
+    }
+
+    @Override
+    public DeleteOperation getDeleteOperation() {
+        return deleteOp;
     }
 
     @Override
@@ -296,6 +321,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void ofDeallocate(CharSequence statementName) {
         this.statementName = Chars.toString(statementName);
         of(DEALLOCATE);
+        this.isExecutedAtParseTime = false;
+    }
+
+    public void ofDelete(DeleteOperation deleteOperation) {
+        this.deleteOp = deleteOperation;
+        this.type = DELETE;
         this.isExecutedAtParseTime = false;
     }
 

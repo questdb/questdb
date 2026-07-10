@@ -2374,6 +2374,83 @@ public class SqlParser {
         }
     }
 
+    // DELETE FROM <table> [[AS] alias] WHERE <predicate>
+    // The "DELETE" keyword is already consumed by parse(); this method expects FROM next.
+    // Model shape mirrors parseDmlUpdate/parseUpdateClause with no SET list:
+    //   deleteQueryModel (modelType=DELETE, tableNameExpr, optional alias)
+    //   |-- fromModel (select-star wrapper so the optimiser/codegen validate WHERE like an ordinary SELECT)
+    //       |-- nestedModel (tableNameExpr, optional alias, whereClause)
+    private ExecutionModel parseDelete(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+        CharSequence tok = tok(lexer, "FROM expected");
+        if (!isFromKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "FROM expected");
+        }
+
+        tok = tok(lexer, "table name expected");
+        tok = sansPublicSchema(tok, lexer);
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        final int tableNamePosition = lexer.lastTokenPosition();
+        final CharSequence tableName = GenericLexer.immutableOf(unquote(tok));
+        final ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, tableNamePosition);
+
+        IQueryModel deleteQueryModel = queryModelPool.next();
+        deleteQueryModel.setModelType(ExecutionModel.DELETE);
+        deleteQueryModel.setModelPosition(tableNamePosition);
+        deleteQueryModel.setTableNameExpr(tableNameExpr);
+
+        IQueryModel fromModel = queryModelPool.next();
+        fromModel.setModelPosition(tableNamePosition);
+        fromModel.setTableNameExpr(tableNameExpr);
+
+        tok = tok(lexer, "AS, WHERE or table alias expected");
+        if (isAsKeyword(tok)) {
+            tok = tok(lexer, "table alias expected");
+            if (isWhereKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "table alias expected");
+            }
+        }
+
+        if (!isAsKeyword(tok) && !isWhereKeyword(tok)) {
+            // this is a table alias
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            ExpressionNode tableAliasExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), 0, lexer.lastTokenPosition());
+            deleteQueryModel.setAlias(tableAliasExpr);
+            tok = tok(lexer, "WHERE expected");
+        }
+
+        if (!isWhereKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "WHERE clause is required for DELETE; use TRUNCATE TABLE to remove all rows");
+        }
+
+        // create nestedModel to source rowids for the delete predicate
+        IQueryModel nestedModel = queryModelPool.next();
+        nestedModel.setModelPosition(tableNamePosition);
+        nestedModel.setTableNameExpr(tableNameExpr);
+        nestedModel.setAlias(deleteQueryModel.getAlias());
+
+        // nest nestedModel inside fromModel, wrapped as a select-star so the optimiser/codegen
+        // validate the predicate exactly like an ordinary "SELECT * FROM t WHERE <pred>"
+        fromModel.setTableNameExpr(null);
+        fromModel.setNestedModel(nestedModel);
+        SqlUtil.addSelectStar(fromModel, queryColumnPool, expressionNodePool);
+
+        ExpressionNode expr = expr(lexer, fromModel, sqlParserCallback);
+        if (expr != null) {
+            nestedModel.setWhereClause(expr);
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "empty where clause");
+        }
+
+        deleteQueryModel.setNestedModel(fromModel);
+
+        tok = optTok(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw errUnexpected(lexer, tok);
+        }
+
+        return deleteQueryModel;
+    }
+
     private IQueryModel parseDml(
             GenericLexer lexer,
             int modelPosition,
@@ -5560,6 +5637,10 @@ public class SqlParser {
 
         if (isUpdateKeyword(tok)) {
             return parseUpdate(lexer, sqlParserCallback, null);
+        }
+
+        if (isDeleteKeyword(tok)) {
+            return parseDelete(lexer, sqlParserCallback);
         }
 
         if (isRenameKeyword(tok)) {
