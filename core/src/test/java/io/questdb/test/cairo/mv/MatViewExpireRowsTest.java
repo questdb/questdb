@@ -556,7 +556,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         // (Physical cleanup is documented as unsafe for such predicates -- this locks in the read-side invariant
         // that the row is only hidden, never logically gone.)
         assertMemoryLeak(() -> {
-            setCurrentMicros(1704844800000000L); // 2024-01-10T00:00:00Z
+            setCurrentMicros(1_704_844_800_000_000L); // 2024-01-10T00:00:00Z
             execute("create table base (sym symbol, ts timestamp) timestamp(ts) partition by day wal");
             execute("create materialized view mv as (select * from base) expire rows when ts > now()");
             execute("insert into base values ('PAST', '2024-01-05T00:00:00.000000Z')");   // < now -> kept
@@ -567,7 +567,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             assertSql("sym\n" + "PAST\n", "select sym from mv order by ts");
 
             // Advance now() beyond the future row's ts: it reappears (it was only hidden, never deleted).
-            setCurrentMicros(1706140800000000L); // 2024-01-25T00:00:00Z
+            setCurrentMicros(1_706_140_800_000_000L); // 2024-01-25T00:00:00Z
             assertSql("sym\n" + "PAST\n" + "FUTURE\n", "select sym from mv order by ts");
         });
     }

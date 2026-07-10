@@ -45,6 +45,8 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -233,6 +235,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // A non-monotonic policy (e.g. "ts > now()") would have cleanup delete a row a later read must show;
         // for such a policy we skip reclamation entirely and let the read filter enforce retention.
         boolean cleanupMonotonic = false;
+        // The applied sequencer txn this sweep's reader reflects; the destructive-commit gate is baselined on
+        // it (not a fresh txnTracker.getSeqTxn() after the reader closes) so the predicate and the gate share
+        // one snapshot -- see the authoritative-predicate re-read inside the reader block.
+        long readerSeqTxn = 0;
 
         // Snapshot non-active LOGICAL partitions. Totals come from the tx file (no column mapping, so
         // parquet partitions are fine), and physical O3 splits of the same logical day are collapsed
@@ -245,6 +251,22 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 return false; // non-timestamp table; nothing to expire (should not happen for a WAL table)
             }
             timestampColumnName = metadata.getColumnName(timestampIndex);
+
+            // Tie the predicate and the seqTxn baseline to ONE consistent snapshot: this reader. `predicate`
+            // was snapshotted at sweep-start discovery (runSerially), well before this reader opened. If an
+            // ALTER SET/DROP EXPIRE applied in between, the reader reflects the NEW policy, so classifying with
+            // the stale discovery predicate could physically delete rows the current policy keeps -- and a
+            // passthrough view stores its own copy, so the read filter cannot resurrect them. Re-read the
+            // authoritative predicate here and DEFER the view this sweep if it changed (the next tick
+            // re-discovers it). A policy change that applies AFTER this reader opened advances the sequencer
+            // past reader.getSeqTxn(), so the per-commit gate below -- baselined on that same reader txn --
+            // catches that window too.
+            final String authoritativePredicate = metadata.getExpiryPredicate();
+            if (authoritativePredicate == null || !authoritativePredicate.equals(predicate)) {
+                return false;
+            }
+            readerSeqTxn = reader.getSeqTxn();
+
             if (window) {
                 windowColsCsv = buildQuotedColumnList(metadata);
             }
@@ -317,9 +339,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // (writer caught up at sweep start), uniformly with the other reclamation paths.
         final boolean isWal = tableToken.isWal();
         final SeqTxnTracker txnTracker = isWal ? engine.getTableSequencerAPI().getTxnTracker(tableToken) : null;
-        long expectedSeqTxn = isWal ? txnTracker.getSeqTxn() : 0;
-        // For WAL, only attempt racy reclamation when the writer has caught up to the sequencer (no pending
-        // apply that the survivor scan would miss). Non-WAL is always allowed (synchronous, recount-checked).
+        // Baseline on the reader's own applied txn (readerSeqTxn), NOT a fresh txnTracker.getSeqTxn() here: the
+        // survivor scan and the authoritative predicate both came from that reader snapshot, so any policy
+        // change or write that applied after the reader opened advances the sequencer past this baseline and
+        // trips the per-commit gate below (the C1 mid-sweep window). A fresh getSeqTxn() would instead adopt
+        // the post-reader sequencer state and could let a stale-predicate wipe commit.
+        long expectedSeqTxn = isWal ? readerSeqTxn : 0;
+        // For WAL, only attempt racy reclamation when the writer is still caught up to the reader snapshot (no
+        // apply since it opened that the survivor scan would miss). Non-WAL is always allowed (synchronous,
+        // recount-checked).
         final boolean racyOpsAllowed = !isWal || txnTracker.getWriterTxn() == expectedSeqTxn;
 
         // Decide and act (reader closed). All reclamation is via REPLACE_RANGE on the WAL writer: a fully
@@ -376,24 +404,39 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // whole non-active range exactly once and bucket them into partitions, so each partition's survivor
         // count is known without a per-partition keep-query execution. Only when the table is caught up.
         final boolean onePass = (keepLatest || window) && racyOpsAllowed && partitionFloors.size() > 0;
-        if (onePass) {
-            final long rangeLo = partitionFloors.getQuick(0);
-            final long rangeHi = partitionNextFloors.getQuick(partitionFloors.size() - 1);
-            try {
-                computeSurvivorCountsOnePass(tsScanSql, rangeLo, rangeHi);
-            } catch (Throwable th) {
-                LOG.error().$("row-expiry survivor scan failed [table=").$safe(tableName)
-                        .$(", msg=").$safe(th.getMessage()).I$();
-                return false; // cannot classify safely this sweep; try again next time
-            }
-        }
         SqlCompiler cleanupCompiler = null;
         RecordCursorFactory countFactory = null;
         RecordCursorFactory selectFactory = null;
         RecordToRowCopier survivorCopier = null;
         int selectTsIndex = -1;
         WalWriter walWriter = null;
+        // M1: bound every survivor query on this sweep to the MAT_VIEW_REFRESH per-workload memory budget.
+        // The KEEP LATEST / window survivor queries build a global LATEST ON / window map sized to the WHOLE
+        // view (the partition range sits OUTSIDE the sub-query, so it cannot be pushed down) and run on the
+        // shared write-worker pool; with no budget an oversized view could exhaust the heap. A bound tracker
+        // makes such a sweep trip the configured limit and throw ("query memory limit exceeded"); the
+        // survivor-scan catch and the per-partition catch below then log and DEFER to a later sweep (cleanup
+        // is best-effort — reads stay correct regardless). EXPIRE ROWS is materialized-view-only, so cleanup
+        // shares the mat-view refresh budget, exactly as MatViewRefreshJob binds its own tracker on its
+        // execution context before running inner SQL.
+        final MemoryTracker memoryTracker = engine.getMemoryTrackerProvider().acquire(
+                sqlExecutionContext.getSecurityContext(),
+                tableToken.getTableId(),
+                MemoryTrackerWorkload.MAT_VIEW_REFRESH
+        );
+        sqlExecutionContext.setMemoryTracker(memoryTracker);
         try {
+            if (onePass) {
+                final long rangeLo = partitionFloors.getQuick(0);
+                final long rangeHi = partitionNextFloors.getQuick(partitionFloors.size() - 1);
+                try {
+                    computeSurvivorCountsOnePass(tsScanSql, rangeLo, rangeHi);
+                } catch (Throwable th) {
+                    LOG.error().$("row-expiry survivor scan failed [table=").$safe(tableName)
+                            .$(", msg=").$safe(th.getMessage()).I$();
+                    return false; // cannot classify safely this sweep; try again next time
+                }
+            }
             for (int i = 0, n = partitionFloors.size(); i < n; i++) {
                 final long floorTs = partitionFloors.getQuick(i);
                 final long nextFloorTs = partitionNextFloors.getQuick(i);
@@ -513,6 +556,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             selectFactory = Misc.free(selectFactory);
             countFactory = Misc.free(countFactory);
             cleanupCompiler = Misc.free(cleanupCompiler);
+            // Release the sweep's memory tracker (M1): clear the context slot, then recycle the tracker to the
+            // provider pool so its used-bytes counter resets before the next sweep binds a fresh one.
+            sqlExecutionContext.setMemoryTracker(null);
+            memoryTracker.close();
         }
         return workDone;
     }

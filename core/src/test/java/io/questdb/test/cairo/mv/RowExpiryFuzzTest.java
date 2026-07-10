@@ -73,7 +73,7 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
     @Test
     public void testFuzzRelativeModes() throws Exception {
         assertMemoryLeak(() -> {
-            final long[] seeds = {42L, 7L, 123456L};
+            final long[] seeds = {42L, 7L, 123_456L};
             final Mode[] modes = Mode.values();
             int iter = 0;
             for (long seed : seeds) {

@@ -268,10 +268,11 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         );
     }
 
-    // M1 GATE deterministic pin (writer caught up + policy change lands MID-SWEEP). The two
-    // testCleanupWithStalePredicate... tests above leave the change committed-but-not-applied (writerTxn <
-    // seqTxn), so they exercise the coarser racyOpsAllowed guard (the bounds-DROP branch is never even
-    // entered). This test pins the M1 per-commit sequencer gate itself: the view is fully applied so
+    // M1 GATE deterministic pin (writer caught up + policy change lands MID-SWEEP). Since the seqTxn baseline
+    // is now the reader's own applied txn (readerSeqTxn), even the committed-but-not-applied
+    // testCleanupWithStalePredicate...Unapplied tests reach the bounds-DROP fast path (racyOpsAllowed is true
+    // against that baseline) and defer at the per-commit gate -- so reverting the M1 one-liner already breaks
+    // them. This test pins the same gate under the fully-applied mid-sweep race: the view is fully applied so
     // racyOpsAllowed == true and the bounds-DROP fast path IS entered, and an in-job barrier injects the
     // loosening ALTER exactly before the first destructive commit — advancing the sequencer past the sweep's
     // expectedSeqTxn while the writer was caught up. Only the M1 per-commit gate on the bounds-DROP fast path
@@ -329,6 +330,73 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         });
     }
 
+    // C1 (mid-sweep predicate reconciliation, data-loss). A cleanup sweep snapshots (token, predicate) at
+    // sweep-start discovery (runSerially) and opens its reader LATER. If an ALTER SET/DROP EXPIRE applied in
+    // between and was FULLY applied (writer caught up), the seqTxn per-commit gate alone does NOT defer -- the
+    // sequencer moved but the writer is caught up again, so racyOpsAllowed is true and getSeqTxn()==expectedSeqTxn
+    // holds. cleanupTable0 must instead re-read the AUTHORITATIVE predicate from its reader and defer when it no
+    // longer matches the stale discovery predicate. Reproduced deterministically: apply the loosening/DROP fully,
+    // then drive cleanup with the OLD strict predicate exactly as a stale discovery snapshot would. Without the
+    // reconciliation this wipes OLD1/OLD2 against the stale strict predicate.
+    @Test
+    public void testCleanupWithStalePredicateAfterAppliedSetExpireLooseningSurvives() throws Exception {
+        assertCleanupWithStaleDiscoveryPredicateKeepsRows(
+                "alter materialized view mv set expire rows when ts < '2024-01-01T00:00:00.000000Z'",
+                "ts < '2024-01-01T00:00:00.000000Z'"
+        );
+    }
+
+    @Test
+    public void testCleanupWithStalePredicateAfterAppliedDropExpireSurvives() throws Exception {
+        assertCleanupWithStaleDiscoveryPredicateKeepsRows("alter materialized view mv drop expire", null);
+    }
+
+    private void assertCleanupWithStaleDiscoveryPredicateKeepsRows(String policyChangeSql, String newPredicateOrNullForDrop) throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('OLD1', 1.0, '2024-01-05T00:00:00.000000Z')," + // ts < now() -> strict-expired under the STALE predicate
+                    "('OLD2', 2.0, '2024-01-08T00:00:00.000000Z')," + // ts < now() -> strict-expired under the STALE predicate
+                    "('NEW', 3.0, '2024-01-20T00:00:00.000000Z')");   // active partition
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when ts < now()");
+            drainWalAndMatViewQueues();
+
+            assertSql("sym\nNEW\n", "select sym from mv order by sym");
+
+            // The stale discovery predicate: the strict policy in force at (simulated) discovery time.
+            final TableToken token = engine.verifyTableName("mv");
+            final String stalePredicate;
+            try (TableMetadata m = engine.getTableMetadata(token)) {
+                stalePredicate = m.getExpiryPredicate();
+            }
+
+            // Apply the policy change FULLY (writer caught up): a reader opened now reflects the NEW policy, so
+            // the seqTxn gate alone would NOT defer -- only the authoritative-predicate re-read does.
+            execute(policyChangeSql);
+            drainWalAndMatViewQueues();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertEquals("precondition: policy change fully applied (writer caught up)",
+                    tracker.getSeqTxn(), tracker.getWriterTxn());
+
+            // Drive cleanup with the STALE strict predicate, exactly as a discovery snapshot taken before the change.
+            final boolean reclaimed;
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                reclaimed = job.cleanupTable(token, stalePredicate);
+            }
+            Assert.assertFalse("cleanup must defer when the authoritative predicate changed since the discovery snapshot", reclaimed);
+
+            if (newPredicateOrNullForDrop == null) {
+                Assert.assertNull("DROP EXPIRE cleared the policy", expiryPredicate("mv"));
+            } else {
+                Assert.assertEquals(newPredicateOrNullForDrop, expiryPredicate("mv"));
+            }
+            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertSql("sym\nNEW\nOLD1\nOLD2\n", "select sym from mv order by sym");
+        });
+    }
+
     // M1/M6 DETERMINISTIC data-loss guard (non-fuzz): a cleanup sweep that snapshotted a now-STALE (stricter)
     // predicate must not physically delete rows the CURRENT (loosened / dropped) policy keeps. TableWriter's
     // policy-change apply path does not take the MatViewState lock the sweep holds, so a policy change can
@@ -336,8 +404,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     // see RowExpiryCleanupJob) is what prevents the wipe. As in testDeterministicBackfillBetweenScanAndCommit-
     // Survives, there is no in-job hook to pause between the survivor scan and the destructive commit, so we
     // reproduce the gate's precondition DETERMINISTICALLY: the policy change is left COMMITTED-BUT-NOT-APPLIED
-    // (its sequencer txn is published but not applied, so writerTxn < seqTxn). Cleanup with the stale strict
-    // predicate MUST defer (reclaim nothing); after the change is applied, every row the new policy keeps must
+    // (its sequencer txn is published but not applied, so writerTxn < seqTxn). With the reader-txn baseline the
+    // bounds-DROP fast path is entered and the per-commit gate (getSeqTxn() != expectedSeqTxn) is what defers.
+    // Cleanup with the stale strict predicate MUST defer (reclaim nothing); after the change is applied, every row the new policy keeps must
     // still be physically present. The instruction-level scan-vs-commit interleave with the writer caught up is
     // exercised probabilistically by MatViewRowExpiryFuzzTest.
     private void assertConcurrentPolicyChangeKeepsRows(String policyChangeSql, String loosenedPredicateOrNullForDrop) throws Exception {

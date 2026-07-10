@@ -935,10 +935,17 @@ public class SqlParser {
             // references a window function, illegal in a plain WHERE, so compute it as a boolean column in an
             // inner projection over the WHOLE view and filter on it in the outer query. Base columns are
             // enumerated so the synthetic keep column never leaks through the caller's SELECT *.
+            //
+            // The inner "SELECT *, CASE ..." projection drops the designated-timestamp property (the extra
+            // synthetic column makes it a general projection, not a passthrough), so re-assert it with a
+            // timestamp("<ts>") clause on the sub-query -- otherwise a downstream timestamp-requiring operator
+            // over a window-policied view (ASOF/LT/SPLICE JOIN) fails to compile with "TIMESTAMP column is
+            // required but not provided". The scalar and KEEP LATEST rewrites keep the designation naturally
+            // (SELECT * / LATEST ON), so only this branch needs it.
             final String windowPredicate = RowExpiryUtil.windowPredicate(predicate, designatedTimestampColumn);
             final String windowSql = "SELECT " + buildQuotedColumnList(tableName) + " FROM (SELECT *, CASE WHEN ("
                     + windowPredicate + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM \""
-                    + tableName + "\") WHERE " + RowExpiryUtil.KEEP_COLUMN;
+                    + tableName + "\") timestamp(\"" + designatedTimestampColumn + "\") WHERE " + RowExpiryUtil.KEEP_COLUMN;
             final GenericLexer windowLexer = viewLexers.next();
             windowLexer.of(windowSql);
             final IQueryModel windowSubQuery = parseAsSubQuery(windowLexer, null, false, sqlParserCallback, model.getDecls(), true);
@@ -1059,24 +1066,6 @@ public class SqlParser {
         return flip
                 ? "NOT (" + predicate + ")"
                 : "CASE WHEN (" + predicate + ") THEN false ELSE true END";
-    }
-
-    /**
-     * Builds the keep-filter node for ANDing into an UPDATE's WHERE (an UPDATE target cannot be wrapped in
-     * a sub-query — it needs row ids). Parses {@link #keepFilterWhereText} inline and applies the same
-     * timestamp flip the read path uses.
-     */
-    private ExpressionNode buildKeepFilterNode(
-            String predicate,
-            CharSequence designatedTimestampColumn,
-            SqlParserCallback sqlParserCallback,
-            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
-    ) throws SqlException {
-        final boolean flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, decls);
-        final GenericLexer keepLexer = viewLexers.next();
-        keepLexer.of(keepFilterWhereText(predicate, flip));
-        final ExpressionNode node = expr(keepLexer, (IQueryModel) null, sqlParserCallback, decls);
-        return flip ? simplifyKeepFilter(node, designatedTimestampColumn) : node;
     }
 
     /**
@@ -1217,22 +1206,6 @@ public class SqlParser {
                 || Chars.equalsIgnoreCase(token, "to_utc")
                 || (token != null && token.length() == 1
                 && (token.charAt(0) == '+' || token.charAt(0) == '-' || token.charAt(0) == '*'));
-    }
-
-    /**
-     * ANDs an EXPIRE ROWS keep-filter into an existing WHERE clause (used for UPDATE, whose target
-     * cannot be wrapped in a sub-query the way a SELECT reference can — it needs row ids). Returns the
-     * keep-filter alone when there is no existing WHERE.
-     */
-    private ExpressionNode andKeepFilter(ExpressionNode existingWhere, ExpressionNode keepFilter) {
-        if (existingWhere == null) {
-            return keepFilter;
-        }
-        final ExpressionNode and = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, existingWhere.position);
-        and.paramCount = 2;
-        and.lhs = existingWhere;
-        and.rhs = keepFilter;
-        return and;
     }
 
     /**

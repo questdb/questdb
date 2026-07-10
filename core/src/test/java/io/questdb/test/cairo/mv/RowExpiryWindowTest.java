@@ -722,4 +722,41 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         execute("create materialized view mv as (select * from base) " + expireClause);
         drainWalAndMatViewQueues();
     }
+
+    // Regression (window-mode designated-timestamp propagation): a window-mode policy (KEEP HIGHEST/LOWEST/
+    // top-N or a window WHEN) rewrites the view reference as an explicit projection over an inner
+    // "SELECT *, CASE ... __keep" query. That inner projection drops the designated timestamp, so a
+    // timestamp-requiring operator over such a view (ASOF/LT/SPLICE JOIN) failed to compile with "TIMESTAMP
+    // column is required but not provided". The rewrite now re-asserts timestamp("<ts>") on the sub-query.
+    @Test
+    public void testWindowPoliciedViewCarriesDesignatedTimestampForJoinsAndSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('A', 3.0, '2024-01-02T00:00:00.000000Z')," +
+                    "('B', 5.0, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, '2024-01-02T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
+            drainWalAndMatViewQueues();
+            // kept per key: A -> (3.0 @ 01-02), B -> (5.0 @ 01-01)
+            assertSql("k\tv\tts\n" +
+                    "B\t5.0\t2024-01-01T00:00:00.000000Z\n" +
+                    "A\t3.0\t2024-01-02T00:00:00.000000Z\n", "select k, v, ts from mv order by ts");
+
+            // ASOF JOIN over the window-policied view: previously failed to compile.
+            execute("create table probe (k symbol, p double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into probe values ('A', 100.0, '2024-01-05T00:00:00.000000Z'),('B', 200.0, '2024-01-05T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertSql("k\tp\tv\n" +
+                    "A\t100.0\t3.0\n" +
+                    "B\t200.0\t5.0\n", "select p.k, p.p, mv.v from probe p asof join mv on (k) order by p.k");
+
+            // SAMPLE BY over the same view also needs the designated timestamp.
+            assertSql("ts\tc\n" +
+                    "2024-01-01T00:00:00.000000Z\t1\n" +
+                    "2024-01-02T00:00:00.000000Z\t1\n", "select ts, count() c from mv sample by 1d");
+        });
+    }
 }
