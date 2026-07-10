@@ -96,6 +96,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      */
     public static final int CLOSE_ECHO_DISCARD_BYTE_BUDGET = 256 * 1024;
     /**
+     * Maximum bytes read in one close-echo worker turn. The effective read
+     * cap also accounts for {@link #CLOSE_ECHO_FRAME_COUNT_BUDGET}, so a
+     * receive can never admit more minimum-size frames than the count budget.
+     */
+    public static final int CLOSE_ECHO_FRAME_BYTE_BUDGET = 256 * 1024;
+    /**
+     * Maximum complete client frames admitted in one close-echo worker turn.
+     */
+    public static final int CLOSE_ECHO_FRAME_COUNT_BUDGET = 1024;
+    /**
      * Read budget for the best-effort inbound drain performed immediately
      * before a graceful teardown ({@link #gracefulCloseAndDisconnect}). The
      * drain lowers the chance of the fd close turning abortive (an RST
@@ -568,7 +578,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
 
             int remaining = recvBufferSize - recvBufferLen;
-            int read = socket.recv(recvBuffer + recvBufferLen, Math.min(forceRecvFragmentationChunkSize, remaining));
+            int uncappedReadSize = Math.min(forceRecvFragmentationChunkSize, remaining);
+            int readSize = uncappedReadSize;
+            if (state.isAwaitingCloseEcho()) {
+                // A masked client frame occupies at least six bytes. Bound the
+                // recv itself so all admitted complete frames can be consumed
+                // without parking a user-space suffix behind an empty kernel
+                // socket, which an edge-triggered READ re-arm would not wake.
+                readSize = Math.min(
+                        readSize,
+                        Math.min(CLOSE_ECHO_FRAME_BYTE_BUDGET, CLOSE_ECHO_FRAME_COUNT_BUDGET * 6)
+                );
+            }
+            int read = socket.recv(recvBuffer + recvBufferLen, readSize);
             if (read < 0) {
                 // Connection closed
                 LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
@@ -589,10 +611,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
             processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
 
-            if (read == forceRecvFragmentationChunkSize) {
-                // Read was capped by the fragmentation chunk size — more data
-                // may be available. Schedule for re-read via the dispatcher,
-                // matching HttpConnectionContext.consumeChunked() behavior.
+            if (read == readSize && (readSize < uncappedReadSize || read == forceRecvFragmentationChunkSize)) {
+                // The close-echo fairness cap or forced fragmentation cap may
+                // have left bytes in the kernel. Re-arm READ so another worker
+                // turn can continue after other connections receive service.
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
 
@@ -636,6 +658,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             return;
         }
 
+        boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
         switch (state.getSendState()) {
             case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
@@ -696,14 +719,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             }
             case QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> {
                 context.resumeResponseSend();
-                // Return the send machine to READY BEFORE arming the echo
+                // Return the send machine to READY before arming the echo
                 // wait. Every other entry into the wait leaves READY behind;
-                // staying parked in RESUME_CLOSE here disabled the
-                // drainBufferedFrames call below, so a client CLOSE already
-                // sitting in the recv buffer (crossing close) was never
-                // dispatched and the connection outlived the echo budget --
-                // the expiry poll is recv-driven and a conformant post-close
-                // client sends nothing more.
+                // the central causal-boundary check below then observes the
+                // transition and discards bytes buffered before this CLOSE.
                 state.onResumeCloseComplete();
                 LOG.debug().$("Resumed CLOSE frame sent [fd=").$(context.getFd()).I$();
                 if (!beginCloseEchoWaitIfEligible(context, state)) {
@@ -743,6 +762,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                         .$(", state=").$(state.getSendState()).I$();
                 throw ServerDisconnectException.INSTANCE;
             }
+        }
+        if (!wasAwaitingCloseEcho && state.isAwaitingCloseEcho()) {
+            // Any buffered bytes came from the recv that initiated the send
+            // continuation and therefore predate the server CLOSE. They cannot
+            // contain its echo. Drop them before drainBufferedFrames to avoid
+            // unbounded parsing and a false handshake completion on a
+            // pre-CLOSE client frame. This covers every continuation that can
+            // synchronously send CLOSE, not only RESUME_CLOSE.
+            state.setRecvBufferLen(0);
         }
         drainBufferedFrames(context, state);
     }
@@ -1116,6 +1144,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private void flushPendingAck(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
+        flushPendingAck(context, state, true);
+    }
+
+    private void flushPendingAck(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            boolean isDurableAckPollAllowed
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.isAwaitingCloseEcho()) {
             // Our role-change CLOSE is already on the wire and RFC 6455 forbids
             // any frame following it. The final durable ack went out with the
@@ -1133,7 +1169,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         if (state.hasPendingAck()) {
             trySendAck(context, state);
         }
-        if (state.isDurableAckEnabled() && state.isSendReady()) {
+        if (isDurableAckPollAllowed && state.isDurableAckEnabled() && state.isSendReady()) {
             trySendDurableAck(context, state);
         }
     }
@@ -1510,9 +1546,26 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // cannot drift between the two polls (a grace-expired close observed
         // by PING used to proceed silently, skipping the un-acked-durable-work
         // alarm). While the deferral holds, fall through to the pong keepalive.
-        if (state.isRoleChangeCloseDeferred() && isRoleChangeCloseCompletable(state)) {
-            roleChangeCloseWithUploadGrace(context, state, state.getRoleChangeCloseReason());
-            return;
+        if (state.isRoleChangeCloseDeferred()) {
+            boolean isGraceExpired = state.isRoleChangeCloseGraceExpired();
+            // When the send side is READY, flushPendingAck above prunes every
+            // table whose final durable ACK was sent, so local pending state
+            // gives the result without another registry scan. A pre-existing
+            // parked send prevents that flush; query coverage once in that case
+            // so the CLOSE can chain behind the parked frame.
+            boolean isDurableWorkFullyUploaded = state.isSendReady()
+                    ? !state.hasPendingDurableWork()
+                    : state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+            if (isDurableWorkFullyUploaded || isGraceExpired) {
+                roleChangeCloseWithUploadGrace(
+                        context,
+                        state,
+                        state.getRoleChangeCloseReason(),
+                        isDurableWorkFullyUploaded,
+                        isGraceExpired
+                );
+                return;
+            }
         }
 
         // Can only send pong when the response sink is clear. If a prior ACK
@@ -1557,20 +1610,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     /**
-     * Completion predicate for a deferred role-change close: the registry's
-     * durable-upload watermark covers every committed seqTxn (replay window
-     * empty), or the bounded grace budget is exhausted (availability over the
-     * duplicate guard). Single source of truth shared by the deferral's two
-     * re-entry polls -- gate-refused data frames and keepalive PINGs
-     * ({@link #handlePing}) -- so the close path and its diagnostics cannot
-     * drift between them.
-     */
-    private boolean isRoleChangeCloseCompletable(QwpIngressProcessorState state) {
-        return state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())
-                || state.isRoleChangeCloseGraceExpired();
-    }
-
-    /**
      * INVARIANT B role-change close with an exactly-once guard for durable-ack
      * connections.
      * <p>
@@ -1612,6 +1651,28 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             QwpIngressProcessorState state,
             CharSequence reason
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        boolean isGraceExpired = state.isRoleChangeCloseGraceExpired();
+        // Expiry alone completes the deferral. Skip the initial registry scan
+        // in that case; the diagnostic path below performs one fresh check so
+        // concurrent catch-up can still suppress a false duplicate warning.
+        boolean isDurableWorkFullyUploaded = !state.isDurableAckEnabled()
+                || (!isGraceExpired && state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry()));
+        roleChangeCloseWithUploadGrace(
+                context,
+                state,
+                reason,
+                isDurableWorkFullyUploaded,
+                isGraceExpired
+        );
+    }
+
+    private void roleChangeCloseWithUploadGrace(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            CharSequence reason,
+            boolean isDurableWorkFullyUploaded,
+            boolean isGraceExpired
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         if (state.isAwaitingCloseEcho()) {
             // CLOSE already sent; the deferral has completed. Just poll the
             // echo grace budget.
@@ -1626,7 +1687,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // ack immediately before the CLOSE and needs the same echo-confirmed
         // teardown as a close that deferred.
         state.initiateRoleChangeClose();
-        if (state.isDurableAckEnabled() && !isRoleChangeCloseCompletable(state)) {
+        if (state.isDurableAckEnabled() && !isDurableWorkFullyUploaded && !isGraceExpired) {
             boolean firstDeferral = !state.isRoleChangeCloseDeferred();
             state.deferRoleChangeClose(reason);
             if (firstDeferral) {
@@ -1639,7 +1700,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             flushPendingAck(context, state);
             return;
         }
-        if (state.isRoleChangeCloseGraceExpired()
+        if (isGraceExpired
+                && !isDurableWorkFullyUploaded
                 && !state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry())) {
             // Grace expired with genuinely un-acked durable work: the one
             // close the operator must see. A slow-but-clean close -- uploads
@@ -1735,6 +1797,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
+        boolean hasPolledDurableProgress = false;
+        boolean hasProcessedFrame = false;
 
         try {
             // The close-echo wait's expiry must be polled on EVERY receive
@@ -1755,6 +1819,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
                 if (frameParser.getState() == WebSocketFrameParser.STATE_ERROR) {
                     LOG.error().$("WebSocket frame error [fd=").$(context.getFd()).$(", code=").$(frameParser.getErrorCode()).I$();
+                    if (state.isAwaitingCloseEcho()) {
+                        // A malformed header destroys frame synchronization, so a
+                        // later byte sequence cannot safely be recognized as the
+                        // client's CLOSE echo. Drop all buffered garbage and let
+                        // resumeRecv drain subsequent bytes until peer FIN or the
+                        // bounded echo wait expires. Disconnecting immediately can
+                        // close the fd with unread inbound bytes and reset the peer's
+                        // unread final durable ACK/CLOSE tail.
+                        state.onCloseEchoSyncLost();
+                        pos = bufferEnd;
+                        checkCloseEchoWaitExpiry(context, state);
+                        return;
+                    }
                     throw ServerDisconnectException.INSTANCE;
                 }
 
@@ -1795,6 +1872,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 }
 
                 // Frame parsed successfully
+                boolean wasAwaitingCloseEcho = state.isAwaitingCloseEcho();
                 int opcode = frameParser.getOpcode();
                 long payloadPtr = pos + frameParser.getHeaderSize();
                 int payloadLen = (int) frameParser.getPayloadLength();
@@ -1816,16 +1894,31 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 pos += consumed;
 
                 handleWebSocketFrame(context, state, opcode, frameParser.isFin(), payloadPtr, payloadLen);
+                hasProcessedFrame = true;
+                if (opcode == WebSocketOpcode.PING) {
+                    hasPolledDurableProgress = true;
+                } else if (opcode == WebSocketOpcode.BINARY) {
+                    // A normal BINARY frame may have committed new durable
+                    // work after an earlier PING poll in the same recv. Only a
+                    // role-deferral BINARY path polls internally.
+                    hasPolledDurableProgress = state.isRoleChangeCloseDeferred();
+                }
+                if (!wasAwaitingCloseEcho && state.isAwaitingCloseEcho() && pos < bufferEnd) {
+                    // The server sent its CLOSE while handling this frame. All
+                    // bytes already returned by the preceding recv necessarily
+                    // arrived before that CLOSE and therefore cannot contain its
+                    // echo. Drop the pipelined suffix without parsing it; later
+                    // receives use the bounded close-echo read cap above.
+                    pos = bufferEnd;
+                    return;
+                }
             }
 
-            // Flush any pending cumulative ACK whether or not the buffer ends
-            // on a clean frame boundary. The previous `COMPLETE`-only check
-            // starved senders of ACKs whenever a recv landed mid-frame —
-            // including any time the OS recv chunk was smaller than a full
-            // QWP batch — leaving the client's drainOnClose to time out.
-            // flushPendingAck is a no-op when nothing is pending, so this
-            // is safe in the empty-buffer / partial-frame-only cases too.
-            flushPendingAck(context, state);
+            // Keep cumulative ACK progress available even when this recv ends
+            // mid-frame. Durable progress polling is different: it scans every
+            // table with outstanding work, so a partial-frame-only re-entry
+            // must not repeat that scan without a meaningful frame event.
+            flushPendingAck(context, state, hasProcessedFrame && !hasPolledDurableProgress);
         } finally {
             // Compact unprocessed bytes to buffer start and update state.
             // Handles both normal exit (remaining=0) and exception unwind
