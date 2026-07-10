@@ -2062,6 +2062,105 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * The structural "no ack after CLOSE" guarantee: while the close-echo
+     * wait is armed, {@code flushPendingAck}'s awaiting-close-echo gate must
+     * refuse to emit anything through BOTH recv-driven vectors -- the
+     * trailing flush after a discarded inbound frame and the
+     * {@code onConnectionClosed} teardown flush. Normal flows arm the wait
+     * only after the pending maps drain, so the gate is unobservable unless
+     * pending cumulative-ack state exists DURING the wait: this test
+     * recreates that state directly (the situation the gate exists to make
+     * impossible-by-construction rather than empty-by-coincidence) and pins
+     * that no frame follows our CLOSE. Removing the gate makes both vectors
+     * emit a post-CLOSE ACK and fails this test.
+     */
+    @Test
+    public void testAwaitingCloseEchoGateBlocksPendingAckFlush() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabng (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabng", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabng", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabng", 300L, 3_000_000L));
+                byte[] strayPing = createMaskedFrame(WebSocketOpcode.PING, new byte[]{7});
+                byte[] wire = concat(frame0, frame1, frame2, strayPing);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Arm the echo wait: commit, demote, cover uploads, close.
+                    drive(processor, context, nf, frame0.length);
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "test setup: connection must await the client's close echo",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertTrue("test setup: send side must be READY", state.isSendReady());
+                    int framesAtClose = rawSocket.sentFrames.size();
+
+                    // Recreate pending cumulative-ack state during the wait
+                    // by regressing the acked watermark below the processed
+                    // one. No legitimate flow leaves the maps in this shape
+                    // once the wait is armed -- which is exactly why the gate
+                    // must be structural, not reliant on that coincidence.
+                    Field lastAckedField = QwpIngressProcessorState.class.getDeclaredField("lastAckedSequence");
+                    lastAckedField.setAccessible(true);
+                    lastAckedField.setLong(state, -1L);
+                    Assert.assertTrue(
+                            "test scaffolding: pending cumulative-ack state must exist during the wait",
+                            state.hasPendingAck()
+                    );
+
+                    // Vector 1: the trailing flush after a discarded inbound
+                    // frame (the stray PING gets no pong during the wait, but
+                    // processWebSocketFrames still runs its chunk-end flush).
+                    drive(processor, context, nf, strayPing.length);
+                    Assert.assertEquals(
+                            "STRUCTURAL GUARANTEE BROKEN: the discarded-frame trailing flush emitted a"
+                                    + " frame after our CLOSE (RFC 6455 forbids any frame after CLOSE; a late"
+                                    + " cumulative ack could also cover sequences the client must replay)",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+                    Assert.assertTrue(
+                            "test setup: wait must survive the discarded frame",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertTrue(
+                            "test scaffolding: pending-ack state must persist for the teardown vector",
+                            state.hasPendingAck()
+                    );
+
+                    // Vector 2: the onConnectionClosed teardown flush.
+                    processor.onConnectionClosed(context);
+                    Assert.assertEquals(
+                            "STRUCTURAL GUARANTEE BROKEN: onConnectionClosed's teardown flush emitted a"
+                                    + " frame after our CLOSE",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * The drain budgets must bound BYTES, not only recv() call count: a
      * count-only budget permits {@code reads x recvBufferSize} bytes of
      * copying per dispatch -- 16 MiB at the default 2 MiB HTTP buffer, more
