@@ -1579,4 +1579,32 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testDynamicBoundOffsetResidualFreesTempModel() throws Exception {
+        // analyzeAndOffset compiles a dynamic (runtime-constant) bound into the temp interval model,
+        // then leaves it a residual filter when the offset merge cannot bake the bound into an
+        // interval. It must free that temp model's Function on the residual exit; otherwise the
+        // compiled bound is orphaned until the pool slot is reused. A bind-variable bound holds no
+        // native memory so its leak is invisible, so this uses alloc_ts() - a runtime-constant
+        // timestamp bound that allocates a tracked native buffer at construction - to make the leak
+        // observable under assertMemoryLeak. Without the free the buffer leaks; with it the query
+        // compiles clean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES " +
+                    "(100, '2020-01-01T00:30:00.000000Z')," +   // tt = 2019-12-31T23:30
+                    "(150, '2020-06-01T00:30:00.000000Z')," +   // tt = 2020-05-31T23:30
+                    "(200, '2020-12-01T00:30:00.000000Z');");   // tt = 2020-11-30T23:30
+
+            assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) " +
+                    "WHERE tt > alloc_ts('2020-05-31T23:00:00.000000Z'::timestamp)")
+                    .timestamp("tt")
+                    .returns("""
+                            tt\tprice
+                            2020-05-31T23:30:00.000000Z\t150.0
+                            2020-11-30T23:30:00.000000Z\t200.0
+                            """);
+        });
+    }
 }

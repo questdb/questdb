@@ -898,6 +898,31 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeepArithmeticChainMatchesJava() throws Exception {
+        // M2: the JIT marker passes (markI64WidenFoldRoots / markI64WrapArithLeaves) prune a narrow-int
+        // subtree instead of recomputing genuineArithType at every level. Exercise a deep arithmetic
+        // spine so the pruned/short-circuited walk is taken, and confirm the JIT still matches the Java
+        // filter under INT- and LONG-width comparisons and with an overflowing constant fold at the leaf.
+        assertMemoryLeak(() -> {
+            execute("create table dc as (select cast(1000000 as int) a, cast(3 as int) b," +
+                    " cast(x as long) nl, x::short cs, x::byte cbyte, timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(5)) timestamp(k)");
+            // Deep all-narrow-int spine read at INT width: every node is narrow, so the marker walk
+            // prunes at the root; the JIT must still wrap (getInt) exactly like the Java filter.
+            assertJitMatchesJava("dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) > 0", true);
+            assertJitMatchesJava("dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) = 0", true);
+            // Same spine compared against a LONG column: the comparison promotes to long width, so the
+            // spine widens (getLong) on both paths - the narrow prune does not fire (under long).
+            assertJitMatchesJava("dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) > nl", true);
+            assertJitMatchesJava("dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) >= -432577000000L", true);
+            // Deep spine with an overflowing pure-constant fold at the leaf: narrow (wraps) vs long
+            // (widens) contexts must each still agree.
+            assertJitMatchesJava("dc where (a + ((((1000000 * 1000000) + 1) + 2) + 3)) > 0", true);
+            assertJitMatchesJava("dc where (nl + ((((1000000 * 1000000) + 1) + 2) + 3)) > 0", true);
+        });
+    }
+
+    @Test
     public void testFloatArithmeticOperandWiden() throws Exception {
         // An out-of-INT-range integer constant used as an ARITHMETIC OPERAND against a
         // narrow-int column, in a predicate that also has a FLOAT column, diverged.

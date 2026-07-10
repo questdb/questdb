@@ -512,6 +512,13 @@ public final class WhereClauseParser implements Mutable {
         // place into an equivalent, compilable residual dateadd(unit, stride, source_ts) <op> bound.
         // The stored offset is the inverse of the original dateadd stride (see SqlOptimiser), so the
         // reconstructed dateadd uses the negated offset to restore the original virtual-column semantics.
+        //
+        // mergeIntervalModelWithAddMethod reported failure without consuming tempModel, so any dynamic
+        // bound Function that removeAndIntrinsics compiled into tempModel's dynamicRangeList is still
+        // owned here. The residual is rebuilt from the predicate AST (re-compiled later), so that temp
+        // Function is dead - free it now instead of leaving it orphaned until the pool slot is reused,
+        // mirroring the OR-tree rollback path that also clears a partially-extracted interval model.
+        tempModel.clearIntervalFilters();
         rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
         return false;
     }

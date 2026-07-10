@@ -1370,7 +1370,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
         if (isArithmeticOperation(node) || (node.paramCount == 1 && Chars.equals(node.token, '-'))) {
-            boolean nodeGenuineLong = underGenuineLong || genuineArithType(node) == I8_TYPE;
+            // Read this arithmetic node's genuine width once. Under a genuine-LONG context it is
+            // already I8, so skip the walk (preserving the underGenuineLong short-circuit); otherwise
+            // read it directly.
+            final int nodeType = underGenuineLong ? I8_TYPE : genuineArithType(node);
+            final boolean nodeGenuineLong = nodeType == I8_TYPE;
+            if (!nodeGenuineLong && (nodeType == I1_TYPE || nodeType == I2_TYPE || nodeType == I4_TYPE)) {
+                // A narrow-int arithmetic subtree read at INT width. promoteArithType widens
+                // monotonically (Math.max on integer codes; a float/undefined operand absorbs), so a
+                // narrow node has only narrow descendants - none read at I8 width, none an I8 widen fold
+                // root. Prune here so a deep narrow-int chain marks in O(depth) instead of recomputing
+                // genuineArithType at every level (O(depth^2)).
+                return;
+            }
             if (nodeGenuineLong && isFoldableOverflowConst(node)) {
                 i64WidenFoldRoots.add(node);
                 return; // folds to one IMM; no deeper fold root to find
@@ -1458,23 +1470,50 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @param underLong whether the enclosing context reads {@code node} at 64-bit width
      */
     private void markI64WrapArithLeaves(ExpressionNode node, boolean underLong) {
+        markI64WrapArithLeaves(node, underLong, false);
+    }
+
+    /**
+     * @param narrowResolved the enclosing arithmetic context is already known to be narrow-int (not
+     *                       LONG, not float). By the monotonic widening of {@link #promoteArithType}
+     *                       a narrow node has only narrow descendants, all read at INT width, so
+     *                       {@link #genuineArithType} need not be recomputed here. This lets a deep
+     *                       narrow-int chain mark its wrap leaves in O(depth) rather than recomputing
+     *                       genuineArithType at every level (O(depth^2)).
+     */
+    private void markI64WrapArithLeaves(ExpressionNode node, boolean underLong, boolean narrowResolved) {
         if (node == null || node.type != ExpressionNode.OPERATION) {
             return; // a bare leaf is marked, if needed, by its arithmetic parent below
         }
         if (isArithmeticOperation(node)) {
-            boolean thisLong = underLong || genuineArithType(node) == I8_TYPE;
-            markI64WrapArithOperand(node.lhs, thisLong);
-            markI64WrapArithOperand(node.rhs, thisLong);
+            final boolean thisLong;
+            final boolean childNarrowResolved;
+            if (underLong) {
+                thisLong = true;
+                childNarrowResolved = false;
+            } else if (narrowResolved) {
+                thisLong = false;
+                childNarrowResolved = true;
+            } else {
+                final int nodeType = genuineArithType(node);
+                thisLong = nodeType == I8_TYPE;
+                // A narrow-int node (never I8) has only narrow-int descendants, so children need no
+                // genuineArithType recompute. A float/undefined node may still hide an I8 descendant
+                // (e.g. long*float promotes to float), so it does not resolve them.
+                childNarrowResolved = nodeType == I1_TYPE || nodeType == I2_TYPE || nodeType == I4_TYPE;
+            }
+            markI64WrapArithOperand(node.lhs, thisLong, childNarrowResolved);
+            markI64WrapArithOperand(node.rhs, thisLong, childNarrowResolved);
             return;
         }
         if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-            markI64WrapArithLeaves(node.rhs != null ? node.rhs : node.lhs, underLong);
+            markI64WrapArithLeaves(node.rhs != null ? node.rhs : node.lhs, underLong, narrowResolved);
             return;
         }
-        // Comparison / boolean / NOT: derive the comparison width from all operands
-        // (a genuine LONG operand promotes to long width), then read each operand at
-        // that width. An overflowing constant fold stays narrow (genuineArithType),
-        // so it does not fake-promote the comparison.
+        // Comparison / boolean / NOT: a fresh width boundary. Derive the comparison width from all
+        // operands (a genuine LONG operand promotes to long width), then read each operand at that
+        // width. An overflowing constant fold stays narrow (genuineArithType), so it does not
+        // fake-promote the comparison. narrowResolved does not carry across a comparison.
         int cmpType = foldCmpType(UNDEFINED_CODE, node.lhs);
         cmpType = foldCmpType(cmpType, node.rhs);
         for (int i = 0, n = node.args.size(); i < n; i++) {
@@ -1488,7 +1527,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void markI64WrapArithOperand(ExpressionNode child, boolean parentLong) {
+    private void markI64WrapArithOperand(ExpressionNode child, boolean parentLong, boolean parentNarrowResolved) {
         if (!parentLong && isWidenableLeaf(child)) {
             // A narrow-int arithmetic operand read at 32 bits: it must wrap, so never
             // sign-extend it. A wide (I8) operand read at 64 bits stays widenable.
@@ -1497,7 +1536,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 i64WrapLeaves.add(child);
             }
         } else {
-            markI64WrapArithLeaves(child, parentLong);
+            markI64WrapArithLeaves(child, parentLong, parentNarrowResolved);
         }
     }
 
