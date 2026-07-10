@@ -24,9 +24,16 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.RecordToRowCopierUtils;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -158,6 +165,51 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
 
             // No rows in the range, so nothing is deleted.
             Assert.assertEquals(0, deleted);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeSurvivorsRewritesPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // 300 minute-spaced rows, all on 1970-01-01 (x*60s for x in 1..300 -> up to 05:00:00).
+            execute("create table src (ts timestamp, x long, s symbol) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into src select (x*60*1000000L)::timestamp, x, rnd_symbol('a','b','c') from long_sequence(300)");
+            // Survivors of "delete where x % 2 = 0" -> keep the odd-x rows. ref captures the real (non-random)
+            // symbol values for the survivors, so it is a faithful post-delete reference including the symbol column.
+            execute("create table ref as (select * from src where not (x % 2 = 0)) timestamp(ts) partition by DAY BYPASS WAL");
+
+            TableToken tt = engine.verifyTableName("src");
+            // Single-partition seed -> the whole day spans it; the executor (Task 1.10) invokes replaceRange
+            // once per partition with a survivor cursor filtered to [partLo, partHi).
+            long partLo = MicrosTimestampDriver.floor("1970-01-01T00:00:00.000000Z");
+            long partHi = MicrosTimestampDriver.floor("1970-01-02T00:00:00.000000Z");
+
+            long removed;
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "select * from src where not (x % 2 = 0) and ts >= " + partLo + " and ts < " + partHi,
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final EntityColumnFilter columnFilter = new EntityColumnFilter();
+                columnFilter.of(factory.getMetadata().getColumnCount());
+                try (TableWriter w = getWriter(tt)) {
+                    final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                            new BytecodeAssembler(),
+                            factory.getMetadata(),
+                            w.getMetadata(),
+                            columnFilter,
+                            configuration
+                    );
+                    removed = w.replaceRange(partLo, partHi, cursor, copier, w.getMetadata().getTimestampIndex());
+                }
+            }
+
+            // 300 rows, even-x deleted -> 150 removed, 150 odd-x survivors remain.
+            Assert.assertEquals(150, removed);
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
         });
     }

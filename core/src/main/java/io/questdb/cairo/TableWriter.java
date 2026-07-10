@@ -41,6 +41,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
@@ -3066,24 +3067,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * outside the range within boundary partitions are kept, fully-covered partitions are dropped, and a
      * range covering all data truncates the table. Returns the number of rows removed.
      * <p>
-     * SPIKE DECISION (task 1.8): option (a) - DIRECT EXPOSURE. The empty-range path needs no row source, so
-     * option (b) (staging survivors into a throwaway WAL segment) would be pure overhead here - there is
-     * nothing to stage. We therefore drive the existing {@code WAL_DEDUP_MODE_REPLACE_RANGE} apply machinery
-     * directly on the writer: {@link #processWalCommitFinishApply} over an empty O3 batch with the replace
-     * range carried in the tx lag min/max, exactly as {@link #processWalCommitDedupReplace}'s
-     * {@code rowLo >= rowHi} (empty) branch does, bracketed by the standalone-commit pattern
+     * SPIKE DECISION (tasks 1.8 + 1.9): option (a) - DIRECT EXPOSURE. We drive the existing
+     * {@code WAL_DEDUP_MODE_REPLACE_RANGE} apply machinery directly on the writer via
+     * {@link #processWalCommitFinishApply}, with the replace range carried in the tx lag min/max exactly as
+     * {@link #processWalCommitDedupReplace} does, bracketed by the standalone-commit pattern
      * {@link #removePartition} uses (commit up front to flush pending rows; persist + housekeep afterward so
-     * a reader sees the change and dropped-partition dirs are reclaimed). All O3 surgery - partition
-     * drop/trim/split, symbol maps, index rebuild, first/last recompute, truncate-when-empty - is reused
-     * unchanged; no new O3 code is introduced.
-     * <p>
-     * The cursor-sourced path is task 1.9.
+     * a reader sees the change and dropped-partition dirs are reclaimed).
+     * <ul>
+     *   <li><b>Empty range</b> ({@code survivorCursor == null} or an empty cursor): an empty O3 batch, as in
+     *   {@code processWalCommitDedupReplace}'s {@code rowLo >= rowHi} branch - the range alone drops/trims.</li>
+     *   <li><b>Survivor rows</b>: staged into O3 memory through the ordinary O3 row API
+     *   ({@link #newRow}/{@code copier.copy}/{@link Row#append}, as {@code MatViewRefreshJob.insertAsSelect}
+     *   does), then sorted (o3Commit's sort/dispatch/swap) and fed as the non-empty O3 batch - the
+     *   TableWriter analogue of {@code processWalCommitDedupReplace}'s {@code rowLo < rowHi} branch, whose
+     *   row source is a WAL segment. Option (b) (staging survivors to a throwaway WAL segment) was rejected
+     *   as pure re-serialization overhead over filling O3 memory directly.</li>
+     * </ul>
+     * All O3 surgery - partition drop/trim/split, symbol maps, index rebuild, first/last recompute,
+     * truncate-when-empty, and the radix sort of unordered survivors - is reused unchanged.
      *
      * @param replaceRangeLoTs     inclusive low timestamp of the range to replace
      * @param replaceRangeHiExclTs exclusive high timestamp of the range to replace
      * @param survivorCursor       survivor rows to write into the range, or {@code null} to empty it
-     * @param copier               copies a survivor record into a table row (cursor path only; task 1.9)
-     * @param timestampCursorIndex designated-timestamp column index in the cursor (cursor path only; task 1.9)
+     * @param copier               copies a survivor record into a table row (cursor path only)
+     * @param timestampCursorIndex designated-timestamp column index in the cursor (cursor path only)
      * @return number of rows removed from the range
      */
     public long replaceRange(
@@ -3093,10 +3100,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             @Nullable RecordToRowCopier copier,
             int timestampCursorIndex
     ) {
-        if (survivorCursor != null) {
-            throw new UnsupportedOperationException("replaceRange cursor path: task 1.9");
-        }
-
         checkDistressed();
 
         // Commit up front to flush any pending rows, so the replace-apply starts from a fully-committed
@@ -3104,7 +3107,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
 
         if (replaceRangeLoTs >= replaceRangeHiExclTs) {
-            // Empty or inverted range - nothing to remove.
+            // Empty or inverted range - nothing to remove. By the replace-range contract every survivor
+            // must fall inside [lo, hiExcl), so an empty range also has nothing to stage.
             return 0;
         }
 
@@ -3121,16 +3125,95 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isLastPartitionClosed() && isEmptyTable()) {
             populateDenseIndexerList();
         }
+
+        // SPIKE DECISION (task 1.9): option (a) - DIRECT EXPOSURE, extended to the cursor path. Survivor
+        // rows are produced through TableWriter's ordinary O3 row API (newRow / copier.copy / row.append),
+        // exactly as MatViewRefreshJob.insertAsSelect produces a REPLACE_RANGE batch, and then the
+        // empty-path's direct drive of processWalCommitFinishApply is reused - only now over a non-empty,
+        // sorted O3 batch. This is the TableWriter analogue of processWalCommitDedupReplace's non-empty
+        // branch: its row source is a mmap'd WAL segment, ours is the O3 memory we fill here. Option (b)
+        // (staging survivors into a throwaway WAL segment) was rejected - it would re-serialize the rows
+        // through a segment only for the apply to re-read them, pure overhead over filling O3 memory direct.
+        //
+        // The replace RANGE is always [lo, hiExcl), carried (as in the empty path) in the tx lag min/max -
+        // NOT the survivors' own min/max. This is load-bearing: the ordinary o3Commit() passes the DATA's
+        // min/max to processO3Block, which in replace mode would delete only [survivorMin, survivorMax] and
+        // leave to-be-deleted rows between a range bound and the nearest survivor alive. We therefore must
+        // NOT route through o3Commit(); we drive processWalCommitFinishApply directly with the true range,
+        // feeding the survivors as the sorted O3 batch.
         try {
             dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
             try {
-                // Empty O3 batch: the replace range alone (carried in lag min/max) drives the partition
-                // drop/trim over [lo, hiExcl). This is processWalCommitDedupReplace's rowLo >= rowHi branch.
+                // Stage survivors (if any) into O3 memory. Kept inside the try/finally so a mid-drain failure
+                // (cursor IO error, copier cast, distress) is unwound by finishO3Append/clearO3 below rather
+                // than leaking forced-O3 state. dedupMode does not affect the O3 append path.
+                long o3RowCount = 0;
+                if (survivorCursor != null && survivorCursor.hasNext()) {
+                    // Force O3 staging up front so every survivor lands in O3 memory uniformly, whether its
+                    // timestamp is below or at/above the table's current max. Without this a survivor at/after
+                    // maxTimestamp would append in order (into the active partition, not O3 memory) and be
+                    // silently dropped by the O3 sort below - matching how the WAL replace path treats ALL
+                    // replacement rows as O3. o3OpenColumns() also points activeColumns at O3 memory so the
+                    // copier writes there.
+                    o3OpenColumns();
+                    o3InError = false;
+                    // newRowO3 sets o3MasterRef AFTER the first row's newRow bumps masterRef; here we force O3
+                    // before the loop (masterRef un-bumped), so pre-add that bump. getO3RowCount0() =
+                    // (masterRef-o3MasterRef+1)/2 must then read 0 at the first o3TimestampSetter, i.e. the
+                    // stored (timestamp, row-index) entries count 0,1,2,... in lockstep with the physical
+                    // column-append order. Off by one here shifts each survivor's payload one row off its ts.
+                    o3MasterRef = masterRef + 1;
+                    rowAction = ROW_ACTION_O3;
+
+                    final Record record = survivorCursor.getRecord();
+                    do {
+                        final long ts = record.getTimestamp(timestampCursorIndex);
+                        // Guard (mirrors MatViewRefreshJob.insertAsSelect): a survivor outside [lo, hiExcl)
+                        // violates the replace contract (processWalCommitDedupReplace asserts lo <= o3Min,
+                        // hiExcl > o3Max).
+                        assert ts >= replaceRangeLoTs && ts < replaceRangeHiExclTs
+                                : "survivor timestamp out of replace range [ts=" + ts + ", lo=" + replaceRangeLoTs + ", hiExcl=" + replaceRangeHiExclTs + ']';
+                        final Row row = newRow(ts);
+                        // No SqlExecutionContext at this layer: the DELETE survivor cursor is `select * from t`,
+                        // an identical-schema copier that performs only same-type field copies and never
+                        // dereferences the context (used solely for decimal-conversion helpers, none here).
+                        copier.copy(null, record, row);
+                        row.append();
+                    } while (survivorCursor.hasNext());
+
+                    o3RowCount = getO3RowCount0();
+                }
+
                 txWriter.setLagMinTimestamp(replaceRangeLoTs);
                 txWriter.setLagMaxTimestamp(replaceRangeTsHi);
-                processWalCommitFinishApply(0, 0, 0, 0, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+                if (o3RowCount > 0) {
+                    // Sort the staged survivors by timestamp and reshuffle their data columns to match,
+                    // mirroring o3Commit()'s sort/dispatch/swap. The O3 timestamp column is a 128-bit
+                    // (timestamp, row-index) merge array (o3TimestampSetter), so UNORDERED survivors are
+                    // handled here - the sort orders them before the apply; the caller need not pre-sort.
+                    final long sortedTimestampsAddr = o3TimestampMem.getAddress();
+                    assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+                    if (o3RowCount > 600 || !o3QuickSortEnabled) {
+                        o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
+                        Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
+                    } else {
+                        Vect.quickSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
+                    }
+                    dispatchColumnTasks(sortedTimestampsAddr, o3RowCount, IGNORE, IGNORE, IGNORE, cthO3SortColumnRef);
+                    swapO3ColumnsExcept(metadata.getTimestampIndex());
+
+                    // Non-empty O3 batch: sorted survivors + the [lo, hiExcl) range drive the partition
+                    // drop/trim/split and the survivor merge (processWalCommitDedupReplace's rowLo < rowHi
+                    // branch). copiedToMemory/flattenTimestamp = true: the batch is in O3 memory.
+                    processWalCommitFinishApply(0, sortedTimestampsAddr, 0, o3RowCount, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+                } else {
+                    // Empty O3 batch: the replace range alone (carried in lag min/max) drives the partition
+                    // drop/trim over [lo, hiExcl). This is processWalCommitDedupReplace's rowLo >= rowHi branch.
+                    processWalCommitFinishApply(0, 0, 0, 0, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+                }
             } finally {
                 finishO3Append(0);
+                o3Columns = o3MemColumns1;
             }
         } finally {
             dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
