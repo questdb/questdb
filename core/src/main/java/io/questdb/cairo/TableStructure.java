@@ -110,15 +110,15 @@ public interface TableStructure {
 
     boolean isDedupKey(int columnIndex);
 
-    default boolean isReplicaOnlyIndex(int columnIndex) {
-        return false;
-    }
-
     default boolean isIndexed(int columnIndex) {
         return IndexType.isIndexed(getIndexType(columnIndex));
     }
 
     default boolean isMatView() {
+        return false;
+    }
+
+    default boolean isReplicaOnlyIndex(int columnIndex) {
         return false;
     }
 

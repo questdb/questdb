@@ -188,6 +188,17 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
     byte getColumnIndexType(int columnIndex);
 
     /**
+     * Effective, role-aware index availability for query planning. A replica-only index is
+     * inactive when this node skips replica-only indexes (a replicating primary).
+     *
+     * @param skipReplicaOnlyIndexes value of CairoConfiguration.skipReplicaOnlyIndexes()
+     */
+    default boolean isColumnIndexActive(int columnIndex, boolean skipReplicaOnlyIndexes) {
+        return isColumnIndexed(columnIndex)
+                && !(skipReplicaOnlyIndexes && isColumnReplicaOnlyIndex(columnIndex));
+    }
+
+    /**
      * @param columnIndex numeric index of the column
      * @return true if column is indexed, otherwise false.
      */
@@ -200,17 +211,6 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
      */
     default boolean isColumnReplicaOnlyIndex(int columnIndex) {
         return false;
-    }
-
-    /**
-     * Effective, role-aware index availability for query planning. A replica-only index is
-     * inactive when this node skips replica-only indexes (a replicating primary).
-     *
-     * @param skipReplicaOnlyIndexes value of CairoConfiguration.skipReplicaOnlyIndexes()
-     */
-    default boolean isColumnIndexActive(int columnIndex, boolean skipReplicaOnlyIndexes) {
-        return isColumnIndexed(columnIndex)
-                && !(skipReplicaOnlyIndexes && isColumnReplicaOnlyIndex(columnIndex));
     }
 
     /**

@@ -29,12 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.TableSnapshotRestore;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -114,13 +109,13 @@ public class SnapshotReplicaOnlyRebuildTest extends AbstractCairoTest {
             // Replica-only column: NO index files in any partition directory.
             Assert.assertFalse(
                     "replica-only column 's' must NOT have index files after restore on a skipping node",
-                    indexFilesExist("x", "s")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
             );
 
             // Normal column: index files MUST exist (rebuild ran normally).
             Assert.assertTrue(
                     "normal-indexed column 't' MUST have index files after restore on a skipping node",
-                    indexFilesExist("x", "t")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "t")
             );
 
             engine.checkpointRelease();
@@ -174,11 +169,11 @@ public class SnapshotReplicaOnlyRebuildTest extends AbstractCairoTest {
             // Both columns must have index files when skip=false.
             Assert.assertTrue(
                     "replica-only column 's' MUST have index files after rebuild on a non-skipping node",
-                    indexFilesExist("y", "s")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "y", "s")
             );
             Assert.assertTrue(
                     "normal-indexed column 't' MUST have index files after rebuild on a non-skipping node",
-                    indexFilesExist("y", "t")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "y", "t")
             );
         });
     }
@@ -187,69 +182,4 @@ public class SnapshotReplicaOnlyRebuildTest extends AbstractCairoTest {
     // Helpers (mirrored from TableWriterReplicaOnlySkipTest)
     // -------------------------------------------------------------------------
 
-    /**
-     * Scans every partition directory under the table root for any bitmap key file
-     * ({@code <col>.k.*}) or bitmap value file ({@code <col>.v.*}) for the given column.
-     * Returns {@code true} if any such file exists.
-     * <p>
-     * Note: per-column index files live in the PARTITION directory; the symbol
-     * dictionary's own {@code .k}/{@code .v} files live at the TABLE ROOT and are
-     * deliberately not scanned here.
-     */
-    private boolean indexFilesExist(String table, String col) {
-        final TableToken token = engine.verifyTableName(table);
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final boolean[] found = {false};
-        final StringSink fileName = new StringSink();
-        final String keyPrefix = col + ".k";
-        final String valPrefix = col + ".v";
-        final String postingKeyPrefix = col + ".pk";
-        final String postingValPrefix = col + ".pv";
-        try (Path tablePath = new Path(); Path partPath = new Path()) {
-            tablePath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-            ff.iterateDir(tablePath.$(), (pUtf8NameZ, type) -> {
-                if (type != Files.DT_DIR) {
-                    return;
-                }
-                fileName.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-                // skip "." and ".." plus non-partition dirs (wal*, txn_seq, etc.)
-                if (Chars.equals(fileName, '.') || Chars.equals(fileName, "..") ||
-                        Chars.startsWith(fileName, "wal") || Chars.startsWith(fileName, "txn_seq")) {
-                    return;
-                }
-                partPath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(fileName);
-                final StringSink inner = new StringSink();
-                ff.iterateDir(partPath.$(), (pInnerZ, innerType) -> {
-                    if (innerType != Files.DT_FILE && innerType != Files.DT_UNKNOWN) {
-                        return;
-                    }
-                    inner.clear();
-                    Utf8s.utf8ToUtf16Z(pInnerZ, inner);
-                    if (matchesIndexFile(inner, postingKeyPrefix)
-                            || matchesIndexFile(inner, postingValPrefix)
-                            || matchesIndexFile(inner, keyPrefix)
-                            || matchesIndexFile(inner, valPrefix)) {
-                        found[0] = true;
-                    }
-                });
-            });
-        }
-        return found[0];
-    }
-
-    /**
-     * True if {@code name} equals {@code prefix}, or equals {@code prefix + "." + <digits>}
-     * (the columnNameTxn-suffixed form).
-     */
-    private boolean matchesIndexFile(CharSequence name, String prefix) {
-        if (!Chars.startsWith(name, prefix)) {
-            return false;
-        }
-        if (name.length() == prefix.length()) {
-            return true;
-        }
-        // next char after the prefix must be '.' to avoid matching e.g. "s.kx"
-        return name.charAt(prefix.length()) == '.';
-    }
 }

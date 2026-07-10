@@ -4505,6 +4505,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             byte indexType = metadata.getColumnIndexType(columnIndex);
             if (IndexType.isIndexed(indexType)) {
+                // A replica-only index is never materialized on a skipping primary, and may be
+                // transiently absent on a non-skipping node until the first insert-apply reconcile
+                // rebuilds it (a partition attached before that, e.g. a _dmeta-less backup copy, has
+                // no sidecars). ATTACH must not require the .pk/.pv (or .k/.v) files in either case,
+                // else it throws fileNotFound and suspends the table on the WAL-apply of the ATTACH.
+                // Mirror the gate + tolerance in copyOrRebuildColumnIndexes / linkPartitionIndexFiles.
+                if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                        && (configuration.skipReplicaOnlyIndexes()
+                        || !ff.exists(keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn)))) {
+                    return;
+                }
                 // Verify .pk exists before trying to resolve sealTxn from it.
                 keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
@@ -4695,7 +4706,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         removeFileOrLog(ff, detachedPath.$());
                     } else if (isIndexedNow
                             && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached
-                            || indexTypeNow != indexTypeAtDetached)) {
+                            || indexTypeNow != indexTypeAtDetached)
+                            // A skipping primary must not materialize a replica-only index for the
+                            // attached partition: rebuildAttachedPartitionColumnIndex -> reindexColumn
+                            // bypasses isSupportedColumn and would build .k/.v (or posting) files this
+                            // node never maintains, violating the "indexer wired + files present <=>
+                            // !skipReplicaOnlyIndexes()" invariant and leaving a stale/partial index.
+                            // Mirror the gate in rebuildPartitionIndexFiles.
+                            && !(metadata.isColumnReplicaOnlyIndex(colIdx) && configuration.skipReplicaOnlyIndexes())) {
                         detachedPath.trimTo(detachedPartitionRoot);
                         rebuildAttachedPartitionColumnIndex(partitionTimestamp, partitionSize, columnName);
                     }

@@ -45,8 +45,8 @@ public class TableColumnMetadata implements Plannable {
     private byte indexType;
     private int indexValueBlockCapacity;
     private int parquetEncodingConfig;
-    private boolean symbolCacheFlag;
     private boolean replicaOnlyIndex;
+    private boolean symbolCacheFlag;
 
     public TableColumnMetadata(String columnName, int columnType) {
         this(columnName, columnType, null);
@@ -225,12 +225,12 @@ public class TableColumnMetadata implements Plannable {
         return IndexType.isIndexed(indexType);
     }
 
-    public boolean isSymbolCacheFlag() {
-        return symbolCacheFlag;
-    }
-
     public boolean isReplicaOnlyIndex() {
         return replicaOnlyIndex;
+    }
+
+    public boolean isSymbolCacheFlag() {
+        return symbolCacheFlag;
     }
 
     public boolean isSymbolTableStatic() {

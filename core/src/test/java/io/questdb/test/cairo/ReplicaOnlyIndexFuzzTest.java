@@ -28,12 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -294,7 +289,7 @@ public class ReplicaOnlyIndexFuzzTest extends AbstractCairoTest {
                     drainWalQueue();
                     engine.releaseAllWriters();
 
-                    final boolean present = indexFilesExist("x", sCol);
+                    final boolean present = ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", sCol);
                     final boolean expectPresent = !skip && indexed;
                     Assert.assertEquals(
                             "convergent invariant: index-files-present <=> (!skip && indexed) "
@@ -349,49 +344,6 @@ public class ReplicaOnlyIndexFuzzTest extends AbstractCairoTest {
                 + "timestamp(ts) partition by day wal");
     }
 
-    // Scans every partition dir for any "<col>.k|.v|.pk|.pv" index file (partition-level, not the
-    // table-root symbol dictionary). Identical semantics to the sibling replica-only tests.
-    private boolean indexFilesExist(String table, String col) {
-        final TableToken token = engine.verifyTableName(table);
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final boolean[] found = {false};
-        final StringSink fileName = new StringSink();
-        final String keyPrefix = col + ".k";
-        final String valPrefix = col + ".v";
-        final String postingKeyPrefix = col + ".pk";
-        final String postingValPrefix = col + ".pv";
-        try (Path tablePath = new Path(); Path partPath = new Path()) {
-            tablePath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-            ff.iterateDir(tablePath.$(), (pUtf8NameZ, type) -> {
-                if (type != Files.DT_DIR) {
-                    return;
-                }
-                fileName.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-                if (Chars.equals(fileName, '.') || Chars.equals(fileName, "..")
-                        || Chars.startsWith(fileName, "wal") || Chars.startsWith(fileName, "txn_seq")) {
-                    return;
-                }
-                partPath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(fileName);
-                final StringSink inner = new StringSink();
-                ff.iterateDir(partPath.$(), (pInnerZ, innerType) -> {
-                    if (innerType != Files.DT_FILE && innerType != Files.DT_UNKNOWN) {
-                        return;
-                    }
-                    inner.clear();
-                    Utf8s.utf8ToUtf16Z(pInnerZ, inner);
-                    if (matchesIndexFile(inner, postingKeyPrefix)
-                            || matchesIndexFile(inner, postingValPrefix)
-                            || matchesIndexFile(inner, keyPrefix)
-                            || matchesIndexFile(inner, valPrefix)) {
-                        found[0] = true;
-                    }
-                });
-            });
-        }
-        return found[0];
-    }
-
     // Insert a deterministic batch into BOTH x and ref using the SAME values, mixing in-order and
     // out-of-order timestamps to drive the O3 path. Returns the advanced max timestamp.
     private long insertBatch(Rnd rnd, long ts, String sCol, StringBuilder ops) throws Exception {
@@ -431,16 +383,6 @@ public class ReplicaOnlyIndexFuzzTest extends AbstractCairoTest {
         execute(rv.toString());
         ops.append("insert n=").append(n).append(" maxTs=").append(maxTs).append('\n');
         return ts;
-    }
-
-    private boolean matchesIndexFile(CharSequence name, String prefix) {
-        if (!Chars.startsWith(name, prefix)) {
-            return false;
-        }
-        if (name.length() == prefix.length()) {
-            return true;
-        }
-        return name.charAt(prefix.length()) == '.';
     }
 
     private long scalarLong(String sql) throws Exception {

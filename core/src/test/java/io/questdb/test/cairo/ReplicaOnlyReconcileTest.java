@@ -25,14 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -75,20 +68,20 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
             drainWalQueue();
-            Assert.assertTrue("replica-only index files must exist after WAL apply on a replica", indexFilesExist("x", "s"));
+            Assert.assertTrue("replica-only index files must exist after WAL apply on a replica", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // Simulate restore-from-primary-backup: the backup lacks the index sidecars. Delete them
             // and drop all writers so the next access reopens the writer and reconciles on open.
             engine.releaseAllWriters();
-            deleteIndexFiles("x", "s");
-            Assert.assertFalse("index files must be gone after simulated restore", indexFilesExist("x", "s"));
+            ReplicaOnlyIndexTestUtils.deleteIndexFiles(engine, "x", "s");
+            Assert.assertFalse("index files must be gone after simulated restore", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // Force a writer reopen + apply. The constructor reconcile rebuilds the missing index;
             // the apply then maintains it for the new row.
             execute("insert into x values ('b',4,3000000)");
             drainWalQueue();
 
-            Assert.assertTrue("reconcile-on-open must rebuild the replica-only index files", indexFilesExist("x", "s"));
+            Assert.assertTrue("reconcile-on-open must rebuild the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertIndexUsed();
             assertContents("s\tv\tts\n" +
                     "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
@@ -104,7 +97,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
             drainWalQueue();
-            Assert.assertTrue("index files must exist on a replica", indexFilesExist("x", "s"));
+            Assert.assertTrue("index files must exist on a replica", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertIndexUsed();
             assertContents("s\tv\tts\n" +
                     "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
@@ -117,7 +110,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             execute("insert into x values ('a',4,4000000)");
             drainWalQueue();
 
-            Assert.assertFalse("role flip to primary must purge the replica-only index files", indexFilesExist("x", "s"));
+            Assert.assertFalse("role flip to primary must purge the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertIndexNotUsed();
             // metadata flags are KEPT (node-local materialization only):
             assertMetadataFlagsKept();
@@ -132,7 +125,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             execute("insert into x values ('b',5,5000000)");
             drainWalQueue();
 
-            Assert.assertTrue("role flip back to replica must rebuild the replica-only index files", indexFilesExist("x", "s"));
+            Assert.assertTrue("role flip back to replica must rebuild the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertIndexUsed();
             assertContents("s\tv\tts\n" +
                     "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
@@ -156,7 +149,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,86400000000)"); // day0 + day1
             drainWalQueue();
-            Assert.assertTrue("index files must exist on a replica", indexFilesExist("x", "s"));
+            Assert.assertTrue("index files must exist on a replica", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             final TableToken token = engine.verifyTableName("x");
             try (io.questdb.cairo.TableReader reader = engine.getReader(token)) {
@@ -172,7 +165,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
                 engine.bumpRoleGeneration();
                 execute("insert into x values ('a',4,500000)"); // out-of-order within day0
                 drainWalQueue();
-                Assert.assertFalse("promote must purge the replica-only index files", indexFilesExist("x", "s"));
+                Assert.assertFalse("promote must purge the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
                 // 3. Reload + re-open partition 0: closeRewrittenPartitionFiles closes its columns
                 //    (slot freed but retained non-null) and reloadColumnAt re-opens the CACHED reader
@@ -203,7 +196,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             execute("create table n (s symbol index capacity 256, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into n values ('a',1,0),('b',2,1000000),('a',3,86400000000)");
             drainWalQueue();
-            Assert.assertTrue(indexFilesExist("n", "s"));
+            Assert.assertTrue(ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "n", "s"));
 
             final TableToken token = engine.verifyTableName("n");
             try (io.questdb.cairo.TableReader reader = engine.getReader(token)) {
@@ -215,7 +208,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
                 // files to simulate genuine corruption -- a normal index is never legitimately absent.
                 execute("insert into n values ('a',4,500000)");
                 drainWalQueue();
-                deleteIndexFiles("n", "s");
+                ReplicaOnlyIndexTestUtils.deleteIndexFiles(engine, "n", "s");
 
                 boolean threw = false;
                 try {
@@ -238,7 +231,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
             drainWalQueue();
-            Assert.assertTrue("index files must exist on a replica", indexFilesExist("x", "s"));
+            Assert.assertTrue("index files must exist on a replica", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             final TableToken token = engine.verifyTableName("x");
 
@@ -250,7 +243,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             try (io.questdb.cairo.TableWriter writer = engine.getWriter(token, "sweep")) {
                 writer.reconcileReplicaOnlyIndexesIfRoleChanged();
             }
-            Assert.assertFalse("role-switch sweep trigger must purge the replica-only index files", indexFilesExist("x", "s"));
+            Assert.assertFalse("role-switch sweep trigger must purge the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // Demote back to a replica, bump again, and trigger the sweep: it must rebuild the index.
             skip = false;
@@ -260,7 +253,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
                 // Idempotent: a second call with no further gen bump is a cheap no-op.
                 writer.reconcileReplicaOnlyIndexesIfRoleChanged();
             }
-            Assert.assertTrue("role-switch sweep trigger must rebuild the replica-only index files", indexFilesExist("x", "s"));
+            Assert.assertTrue("role-switch sweep trigger must rebuild the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertIndexUsed();
             assertContents("s\tv\tts\n" +
                     "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
@@ -270,9 +263,8 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
 
     // Query correctness over the index scan path: s = 'a' rows in timestamp order.
     private void assertContents(String expected) throws Exception {
-        sink.clear();
-        printSql("select s, v, ts from x where s = 'a'", sink);
-        TestUtils.assertEquals(expected, sink);
+        assertQuery("select s, v, ts from x where s = 'a'")
+                .noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 
     // On a non-skipping node the planner chooses a symbol index scan for s = 'a'
@@ -301,72 +293,4 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
         }
     }
 
-    private void deleteIndexFiles(String table, String col) {
-        forEachIndexFile(table, col, (ff, fullPath) -> ff.removeQuiet(fullPath.$()));
-    }
-
-    private void forEachIndexFile(String table, String col, IndexFileAction action) {
-        final TableToken token = engine.verifyTableName(table);
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final StringSink dirName = new StringSink();
-        final String keyPrefix = col + ".k";
-        final String valPrefix = col + ".v";
-        final String postingKeyPrefix = col + ".pk";
-        final String postingValPrefix = col + ".pv";
-        try (Path tablePath = new Path(); Path partPath = new Path(); Path filePath = new Path()) {
-            tablePath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-            ff.iterateDir(tablePath.$(), (pUtf8NameZ, type) -> {
-                if (type != Files.DT_DIR) {
-                    return;
-                }
-                dirName.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, dirName);
-                if (Chars.equals(dirName, '.') || Chars.equals(dirName, "..")
-                        || Chars.startsWith(dirName, "wal") || Chars.startsWith(dirName, "txn_seq")) {
-                    return;
-                }
-                partPath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(dirName);
-                final StringSink inner = new StringSink();
-                ff.iterateDir(partPath.$(), (pInnerZ, innerType) -> {
-                    if (innerType != Files.DT_FILE && innerType != Files.DT_UNKNOWN) {
-                        return;
-                    }
-                    inner.clear();
-                    Utf8s.utf8ToUtf16Z(pInnerZ, inner);
-                    if (matchesIndexFile(inner, postingKeyPrefix)
-                            || matchesIndexFile(inner, postingValPrefix)
-                            || matchesIndexFile(inner, keyPrefix)
-                            || matchesIndexFile(inner, valPrefix)) {
-                        filePath.of(engine.getConfiguration().getDbRoot())
-                                .concat(token.getDirName()).concat(dirName).concat(inner);
-                        action.apply(ff, filePath);
-                    }
-                });
-            });
-        }
-    }
-
-    // True if any per-partition index file exists for the column (the symbol dictionary's own
-    // "<col>.k"/"<col>.v" live at the TABLE ROOT and are deliberately not scanned here).
-    private boolean indexFilesExist(String table, String col) {
-        final boolean[] found = {false};
-        forEachIndexFile(table, col, (ff, fullPath) -> found[0] = true);
-        return found[0];
-    }
-
-    // True if name == prefix, or name == prefix + "." + <suffix> (the columnNameTxn-suffixed form).
-    private boolean matchesIndexFile(CharSequence name, String prefix) {
-        if (!Chars.startsWith(name, prefix)) {
-            return false;
-        }
-        if (name.length() == prefix.length()) {
-            return true;
-        }
-        return name.charAt(prefix.length()) == '.';
-    }
-
-    @FunctionalInterface
-    private interface IndexFileAction {
-        void apply(FilesFacade ff, Path fullPath);
-    }
 }

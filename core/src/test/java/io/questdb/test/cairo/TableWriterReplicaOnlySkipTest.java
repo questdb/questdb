@@ -27,15 +27,13 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -94,7 +92,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
             Assert.assertFalse(
                     "no index files expected on skipping primary after ALTER ADD INDEX REPLICA ONLY",
-                    indexFilesExist("x", "s")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
             );
             assertMetadataFlags("x", "s");
         });
@@ -119,7 +117,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
                     "v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into x values ('a', 1.0, 0), ('b', 2.0, 1000000), ('a', 3.0, 2000000)");
             drainWalQueue();
-            Assert.assertFalse("posting index must NOT exist while skipping", indexFilesExist("x", "c"));
+            Assert.assertFalse("posting index must NOT exist while skipping", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "c"));
 
             // Flip to NON-skipping with a role bump but NO intervening insert: reconcile has not run, so
             // the replica-only posting index is still unmaterialized on disk.
@@ -156,10 +154,12 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         });
     }
 
+    // Full-battery result assertion: the fluent builder runs the second cursor pass, the
+    // calculateSize() cross-check and the variable-column check that a single printSql/assertEquals
+    // skips. sizeMayVary()/inferRandomAccess()/inferTimestamp() accommodate the heterogeneous
+    // full-scan-fallback factories these tests exercise.
     private void assertSql(String expected, String query) throws Exception {
-        sink.clear();
-        printSql(query, sink);
-        io.questdb.test.tools.TestUtils.assertEquals(expected, sink);
+        assertQuery(query).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 
     // Regression for an O3 crash: out-of-order rows spanning multiple partitions drive the O3 open-
@@ -182,17 +182,15 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             drainWalQueue();
 
             Assert.assertFalse("no index files expected on skipping primary after O3 multi-partition insert",
-                    indexFilesExist("x", "s"));
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
             // Full-scan correctness: the skipped index must not change query results.
-            sink.clear();
-            printSql("select s, v, ts from x where s = 'a'", sink);
-            io.questdb.test.tools.TestUtils.assertEquals(
+            assertSql(
                     "s\tv\tts\n" +
                             "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t3.0\t1970-01-01T00:00:02.000000Z\n" +
                             "a\t5.0\t1970-01-02T00:00:01.000000Z\n",
-                    sink);
+                    "select s, v, ts from x where s = 'a'");
         });
     }
 
@@ -209,7 +207,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             drainWalQueue();
 
             // No index built on the skipping primary at insert time.
-            Assert.assertFalse("no index files expected on skipping primary after insert", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary after insert", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // Round-trip the partition through parquet and back to native.
             execute("alter table x convert partition to parquet where ts >= 0");
@@ -220,18 +218,16 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             // The conversion back to native must not have rebuilt the replica-only index.
             Assert.assertFalse(
                     "no index files expected on skipping primary after parquet->native conversion",
-                    indexFilesExist("x", "s")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
             );
             assertMetadataFlags("x", "s");
 
             // Full-scan correctness: the skipped index must not change query results.
-            sink.clear();
-            printSql("select s, ts from x where s = 'a'", sink);
-            io.questdb.test.tools.TestUtils.assertEquals(
+            assertSql(
                     "s\tts\n" +
                             "a\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t1970-01-01T00:00:02.000000Z\n",
-                    sink);
+                    "select s, ts from x where s = 'a'");
         });
     }
 
@@ -263,8 +259,8 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             final TableToken token = engine.verifyTableName("x");
 
             // No index files for either replica-only column on the skipping primary before conversion.
-            Assert.assertFalse("no s index files expected before conversion", indexFilesExist("x", "s"));
-            Assert.assertFalse("no s2 index files expected before conversion", indexFilesExist("x", "s2"));
+            Assert.assertFalse("no s index files expected before conversion", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+            Assert.assertFalse("no s2 index files expected before conversion", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s2"));
 
             // Convert the populated partition native -> parquet. Without the guard in
             // copyOrRebuildColumnIndexes the link branch (colTop==0, column s) throws
@@ -279,24 +275,22 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             );
             Assert.assertFalse(
                     "no s index files expected after native->parquet conversion",
-                    indexFilesExist("x", "s")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
             );
             Assert.assertFalse(
                     "no s2 index files expected after native->parquet conversion",
-                    indexFilesExist("x", "s2")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s2")
             );
             assertMetadataFlags("x", "s");
             assertMetadataFlags("x", "s2");
 
             // Full-scan correctness over the parquet partition: results must be unaffected.
-            sink.clear();
-            printSql("select s, s2, ts from x where s = 'a'", sink);
-            io.questdb.test.tools.TestUtils.assertEquals(
+            assertSql(
                     "s\ts2\tts\n" +
                             "a\t\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t\t1970-01-01T00:00:02.000000Z\n" +
                             "a\tx\t1970-01-01T00:00:04.000000Z\n",
-                    sink);
+                    "select s, s2, ts from x where s = 'a'");
         });
     }
 
@@ -307,7 +301,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
             drainWalQueue();
 
-            Assert.assertFalse("no index files expected on skipping primary", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
             // symbol dictionary must still be built (only the bitmap index is skipped):
             // the per-column symbol map files (s.o/s.c/s.k/s.v at the table root) are always present.
@@ -330,7 +324,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Nothing built at insert time on the skipping primary.
-            Assert.assertFalse("no index files expected on skipping primary before REINDEX", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary before REINDEX", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // The replica-only column is excluded by the IndexBuilder gate, so the whole-table
             // REINDEX finds no reindexable column and reports it as un-indexed (instead of building).
@@ -344,7 +338,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             engine.releaseAllReaders();
 
             // REINDEX must not have built the replica-only index on the skipping primary.
-            Assert.assertFalse("no index files expected on skipping primary after REINDEX", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary after REINDEX", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
         });
     }
@@ -378,17 +372,15 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             // (3) no index files materialised on the skipping primary
             Assert.assertFalse(
                     "no index files expected on skipping primary after SYMBOL CAPACITY change",
-                    indexFilesExist("x", "s")
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
             );
 
             // table remains queryable; the skipped index must not change results
-            sink.clear();
-            printSql("select s, ts from x where s = 'a'", sink);
-            io.questdb.test.tools.TestUtils.assertEquals(
+            assertSql(
                     "s\tts\n" +
                             "a\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t1970-01-01T00:00:02.000000Z\n",
-                    sink);
+                    "select s, ts from x where s = 'a'");
         });
     }
 
@@ -412,9 +404,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             assertMetadataFlags("x", "s");
 
             // empty + queryable
-            sink.clear();
-            printSql("select count() from x", sink);
-            io.questdb.test.tools.TestUtils.assertEquals("count\n0\n", sink);
+            assertSql("count\n0\n", "select count() from x");
         });
     }
 
@@ -431,7 +421,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             // Nothing built on the skipping primary at insert time.
-            Assert.assertFalse("no index files expected on skipping primary before DROP INDEX", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary before DROP INDEX", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // DROP INDEX must not OOB on the absent indexer slot.
             execute("alter table x alter column s drop index");
@@ -447,16 +437,14 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
                 Assert.assertFalse("replica-only flag should be cleared after DROP INDEX",
                         reader.getMetadata().isColumnReplicaOnlyIndex(colIdx));
             }
-            Assert.assertFalse("no index files expected after DROP INDEX", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected after DROP INDEX", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // table remains queryable
-            sink.clear();
-            printSql("select s, ts from x where s = 'a'", sink);
-            io.questdb.test.tools.TestUtils.assertEquals(
+            assertSql(
                     "s\tts\n" +
                             "a\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t1970-01-01T00:00:02.000000Z\n",
-                    sink);
+                    "select s, ts from x where s = 'a'");
         });
     }
 
@@ -485,18 +473,16 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
                     "WAL table must not be suspended by O3 posting-seal sweep over a replica-only index",
                     engine.getTableSequencerAPI().isSuspended(token)
             );
-            Assert.assertFalse("no posting index files expected on skipping primary after O3", indexFilesExist("x", "s"));
+            Assert.assertFalse("no posting index files expected on skipping primary after O3", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
 
             // Full-scan correctness across both partitions.
-            sink.clear();
-            printSql("select s, v, ts from x where s = 'a' order by ts", sink);
-            io.questdb.test.tools.TestUtils.assertEquals(
+            assertSql(
                     "s\tv\tts\n" +
                             "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t4.0\t1970-01-01T00:00:00.500000Z\n" +
                             "a\t6.0\t1970-01-02T00:00:00.500000Z\n",
-                    sink);
+                    "select s, v, ts from x where s = 'a' order by ts");
         });
     }
 
@@ -524,16 +510,14 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
                     "WAL table must not be suspended by parquet covering-posting reseal over a replica-only index",
                     engine.getTableSequencerAPI().isSuspended(token)
             );
-            Assert.assertFalse("no posting index files expected on skipping primary", indexFilesExist("x", "s"));
+            Assert.assertFalse("no posting index files expected on skipping primary", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
 
-            sink.clear();
-            printSql("select s, v, ts from x where s = 'a' order by ts", sink);
-            io.questdb.test.tools.TestUtils.assertEquals(
+            assertSql(
                     "s\tv\tts\n" +
                             "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t4.0\t1970-01-01T00:00:00.500000Z\n",
-                    sink);
+                    "select s, v, ts from x where s = 'a' order by ts");
         });
     }
 
@@ -556,7 +540,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             execute("insert into x select 'a', x * 1.0, timestamp_sequence(0, 60000000L) from long_sequence(300)");
             engine.releaseAllWriters();
 
-            Assert.assertFalse("no index files expected on skipping primary after seed insert", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary after seed insert", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // Three O3 inserts landing near the tail of the seeded partition: with a split-min-size of 1
             // each one splits the last partition (rather than merging), so several split partitions
@@ -574,7 +558,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             );
 
             // The split path must not have materialized the replica-only index.
-            Assert.assertFalse("no index files expected on skipping primary after O3 split", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary after O3 split", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // Squash the split partitions back together. Without the FrameImpl fix this opens a
             // BitmapIndexWriter over the absent .k and throws, distressing the writer.
@@ -592,7 +576,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             );
 
             // Still no index files after the squash, and the metadata flags survive.
-            Assert.assertFalse("no index files expected on skipping primary after squash", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary after squash", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
 
             // Full-scan correctness over the squashed partition: the skipped index must not change results.
@@ -614,7 +598,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             drainWalQueue();
 
             final TableToken token = engine.verifyTableName("x");
-            Assert.assertFalse("no index files expected on skipping primary before type change", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected on skipping primary before type change", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             execute("alter table x alter column s type varchar");
             drainWalQueue();
@@ -623,7 +607,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
                     "WAL table must not be suspended by ALTER COLUMN TYPE on a replica-only indexed column",
                     engine.getTableSequencerAPI().isSuspended(token)
             );
-            Assert.assertFalse("no index files expected after type change", indexFilesExist("x", "s"));
+            Assert.assertFalse("no index files expected after type change", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // The replacement column is a plain varchar: no longer indexed or replica-only.
             try (TableReader reader = engine.getReader(token)) {
@@ -637,6 +621,101 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .returns("s\tv\tts\na\t1.0\t1970-01-01T00:00:00.000000Z\na\t3.0\t1970-01-01T00:00:02.000000Z\n");
         });
+    }
+
+    // ATTACH PARTITION LIST of a partition whose _dmeta is absent (a backup / filesystem-copied
+    // partition) makes attachPrepare return false, so ATTACH falls through to attachValidateMetadata ->
+    // attachPartitionCheckSymbolColumn. That check read the raw indexed flag and demanded the index
+    // .pk/.pv (or .k/.v) sidecars, which a replica-only index never materializes on a skipping primary
+    // -> "Index key file does not exist" (on a WAL table this suspends it during the ATTACH apply). The
+    // gate now skips the sidecar check for a replica-only column, mirroring copyOrRebuildColumnIndexes.
+    @Test
+    public void testAttachPartitionReplicaOnlyIndexMissingMetadataDoesNotRequireIndexFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 32 replica only, i int, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into x values ('a', 1, 0), ('b', 2, 3600000000), ('a', 3, 86400000000)");
+            engine.releaseAllWriters();
+            Assert.assertFalse("no index files expected on skipping primary", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+
+            execute("alter table x detach partition list '1970-01-01'");
+            engine.releaseAllWriters();
+
+            // Simulate a backup / filesystem-copied partition: drop _dmeta + _dcv from the detached dir
+            // so attachPrepare returns false and ATTACH reaches attachValidateMetadata.
+            final TableToken token = engine.verifyTableName("x");
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot()).concat(token).concat("1970-01-01").put(TableUtils.DETACHED_DIR_MARKER).concat(TableUtils.META_FILE_NAME).$();
+                Assert.assertTrue("remove _dmeta", TestUtils.remove(p.$()));
+                p.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+                Assert.assertTrue("remove _dcv", TestUtils.remove(p.$()));
+            }
+            renameDetachedToAttachable("x", "1970-01-01");
+
+            // Without the fix this throws "Index key file does not exist".
+            execute("alter table x attach partition list '1970-01-01'");
+            engine.releaseAllWriters();
+
+            Assert.assertFalse("attach must not materialize the replica-only index", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+            assertMetadataFlags("x", "s");
+            assertSql(
+                    "s\ti\tts\n" +
+                            "a\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "b\t2\t1970-01-01T01:00:00.000000Z\n" +
+                            "a\t3\t1970-01-02T00:00:00.000000Z\n",
+                    "select s, i, ts from x order by ts");
+        });
+    }
+
+    // ATTACH of a partition detached BEFORE the column gained its replica-only index drives the
+    // attachPrepare rebuild branch (isIndexedNow && !wasIndexedAtDetached), which is now gated for a
+    // replica-only column on a skipping primary (mirroring rebuildPartitionIndexFiles). NOTE: the gate
+    // here is defensive/consistency-only -- rebuildAttachedPartitionColumnIndex runs reindexColumn with
+    // an empty path root (attachIndexBuilder.of(Utf8String.EMPTY)) against the partition's FINAL native
+    // path, which does not exist yet at attachPrepare time (the data is still in the ".attachable" dir,
+    // renamed into place only later), so doReindex no-ops ("partition does not exist"). It therefore
+    // cannot materialize a stale index today; the gate keeps the invariant robust if that path changes.
+    // This test is end-to-end coverage of ATTACH over a replica-only-indexed column: it passes with or
+    // without the gate (there is no materialization to reproduce), but pins that ATTACH stays clean.
+    @Test
+    public void testAttachPartitionDoesNotRebuildReplicaOnlyIndexOnSkippingPrimary() throws Exception {
+        assertMemoryLeak(() -> {
+            // s is a plain (un-indexed) symbol at detach time.
+            execute("create table x (s symbol capacity 32, i int, ts timestamp) timestamp(ts) partition by day bypass wal");
+            execute("insert into x values ('a', 1, 0), ('b', 2, 3600000000), ('a', 3, 86400000000)");
+            engine.releaseAllWriters();
+
+            execute("alter table x detach partition list '1970-01-01'");
+            engine.releaseAllWriters();
+
+            // Add the replica-only index after the detach: the skipping primary materializes nothing.
+            execute("alter table x alter column s add index replica only");
+            engine.releaseAllWriters();
+            Assert.assertFalse("no index files expected on skipping primary after ADD INDEX REPLICA ONLY", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+
+            // Keep _dmeta so attachPrepare runs and reaches the rebuild branch.
+            renameDetachedToAttachable("x", "1970-01-01");
+            execute("alter table x attach partition list '1970-01-01'");
+            engine.releaseAllWriters();
+
+            Assert.assertFalse("attach must not materialize the replica-only index on a skipping primary", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+            assertMetadataFlags("x", "s");
+            assertSql(
+                    "s\ti\tts\n" +
+                            "a\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "b\t2\t1970-01-01T01:00:00.000000Z\n" +
+                            "a\t3\t1970-01-02T00:00:00.000000Z\n",
+                    "select s, i, ts from x order by ts");
+        });
+    }
+
+    // Rename "<partition>.detached" to the attach marker so ATTACH PARTITION LIST can pick it up.
+    private void renameDetachedToAttachable(String table, String partition) {
+        final TableToken token = engine.verifyTableName(table);
+        try (Path from = new Path(); Path to = new Path()) {
+            from.of(engine.getConfiguration().getDbRoot()).concat(token).concat(partition).put(TableUtils.DETACHED_DIR_MARKER).$();
+            to.of(engine.getConfiguration().getDbRoot()).concat(token).concat(partition).put(engine.getConfiguration().getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(from.$(), to.$()) > -1);
+        }
     }
 
     // The metadata must still record indexed=true and replicaOnly=true so a replica or a promoted
@@ -661,65 +740,6 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             path.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(col).put(".c");
             Assert.assertTrue("symbol char file (" + col + ".c) should exist", ff.exists(path.$()));
         }
-    }
-
-    // Scans every partition directory under the table root for any bitmap key file
-    // ("<col>.k.*"), bitmap value file ("<col>.v.*"), or posting index file
-    // ("<col>.pk.*" / "<col>.pv.*") for the given column. Returns true if any exist.
-    // Note: per-column index files are named "<col>.k"/"<col>.v" in the PARTITION dir; the symbol
-    // dictionary's own "<col>.k"/"<col>.v" live at the TABLE ROOT and are deliberately not scanned here.
-    private boolean indexFilesExist(String table, String col) {
-        final TableToken token = engine.verifyTableName(table);
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final boolean[] found = {false};
-        final StringSink fileName = new StringSink();
-        final String keyPrefix = col + ".k";
-        final String valPrefix = col + ".v";
-        final String postingKeyPrefix = col + ".pk";
-        final String postingValPrefix = col + ".pv";
-        try (Path tablePath = new Path(); Path partPath = new Path()) {
-            tablePath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-            ff.iterateDir(tablePath.$(), (pUtf8NameZ, type) -> {
-                if (type != Files.DT_DIR) {
-                    return;
-                }
-                fileName.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-                // skip "." and ".." plus non-partition dirs (wal*, txn_seq, etc.)
-                if (Chars.equals(fileName, '.') || Chars.equals(fileName, "..") || Chars.startsWith(fileName, "wal") || Chars.startsWith(fileName, "txn_seq")) {
-                    return;
-                }
-                partPath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(fileName);
-                final StringSink inner = new StringSink();
-                ff.iterateDir(partPath.$(), (pInnerZ, innerType) -> {
-                    if (innerType != Files.DT_FILE && innerType != Files.DT_UNKNOWN) {
-                        return;
-                    }
-                    inner.clear();
-                    Utf8s.utf8ToUtf16Z(pInnerZ, inner);
-                    // exact "<col>.k" / "<col>.v" or with a columnNameTxn suffix "<col>.k.N"
-                    if (matchesIndexFile(inner, postingKeyPrefix)
-                            || matchesIndexFile(inner, postingValPrefix)
-                            || matchesIndexFile(inner, keyPrefix)
-                            || matchesIndexFile(inner, valPrefix)) {
-                        found[0] = true;
-                    }
-                });
-            });
-        }
-        return found[0];
-    }
-
-    // True if name == prefix, or name == prefix + "." + <digits> (the columnNameTxn-suffixed form).
-    private boolean matchesIndexFile(CharSequence name, String prefix) {
-        if (!Chars.startsWith(name, prefix)) {
-            return false;
-        }
-        if (name.length() == prefix.length()) {
-            return true;
-        }
-        // next char after the prefix must be '.' (txn suffix) to avoid matching e.g. "s.kx"
-        return name.charAt(prefix.length()) == '.';
     }
 
     private long selectLong(CharSequence sql) throws Exception {

@@ -28,12 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -136,6 +131,10 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
 
     // Fixed seeds -> deterministic, reproducible. NOT wall-clock / Math.random (banned).
     private static final long[] SEEDS = {0xC0FFEEL, 0xBEEFL, 0x1234L, 0xABCDL};
+    // The ONE seed whose op sequence deterministically unmasks the pre-existing, out-of-scope posting-
+    // reader .pk-absence defect (class javadoc "SEPARATE FINDING"). Named so the risk-acceptance below
+    // is explicit and pinned to a single scenario rather than "any one seed may fail".
+    private static final long KNOWN_POSTING_DEFECT_SEED = 0xABCDL;
     private static final int OPS_PER_SEED = 500;
     // Small symbol universe so where-filters frequently hit populated values.
     private static final String[] SYMS = {"a", "b", "c", "d", "e", "f", "g", "h", "null-ish", "z"};
@@ -164,24 +163,37 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
         // a later insert-apply reconcile builds it over the (now-parquet) partition. See
         // TableWriter.copyOrRebuildColumnIndexes / linkPartitionIndexFiles.
         //
-        // The ONLY tolerated failure is the SEPARATE, newly-unmasked posting-index READER defect (class
-        // javadoc "SEPARATE FINDING"): a NON-replica-only posting index whose per-partition .pk is
-        // absent, read-faulting at query time. Matched by its exact signature so nothing else is masked;
-        // the strict count / covering / suspend oracle and the other three seeds stay FULLY STRICT.
-        int strictlyCompleted = 0;
+        // RISK-ACCEPTED (explicit maintainer decision, named + pinned): the SEPARATE, pre-existing
+        // posting-index READER defect (class javadoc "SEPARATE FINDING") -- a NON-replica-only posting
+        // index whose per-partition .pk is absent when the planner emits an index scan, hard-faulting at
+        // query time -- lives in the posting reader/planner, not in this replica-only change. Fixing it
+        // here (planner must not choose an index scan when the per-partition .pk is absent, or the reader
+        // must tolerate that absence) is out of scope for this PR and would destabilise a mission-critical
+        // change; it is deferred to the posting-index owner. Remove this acceptance once that lands.
+        //
+        // The acceptance is tight, not a blanket ">=3 seeds pass": EXACTLY the one documented seed
+        // (KNOWN_POSTING_DEFECT_SEED) may terminate early, and ONLY via the exact non-replica-only
+        // ".pk"-absent signature. Every other seed must complete FULLY STRICT (count / covering / suspend
+        // oracle intact); a replica-only column faulting, a different signature, or a SECOND seed tripping
+        // this all re-throw. The accepted seed's ops BEFORE the fault still execute and are asserted, so
+        // coverage is only lost past the fault point (documented, not silent).
+        boolean toleratedDefectSeen = false;
         for (long seed : SEEDS) {
             try {
                 runScenario(seed);
-                strictlyCompleted++;
             } catch (CairoException ce) {
                 if (!isTolerablePostingReaderMissingPkDefect(ce)) {
                     throw ce;
                 }
+                Assert.assertFalse("a SECOND seed hit the accepted posting-reader .pk defect -> the "
+                        + "tolerance is too broad or a new regression appeared (seed=0x" + Long.toHexString(seed) + ')',
+                        toleratedDefectSeen);
+                Assert.assertEquals("only the documented seed may unmask the accepted posting-reader defect; "
+                        + "a different seed faulting means the scenario shifted -- investigate, do not widen the mask",
+                        KNOWN_POSTING_DEFECT_SEED, seed);
+                toleratedDefectSeen = true;
             }
         }
-        // The three convert-clean seeds MUST run fully strict; if even those regressed, fail.
-        Assert.assertTrue("expected >=3 seeds to complete fully strict, got " + strictlyCompleted,
-                strictlyCompleted >= 3);
     }
 
     // Extracts "<col>" from a "...: <path>/<col>.pk.<txn>" missing-file message, or null when the
@@ -261,49 +273,6 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
                 "timestamp(ts) partition by day wal");
     }
 
-    // Per-partition index-file presence for a column (.k/.v bitmap or .pk/.pv posting), ignoring the
-    // table-root symbol dictionary. Identical semantics to the sibling replica-only tests.
-    private boolean indexFilesExist(String table, String col) {
-        final TableToken token = engine.verifyTableName(table);
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final boolean[] found = {false};
-        final StringSink fileName = new StringSink();
-        final String keyPrefix = col + ".k";
-        final String valPrefix = col + ".v";
-        final String postingKeyPrefix = col + ".pk";
-        final String postingValPrefix = col + ".pv";
-        try (Path tablePath = new Path(); Path partPath = new Path()) {
-            tablePath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-            ff.iterateDir(tablePath.$(), (pUtf8NameZ, type) -> {
-                if (type != Files.DT_DIR) {
-                    return;
-                }
-                fileName.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-                if (Chars.equals(fileName, '.') || Chars.equals(fileName, "..")
-                        || Chars.startsWith(fileName, "wal") || Chars.startsWith(fileName, "txn_seq")) {
-                    return;
-                }
-                partPath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(fileName);
-                final StringSink inner = new StringSink();
-                ff.iterateDir(partPath.$(), (pInnerZ, innerType) -> {
-                    if (innerType != Files.DT_FILE && innerType != Files.DT_UNKNOWN) {
-                        return;
-                    }
-                    inner.clear();
-                    Utf8s.utf8ToUtf16Z(pInnerZ, inner);
-                    if (matchesIndexFile(inner, postingKeyPrefix)
-                            || matchesIndexFile(inner, postingValPrefix)
-                            || matchesIndexFile(inner, keyPrefix)
-                            || matchesIndexFile(inner, valPrefix)) {
-                        found[0] = true;
-                    }
-                });
-            });
-        }
-        return found[0];
-    }
-
     // Insert a deterministic batch into BOTH x and ref using the SAME values for every column,
     // mixing in-order and out-of-order timestamps to drive O3. x and ref carry the SAME set of
     // currently-present symbol columns (ref mirrors x's structural ops, just index-free), so both
@@ -370,16 +339,6 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
         execute(rv.toString());
         ops.append("insert n=").append(n).append(" maxTs=").append(maxTs).append('\n');
         return ts;
-    }
-
-    private boolean matchesIndexFile(CharSequence name, String prefix) {
-        if (!Chars.startsWith(name, prefix)) {
-            return false;
-        }
-        if (name.length() == prefix.length()) {
-            return true;
-        }
-        return name.charAt(prefix.length()) == '.';
     }
 
     private void runScenario(long seed) throws Exception {
@@ -610,7 +569,7 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
                     if (!col.present) {
                         continue;
                     }
-                    final boolean present = indexFilesExist("x", col.name);
+                    final boolean present = ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", col.name);
                     // Gate on the ACTUAL replica-only-ness of the live index, not the column's nature:
                     // a plain (non-replica-only) index -- whether 'a' or a b/c/e re-added with
                     // ADD INDEX replicaOnly=false -- stays present regardless of skip; only a

@@ -24,16 +24,13 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -74,9 +71,9 @@ public class ReplicaOnlyIndexReaderToleranceTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlanContaining("DeferredSingleSymbolFilterPageFrame");
 
-            Assert.assertTrue("normal index files must exist after WAL apply", indexFilesExist("n", "s"));
-            deleteIndexFiles("n", "s");
-            Assert.assertFalse("normal index files must be gone after delete", indexFilesExist("n", "s"));
+            Assert.assertTrue("normal index files must exist after WAL apply", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "n", "s"));
+            ReplicaOnlyIndexTestUtils.deleteIndexFiles(engine, "n", "s");
+            Assert.assertFalse("normal index files must be gone after delete", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "n", "s"));
 
             boolean threw = false;
             try {
@@ -105,9 +102,9 @@ public class ReplicaOnlyIndexReaderToleranceTest extends AbstractCairoTest {
                     .assertsPlanContaining("DeferredSingleSymbolFilterPageFrame");
 
             // index files exist now; delete them to simulate the post-restore / pre-reconcile transient.
-            Assert.assertTrue("replica-only index files must exist after WAL apply on a non-skipping node", indexFilesExist("x", "s"));
-            deleteIndexFiles("x", "s");
-            Assert.assertFalse("replica-only index files must be gone after delete", indexFilesExist("x", "s"));
+            Assert.assertTrue("replica-only index files must exist after WAL apply on a non-skipping node", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+            ReplicaOnlyIndexTestUtils.deleteIndexFiles(engine, "x", "s");
+            Assert.assertFalse("replica-only index files must be gone after delete", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             boolean threw = false;
             try {
@@ -121,9 +118,45 @@ public class ReplicaOnlyIndexReaderToleranceTest extends AbstractCairoTest {
             Assert.assertTrue(threw);
 
             // table must still be usable for non-index queries -- it must NOT be suspended.
-            sink.clear();
-            printSql("select count(*) from x", sink);
-            TestUtils.assertEquals("count\n3\n", sink);
+            assertQuery("select count(*) from x").noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns("count\n3\n");
+        });
+    }
+
+    @Test
+    public void testCorruptReplicaOnlyIndexHeaderStaysCritical() throws Exception {
+        // Companion to testMissingReplicaOnlyIndexFilesDegradeGracefully: a MISSING replica-only index file
+        // (ENOENT, errno 2) is "not materialized" and must degrade gracefully -- but a PRESENT-but-CORRUPT
+        // one (a torn/truncated header, errno 0) is genuine corruption and must STILL surface as CRITICAL,
+        // exactly like a normal index. The graceful-degradation catch keys strictly on
+        // Files.isErrnoFileDoesNotExist, so this pins that it does not widen to swallow errno-0 corruption
+        // (which would silently drop rows / hide storage damage on a replica). Guards a plausible future
+        // regression that the missing-files tests (errno 2 only) cannot catch.
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
+            drainWalQueue();
+
+            assertQuery("select s, v, ts from x where s = 'a'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("DeferredSingleSymbolFilterPageFrame");
+
+            Assert.assertTrue("replica-only index files must exist after WAL apply", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+            // Truncate the bitmap KEY file ("s.k") header so the file is PRESENT but its index header
+            // cannot be read consistently -> a corruption error with errno 0 (not ENOENT).
+            truncateReplicaOnlyKeyFile(engine, "x", "s");
+
+            boolean threw = false;
+            try {
+                runQuery("select s, v, ts from x where s = 'a'");
+                Assert.fail("expected a CRITICAL corruption error for a present-but-truncated replica-only index header");
+            } catch (CairoException e) {
+                threw = true;
+                Assert.assertTrue(
+                        "a present-but-corrupt replica-only index header must remain CRITICAL, not be swallowed as 'not materialized'; msg=" + e.getFlyweightMessage(),
+                        e.isCritical()
+                );
+            }
+            Assert.assertTrue(threw);
         });
     }
 
@@ -183,7 +216,7 @@ public class ReplicaOnlyIndexReaderToleranceTest extends AbstractCairoTest {
                     .assertsPlanContaining("DeferredSingleSymbolFilterPageFrame");
 
             // The key files are present on disk: the cheap pre-check WILL pass.
-            Assert.assertTrue("replica-only index key file must exist on disk", indexFilesExist("x", "s"));
+            Assert.assertTrue("replica-only index key file must exist on disk", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // Arm: pre-check still sees the file (exists==true), but the ctor open is forced to fail
             // with ENOENT -- the exact TOCTOU the catch must absorb.
@@ -203,10 +236,33 @@ public class ReplicaOnlyIndexReaderToleranceTest extends AbstractCairoTest {
 
             // The table must not be suspended: non-index queries still work, and once disarmed the
             // index query succeeds again (the file was never actually removed).
-            sink.clear();
-            printSql("select count(*) from x", sink);
-            TestUtils.assertEquals("count\n3\n", sink);
+            assertQuery("select count(*) from x").noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns("count\n3\n");
             runQuery("select s, v, ts from x where s = 'a'");
+        });
+    }
+
+    // Truncates the per-partition bitmap KEY file ("<col>.k") to a few bytes so its index header is
+    // present-but-unreadable (errno 0 corruption), leaving the value file intact. The table under test
+    // uses a bitmap symbol index, so the only per-partition files are "<col>.k"/"<col>.v" (no posting
+    // "<col>.pk"); we truncate just the ".k" header.
+    private static void truncateReplicaOnlyKeyFile(CairoEngine engine, String table, String col) {
+        final String keyExact = col + ".k";
+        ReplicaOnlyIndexTestUtils.forEachIndexFile(engine, table, col, (ff, fullPath) -> {
+            final String p = fullPath.toString();
+            final int slash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+            final String base = slash >= 0 ? p.substring(slash + 1) : p;
+            // match "<col>.k" or "<col>.k.<txn>" but not "<col>.pk"/"<col>.v"/"<col>.pv"
+            if (!(base.equals(keyExact) || base.startsWith(keyExact + "."))) {
+                return;
+            }
+            final long fd = ff.openRW(fullPath.$(), engine.getConfiguration().getWriterFileOpenOpts());
+            Assert.assertTrue("could not open replica-only key file for truncation", fd > -1);
+            try {
+                // 8 bytes is well below the bitmap index key-file header, so the header read fails.
+                Assert.assertTrue(ff.truncate(fd, 8));
+            } finally {
+                ff.close(fd);
+            }
         });
     }
 
@@ -222,74 +278,4 @@ public class ReplicaOnlyIndexReaderToleranceTest extends AbstractCairoTest {
         }
     }
 
-    // Deletes every per-partition bitmap/posting index file ("<col>.k"/"<col>.v"/"<col>.pk"/"<col>.pv",
-    // with or without a columnNameTxn suffix) for the given column. Inverts indexFilesExist below.
-    private void deleteIndexFiles(String table, String col) {
-        forEachIndexFile(table, col, (ff, fullPath) -> ff.removeQuiet(fullPath.$()));
-    }
-
-    // True if any per-partition index file exists for the column (the symbol dictionary's own
-    // "<col>.k"/"<col>.v" live at the TABLE ROOT and are deliberately not scanned here).
-    private boolean indexFilesExist(String table, String col) {
-        final boolean[] found = {false};
-        forEachIndexFile(table, col, (ff, fullPath) -> found[0] = true);
-        return found[0];
-    }
-
-    private void forEachIndexFile(String table, String col, IndexFileAction action) {
-        final TableToken token = engine.verifyTableName(table);
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        final StringSink dirName = new StringSink();
-        final String keyPrefix = col + ".k";
-        final String valPrefix = col + ".v";
-        final String postingKeyPrefix = col + ".pk";
-        final String postingValPrefix = col + ".pv";
-        try (Path tablePath = new Path(); Path partPath = new Path(); Path filePath = new Path()) {
-            tablePath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName());
-            ff.iterateDir(tablePath.$(), (pUtf8NameZ, type) -> {
-                if (type != Files.DT_DIR) {
-                    return;
-                }
-                dirName.clear();
-                Utf8s.utf8ToUtf16Z(pUtf8NameZ, dirName);
-                if (Chars.equals(dirName, '.') || Chars.equals(dirName, "..")
-                        || Chars.startsWith(dirName, "wal") || Chars.startsWith(dirName, "txn_seq")) {
-                    return;
-                }
-                partPath.of(engine.getConfiguration().getDbRoot()).concat(token.getDirName()).concat(dirName);
-                final StringSink inner = new StringSink();
-                ff.iterateDir(partPath.$(), (pInnerZ, innerType) -> {
-                    if (innerType != Files.DT_FILE && innerType != Files.DT_UNKNOWN) {
-                        return;
-                    }
-                    inner.clear();
-                    Utf8s.utf8ToUtf16Z(pInnerZ, inner);
-                    if (matchesIndexFile(inner, postingKeyPrefix)
-                            || matchesIndexFile(inner, postingValPrefix)
-                            || matchesIndexFile(inner, keyPrefix)
-                            || matchesIndexFile(inner, valPrefix)) {
-                        filePath.of(engine.getConfiguration().getDbRoot())
-                                .concat(token.getDirName()).concat(dirName).concat(inner);
-                        action.apply(ff, filePath);
-                    }
-                });
-            });
-        }
-    }
-
-    // True if name == prefix, or name == prefix + "." + <suffix> (the columnNameTxn-suffixed form).
-    private boolean matchesIndexFile(CharSequence name, String prefix) {
-        if (!Chars.startsWith(name, prefix)) {
-            return false;
-        }
-        if (name.length() == prefix.length()) {
-            return true;
-        }
-        return name.charAt(prefix.length()) == '.';
-    }
-
-    @FunctionalInterface
-    private interface IndexFileAction {
-        void apply(FilesFacade ff, Path fullPath);
-    }
 }

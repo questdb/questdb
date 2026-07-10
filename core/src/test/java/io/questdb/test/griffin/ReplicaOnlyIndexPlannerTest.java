@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
-import io.questdb.test.tools.TestUtils;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -57,13 +56,11 @@ public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
             execute("create table y (s symbol index replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into y values ('a',1,0),('a',2,1000000),('b',3,2000000)");
             drainWalQueue();
-            sink.clear();
-            printSql("select s, v, ts from y latest on ts partition by s", sink);
-            TestUtils.assertEquals(
-                    "s\tv\tts\n" +
+            assertQuery("select s, v, ts from y latest on ts partition by s")
+                    .noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp()
+                    .returns("s\tv\tts\n" +
                             "a\t2.0\t1970-01-01T00:00:01.000000Z\n" +
-                            "b\t3.0\t1970-01-01T00:00:02.000000Z\n",
-                    sink);
+                            "b\t3.0\t1970-01-01T00:00:02.000000Z\n");
 
             // plan must NOT use an indexed LATEST BY for s (the index is not materialized on a skipping primary)
             assertQuery("select s, v, ts from y latest on ts partition by s")
@@ -86,13 +83,11 @@ public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
             drainWalQueue();
 
             final String query = "select s2, v, ts from (select s as s2, v, ts from x) where s2 = 'a'";
-            sink.clear();
-            printSql(query, sink);
-            TestUtils.assertEquals(
-                    "s2\tv\tts\n" +
+            assertQuery(query)
+                    .noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp()
+                    .returns("s2\tv\tts\n" +
                             "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t3.0\t1970-01-01T00:00:02.000000Z\n",
-                    sink);
+                            "a\t3.0\t1970-01-01T00:00:02.000000Z\n");
 
             // plan must NOT use a symbol index scan over the aliased column on a skipping primary
             assertQuery(query)
@@ -107,13 +102,11 @@ public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
             drainWalQueue();
-            sink.clear();
-            printSql("select s, v, ts from x where s = 'a'", sink);
-            TestUtils.assertEquals(
-                    "s\tv\tts\n" +
+            assertQuery("select s, v, ts from x where s = 'a'")
+                    .noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp()
+                    .returns("s\tv\tts\n" +
                             "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t3.0\t1970-01-01T00:00:02.000000Z\n",
-                    sink);
+                            "a\t3.0\t1970-01-01T00:00:02.000000Z\n");
 
             // plan must NOT use a symbol index scan for s -- it must full-scan the frames instead
             assertQuery("select s, v, ts from x where s = 'a'")
