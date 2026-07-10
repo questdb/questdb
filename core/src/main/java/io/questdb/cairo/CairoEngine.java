@@ -578,12 +578,12 @@ public class CairoEngine implements Closeable, WriterSource {
             final MatViewStateReader matViewStateReader = new MatViewStateReader();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 if (isClosing()) {
-                    // SIGTERM/close landed mid-promote hydrate. Abort so the enterprise
-                    // switchMatViewMachinery unwind swaps the half-built store back to NoOp before
+                    // SIGTERM/close landed mid-promote hydrate. Abort so an out-of-tree caller
+                    // driving this during a role switch can unwind its half-built store before
                     // CairoEngine.close() frees matViewStateStore -- otherwise the free races this loop
-                    // (native use-after-free in a panic=abort cdylib). signalClose() sets closing before
-                    // freeOnExit reaches the engine, so it is observable here. The poll lives in the loop
-                    // body, not loadMatViewIntoStore, whose catch(Throwable) would swallow the abort.
+                    // over native memory. signalClose() sets closing before freeOnExit reaches the
+                    // engine, so it is observable here. The poll lives in the loop body, not
+                    // loadMatViewIntoStore, whose catch(Throwable) would swallow the abort.
                     throw CairoException.nonCritical().put("engine is closing; mat-view hydration aborted");
                 }
                 final TableToken tableToken = tableTokenBucket.get(i);
@@ -3120,4 +3120,3 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
 }
-
