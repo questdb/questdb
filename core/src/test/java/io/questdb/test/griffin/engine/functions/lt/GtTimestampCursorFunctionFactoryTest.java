@@ -413,6 +413,85 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyIntervalShortCircuitWithCursorBound() throws Exception {
+        // WhereClauseParser traverses AND predicates right-to-left: `ts = NULL::TIMESTAMP` empties
+        // the interval model before the scalar sub-query predicate on the left is parsed. The
+        // builder must consume (close) the already-constructed cursor function on that no-op path
+        // and the query must return an empty result.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+            String[] predicates = {
+                    "ts = (select min(ts) from x)",
+                    "ts > (select min(ts) from x)",
+                    "ts < (select max(ts) from x)",
+                    "ts != (select min(ts) from x)"
+            };
+            for (String predicate : predicates) {
+                assertQuery("select count() c from x where " + predicate + " and ts = null::timestamp")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("c\n0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testStrictBoundAtTypeExtremeMatchesNothing() throws Exception {
+        // `ts > Long.MAX_VALUE` used to wrap the interval low bound to Long.MIN_VALUE and return
+        // every row. A strict bound just past the timestamp domain must produce an empty interval
+        // for constant and scalar sub-query bounds alike, on both TIMESTAMP and TIMESTAMP_NS.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+            execute("create table y as (" +
+                    "select timestamp_sequence_ns(0, 2500000000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            // bare epoch literal bound
+            assertQuery("select count() c from x where ts > 9223372036854775807")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+
+            // constant bounds
+            assertQuery("select count() c from x where ts > 9_223_372_036_854_775_807::timestamp")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+            assertQuery("select count() c from y where ts > 9_223_372_036_854_775_807::timestamp_ns")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+
+            // scalar sub-query bounds
+            assertQuery("select count() c from x where ts > (select 9_223_372_036_854_775_807::timestamp)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+            assertQuery("select count() c from y where ts > (select 9_223_372_036_854_775_807::timestamp_ns)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+
+            // the inclusive bound stays a normal [MAX, MAX] interval: no rows here, no wrap-around
+            assertQuery("select count() c from x where ts >= (select 9_223_372_036_854_775_807::timestamp)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+        });
+    }
+
+    @Test
     public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (i int)");

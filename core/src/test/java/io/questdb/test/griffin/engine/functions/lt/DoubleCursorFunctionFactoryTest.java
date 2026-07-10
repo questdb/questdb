@@ -30,8 +30,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -44,19 +42,14 @@ import org.junit.Test;
  * @see io.questdb.griffin.engine.functions.lt.LtDoubleCursorFunctionFactory
  * @see io.questdb.griffin.engine.functions.lt.GtDoubleCursorFunctionFactory
  */
-public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
+public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFactoryTest {
 
     @Override
     @Before
     public void setUp() {
-        // exercise the parallel group by / async filter paths
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
-        // enables the test_timestamp_counter() function used to count sub-query executions
-        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        // exercise the parallel horizon join paths; horizon joins scan the master with small frames
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         super.setUp();
     }
 
@@ -88,17 +81,364 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlanContaining("Async Group By workers: 4");
 
-            TestTimestampCounterFactory.COUNTER.set(0);
             // threshold = 50000 -> 1..50000 false, 50001..100000 true
             assertQuery(query)
                     .withContext(ctx)
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             k\tc
                             false\t50000
                             true\t50000
                             """);
+
+            // one explicitly compiled execution pins the exact sub-query execution count,
+            // decoupled from how many times the assertion battery above opens cursors
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor(
+                            "k\tc\nfalse\t50000\ntrue\t50000\n",
+                            cursor,
+                            factory.getMetadata(),
+                            true,
+                            sink
+                    );
+                }
+            }
             Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
+    public void testNotKeyedAggregateArgumentExecutesCursorOnce() throws Exception {
+        // An aggregate whose argument contains a cursor comparison runs on the not-keyed parallel
+        // group by path (AsyncGroupByNotKeyedAtom) with per-worker clones of the group-by functions.
+        // The scalar sub-query inside the aggregate argument must execute exactly once per query -
+        // not once per worker - and every worker clone must observe the same threshold.
+        // test_timestamp_counter() increments once per row the sub-query cursor reads, so the counter
+        // equals the number of RHS executions. (The keyed variant is not testable: the optimizer
+        // rejects scalar sub-queries inside aggregate arguments of keyed GROUP BY queries.)
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table src (ts timestamp)", ctx);
+            execute(compiler, "insert into src values (5000)", ctx);
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double price, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+
+            final String query = "select sum(case when price::string::double > (select test_timestamp_counter(ts)::long from src) then 1 else 0 end) s from t";
+
+            // the non-thread-safe aggregate argument must still run on the parallel group by
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Group By workers: 4");
+
+            // threshold = 5000 -> x in 5001..10000 -> 5000 rows
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s
+                            5000
+                            """);
+
+            // one explicitly compiled execution pins the exact sub-query execution count
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("s\n5000\n", cursor, factory.getMetadata(), true, sink);
+                }
+            }
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
+    public void testHorizonJoinAggregateArgumentExecutesCursorOnce() throws Exception {
+        // A not-keyed single-slave HORIZON JOIN whose aggregate argument contains a cursor
+        // comparison runs on the parallel path (BaseAsyncHorizonJoinAtom) with per-worker clones of
+        // the group-by functions. The scalar sub-query must execute exactly once per query - not
+        // once per worker - and every worker clone must observe the same threshold.
+        runWithPool((compiler, ctx) -> {
+            createHorizonJoinTables(compiler, ctx);
+
+            final String query = "SELECT avg((t.qty::string::double > (SELECT test_timestamp_counter(ts)::long FROM src))::int) a " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0) AS h";
+
+            // the non-thread-safe aggregate argument must still run on the parallel horizon join
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Horizon Join workers: 4");
+
+            // threshold = 5000 -> qty in 5001..10000 -> 5000 of 10000 rows -> avg 0.5
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a
+                            0.5
+                            """);
+
+            // one explicitly compiled execution pins the exact sub-query execution count
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("a\n0.5\n", cursor, factory.getMetadata(), true, sink);
+                }
+            }
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
+    public void testHorizonJoinExpressionKeyExecutesCursorOnce() throws Exception {
+        // The cursor comparison as a GROUP BY expression key of a single-slave HORIZON JOIN runs on
+        // the parallel path (AsyncHorizonJoinAtom), where per-worker clones of the key function are
+        // initialized with the owner's state donated up front. The scalar sub-query must execute
+        // exactly once per query - not once per worker - and every worker must observe the same
+        // threshold. test_timestamp_counter() increments once per row the sub-query cursor reads, so
+        // the counter equals the number of RHS executions.
+        runWithPool((compiler, ctx) -> {
+            createHorizonJoinTables(compiler, ctx);
+
+            final String query = "SELECT t.qty::string::double > (SELECT test_timestamp_counter(ts)::long FROM src) k, avg(p.price) a " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0) AS h " +
+                    "GROUP BY k ORDER BY k";
+
+            // the non-thread-safe key must still run on the parallel horizon join
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Horizon Join workers: 4");
+
+            // threshold = 5000 -> both key groups see the single price 100.0
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta
+                            false\t100.0
+                            true\t100.0
+                            """);
+
+            // one explicitly compiled execution pins the exact sub-query execution count
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("k\ta\nfalse\t100.0\ntrue\t100.0\n", cursor, factory.getMetadata(), true, sink);
+                }
+            }
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinAggregateArgumentExecutesCursorOnce() throws Exception {
+        // Same contract as the single-slave variant, on the multi-slave parallel path
+        // (BaseAsyncMultiHorizonJoinAtom): the scalar sub-query inside an aggregate argument must
+        // execute exactly once per query even with 4 workers holding group-by function clones.
+        runWithPool((compiler, ctx) -> {
+            createHorizonJoinTables(compiler, ctx);
+
+            final String query = "SELECT avg((t.qty::string::double > (SELECT test_timestamp_counter(ts)::long FROM src))::int) a, avg(a2.ask) b " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) HORIZON JOIN asks a2 ON (t.sym = a2.sym) LIST (0) AS h";
+
+            // the non-thread-safe aggregate argument must still run on the parallel horizon join
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Multi Horizon Join workers: 4");
+
+            // threshold = 5000 -> avg 0.5; the single ask 200.0 matches every trade
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            0.5\t200.0
+                            """);
+
+            // one explicitly compiled execution pins the exact sub-query execution count
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("a\tb\n0.5\t200.0\n", cursor, factory.getMetadata(), true, sink);
+                }
+            }
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinExpressionKeyExecutesCursorOnce() throws Exception {
+        // Same contract as the single-slave variant, on the multi-slave parallel path
+        // (AsyncMultiHorizonJoinAtom): the scalar sub-query inside a GROUP BY expression key must
+        // execute exactly once per query even with 4 workers holding key function clones.
+        runWithPool((compiler, ctx) -> {
+            createHorizonJoinTables(compiler, ctx);
+
+            final String query = "SELECT t.qty::string::double > (SELECT test_timestamp_counter(ts)::long FROM src) k, avg(p.price) a, avg(a2.ask) b " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) HORIZON JOIN asks a2 ON (t.sym = a2.sym) LIST (0) AS h " +
+                    "GROUP BY k ORDER BY k";
+
+            // the non-thread-safe key must still run on the parallel horizon join
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Multi Horizon Join workers: 4");
+
+            // threshold = 5000 -> both key groups see the single price 100.0 and ask 200.0
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta\tb
+                            false\t100.0\t200.0
+                            true\t100.0\t200.0
+                            """);
+
+            // one explicitly compiled execution pins the exact sub-query execution count
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("k\ta\tb\nfalse\t100.0\t200.0\ntrue\t100.0\t200.0\n", cursor, factory.getMetadata(), true, sink);
+                }
+            }
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
+    public void testSampleByFillLinearCursorComparisonKey() throws Exception {
+        // regression: compiling the scalar sub-query of a cursor-comparison key must not corrupt
+        // generateSampleBy's projection scratch state, and the execution plan must render across
+        // the nested sub-query plan of the key
+        assertMemoryLeak(() -> {
+            execute("create table t as (" +
+                    "select x::double price, x::double qty, timestamp_sequence(0, 60000000) ts" +
+                    " from long_sequence(10)" +
+                    ") timestamp(ts) partition by day");
+            final String query = "select price > (select avg(price) from t) k, sum(qty) s, ts from t sample by 1h fill(linear)";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Sample By");
+            // avg(price) = 5.5 -> k=false sums 1..5, k=true sums 6..10; single 1h bucket
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            k\ts\tts
+                            false\t15.0\t1970-01-01T00:00:00.000000Z
+                            true\t40.0\t1970-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowJoinCursorComparisonProjection() throws Exception {
+        // regression: compiling the scalar sub-query of a cursor-comparison projection must not
+        // corrupt the WINDOW JOIN aggregation scratch state in generateJoins, and the execution
+        // plan must render across the nested sub-query plan
+        assertMemoryLeak(() -> {
+            execute("create table trades as (" +
+                    "select 'A'::symbol sym, x::double price, timestamp_sequence(1000000, 1000000) ts" +
+                    " from long_sequence(4)" +
+                    ") timestamp(ts) partition by day");
+            execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
+            execute("insert into prices values (0, 'A', 2.0)");
+            final String query = "select t.price > (select avg(p2.price) from prices p2) k, sum(p.price) w " +
+                    "from trades t window join prices p range between 100 seconds preceding and 1 seconds following";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Window Join");
+            // avg = 2.0 -> k = price > 2.0; every window sees the single price 2.0
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            k\tw
+                            false\t2.0
+                            false\t2.0
+                            true\t2.0
+                            true\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinAggregateSubQueryKey() throws Exception {
+        // regression: a cursor-comparison GROUP BY key whose scalar sub-query itself aggregates
+        // recursively re-enters group-by generation while generateHorizonJoinFactory holds its
+        // projection scratch state; the factory must stay keyed and produce correct groups
+        assertMemoryLeak(() -> {
+            execute("create table trades as (" +
+                    "select 'A'::symbol sym, x::double qty, timestamp_sequence(1000000, 1000000) ts" +
+                    " from long_sequence(10)" +
+                    ") timestamp(ts) partition by day");
+            execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
+            execute("insert into prices values (0, 'A', 5.0)");
+            final String query = "select t.qty > (select avg(price) from prices) k, avg(p.price) a " +
+                    "from trades t horizon join prices p on (t.sym = p.sym) list (0) as h " +
+                    "group by k order by k";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Horizon Join");
+            // avg(prices.price) = 5.0 -> qty 1..5 false, 6..10 true; both groups see price 5.0
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta
+                            false\t5.0
+                            true\t5.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinAggregateSubQueryKey() throws Exception {
+        // multi-slave counterpart of testHorizonJoinAggregateSubQueryKey, covering
+        // generateMultiHorizonJoinFactory's projection scratch state
+        assertMemoryLeak(() -> {
+            execute("create table trades as (" +
+                    "select 'A'::symbol sym, x::double qty, timestamp_sequence(1000000, 1000000) ts" +
+                    " from long_sequence(10)" +
+                    ") timestamp(ts) partition by day");
+            execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
+            execute("insert into prices values (0, 'A', 5.0)");
+            execute("create table asks (ts timestamp, sym symbol, ask double) timestamp(ts)");
+            execute("insert into asks values (0, 'A', 7.0)");
+            final String query = "select t.qty > (select avg(price) from prices) k, avg(p.price) a, avg(a2.ask) b " +
+                    "from trades t horizon join prices p on (t.sym = p.sym) horizon join asks a2 on (t.sym = a2.sym) list (0) as h " +
+                    "group by k order by k";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Multi Horizon Join");
+            // avg(prices.price) = 5.0 -> qty 1..5 false, 6..10 true; both groups see 5.0 and 7.0
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta\tb
+                            false\t5.0\t7.0
+                            true\t5.0\t7.0
+                            """);
         });
     }
 
@@ -761,17 +1101,21 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void runWithPool(PoolRunnable body) throws Exception {
-        assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (_, compiler, sqlExecutionContext) ->
-                        body.run(compiler, sqlExecutionContext), configuration, LOG);
-            }
-        });
+    private void createHorizonJoinTables(SqlCompiler compiler, SqlExecutionContext ctx) throws Exception {
+        execute(compiler, "create table src (ts timestamp)", ctx);
+        execute(compiler, "insert into src values (5000)", ctx);
+        execute(
+                compiler,
+                "create table trades as (" +
+                        "  select 'A'::symbol sym, x::double qty, timestamp_sequence(1000000, 1000000) ts" +
+                        "  from long_sequence(10000)" +
+                        ") timestamp(ts) partition by day",
+                ctx
+        );
+        execute(compiler, "create table prices (ts timestamp, sym symbol, price double) timestamp(ts)", ctx);
+        execute(compiler, "insert into prices values (0, 'A', 100.0)", ctx);
+        execute(compiler, "create table asks (ts timestamp, sym symbol, ask double) timestamp(ts)", ctx);
+        execute(compiler, "insert into asks values (0, 'A', 200.0)", ctx);
     }
 
-    @FunctionalInterface
-    private interface PoolRunnable {
-        void run(SqlCompiler compiler, SqlExecutionContext ctx) throws Exception;
-    }
 }

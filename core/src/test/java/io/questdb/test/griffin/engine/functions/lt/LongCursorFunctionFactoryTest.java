@@ -24,17 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.lt;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
-import io.questdb.mp.WorkerPool;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -46,24 +40,11 @@ import org.junit.Test;
  * @see io.questdb.griffin.engine.functions.lt.LtLongCursorFunctionFactory
  * @see io.questdb.griffin.engine.functions.lt.GtLongCursorFunctionFactory
  */
-public class LongCursorFunctionFactoryTest extends AbstractCairoTest {
+public class LongCursorFunctionFactoryTest extends AbstractCursorFunctionFactoryTest {
 
     // 2^53, 2^53+1, 2^53+2 : the middle value is NOT representable as a double (it rounds to 2^53),
     // so any comparison performed via double would conflate 2^53 and 2^53+1.
     private static final long POW2_53 = 9007199254740992L;
-
-    @Override
-    @Before
-    public void setUp() {
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
-        // enables the test_timestamp_counter() function used to count sub-query executions
-        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        super.setUp();
-    }
 
     @Test
     public void testWorkerStateSharedExecutesCursorOnceAndRefreshes() throws Exception {
@@ -566,17 +547,4 @@ public class LongCursorFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void runWithPool(PoolRunnable body) throws Exception {
-        assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
-                TestUtils.execute(pool, (_, compiler, sqlExecutionContext) ->
-                        body.run(compiler, sqlExecutionContext), configuration, LOG);
-            }
-        });
-    }
-
-    @FunctionalInterface
-    private interface PoolRunnable {
-        void run(SqlCompiler compiler, SqlExecutionContext ctx) throws Exception;
-    }
 }
