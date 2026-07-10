@@ -1945,6 +1945,110 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullEvictionKeepsSameTsOverlapRow() throws Exception {
+        // C4 regression: a full in-memory eviction (the whole overlap ages out and
+        // only the un-flushed lead survives) must not drop a disk-backed overlap
+        // row that shares the lead's minimum timestamp. Such an additive same-ts
+        // frontier row is admitted because the O3 trigger is a strict
+        // below-frontier compare (txnMinTs < latestSeen): it lands on disk as
+        // overlap AND again in the lead at the same timestamp. Pre-fix the eviction
+        // seamed the lead-only slot at lead_min and evicted the on-disk overlap
+        // copy, so the reader served neither - the disk scan stops strictly below
+        // the seam and the slot holds only the lead - dropping the row while size()
+        // still counted it, which breaks LIMIT. The fix clamps the eviction
+        // threshold to lead_min so the same-ts overlap group stays resident at the
+        // seam. The fuzz suite cannot catch this: it uses unique timestamps by
+        // construction.
+        assertMemoryLeak(() -> {
+            // growth.bytes = 0 forces the slow-path (and its IN MEMORY eviction) on
+            // every publish.
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: flush three in-order rows to disk. The frontier is ts=03.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:01.000000Z', 1), " +
+                        "('2026-05-12T00:00:02.000000Z', 2), " +
+                        "('2026-05-12T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                drainJob(job); // clock 0: first tick flushes the batch to disk
+                drainWalQueue();
+
+                // Cycle 2: an additive same-ts row at the frontier (ts=03 ==
+                // latestSeen) is NOT O3, so it lands as an un-flushed lead on top of
+                // the on-disk overlap that also holds ts=03. FLUSH EVERY 1s has not
+                // elapsed since the cycle-1 flush (clock still 0), so it stays
+                // un-flushed.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:03.000000Z', 4)");
+                drainWalQueue();
+                drainJob(job); // clock still 0: refresh only, lead in RAM
+                drainWalQueue();
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                LiveViewInMemoryBuffer pre = tier.getSlot(tier.getPublishedIdx());
+                // The slot carries the additive same-ts frontier: an overlap row at
+                // ts=03 (on disk) directly below the lead row at ts=03 (RAM only).
+                Assert.assertEquals("one un-flushed lead row before the far cycle", 1, pre.leadRowCount());
+                final int tsCol = pre.getTimestampColumnIndex();
+                final long leadStart = pre.rowCount() - pre.leadRowCount();
+                final long leadMin = pre.getLong(leadStart, tsCol);
+                final long overlapMax = pre.getLong(leadStart - 1, tsCol);
+                Assert.assertEquals("overlap max must share the lead's minimum timestamp", leadMin, overlapMax);
+
+                // Cycle 3: two rows far beyond lead_min + IN MEMORY push the eviction
+                // threshold above the whole overlap, so it ages out entirely. Pre-fix
+                // the seam lands at lead_min (ts=03) with only the lead retained; the
+                // fix keeps the ts=03 overlap row resident at the seam.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-05-12T00:00:10.000000Z', 5), " +
+                        "('2026-05-12T00:00:11.000000Z', 6)");
+                drainWalQueue();
+                drainJob(job); // clock still 0: refresh only, full eviction of the overlap
+                drainWalQueue();
+            }
+
+            // The tier still routes and the read matches a from-scratch recompute -
+            // the additive same-ts disk row at ts=03 is served, not dropped.
+            InnerRead read = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-eviction read must stay routing-eligible", read.routingEligible);
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            // size() must equal the served row count so LIMIT pushdown is exact.
+            // Pre-fix the vanished disk row left size() one over the rows actually
+            // served, so a LIMIT past the boundary diverged from the oracle.
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertTrue(cursor.isRoutingEligible());
+                Assert.assertEquals("size() must count every served row exactly once", 6, cursor.size());
+            }
+            assertLvMatchesOracle("SELECT * FROM lv LIMIT 6",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 6");
+
+            // Explicit full result: both ts=03 rows present - the disk overlap
+            // (rn=3) and the lead (rn=4) - in ts then rn order.
+            StringSink out = new StringSink();
+            printSql("SELECT * FROM lv", out);
+            Assert.assertEquals("ts\tx\trn\n" +
+                    "2026-05-12T00:00:01.000000Z\t1\t1\n" +
+                    "2026-05-12T00:00:02.000000Z\t2\t2\n" +
+                    "2026-05-12T00:00:03.000000Z\t3\t3\n" +
+                    "2026-05-12T00:00:03.000000Z\t4\t4\n" +
+                    "2026-05-12T00:00:10.000000Z\t5\t5\n" +
+                    "2026-05-12T00:00:11.000000Z\t6\t6\n", out.toString());
+        });
+    }
+
+    @Test
     public void testAsOfJoinRhsSeesAppliedPrefixNotLead() throws Exception {
         // ASOF JOIN with the LV on the RHS consumes the LV's time-frame cursor,
         // which is disk-only in V1: it serves the applied prefix and

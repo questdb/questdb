@@ -4201,17 +4201,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // Slot rows are ts-ascending, so the evicted overlap rows form a
                 // prefix [0, k) and the retained rows a contiguous suffix
                 // [k, rowCount) - retained overlap plus the always-kept lead. Binary
-                // search k (lower bound of retainThreshold) over the overlap region,
-                // then bulk-copy the suffix with a single copyRowsFrom - a per-column
-                // memcpy for fixed-width / SYMBOL columns - instead of a scalar
-                // per-row, per-column copy.
+                // search k (lower bound of the eviction threshold) over the overlap
+                // region, then bulk-copy the suffix with a single copyRowsFrom - a
+                // per-column memcpy for fixed-width / SYMBOL columns - instead of a
+                // scalar per-row, per-column copy.
                 long leadCount = pubSlot.leadRowCount();
                 long overlapCount = pubSlot.rowCount() - leadCount;
+                // Clamp the eviction threshold to the lead's minimum timestamp so
+                // an overlap group sharing that timestamp stays resident. When the
+                // whole overlap ages out (lo == overlapCount) the seam lands at the
+                // lead minimum (lead_min); a disk-backed overlap row at exactly
+                // lead_min - an additive same-ts row at the frontier, admitted
+                // because the O3 trigger is a strict below-frontier compare - would
+                // then be served by neither disk (the reader's scan stops strictly
+                // below the seam) nor the lead-only slot: silent row loss plus a
+                // size() overcount that breaks LIMIT. Retaining every overlap row
+                // with ts >= lead_min keeps that group in the slot at the seam,
+                // where the overlap band still agrees with disk row-for-row. This
+                // mirrors the tierStale rebuild guard in finishLeadRefresh that
+                // avoids the same additive-same-ts gap. In the common unique-ts
+                // case lead_min is strictly above every overlap ts, so the clamp
+                // retains nothing extra and eviction is unchanged.
+                long evictionThreshold = retainThreshold;
+                if (leadCount > 0) {
+                    long leadMinTs = pubSlot.getLong(overlapCount, tsCol);
+                    if (leadMinTs < evictionThreshold) {
+                        evictionThreshold = leadMinTs;
+                    }
+                }
                 long lo = 0;
                 long hi = overlapCount;
                 while (lo < hi) {
                     long mid = (lo + hi) >>> 1;
-                    if (pubSlot.getLong(mid, tsCol) < retainThreshold) {
+                    if (pubSlot.getLong(mid, tsCol) < evictionThreshold) {
                         lo = mid + 1;
                     } else {
                         hi = mid;
