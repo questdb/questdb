@@ -75,6 +75,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private final ObjList<GroupByFunction> groupByTwoPointFunctions;
     private final ObjList<InterpolationUtil.InterpolatorFunction> interpolatorFunctions;
     private final RecordSink mapSink;
+    private final Function offsetFunc;
+    private final Function sampleFromFunc;
+    private final Function sampleToFunc;
+    private final Function timezoneNameFunc;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
     private final ObjList<Function> recordFunctions;
@@ -114,6 +118,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             this.sampler = timestampSampler;
+            // adopt the temporal parameter functions first, so close() reaches them if the
+            // remainder of the construction throws
+            this.timezoneNameFunc = timezoneNameFunc;
+            this.offsetFunc = offsetFunc;
+            this.sampleFromFunc = sampleFromFunc;
+            this.sampleToFunc = sampleToFunc;
 
             // create timestamp column
             TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount(), timestampType);
@@ -252,6 +262,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         freeYData();
         Misc.free(base);
         Misc.free(cursor);
+        // The factory is the lifetime owner of the temporal parameter functions (timezone,
+        // offset, FROM, TO); the cursor only borrows them across the executions of this cached
+        // factory. The generator accepts runtime-constant expressions here, which may own child
+        // functions, so they must be closed exactly once.
+        Misc.free(timezoneNameFunc);
+        Misc.free(offsetFunc);
+        Misc.free(sampleFromFunc);
+        Misc.free(sampleToFunc);
     }
 
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -334,14 +352,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }
-            Misc.clear(timezoneNameFunc);
-            Misc.free(timezoneNameFunc);
-            Misc.clear(offsetFunc);
-            Misc.free(offsetFunc);
-            Misc.clear(sampleFromFunc);
-            Misc.free(sampleFromFunc);
-            Misc.clear(sampleToFunc);
-            Misc.free(sampleToFunc);
+            // The temporal parameter functions (timezone, offset, FROM, TO) are borrowed from
+            // the owning factory, which closes them exactly once at teardown; per-execution
+            // cursor close must leave them usable for the next execution of the cached factory.
         }
 
         @Override

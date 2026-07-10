@@ -65,7 +65,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             Function sampleToFunc,
             int sampleToFuncPos
     ) throws SqlException {
-        super(base, groupByMetadata, recordFunctions);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
             this.value = new SimpleMapValue(valueCount);
             this.valueB = new SimpleMapValue(valueCount);

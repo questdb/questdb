@@ -439,6 +439,35 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInclusiveBoundMatchesStoredTypeMaximum() throws Exception {
+        // The designated timestamp rejects values beyond 9999-12-31, so the domain maximum can
+        // only live in a non-designated TIMESTAMP column, where the comparison runs through the
+        // cursor-comparison functions instead of the interval intrinsics. A row holding
+        // Long.MAX_VALUE distinguishes the inclusive from the strict bound: `>= MAX` must match
+        // exactly that row and `> MAX` must match nothing. A fixture with only small timestamps
+        // cannot tell `>=` apart from `<`.
+        assertMemoryLeak(() -> {
+            execute("create table xmax (ts timestamp, t2 timestamp) timestamp(ts)");
+            execute("insert into xmax values (0, 0), (1, 9223372036854775807)");
+
+            // assert row identity, not counts: with one small row and one MAX row, a `>=`
+            // mistakenly computing `<` would return the same count but the other row
+            assertQuery("select ts::long tsv from xmax where t2 >= (select 9_223_372_036_854_775_807::timestamp)")
+                    .noLeakCheck()
+                    .returns("tsv\n1\n");
+            assertQuery("select ts::long tsv from xmax where t2 > (select 9_223_372_036_854_775_807::timestamp)")
+                    .noLeakCheck()
+                    .returns("tsv\n");
+            assertQuery("select ts::long tsv from xmax where t2 < (select 9_223_372_036_854_775_807::timestamp)")
+                    .noLeakCheck()
+                    .returns("tsv\n0\n");
+            assertQuery("select ts::long tsv from xmax where t2 <= (select 9_223_372_036_854_775_807::timestamp)")
+                    .noLeakCheck()
+                    .returns("tsv\n0\n1\n");
+        });
+    }
+
+    @Test
     public void testStrictBoundAtTypeExtremeMatchesNothing() throws Exception {
         // `ts > Long.MAX_VALUE` used to wrap the interval low bound to Long.MIN_VALUE and return
         // every row. A strict bound just past the timestamp domain must produce an empty interval

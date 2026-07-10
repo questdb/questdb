@@ -531,37 +531,54 @@ public class GroupByUtils {
 
     /**
      * Frees the projection functions produced by {@link #assembleGroupByFunctions} exactly once
-     * when generation fails after a successful assembly. The first assembly loop adds each parsed
-     * Function to both lists, so they share references. The timestamp column appends null to
-     * outer but skips inner, so subsequent entries sit at outer[i] and inner[i-1]. The key-rewrite
-     * loop may also replace outer entries with column-ref Functions, leaving the original parsed
-     * Function reachable only via inner. Frees outer first (Misc.free is null-safe), keeping the
-     * list as a reference-identity index, then walks inner and frees only references not already
-     * in outer, then clears both lists. Closing the same Function twice would underflow allocator
-     * counters, so callers must not additionally free the group-by function list - its entries
-     * are aliased in the outer list and are already closed by this call.
+     * when generation fails after assembly, in Theta(outer + inner) time and constant space by
+     * walking the producer's positional correspondence. The first assembly loop adds each parsed
+     * Function to both lists, so paired slots share references; the timestamp column appends null
+     * to outer and nothing to inner, so a null outer slot consumes no inner slot; the key-rewrite
+     * loop may replace an outer entry with a column-ref Function, leaving the original parsed
+     * Function reachable only through its paired inner slot; a mid-assembly failure can leave
+     * the last non-null outer entry without an inner counterpart, never the reverse. Every
+     * non-null outer entry is freed, and a paired inner entry is freed only when it is not the
+     * same reference. Closing the same Function twice would underflow allocator counters, so
+     * callers must not additionally free the group-by function list - its entries are aliased in
+     * the outer list and are already closed by this call.
      */
     public static void freeAssembledProjectionFunctions(
             @Nullable ObjList<Function> outerProjectionFunctions,
             @Nullable ObjList<Function> innerProjectionFunctions
     ) {
-        if (outerProjectionFunctions != null) {
-            for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
-                Misc.free(outerProjectionFunctions.getQuick(i));
+        if (outerProjectionFunctions == null) {
+            if (innerProjectionFunctions != null) {
+                Misc.freeObjListAndClear(innerProjectionFunctions);
+            }
+            return;
+        }
+        final int innerSize = innerProjectionFunctions != null ? innerProjectionFunctions.size() : 0;
+        int j = 0;
+        for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
+            final Function outerFunc = outerProjectionFunctions.getQuick(i);
+            if (outerFunc == null) {
+                // timestamp placeholder: assembly added no inner counterpart
+                continue;
+            }
+            Misc.free(outerFunc);
+            if (j < innerSize) {
+                final Function innerFunc = innerProjectionFunctions.getQuick(j);
+                if (innerFunc != outerFunc) {
+                    // the key rewrite replaced the outer entry; the parsed original is
+                    // reachable only through this inner slot
+                    Misc.free(innerFunc);
+                }
+                j++;
             }
         }
+        // Full assembly pairs every inner entry; a mid-assembly failure leaves at most the last
+        // non-null outer entry unpaired. Either way the walk must consume the whole inner list.
+        assert j == innerSize;
         if (innerProjectionFunctions != null) {
-            for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
-                final Function f = innerProjectionFunctions.getQuick(i);
-                if (f != null && (outerProjectionFunctions == null || !containsIdentity(outerProjectionFunctions, f))) {
-                    Misc.free(f);
-                }
-            }
             innerProjectionFunctions.clear();
         }
-        if (outerProjectionFunctions != null) {
-            outerProjectionFunctions.clear();
-        }
+        outerProjectionFunctions.clear();
     }
 
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
@@ -785,15 +802,6 @@ public class GroupByUtils {
             }
         }
 
-        return false;
-    }
-
-    private static boolean containsIdentity(ObjList<Function> list, Function target) {
-        for (int i = 0, n = list.size(); i < n; i++) {
-            if (list.getQuick(i) == target) {
-                return true;
-            }
-        }
         return false;
     }
 

@@ -138,11 +138,33 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             cursor.baseCursor = base.getCursor(executionContext);
         }
         try {
+            // The owner group-by functions must initialize before any shared consumer's clones,
+            // regardless of open order: stateful functions inside aggregate arguments - such as
+            // cursor comparisons caching a scalar sub-query result - run their expensive and
+            // potentially nondeterministic initialization exactly once per query, in the owner,
+            // and every consumer inherits that state. Shared consumers can open first (they sit
+            // on the build side of the enclosing join), so trigger the owner setup here; the
+            // primary getCursor skips the second initialization via areFunctionsInitialized.
+            if (!cursor.areFunctionsInitialized) {
+                cursor.of(cursor.baseCursor, executionContext);
+            }
+            // donate the owner state to the consumer's aligned clones before they initialize
+            final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
+            assert groupByFunctions.size() == sharedFunctions.size();
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                groupByFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
+            }
             shared.of(cursor.baseCursor, executionContext);
             return shared;
         } catch (Throwable e) {
             if (isNewCursor) {
-                cursor.baseCursor = Misc.free(cursor.baseCursor);
+                // This call opened the base cursor and may have run the owner setup above. Close
+                // the primary cursor outright - freeing the base cursor and the allocator under
+                // the current per-query tracker, clearing the functions, and resetting
+                // areFunctionsInitialized - so the next execution of this cached factory
+                // re-initializes the functions instead of serving stale state. When the primary
+                // opened the base cursor, its owner closes it.
+                cursor.close();
             }
             throw e;
         }
@@ -296,6 +318,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         private final GroupByAllocator allocator;
         private final GroupByFunctionsUpdater groupByFunctionsUpdater;
+        // True once of() has initialized the group-by functions for the current execution;
+        // getSharedCursor donates owner state to shared consumers only when this is set.
+        private boolean areFunctionsInitialized;
         // hold on to reference of base cursor here
         // because we use it as symbol table source for the functions
         private RecordCursor baseCursor;
@@ -326,6 +351,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void close() {
+            areFunctionsInitialized = false;
             baseCursor = Misc.free(baseCursor);
             Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
@@ -367,7 +393,13 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.circuitBreaker = executionContext.getCircuitBreaker();
             allocator.setMemoryTracker(executionContext.getMemoryTracker());
             allocator.reopen();
-            Function.init(groupByFunctions, baseCursor, executionContext, null);
+            // getSharedCursor may have run this setup already (a shared consumer can open before
+            // the primary cursor); the functions must not re-run their once-per-query
+            // initialization, or stateful functions such as scalar sub-query caches execute again.
+            if (!areFunctionsInitialized) {
+                Function.init(groupByFunctions, baseCursor, executionContext, null);
+                areFunctionsInitialized = true;
+            }
             return this;
         }
 

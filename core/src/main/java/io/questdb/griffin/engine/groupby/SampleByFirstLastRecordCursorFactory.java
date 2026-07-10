@@ -79,10 +79,14 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private final int groupBySymbolColIndex;
     private final boolean[] isKeyColumn;
     private final int maxSamplePeriodSize;
+    private final Function offsetFunc;
     private final int pageSize;
     private final int[] queryToFrameColumnMapping;
+    private final Function sampleFromFunc;
+    private final Function sampleToFunc;
     private final SingleSymbolFilter symbolFilter;
     private final int timestampIndex;
+    private final Function timezoneNameFunc;
     private int groupByTimestampIndex = -1;
     private DirectLongList rowIdOutAddress;
     private DirectLongList samplePeriodAddress;
@@ -108,6 +112,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         super(groupByMetadata);
         try {
             this.base = base;
+            // adopt the temporal parameter functions first, so close() reaches them if the
+            // remainder of the construction throws
+            this.timezoneNameFunc = timezoneNameFunc;
+            this.offsetFunc = offsetFunc;
+            this.sampleFromFunc = sampleFromFunc;
+            this.sampleToFunc = sampleToFunc;
             groupBySymbolColIndex = symbolFilter.getColumnIndex();
             queryToFrameColumnMapping = new int[columns.size()];
             firstLastIndexByCol = new int[columns.size()];
@@ -294,6 +304,14 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         Misc.free(base);
         rowIdOutAddress = Misc.free(rowIdOutAddress);
         samplePeriodAddress = Misc.free(samplePeriodAddress);
+        // The factory is the lifetime owner of the temporal parameter functions (timezone,
+        // offset, FROM, TO); the cursor only borrows them across the executions of this cached
+        // factory. The generator accepts runtime-constant expressions here, which may own child
+        // functions, so they must be closed exactly once.
+        Misc.free(timezoneNameFunc);
+        Misc.free(offsetFunc);
+        Misc.free(sampleFromFunc);
+        Misc.free(sampleToFunc);
     }
 
     private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {

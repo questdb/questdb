@@ -218,6 +218,19 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             shared = new AsyncGroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), frameSequence.getAtom().getOwnerMapValue());
             sharedCursors.extendAndSet(idx, shared);
         }
+        // Donate the owner state to the consumer's aligned clones before they initialize, so
+        // stateful functions inside aggregate arguments - such as cursor comparisons caching a
+        // scalar sub-query result - never re-run their expensive and potentially
+        // nondeterministic initialization in a shared consumer. The donation is open-order
+        // independent: it marks the clones state-inherited so their init skips
+        // self-execution, and the donated value itself is never read - shared consumers only
+        // materialize the owner's map value through VirtualRecord - while the owner initializes
+        // exactly once in the atom when the primary cursor opens.
+        final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
+        assert groupByFunctions.size() == sharedFunctions.size();
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
+        }
         shared.of(executionContext, frameSequence);
         return shared;
     }

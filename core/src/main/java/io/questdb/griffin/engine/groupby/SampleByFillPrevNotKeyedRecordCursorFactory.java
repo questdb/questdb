@@ -60,7 +60,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
             Function sampleToFunc,
             int sampleToFuncPos
     ) {
-        super(base, groupByMetadata, recordFunctions);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.value = new SimpleMapValue(groupByValueCount);

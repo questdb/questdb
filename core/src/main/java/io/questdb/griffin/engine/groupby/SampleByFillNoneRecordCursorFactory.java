@@ -70,7 +70,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             Function sampleToFunc,
             int sampleToFuncPos
     ) {
-        super(base, groupByMetadata, recordFunctions);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         Map map = null;
         try {
             // sink will be storing record columns to map key

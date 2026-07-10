@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -47,8 +48,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * once the fault is removed. A separate compile-time arm
  * ({@link #armToFailAfterCompiles}) makes the Nth {@link #newInstance} call
  * throw instead, so tests can fail a specific per-worker clone compilation
- * mid-loop. Outside dev mode it folds to the BOOLEAN constant true, so it is
- * inert in production.
+ * mid-loop. An init-time arm ({@link #armToFailAfterInits}) makes the Nth
+ * {@code Function.init} call throw, so tests can fail a specific clone list's
+ * cursor-open initialization after the owner initialized. Outside dev mode it
+ * folds to the BOOLEAN constant true, so it is inert in production.
  */
 public class TestFaultFunctionFactory implements FunctionFactory {
     public static final String CALL = "test_fault()";
@@ -58,6 +61,9 @@ public class TestFaultFunctionFactory implements FunctionFactory {
     // -1 means disarmed. When armed to N, the function returns true on the first
     // N getBool() calls and throws on call N+1, then disarms itself.
     private static final AtomicInteger COUNTDOWN = new AtomicInteger(-1);
+    // -1 means disarmed. When armed to N, init() succeeds on the first N calls
+    // and throws on call N+1, then disarms itself.
+    private static final AtomicInteger INIT_COUNTDOWN = new AtomicInteger(-1);
     private static final AtomicInteger TRIGGERED = new AtomicInteger();
 
     public static void armToFailAfter(int successfulCalls) {
@@ -70,9 +76,15 @@ public class TestFaultFunctionFactory implements FunctionFactory {
         COMPILE_COUNTDOWN.set(successfulCompiles);
     }
 
+    public static void armToFailAfterInits(int successfulInits) {
+        TRIGGERED.set(0);
+        INIT_COUNTDOWN.set(successfulInits);
+    }
+
     public static void disarm() {
         COMPILE_COUNTDOWN.set(-1);
         COUNTDOWN.set(-1);
+        INIT_COUNTDOWN.set(-1);
     }
 
     public static int faultsTriggered() {
@@ -113,6 +125,14 @@ public class TestFaultFunctionFactory implements FunctionFactory {
                 throw CairoException.nonCritical().put("test_fault: injected failure");
             }
             return true;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            if (INIT_COUNTDOWN.get() >= 0 && INIT_COUNTDOWN.getAndDecrement() == 0) {
+                TRIGGERED.incrementAndGet();
+                throw CairoException.nonCritical().put("test_fault: injected init failure");
+            }
         }
 
         @Override

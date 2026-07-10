@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.test.tools.TestUtils;
@@ -163,6 +164,119 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     }
 
     @Test
+    public void testLateralConsumersExecuteScalarSubQueryOnce() throws Exception {
+        // Lateral decorrelation opens one shared cursor per dependent over the not-keyed group
+        // by. Each shared consumer initializes its own clone list of the group-by functions; the
+        // owner's already-initialized scalar state must be donated to those clones before they
+        // initialize, or every shared consumer re-executes the scalar sub-query. With two
+        // lateral consumers the sub-query must still execute exactly once per query, on both the
+        // parallel (AsyncGroupByNotKeyedRecordCursorFactory) and the serial
+        // (GroupByNotKeyedRecordCursorFactory) paths.
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table src (ts timestamp)", ctx);
+            execute(compiler, "insert into src values (5000)", ctx);
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double price, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            execute(compiler, "create table rates (min_amount double, rate double)", ctx);
+            execute(compiler, "insert into rates values (1000.0, 0.1)", ctx);
+
+            final String query = "SELECT o.s, sub1.rate, sub2.rate r2 " +
+                    "FROM (SELECT sum(case when price::string::double > (SELECT test_timestamp_counter(ts)::long FROM src) then 1 else 0 end) s FROM t) o " +
+                    "JOIN LATERAL (SELECT rate FROM rates WHERE min_amount <= o.s) sub1 " +
+                    "JOIN LATERAL (SELECT rate FROM rates WHERE min_amount <= o.s) sub2";
+
+            // the aggregate must still run on the parallel group by
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Group By workers: 4");
+
+            // threshold = 5000 -> price in 5001..10000 -> s = 5000; both laterals match 0.1
+            final String expected = "s\trate\tr2\n5000\t0.1\t0.1\n";
+
+            // parallel path: owner initializes once, workers and both shared consumers inherit
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                }
+            }
+            Assert.assertEquals("parallel: scalar sub-query must execute exactly once", 1, TestTimestampCounterFactory.COUNTER.get());
+
+            // serial path: same contract on GroupByNotKeyedRecordCursorFactory's shared cursors
+            ctx.setParallelGroupByEnabled(false);
+            try {
+                TestTimestampCounterFactory.COUNTER.set(0);
+                try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                    }
+                }
+                Assert.assertEquals("serial: scalar sub-query must execute exactly once", 1, TestTimestampCounterFactory.COUNTER.get());
+            } finally {
+                ctx.setParallelGroupByEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCursorInitFailureKeepsCachedFactoryReusable() throws Exception {
+        // When a shared consumer opens the base cursor first (it sits on the build side of the
+        // enclosing join), getSharedCursor initializes the owner functions before donating
+        // state. If the consumer's own clone initialization then throws, the catch must fully
+        // close the primary cursor so the next execution of the cached factory re-initializes
+        // the owner functions; otherwise it serves the previous execution's stale scalar state.
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table src (ts timestamp)", ctx);
+            execute(compiler, "insert into src values (5000)", ctx);
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double price, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            execute(compiler, "create table rates (min_amount double, rate double)", ctx);
+            execute(compiler, "insert into rates values (1000.0, 0.1)", ctx);
+
+            final String query = "SELECT o.s, sub1.rate " +
+                    "FROM (SELECT sum(case when test_fault() and price::string::double > (SELECT test_timestamp_counter(ts)::long FROM src) then 1 else 0 end) s FROM t) o " +
+                    "JOIN LATERAL (SELECT rate FROM rates WHERE min_amount <= o.s) sub1";
+            ctx.setParallelGroupByEnabled(false);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                // the owner list initializes test_fault() once inside getSharedCursor; the
+                // shared consumer's clone init runs next and fails
+                TestFaultFunctionFactory.armToFailAfterInits(1);
+                try {
+                    factory.getCursor(ctx).close();
+                    Assert.fail("injected init failure expected");
+                } catch (Throwable e) {
+                    TestUtils.assertContains(e.getMessage(), "test_fault: injected init failure");
+                } finally {
+                    TestFaultFunctionFactory.disarm();
+                }
+                // the cached factory must re-initialize the owner functions on the next
+                // execution: the scalar sub-query executes exactly once more and the results
+                // are fresh
+                TestTimestampCounterFactory.COUNTER.set(0);
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("s\trate\n5000\t0.1\n", cursor, factory.getMetadata(), true, sink);
+                }
+                Assert.assertEquals("scalar sub-query must re-execute after a failed open", 1, TestTimestampCounterFactory.COUNTER.get());
+            } finally {
+                ctx.setParallelGroupByEnabled(true);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinAggregateArgumentExecutesCursorOnce() throws Exception {
         // A not-keyed single-slave HORIZON JOIN whose aggregate argument contains a cursor
         // comparison runs on the parallel path (BaseAsyncHorizonJoinAtom) with per-worker clones of
@@ -242,6 +356,56 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                 }
             }
             Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
+    public void testHorizonJoinAggregatesCompileOncePerWorker() throws Exception {
+        // The single-slave HORIZON join compiles the per-worker projection clones (which include
+        // the GROUP_BY-flagged aggregate slots) and must reuse those aggregate clones instead of
+        // freeing them and parsing every aggregate a second time per worker.
+        // test_close_counter('x') inside the aggregate argument counts one creation per compile,
+        // so the expected count is exactly one owner compile plus one per worker clone.
+        runWithPool((compiler, ctx) -> {
+            createHorizonJoinTables(compiler, ctx);
+            final String query = "SELECT avg((t.qty::string::double > (SELECT max(price) FROM prices))::int * length(test_close_counter('x'))) a " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0) AS h";
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Horizon Join workers: 4");
+            TestCloseCounterFunctionFactory.reset();
+            compiler.compile(query, ctx).getRecordCursorFactory().close();
+            Assert.assertEquals(
+                    "each aggregate must compile once for the owner and once per worker clone",
+                    5,
+                    TestCloseCounterFunctionFactory.created()
+            );
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinAggregatesCompileOncePerWorker() throws Exception {
+        // The keyed multi-slave HORIZON join compiles the per-worker projection clones (which
+        // include the GROUP_BY-flagged aggregate slots) and must reuse those aggregate clones
+        // instead of freeing them and parsing every aggregate a second time per worker.
+        runWithPool((compiler, ctx) -> {
+            createHorizonJoinTables(compiler, ctx);
+            final String query = "SELECT t.qty::string::double > (SELECT test_timestamp_counter(ts)::long FROM src) k, " +
+                    "avg((t.qty + 1)::string::double * length(test_close_counter('x'))) a, avg(a2.ask) b " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) HORIZON JOIN asks a2 ON (t.sym = a2.sym) LIST (0) AS h " +
+                    "GROUP BY k ORDER BY k";
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Multi Horizon Join workers: 4");
+            TestCloseCounterFunctionFactory.reset();
+            compiler.compile(query, ctx).getRecordCursorFactory().close();
+            Assert.assertEquals(
+                    "each aggregate must compile once for the owner and once per worker clone",
+                    5,
+                    TestCloseCounterFunctionFactory.created()
+            );
         });
     }
 
@@ -480,6 +644,115 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                 TestUtils.assertContains(e.getMessage(), "test_fault: injected compile failure");
             } finally {
                 TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
+    public void testToleranceEqualityAtScalarBoundary() throws Exception {
+        // Doubles within Numbers.DOUBLE_TOLERANCE (1e-10) of the cached scalar are equal under
+        // QuestDB's double semantics: the strict comparisons must exclude them and the negated
+        // inclusive forms must include them, on both the Gt and Lt cursor functions. Values just
+        // outside the tolerance follow the primitive ordering.
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table t (price double)", ctx);
+            // 1.0 and the two 5e-11 neighbours are tolerance-equal to the scalar; the two 2e-10
+            // neighbours are strictly greater/less
+            execute(compiler, "insert into t values (1.0), (1.00000000005), (0.99999999995), (1.0000000002), (0.9999999998)", ctx);
+            execute(compiler, "create table s (v double)", ctx);
+            execute(compiler, "insert into s values (1.0)", ctx);
+
+            assertQuery("select count() c from t where price > (select v from s)")
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n1\n");
+            assertQuery("select count() c from t where price <= (select v from s)")
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n4\n");
+            assertQuery("select count() c from t where price < (select v from s)")
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n1\n");
+            assertQuery("select count() c from t where price >= (select v from s)")
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n4\n");
+        });
+    }
+
+    @Test
+    public void testWorkerFilterCloneCompilationFailureFreesProjectionClones() throws Exception {
+        // The keyed parallel GROUP BY compiles the per-worker projection clones before it clones
+        // a non-thread-safe filter. When a later filter clone's compilation throws, the
+        // generator catch must free the completed projection clones - including the
+        // cursor-comparison key's nested sub-query factory and its tracked native memory. The
+        // helper that compiled the projection clones has already returned, so only a
+        // catch-visible owner in generateSelectGroupBy can reach them. alloc() places tracked
+        // native memory in each projection clone and the armed test_fault() makes a later
+        // worker filter clone's compilation throw after every projection clone compiled.
+        runWithPool((compiler, ctx) -> {
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double price, x::double qty, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            final String query = "SELECT qty + alloc(32) > (SELECT max(price) FROM t) k, avg(price) a " +
+                    "FROM t WHERE test_fault() GROUP BY k";
+            // test_fault() compiles five times before the keyed group-by clones the stolen
+            // filter: once for the owner filter and four times for the async filter factory's
+            // worker clones (generateFilter0 builds those before the group-by steals the
+            // filter). The keyed group-by then compiles the per-worker projection clones and
+            // re-clones the filter once per worker; fail on the second of those, after every
+            // projection clone compiled
+            TestFaultFunctionFactory.armToFailAfterCompiles(6);
+            try {
+                compiler.compile(query, ctx);
+                Assert.fail("compilation should have failed with the injected fault");
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "test_fault: injected compile failure");
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
+    public void testGenerateFillFailureFreesAdoptedGroupByFactory() throws Exception {
+        // generateFill runs after the group-by factory constructor has adopted the projection
+        // functions and the base factory. When fill-value parsing throws, generateFill's catch
+        // must free the adopted factory - closing every projection clone and the base - and
+        // the generator catch must not double-close the base (idempotent factory close).
+        // alloc() places tracked native memory in the owner and per-worker aggregate clones so
+        // assertMemoryLeak() sees any abandoned clone.
+        runWithPool((compiler, ctx) -> {
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double price, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            try {
+                compiler.compile(
+                        "select ts, sum(price + alloc(32)) s from t sample by 1d fill(no_such_column)",
+                        ctx
+                );
+                Assert.fail("fill-value parse failure expected");
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "Invalid column");
             }
         });
     }

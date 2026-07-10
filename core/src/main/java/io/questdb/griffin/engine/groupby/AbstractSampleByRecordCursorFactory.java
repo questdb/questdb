@@ -37,16 +37,28 @@ import io.questdb.std.ObjList;
 public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
+    protected final Function offsetFunc;
     protected final ObjList<Function> recordFunctions;
+    protected final Function sampleFromFunc;
+    protected final Function sampleToFunc;
+    protected final Function timezoneNameFunc;
 
     public AbstractSampleByRecordCursorFactory(
             RecordCursorFactory base,
             RecordMetadata metadata,
-            ObjList<Function> recordFunctions
+            ObjList<Function> recordFunctions,
+            Function timezoneNameFunc,
+            Function offsetFunc,
+            Function sampleFromFunc,
+            Function sampleToFunc
     ) {
         super(metadata);
         this.base = base;
         this.recordFunctions = recordFunctions;
+        this.timezoneNameFunc = timezoneNameFunc;
+        this.offsetFunc = offsetFunc;
+        this.sampleFromFunc = sampleFromFunc;
+        this.sampleToFunc = sampleToFunc;
     }
 
     @Override
@@ -73,6 +85,14 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     protected void _close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(base);
+        // The factory is the lifetime owner of the temporal parameter functions (timezone,
+        // offset, FROM, TO); the cursors only borrow them across the executions of this cached
+        // factory. The generator accepts runtime-constant expressions here, which may own child
+        // functions, so they must be closed exactly once.
+        Misc.free(timezoneNameFunc);
+        Misc.free(offsetFunc);
+        Misc.free(sampleFromFunc);
+        Misc.free(sampleToFunc);
     }
 
     protected abstract AbstractNoRecordSampleByCursor getRawCursor();

@@ -30,8 +30,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.griffin.model.TimestampMonotonicInverter;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,6 +44,46 @@ import org.junit.Test;
  * itself on rollback/no-op paths that never adopt the function.
  */
 public class RuntimeIntervalModelBuilderTest {
+
+    @Test
+    public void testBetweenDynamicAdoptionIsAtomicUnderAllocationFailure() {
+        // Injects an allocation failure into the capacity reservation of a dynamic/dynamic
+        // BETWEEN and emulates the WhereClauseParser error handling: the catch in
+        // translateBetweenToTimestampModel frees the incoming endpoint, the finally in
+        // analyzeBetween0 rolls back the pending endpoint via clearBetweenParsing(). Every
+        // endpoint must be closed exactly once and the builder must stay consistent.
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction lo = new CloseCountingFunction();
+        CloseCountingFunction hi = new CloseCountingFunction();
+        builder.setBetweenBoundary(lo, 0);
+        builder.failNextReservation = true;
+        try {
+            builder.setBetweenBoundary(hi, 0);
+            Assert.fail("injected failure expected");
+        } catch (RuntimeException e) {
+            // WhereClauseParser.translateBetweenToTimestampModel catch: frees the incoming func
+            Misc.free(hi);
+        }
+        // WhereClauseParser.analyzeBetween0 finally: rollback of the pending endpoint
+        builder.clearBetweenParsing();
+        Assert.assertEquals("pending first endpoint must be closed exactly once", 1, lo.closeCount);
+        Assert.assertEquals("incoming second endpoint must be closed exactly once", 1, hi.closeCount);
+        Assert.assertFalse("failed append must not mark intervals applied", builder.hasIntervalFilters());
+
+        // the failed append must leave the lists untouched and aligned: a subsequent BETWEEN
+        // must adopt and transfer its endpoints normally
+        CloseCountingFunction lo2 = new CloseCountingFunction();
+        CloseCountingFunction hi2 = new CloseCountingFunction();
+        builder.setBetweenBoundary(lo2, 0);
+        builder.setBetweenBoundary(hi2, 0);
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, lo2.closeCount);
+        Assert.assertEquals(1, hi2.closeCount);
+        Assert.assertEquals("retry must not close the rolled-back endpoint again", 1, lo.closeCount);
+        Assert.assertEquals("retry must not close the freed endpoint again", 1, hi.closeCount);
+    }
 
     @Test
     public void testBetweenNullBoundaryConsumesDynamicEndpoint() {
@@ -82,6 +124,50 @@ public class RuntimeIntervalModelBuilderTest {
         builder.setBetweenBoundary(lo, 0);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
+    }
+
+    @Test
+    public void testBetweenSemiDynamicIncomingAdoptionIsAtomicUnderAllocationFailure() {
+        // Constant first endpoint, dynamic second endpoint: an allocation failure in the
+        // capacity reservation must leave the incoming function owned by the caller
+        // (WhereClauseParser frees it in its catch) and must not adopt it into the builder,
+        // otherwise the parser catch and the builder rollback double-close it.
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction hi = new CloseCountingFunction();
+        builder.setBetweenBoundary(1_000_000L);
+        builder.failNextReservation = true;
+        try {
+            builder.setBetweenBoundary(hi, 0);
+            Assert.fail("injected failure expected");
+        } catch (RuntimeException e) {
+            // WhereClauseParser.translateBetweenToTimestampModel catch: frees the incoming func
+            Misc.free(hi);
+        }
+        builder.clearBetweenParsing();
+        builder.freeAndClear();
+        Assert.assertEquals("incoming endpoint must be closed exactly once", 1, hi.closeCount);
+    }
+
+    @Test
+    public void testBetweenSemiDynamicPendingAdoptionIsAtomicUnderAllocationFailure() {
+        // Dynamic first endpoint, constant second endpoint: an allocation failure in the
+        // capacity reservation must leave the pending endpoint reachable through
+        // betweenBoundaryFunc so the clearBetweenParsing() rollback closes it exactly once.
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction lo = new CloseCountingFunction();
+        builder.setBetweenBoundary(lo, 0);
+        builder.failNextReservation = true;
+        try {
+            builder.setBetweenBoundary(2_000_000L);
+            Assert.fail("injected failure expected");
+        } catch (RuntimeException e) {
+            // no incoming function on this path; nothing for the parser to free
+        }
+        builder.clearBetweenParsing();
+        Assert.assertEquals("pending endpoint must be closed exactly once", 1, lo.closeCount);
+        Assert.assertFalse("failed append must not mark intervals applied", builder.hasIntervalFilters());
+        builder.freeAndClear();
+        Assert.assertEquals("rollback must not close the pending endpoint again", 1, lo.closeCount);
     }
 
     @Test
@@ -210,6 +296,32 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
+    public void testEmptySetConsumesMonotonicInverter() {
+        // intersectMonotonicTimestamp() on an already-empty model must consume ownership of the
+        // inverter: its close() must reach the head and bound functions exactly once.
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        builder.intersectEmpty();
+        CloseCountingFunction head = new CloseCountingFunction();
+        CloseCountingFunction lo = new CloseCountingFunction();
+        CloseCountingFunction hi = new CloseCountingFunction();
+        builder.intersectMonotonicTimestamp(new TimestampMonotonicInverter(
+                head,
+                new ObjList<>(),
+                lo,
+                (short) 0,
+                0L,
+                hi,
+                (short) 0,
+                0L,
+                true,
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
+        ));
+        Assert.assertEquals(1, head.closeCount);
+        Assert.assertEquals(1, lo.closeCount);
+        Assert.assertEquals(1, hi.closeCount);
+    }
+
+    @Test
     public void testFreeAndClearClosesPendingFunctionOnce() {
         RuntimeIntervalModelBuilder builder = newBuilder();
         CloseCountingFunction lo = new CloseCountingFunction();
@@ -237,6 +349,12 @@ public class RuntimeIntervalModelBuilderTest {
         return builder;
     }
 
+    private static ReservationFailingBuilder newFailingBuilder() {
+        ReservationFailingBuilder builder = new ReservationFailingBuilder();
+        builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
+        return builder;
+    }
+
     private static class CloseCountingFunction extends TimestampFunction {
         int closeCount;
 
@@ -257,6 +375,23 @@ public class RuntimeIntervalModelBuilderTest {
         @Override
         public boolean isRuntimeConstant() {
             return true;
+        }
+    }
+
+    /**
+     * Simulates an allocation failure at the single fallible point of a BETWEEN append: the
+     * up-front capacity reservation that precedes every list mutation and ownership transfer.
+     */
+    private static class ReservationFailingBuilder extends RuntimeIntervalModelBuilder {
+        boolean failNextReservation;
+
+        @Override
+        protected void reserveEncodedIntervals(int intervalCount) {
+            if (failNextReservation) {
+                failNextReservation = false;
+                throw new RuntimeException("injected allocation failure");
+            }
+            super.reserveEncodedIntervals(intervalCount);
         }
     }
 }

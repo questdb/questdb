@@ -138,11 +138,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      */
     public void clearBetweenParsing() {
         if (betweenBoundaryFunc != null) {
-            // Every successful handoff nulls betweenBoundaryFunc before the callee adopts the
-            // function into dynamicRangeList (see setBetweenBoundary), so a non-null field always
-            // denotes a pending, not-yet-adopted function that this rollback owns. Closing it
-            // directly avoids an O(n) list scan per rollback; the assert keeps the invariant
-            // checked in tests.
+            // setBetweenBoundary drops the rollback reference immediately after a handoff
+            // commits, and the handoff itself is atomic (see reserveEncodedIntervals), so a
+            // non-null field always denotes a pending, not-yet-adopted function that this
+            // rollback owns. Closing it directly avoids an O(n) list scan per rollback; the
+            // assert keeps the invariant checked in tests.
             assert dynamicRangeList.indexOf(betweenBoundaryFunc) < 0;
             betweenBoundaryFunc.close();
         }
@@ -386,10 +386,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     }
                 }
             } else {
-                // hand the pending function off; the callee adopts or frees it
-                final Function pendingFunc = betweenBoundaryFunc;
+                // The callee either fully adopts/frees the pending endpoint or throws without
+                // touching it, so the rollback reference is dropped only after the handoff
+                // commits. On a throw, clearBetweenParsing() still owns and closes the endpoint.
+                intersectBetweenSemiDynamic(betweenBoundaryFunc, betweenBoundaryFuncPosition, timestamp);
                 betweenBoundaryFunc = null;
-                intersectBetweenSemiDynamic(pendingFunc, betweenBoundaryFuncPosition, timestamp);
             }
             betweenBoundarySet = false;
         }
@@ -404,10 +405,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             if (betweenBoundaryFunc == null) {
                 intersectBetweenSemiDynamic(timestamp, functionPosition, betweenBoundary);
             } else {
-                // hand the pending function off; the callee adopts or frees both endpoints
-                final Function pendingFunc = betweenBoundaryFunc;
+                // The callee either fully adopts/frees both endpoints or throws without touching
+                // either, so the rollback reference is dropped only after the handoff commits.
+                // On a throw, the caller still owns the incoming function and
+                // clearBetweenParsing() still owns and closes the pending one.
+                intersectBetweenDynamic(timestamp, functionPosition, betweenBoundaryFunc, betweenBoundaryFuncPosition);
                 betweenBoundaryFunc = null;
-                intersectBetweenDynamic(timestamp, functionPosition, pendingFunc, betweenBoundaryFuncPosition);
             }
             betweenBoundarySet = false;
         }
@@ -554,6 +557,20 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     /**
+     * Reserves capacity for {@code intervalCount} encoded intervals in staticIntervals and for
+     * their parallel slots in dynamicRangeList and dynamicRangePositionList before any of them
+     * is mutated. Growth is the only failure mode of the appends that follow, so reserving up
+     * front makes a multi-entry append effectively atomic: a failure here leaves the lists
+     * untouched and aligned, and every involved Function with its previous owner. Overridable
+     * so tests can inject an allocation failure at the single fallible point of the append.
+     */
+    protected void reserveEncodedIntervals(int intervalCount) {
+        staticIntervals.checkCapacity(staticIntervals.size() + intervalCount * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL);
+        dynamicRangeList.checkCapacity(dynamicRangeList.size() + intervalCount);
+        dynamicRangePositionList.checkCapacity(dynamicRangePositionList.size() + intervalCount);
+    }
+
+    /**
      * Applies the add method with overflow checking.
      * Throws SqlException if the addition would cause timestamp overflow.
      */
@@ -610,6 +627,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
+        // Reserve capacity for the whole operation before mutating any list or adopting either
+        // function: a growth failure here leaves both functions with their previous owners and
+        // the lists untouched, instead of adopting one endpoint (double-closed by the caller and
+        // this builder) while stranding the other.
+        reserveEncodedIntervals(2);
+
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
@@ -620,6 +643,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void intersectBetweenSemiDynamic(Function funcValue, int funcPosition, long constValue) {
         if (constValue == Numbers.LONG_NULL) {
+            // The caller drops its rollback reference only after this method returns, so the
+            // incoming function may still be referenced by betweenBoundaryFunc. Detach it before
+            // emptying the model: the freeAndClear() inside intersectEmpty() must not close it
+            // ahead of the single Misc.free() below.
+            if (betweenBoundaryFunc == funcValue) {
+                betweenBoundaryFunc = null;
+            }
             if (!betweenNegated) {
                 intersectEmpty();
             }
@@ -638,6 +668,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             Misc.free(funcValue);
             return;
         }
+
+        // Reserve capacity for the whole operation before mutating any list or adopting the
+        // function: a growth failure here leaves the function with its previous owner and the
+        // lists untouched and aligned.
+        reserveEncodedIntervals(1);
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);

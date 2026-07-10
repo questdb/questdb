@@ -68,7 +68,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             Function sampleToFunc,
             int sampleToFuncPos
     ) throws SqlException {
-        super(base, groupByMetadata, recordFunctions);
+        super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
             final ObjList<Function> placeholderFunctions = SampleByFillValueRecordCursorFactory.createPlaceholderFunctions(
                     ColumnType.getTimestampDriver(timestampType),

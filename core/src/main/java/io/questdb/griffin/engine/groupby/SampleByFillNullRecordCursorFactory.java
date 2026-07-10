@@ -91,7 +91,11 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                 valueTypes,
                 groupByMetadata,
                 groupByFunctions,
-                recordFunctions
+                recordFunctions,
+                timezoneNameFunc,
+                offsetFunc,
+                sampleFromFunc,
+                sampleToFunc
         );
         try {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
@@ -116,8 +120,13 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                     sampleToFuncPos
             );
         } catch (Throwable e) {
-            Misc.freeObjList(recordFunctions);
+            // The superclass already adopted the record functions, base factory, map, and
+            // temporal parameter functions; the unreturned partial object would strand them.
+            // close() frees everything except the map, which _close() reaches only through the
+            // cursor - not constructed yet - so free it directly. The record functions are
+            // freed by close() and must not be freed here as well.
             Misc.free(map);
+            close();
             throw e;
         }
     }

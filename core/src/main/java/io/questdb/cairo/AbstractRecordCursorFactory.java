@@ -35,6 +35,12 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
      * The record metadata.
      */
     private final RecordMetadata metadata;
+    // Guards _close() against repeated invocation: factory ownership chains close the same
+    // instance from more than one owner on error paths (a failing factory constructor closes
+    // its adopted base factory, and the generator catch then frees its own reference to it),
+    // and _close() implementations free adopted functions and native resources that must not
+    // be freed twice. Sorted after the final field per the final-then-mutable field grouping.
+    private boolean closed;
 
     /**
      * Constructs a new record cursor factory.
@@ -47,7 +53,10 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
 
     @Override
     public final void close() {
-        _close();
+        if (!closed) {
+            closed = true;
+            _close();
+        }
     }
 
     @Override
