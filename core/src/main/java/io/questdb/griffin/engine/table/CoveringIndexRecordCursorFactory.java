@@ -2358,7 +2358,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             final int n = multiKeys.size();
             while (true) {
                 if (!isHeapMerge) {
-                    // Linear min-scan (small IN-lists).
+                    // Linear min-scan (small key sets).
                     // Advance the cursor we emitted last; we deferred this so its
                     // covered values stayed readable until the caller consumed them.
                     if (selectedKeyIdx >= 0) {

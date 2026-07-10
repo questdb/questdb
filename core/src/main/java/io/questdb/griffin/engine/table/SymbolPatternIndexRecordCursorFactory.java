@@ -89,6 +89,11 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
     private final int[] cursorFactoriesIdx = new int[]{0};
     private final PageFrameRecordCursorImpl fallbackCursor;
     private final Function fallbackFilter;         // full filter (pattern AND residual)
+    // Applies fallbackFilter per row over the full-scan fallbackCursor. The plain fallbackCursor emits every
+    // row (its PageFrameRowCursorFactory does no filtering, and PageFrameRecordCursorImpl treats its filter
+    // arg as a toTop-lifecycle handle, NOT a per-row predicate), so without this wrapper the > threshold
+    // fallback would silently return ALL rows and drop the pattern predicate.
+    private final FilteredRecordCursor fallbackFilteredCursor;
     private final RowCursorFactory fallbackRowCursorFactory;
     private final PageFrameRecordCursorImpl indexCursor;
     private final int indexDirection;
@@ -146,6 +151,7 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
                 false,
                 fallbackFilter
         );
+        fallbackFilteredCursor = new FilteredRecordCursor(fallbackFilter);
     }
 
     @Override
@@ -222,10 +228,10 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         if (includedCount > threshold) {
             testFallbackInvocations.incrementAndGet();
             fallbackCursor.of(pageFrameCursor, executionContext);
-            if (fallbackFilter != null) {
-                fallbackFilter.init(fallbackCursor, executionContext);
-            }
-            return fallbackCursor;
+            // Wrap the unfiltered full scan so fallbackFilter (pattern AND residual) is evaluated per row;
+            // of() also runs fallbackFilter.init(). Returning the raw fallbackCursor would drop the predicate.
+            fallbackFilteredCursor.of(fallbackCursor, executionContext);
+            return fallbackFilteredCursor;
         }
 
         // Materialize the effective key list: the matched keys for the positive path, or the complement

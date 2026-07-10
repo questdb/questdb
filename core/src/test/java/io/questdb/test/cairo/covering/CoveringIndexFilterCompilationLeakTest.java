@@ -96,4 +96,59 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
             Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
         });
     }
+
+    @Test
+    public void testPatternCoveringPathFreesResidualExactlyOnceOnThrow() throws Exception {
+        // Coverage for the NEW symbol-pattern COVERING route (sym LIKE '...'), the analogue of the sym='A'
+        // case above but reached through tryGenerateSymbolPatternIndex's covering branch. That branch
+        // transfers dfcFactory + providerFunction into coveringFactory and nulls its OWN locals, then calls
+        // wrapCoveringWithFilter, which here throws on the 3rd per-worker filter compile. Its catch frees
+        // coveringFactory (-> dfcFactory) and the residual filter. This asserts the residual + partial worker
+        // filter are each freed EXACTLY once (CLOSE_COUNT == 2) with no native leak under assertMemoryLeak.
+        //
+        // NOTE on the C-A "double-free" finding: before the SqlCodeGenerator fix, the CALLER's dfcFactory
+        // stayed non-null after this method threw, so generateTableQuery0's outer catch ran
+        // Misc.free(dfcFactory) a SECOND time. That is a genuine ownership-invariant violation (free should
+        // happen exactly once), and the fix closes it. It is NOT, however, an observable fault today: every
+        // resource in the dfcFactory close chain nulls-on-free (IntervalPartitionFrameCursorFactory does
+        // `cursor = Misc.free(cursor)`; RuntimeIntervalModel and AbstractPartitionFrameCursorFactory free
+        // their lists via Misc.freeObjList, which nulls each entry), so the second close() is a no-op and
+        // assertMemoryLeak stays balanced. This test therefore verifies the throw path stays leak-free on the
+        // pattern route; the fix is a defensive correctness change guarding against a future non-idempotent
+        // close in this factory hierarchy, verified separately by the ownership trace in SqlCodeGenerator.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE tab (" +
+                            "ts TIMESTAMP, " +
+                            "sym SYMBOL INDEX TYPE POSTING INCLUDE (price), " +
+                            "price DOUBLE" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL"
+            );
+            execute(
+                    "INSERT INTO tab " +
+                            "SELECT dateadd('h', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A' || (x % 5), x::DOUBLE " +
+                            "FROM long_sequence(20)"
+            );
+            engine.releaseAllWriters();
+
+            TestThrowingFilterFunctionFactory.reset(3);
+
+            // No LIMIT: a multi-key pattern with a negative limit takes the serial fallback (no per-worker
+            // filter compile); without a limit the covering route drives the async page-frame path, so
+            // wrapCoveringWithFilter compiles per-worker copies and the 3rd throws. The dynamic interval
+            // (ts > now()-based) exercises the interval-factory dfcFactory shape on this route.
+            try (
+                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 4);
+                    RecordCursorFactory ignored = engine.select(
+                            "SELECT price FROM tab WHERE sym LIKE 'A%' AND test_throwing_filter() AND ts > dateadd('y', -10, now())", ctx)
+            ) {
+                Assert.fail("expected SqlException from test_throwing_filter");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "configured to throw on call 3");
+            }
+            // The residual + the partial worker filter close exactly once each; assertMemoryLeak confirms no
+            // native imbalance on the pattern-covering throw path.
+            Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+        });
+    }
 }

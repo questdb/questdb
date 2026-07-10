@@ -10704,10 +10704,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && configuration.isSymbolPatternIndexEnabled()
                         && !SqlHints.hasNoSymbolPatternIndexHint(model)
                         && !model.isUpdate()) {
-                    RecordCursorFactory f = tryGenerateSymbolPatternIndex(
-                            model, executionContext, intrinsicModel, reader, queryMeta, dfcFactory,
-                            columnIndexes, columnSizeShifts
-                    );
+                    final RecordCursorFactory f;
+                    try {
+                        f = tryGenerateSymbolPatternIndex(
+                                model, executionContext, intrinsicModel, reader, queryMeta, dfcFactory,
+                                columnIndexes, columnSizeShifts
+                        );
+                    } catch (Throwable th) {
+                        // tryGenerateSymbolPatternIndex frees dfcFactory EXACTLY ONCE on any throw; null the
+                        // caller's reference so the outer catch (Misc.free(dfcFactory)) cannot re-free it.
+                        dfcFactory = null;
+                        throw th;
+                    }
                     if (f != null) {
                         dfcFactory = null; // ownership transferred to f
                         return f;
@@ -11536,7 +11544,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnSizeShifts
             );
         } catch (Throwable th) {
-            // dfcFactory stays owned by the caller; free only what this method compiled
+            // Free dfcFactory here so it is released EXACTLY ONCE on every throw. It is null on the
+            // covering-transfer path (coveringFactory / wrapCoveringWithFilter already freed it) and
+            // non-null on the classic path (no factory took ownership yet). The caller nulls its own
+            // reference on catch, so the outer Misc.free(dfcFactory) never re-frees -- this closes the
+            // double-free when wrapCoveringWithFilter throws after ownership transfer.
+            Misc.free(dfcFactory);
             Misc.free(providerFunction);
             Misc.free(residualFilter);
             Misc.free(fullFilter);

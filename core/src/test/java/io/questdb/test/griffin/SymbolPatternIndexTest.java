@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
@@ -102,13 +103,125 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
 
     @Test
     public void testHintConstantWiring() {
-        Assert.assertEquals("no_symbol_pattern_index", io.questdb.griffin.SqlHints.NO_SYMBOL_PATTERN_INDEX_HINT);
+        // A plain string-equality check on the constant is tautological: it would still pass if
+        // SqlHints never consulted the constant. Assert the real wiring instead -- that a model
+        // carrying the hint is detected by hasNoSymbolPatternIndexHint(), and a model without it is not.
+        final QueryModel withHint = QueryModel.FACTORY.newInstance();
+        withHint.addHint(io.questdb.griffin.SqlHints.NO_SYMBOL_PATTERN_INDEX_HINT, "");
+        Assert.assertTrue(io.questdb.griffin.SqlHints.hasNoSymbolPatternIndexHint(withHint));
+
+        final QueryModel withoutHint = QueryModel.FACTORY.newInstance();
+        Assert.assertFalse(io.questdb.griffin.SqlHints.hasNoSymbolPatternIndexHint(withoutHint));
     }
 
     @Test
     public void testConfigDefaults() {
         Assert.assertTrue(configuration.isSymbolPatternIndexEnabled());
         Assert.assertEquals(100, configuration.getSymbolPatternIndexThreshold());
+    }
+
+    // M-A: cairo.sql.symbol.pattern.index.enabled=false must disable the whole fast path (SqlCodeGenerator
+    // gates on isSymbolPatternIndexEnabled()) -> the pattern falls back to scan+filter, plan has no
+    // "SymbolPatternIndex". A regression ignoring the config key would ship green without this.
+    @Test
+    public void testDisabledConfigRevertsToScanFilter() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select rnd_symbol('AA','AB','BA'), x, timestamp_sequence(0, 60000000) from long_sequence(200)");
+            assertQuery("select sym, v from t where sym like 'A%'").noLeakCheck().assertsPlanNotContaining("SymbolPatternIndex");
+        });
+    }
+
+    // M-A: a NON-default threshold (cairo.sql.symbol.pattern.index.threshold) must be honored -- with
+    // threshold=2, three matched keys (> 2) route to the fallback scan+filter, where the default 100 would
+    // use the index. Proven via the fast/fallback invocation counters, not just row parity.
+    @Test
+    public void testCustomThresholdConfigForcesFallback() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "2");
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            // AA/AB/AC (3 keys) match 'A%'; 3 > threshold(2) -> fallback (default 100 would index).
+            execute("insert into t select rnd_symbol('AA','AB','AC','BA','BB'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, count() from t where sym like 'A%' order by sym");
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            String actual = select("select sym, count() from t where sym like 'A%' order by sym");
+            io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
+            Assert.assertTrue(
+                    "custom threshold=2 must force the fallback for 3 matched keys, got fallback="
+                            + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get(),
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+            );
+            Assert.assertEquals(
+                    "index path must not fire under threshold=2 with 3 matched keys",
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+            );
+        });
+    }
+
+    // Regression: at the DEFAULT threshold (100), a pattern that matches MORE than 100 distinct symbol keys
+    // routes to the > threshold full-scan fallback inside SymbolPatternIndexRecordCursorFactory. That fallback
+    // must still apply the pattern predicate. Before the fix the fallback returned the plain, UNFILTERED full
+    // scan (its PageFrameRowCursorFactory emits every row and PageFrameRecordCursorImpl never evaluates its
+    // filter arg per row), so `sym like 'A%'` silently returned ALL rows -- including non-matching B-keys.
+    // 200 distinct A-keys (> 100) force the fallback at default config; the count must equal the A-only rows,
+    // matching the no-index scan+filter oracle, NOT the whole-table count.
+    @Test
+    public void testFallbackAboveThresholdStillAppliesPatternFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select 'A' || (x%200), x, timestamp_sequence(0, 60000000) from long_sequence(6000)");
+            execute("insert into t select 'B' || (x%50), x, timestamp_sequence(600000000000, 60000000) from long_sequence(3000)");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            long viaFastPath = countOf("select count() from t where sym like 'A%'");
+            // Oracle: the ordinary scan+filter path (fast path disabled by hint).
+            long viaScanFilter = countOf("select /*+ no_symbol_pattern_index(t) */ count() from t where sym like 'A%'");
+
+            Assert.assertEquals("fallback must match the scan+filter oracle (A-only rows)", viaScanFilter, viaFastPath);
+            Assert.assertEquals("only the 6000 A-prefixed rows match 'A%'", 6000, viaFastPath);
+            Assert.assertTrue(
+                    "200 matched keys (> default threshold 100) must take the fallback, got fallback="
+                            + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get(),
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+            );
+            Assert.assertEquals(
+                    "index path must not fire when the match set exceeds the threshold",
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+            );
+        });
+    }
+
+    // Regression companion for the NEGATED (NOT LIKE) complement path, which shares the same > threshold
+    // fallback cursor. With 150 A-keys and 150 B-keys the complement of 'A%' (the NOT-LIKE match set) is
+    // 150 keys > 100, forcing the fallback; it must still apply the negated predicate and return only the
+    // B rows, not the whole table. Before the fix this returned every row exactly like the positive path.
+    @Test
+    public void testNegatedFallbackAboveThresholdStillAppliesPatternFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select 'A' || (x%150), x, timestamp_sequence(0, 60000000) from long_sequence(4500)");
+            execute("insert into t select 'B' || (x%150), x, timestamp_sequence(600000000000, 60000000) from long_sequence(3000)");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            long viaFastPath = countOf("select count() from t where sym not like 'A%'");
+            long viaScanFilter = countOf("select /*+ no_symbol_pattern_index(t) */ count() from t where sym not like 'A%'");
+
+            Assert.assertEquals("negated fallback must match the scan+filter oracle (B-only rows)", viaScanFilter, viaFastPath);
+            Assert.assertEquals("only the 3000 B-prefixed rows satisfy NOT LIKE 'A%'", 3000, viaFastPath);
+            Assert.assertTrue(
+                    "complement of 150 A-keys (150 B-keys > threshold 100) must take the fallback, got fallback="
+                            + SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get(),
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+            );
+            Assert.assertEquals(
+                    "index path must not fire when the complement exceeds the threshold",
+                    0,
+                    SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+            );
+        });
     }
 
     @Test
@@ -316,6 +429,9 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
      * full scan+filter cursor. We trigger this by inserting 150 distinct symbols that all match the
      * pattern {@code 'A%'}, giving 150 matched keys &gt; 100. The fallback counter must increment and
      * the index counter must stay at zero; rows must match the hinted scan+filter ground truth.
+     * <p>
+     * The table ALSO holds non-matching B-keys so the ground-truth comparison is not vacuous: a
+     * fallback that dropped the pattern predicate (and returned the whole table) would fail here.
      */
     @Test
     public void testHighSelectivityFallsBackToScan() throws Exception {
@@ -324,6 +440,8 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             // 'A' || (x % 150) produces A0..A149 = 150 distinct symbols, all matching 'A%'.
             // 150 > default threshold (100), so the factory must choose the fallback path.
             execute("insert into t select cast('A' || (x % 150) as symbol), x, timestamp_sequence(0, 60000000) from long_sequence(1500)");
+            // Non-matching rows: without these every row matches 'A%' and a dropped filter is undetectable.
+            execute("insert into t select cast('B' || (x % 40) as symbol), x, timestamp_sequence(600000000000, 60000000) from long_sequence(800)");
             // Ground truth: force scan+filter with the opt-out hint immediately after SELECT.
             String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, count() from t where sym like 'A%' order by sym");
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
