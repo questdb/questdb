@@ -722,7 +722,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      */
     boolean mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
-            // Nothing to merge, or this builder is already empty; no constraint added, safe to consume.
+            // Nothing merged into this builder, but the caller consumes the and_offset predicate on a
+            // true return and only clears other on the residual path. Free any dynamic bound compiled
+            // into other here so it is not orphaned until the pool slot is reused (mirrors the residual
+            // clearIntervalFilters() fix in WhereClauseParser.analyzeAndOffset).
+            if (other != null) {
+                other.freeAndClear();
+            }
             return true;
         }
         final LongList otherIntervals = other.staticIntervals;

@@ -1607,4 +1607,26 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             """);
         });
     }
+
+    @Test
+    public void testDynamicBoundOffsetEmptyModelFreesTempModel() throws Exception {
+        // Companion to testDynamicBoundOffsetResidualFreesTempModel, covering mergeWithAddMethod's
+        // isEmptySet() early return. The NULL-bound predicate empties this model first; the alloc_ts
+        // offset predicate is then merged into an already-empty model and consumed without applying a
+        // constraint. mergeWithAddMethod must free the alloc_ts bound compiled into the temp model on
+        // that early return; otherwise its tracked native buffer leaks until the pool slot is reused.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES " +
+                    "(100, '2020-01-01T00:30:00.000000Z')," +
+                    "(150, '2020-06-01T00:30:00.000000Z')," +
+                    "(200, '2020-12-01T00:30:00.000000Z');");
+
+            // tt > null::timestamp is unsatisfiable, so the model is empty before the alloc_ts predicate.
+            assertQuery("SELECT * FROM (SELECT dateadd('h',-1,timestamp) tt, price FROM trades) " +
+                    "WHERE tt > alloc_ts('2020-05-31T23:00:00.000000Z'::timestamp) AND tt > null::timestamp")
+                    .timestamp("tt")
+                    .returns("tt\tprice\n");
+        });
+    }
 }

@@ -78,7 +78,9 @@ public final class DecimalType implements FuzzColumnType {
         for (int i = 0; i < integerDigits; i++) {
             magnitude *= 10L;
         }
-        long intPart = magnitude == 0 ? 0 : rnd.nextLong(magnitude);
+        // magnitude starts at 1 and is only ever multiplied by 10, so it is always >= 1; when
+        // integerDigits is 0 it stays 1 and nextLong(1) yields 0 (the 0 -> DECIMAL(p, p) case).
+        long intPart = rnd.nextLong(magnitude);
         boolean negative = rnd.nextBoolean();
         // 1:4 of the time emit a bare integer literal (no fractional part) even when the type
         // carries a scale, to exercise the integer -> DECIMAL cast path, including 0 -> DECIMAL(p, p).

@@ -176,11 +176,6 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 }
 
                 @Override
-                public long getTimestamp(Record rec) {
-                    return -2_856_928_958L;
-                }
-
-                @Override
                 public boolean isRuntimeConstant() {
                     return true;
                 }
@@ -189,6 +184,8 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
                 f.init(null, sqlExecutionContext);
                 assertEquals(1_438_038_338, f.getInt(null));
                 assertEquals(-2_856_928_958L, f.getLong(null));
+                // IntRuntimeConstFunction.getTimestamp is inherited from IntFunction and delegates to
+                // getLong(), so it serves the widened value without consulting the arg's own getTimestamp.
                 assertEquals(-2_856_928_958L, f.getTimestamp(null));
             } finally {
                 f.close();

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.sql.NullRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -208,9 +209,10 @@ public class MultiHorizonJoinRecord implements Record {
     }
 
     @Override
-    public @Nullable Interval getInterval(int col) {
+    public Interval getInterval(int col) {
+        // Interval.NULL sentinel (not Java null) for an absent slave row, matching ExtraNullColumnRecord.
         Record src = getSourceRecord(col);
-        return src != null ? src.getInterval(columnIndices[col]) : null;
+        return src != null ? src.getInterval(columnIndices[col]) : Interval.NULL;
     }
 
     @Override
@@ -259,9 +261,10 @@ public class MultiHorizonJoinRecord implements Record {
     }
 
     @Override
-    public @Nullable Record getRecord(int col) {
+    public Record getRecord(int col) {
+        // NullRecord.INSTANCE sentinel (not Java null) for an absent slave row, matching ExtraNullColumnRecord.
         Record src = getSourceRecord(col);
-        return src != null ? src.getRecord(columnIndices[col]) : null;
+        return src != null ? src.getRecord(columnIndices[col]) : NullRecord.INSTANCE;
     }
 
     @Override

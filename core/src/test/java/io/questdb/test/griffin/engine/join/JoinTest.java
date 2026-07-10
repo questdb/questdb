@@ -2390,14 +2390,19 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE s (k INT, sym SYMBOL, u UUID, l LONG256, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO m VALUES " +
                     "(1, 'a', '1970-01-01T00:00:00.000002Z'), " +
-                    "(1, 'a', '1970-01-01T00:00:00.000004Z')");
+                    "(1, 'a', '1970-01-01T00:00:00.000004Z'), " +
+                    "(2, 'a', '1970-01-01T00:00:00.000006Z')");
             execute("INSERT INTO s VALUES " +
                     "(1, 'a', '11111111-1111-1111-1111-111111111111', '0x01', ARRAY[1.0], '1970-01-01T00:00:00.000001Z'), " +
                     "(1, 'a', '22222222-2222-2222-2222-222222222222', '0x02', ARRAY[2.0], '1970-01-01T00:00:00.000003Z')");
 
+            // The last master row (k=2) has no slave key, so the map lookup misses and both the UUID
+            // and LONG256 must NULL-extend - the sentinel path most likely to mishandle these
+            // fixed-size types. The full-fat and light paths must still agree on it.
             final String expected = "ts\tu\tl\n" +
                     "1970-01-01T00:00:00.000002Z\t11111111-1111-1111-1111-111111111111\t0x01\n" +
-                    "1970-01-01T00:00:00.000004Z\t22222222-2222-2222-2222-222222222222\t0x02\n";
+                    "1970-01-01T00:00:00.000004Z\t22222222-2222-2222-2222-222222222222\t0x02\n" +
+                    "1970-01-01T00:00:00.000006Z\t\t\n";
 
             for (String join : new String[]{"LT", "ASOF"}) {
                 final String sql = "SELECT a.ts, b.u, b.l FROM m a " + join + " JOIN s b ON a.k = b.k AND a.sym = b.sym";

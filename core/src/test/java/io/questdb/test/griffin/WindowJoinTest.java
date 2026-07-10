@@ -3530,7 +3530,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     WINDOW JOIN slave s
                     RANGE BETWEEN 10 seconds PRECEDING AND 0 seconds FOLLOWING
                     EXCLUDE PREVAILING
-                    WHERE m.ts >= (-9223372030000000000L)::TIMESTAMP_NS
+                    WHERE m.ts >= (-9_223_372_030_000_000_000L)::TIMESTAMP_NS
                     ORDER BY m.ts
                     """)
                     .withPlanContaining("Frame forward scan on: slave")
@@ -4866,9 +4866,9 @@ public class WindowJoinTest extends AbstractCairoTest {
             // (2 h wide) spans several slave rows, including ones the buggy index scan dropped.
             // Integer x keeps sum() order-independent so the oracle compares exactly.
             execute("INSERT INTO trades SELECT rnd_symbol('a','b','c'), " +
-                    "timestamp_sequence('2024-01-01T08:00:00.000000Z', 30 * 60 * 1000000L) FROM long_sequence(60)");
+                    "timestamp_sequence('2024-01-01T08:00:00.000000Z', 30 * 60 * 1_000_000L) FROM long_sequence(60)");
             execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
-                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 20 * 60 * 1000000L) FROM long_sequence(180)");
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 20 * 60 * 1_000_000L) FROM long_sequence(180)");
             execute("INSERT INTO prices_pq SELECT * FROM prices");
             execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
@@ -5798,6 +5798,11 @@ public class WindowJoinTest extends AbstractCairoTest {
                 sink.clear();
                 printSql(query, sink);
                 final String expected = sink.toString();
+                // Guard against a vacuous comparison: the fixed bug crashes rather than returning
+                // wrong rows, so a zero-row result on both paths would let a regression pass. Require
+                // the single-threaded oracle to carry at least one data row (>= 2 newlines: header + row).
+                Assert.assertTrue("expected non-empty oracle for: " + query,
+                        expected.indexOf('\n') != expected.lastIndexOf('\n'));
 
                 sqlExecutionContext.setParallelWindowJoinEnabled(true);
                 sink.clear();
