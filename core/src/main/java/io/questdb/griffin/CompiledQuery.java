@@ -74,7 +74,8 @@ public interface CompiledQuery {
     short ALTER_VIEW = COMPILE_VIEW + 1; // 36
     short ALTER_STORAGE_POLICY = ALTER_VIEW + 1; // 37
     short TABLE_REBASE = ALTER_STORAGE_POLICY + 1; // 38
-    short EMPTY = TABLE_REBASE + 1;
+    short DELETE = TABLE_REBASE + 1; // 39
+    short EMPTY = DELETE + 1;
     short TYPES_COUNT = EMPTY;
 
     void closeAllButSelect();
