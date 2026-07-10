@@ -33,6 +33,7 @@ use crate::parquet_metadata::types::{
     encode_stat_sizes, Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
 };
 use crate::parquet_metadata::writer::ParquetMetaWriter;
+use crate::parquet_read::meta::resolve_column_id;
 use parquet2::metadata::FileMetaData;
 use parquet2::metadata::SortingColumn;
 use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType};
@@ -128,7 +129,10 @@ pub fn convert_from_parquet(
     for (i, col_desc) in columns.iter().enumerate() {
         let field_info = col_desc.base_type.get_field_info();
         let name = &field_info.name;
-        let id = field_info.id.unwrap_or(-1);
+        // Prefer QuestDB's authoritative id from QdbMeta over the parquet
+        // field_id, so a `_pm` rebuilt from a file with no field_id still
+        // recovers the column id.
+        let id = resolve_column_id(qdb_meta.and_then(|m| m.schema[i].id), field_info.id);
 
         let col_type_code = if let Some(meta) = qdb_meta {
             let col_meta = &meta.schema[i];
@@ -366,15 +370,23 @@ fn apply_thrift_stats(
         raw.distinct_count = dc.max(0) as u64;
     }
 
+    // Parquet treats an absent is_*_value_exact as exact: the field post-dates the
+    // statistic, so a writer that never widens a bound leaves it unset. Only an
+    // explicit Some(false) -- emitted when UTF-8/opaque-Binary min/max truncation
+    // widens the bound -- means inexact. Carry that through so the _pm exact bit
+    // matches the parquet footer instead of always claiming exact.
+    let is_min_exact = stats.is_min_value_exact != Some(false);
+    let is_max_exact = stats.is_max_value_exact != Some(false);
+
     if let Some(min_val) = stats.min_value.as_deref() {
         if !min_val.is_empty() {
             if min_val.len() <= 8 {
-                stat_flags = stat_flags.with_min(true, true);
+                stat_flags = stat_flags.with_min(true, is_min_exact);
                 let mut buf = [0u8; 8];
                 buf[..min_val.len()].copy_from_slice(min_val);
                 raw.min_stat = u64::from_le_bytes(buf);
             } else {
-                stat_flags = stat_flags.with_min(false, true);
+                stat_flags = stat_flags.with_min(false, is_min_exact);
                 ool_min = Some(min_val.to_vec());
             }
         }
@@ -383,12 +395,12 @@ fn apply_thrift_stats(
     if let Some(max_val) = stats.max_value.as_deref() {
         if !max_val.is_empty() {
             if max_val.len() <= 8 {
-                stat_flags = stat_flags.with_max(true, true);
+                stat_flags = stat_flags.with_max(true, is_max_exact);
                 let mut buf = [0u8; 8];
                 buf[..max_val.len()].copy_from_slice(max_val);
                 raw.max_stat = u64::from_le_bytes(buf);
             } else {
-                stat_flags = stat_flags.with_max(false, true);
+                stat_flags = stat_flags.with_max(false, is_max_exact);
                 ool_max = Some(max_val.to_vec());
             }
         }
@@ -980,6 +992,36 @@ mod tests {
     }
 
     #[test]
+    fn convert_prefers_qdb_meta_id_over_field_id() {
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+
+        // The written parquet has field_id == QdbMeta id == 0 for its single
+        // column. Diverge the QdbMeta id; the _pm must then carry the QdbMeta id,
+        // proving it is preferred over the parquet field_id.
+        let mut qdb_meta = extract_qdb_meta_from(&metadata).expect("test parquet has qdb meta");
+        assert_eq!(qdb_meta.schema.len(), 1);
+        qdb_meta.schema[0].id = Some(77);
+        let (bytes, size) =
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None, None).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
+        assert_eq!(reader.column_descriptor(0).unwrap().id, 77);
+
+        // An absent QdbMeta id falls back to the field_id (0).
+        qdb_meta.schema[0].id = None;
+        let (bytes, size) =
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None, None).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
+        assert_eq!(reader.column_descriptor(0).unwrap().id, 0);
+
+        // Without QdbMeta, the id comes straight from the parquet field_id (0).
+        let (bytes, size) = convert_from_parquet(&metadata, None, 0, 0, None, None).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
+        assert_eq!(reader.column_descriptor(0).unwrap().id, 0);
+    }
+
+    #[test]
     fn convert_with_compression() {
         let parquet_data = write_test_parquet(1000, CompressionOptions::Snappy);
         let mut cursor = Cursor::new(&parquet_data);
@@ -1075,6 +1117,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             });
         bad_meta
             .schema
@@ -1083,6 +1126,7 @@ mod tests {
                 column_top: 0,
                 format: None,
                 ascii: None,
+                id: None,
             });
 
         let result = convert_from_parquet(&metadata, Some(&bad_meta), 0, 0, None, None);
@@ -1667,6 +1711,8 @@ mod tests {
             distinct_count: None,
             max_value: Some(max_days.to_le_bytes().to_vec()),
             min_value: Some(min_days.to_le_bytes().to_vec()),
+            is_max_value_exact: None,
+            is_min_value_exact: None,
         };
         let meta = ColumnMetaData {
             type_: Type::INT32,
@@ -1737,6 +1783,163 @@ mod tests {
         assert_eq!(&max_bytes[4..], &[0u8; 4]);
     }
 
+    /// Run `apply_thrift_stats` over a thrift `Statistics` carrying the given
+    /// min/max values and exactness flags, returning the resulting `_pm` raw plus
+    /// any out-of-line stat bytes.
+    fn apply_thrift_stats_for(
+        min_value: Option<Vec<u8>>,
+        max_value: Option<Vec<u8>>,
+        is_min_value_exact: Option<bool>,
+        is_max_value_exact: Option<bool>,
+    ) -> (ColumnChunkRaw, Option<Vec<u8>>, Option<Vec<u8>>) {
+        let stats = parquet2::thrift_format::Statistics {
+            max: None,
+            min: None,
+            null_count: None,
+            distinct_count: None,
+            max_value,
+            min_value,
+            is_max_value_exact,
+            is_min_value_exact,
+        };
+        let mut raw = ColumnChunkRaw::zeroed();
+        let (ool_min, ool_max) = apply_thrift_stats(&mut raw, Some(&stats));
+        (raw, ool_min, ool_max)
+    }
+
+    #[test]
+    fn pm_exact_bit_set_when_thrift_flag_absent() {
+        // An absent is_*_value_exact is Parquet's "exact" default: short inline
+        // bounds with no flag must mark _pm exact.
+        let (raw, _, _) = apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), None, None);
+        let sf = raw.stat_flags();
+        assert!(sf.has_min_stat() && sf.is_min_inlined() && sf.is_min_exact());
+        assert!(sf.has_max_stat() && sf.is_max_inlined() && sf.is_max_exact());
+    }
+
+    #[test]
+    fn pm_exact_bit_set_when_thrift_flag_explicitly_true() {
+        let (raw, _, _) =
+            apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), Some(true), Some(true));
+        let sf = raw.stat_flags();
+        assert!(sf.is_min_exact());
+        assert!(sf.is_max_exact());
+    }
+
+    #[test]
+    fn pm_exact_bit_cleared_when_thrift_flag_false_inline() {
+        // The core fix: a bound the writer marked inexact (Some(false)) must clear
+        // the _pm exact bit even when it is short enough to inline -- e.g. an
+        // external parquet that truncated a min/max to a short prefix.
+        let (raw, _, _) =
+            apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), Some(false), Some(false));
+        let sf = raw.stat_flags();
+        assert!(sf.has_min_stat() && sf.is_min_inlined() && !sf.is_min_exact());
+        assert!(sf.has_max_stat() && sf.is_max_inlined() && !sf.is_max_exact());
+    }
+
+    #[test]
+    fn pm_exact_bit_cleared_for_truncated_ool_bounds() {
+        // The realistic UTF-8/opaque-Binary truncation case: a 64-byte bound goes
+        // out-of-line and is flagged inexact; _pm must record OOL + not-exact and
+        // carry the full bytes out of line.
+        let long_min = vec![b'a'; 64];
+        let long_max = vec![b'z'; 64];
+        let (raw, ool_min, ool_max) = apply_thrift_stats_for(
+            Some(long_min.clone()),
+            Some(long_max.clone()),
+            Some(false),
+            Some(false),
+        );
+        let sf = raw.stat_flags();
+        assert!(sf.has_min_stat() && !sf.is_min_inlined() && !sf.is_min_exact());
+        assert!(sf.has_max_stat() && !sf.is_max_inlined() && !sf.is_max_exact());
+        assert_eq!(ool_min.as_deref(), Some(long_min.as_slice()));
+        assert_eq!(ool_max.as_deref(), Some(long_max.as_slice()));
+    }
+
+    #[test]
+    fn pm_exact_bit_kept_for_exact_ool_bounds() {
+        // A long bound is not automatically inexact: fixed-length byte arrays
+        // (Uuid/Long256/Decimal) store exact bounds verbatim. A 16-byte exact min
+        // must stay OOL and exact.
+        let exact_min = vec![7u8; 16];
+        let (raw, ool_min, _) = apply_thrift_stats_for(Some(exact_min.clone()), None, None, None);
+        let sf = raw.stat_flags();
+        assert!(sf.has_min_stat() && !sf.is_min_inlined() && sf.is_min_exact());
+        assert_eq!(ool_min.as_deref(), Some(exact_min.as_slice()));
+    }
+
+    #[test]
+    fn pm_min_and_max_exactness_are_independent() {
+        // An inexact min must not drag the max's exact bit down, and vice versa.
+        let (raw, _, _) =
+            apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), Some(false), None);
+        let sf = raw.stat_flags();
+        assert!(!sf.is_min_exact());
+        assert!(sf.is_max_exact());
+
+        let (raw, _, _) =
+            apply_thrift_stats_for(Some(vec![1, 2]), Some(vec![9, 9]), None, Some(false));
+        let sf = raw.stat_flags();
+        assert!(sf.is_min_exact());
+        assert!(!sf.is_max_exact());
+    }
+
+    #[test]
+    fn pm_no_stat_bits_for_absent_or_empty_value() {
+        // An absent or empty bound sets no present/inlined/exact bit at all: the
+        // exactness flag is irrelevant when there is no value to qualify.
+        let (raw, ool_min, ool_max) =
+            apply_thrift_stats_for(None, Some(Vec::new()), Some(false), Some(false));
+        let sf = raw.stat_flags();
+        assert!(!sf.has_min_stat() && !sf.is_min_exact());
+        assert!(!sf.has_max_stat() && !sf.is_max_exact());
+        assert!(ool_min.is_none() && ool_max.is_none());
+    }
+
+    #[test]
+    fn build_column_chunk_from_thrift_carries_inexact_bit() {
+        // End-to-end through the thrift column builder: a truncated (inexact) min
+        // on a BYTE_ARRAY column must surface as a not-exact _pm bit, proving the
+        // exactness survives the full convert path rather than just the helper.
+        use parquet2::thrift_format::{
+            ColumnMetaData, CompressionCodec, Encoding as ThriftEncoding, Statistics, Type,
+        };
+        let long_min = vec![b'a'; 64];
+        let stats = Statistics {
+            max: None,
+            min: None,
+            null_count: Some(0),
+            distinct_count: None,
+            max_value: None,
+            min_value: Some(long_min.clone()),
+            is_max_value_exact: None,
+            is_min_value_exact: Some(false),
+        };
+        let meta = ColumnMetaData {
+            type_: Type::BYTE_ARRAY,
+            encodings: vec![ThriftEncoding::PLAIN],
+            path_in_schema: vec!["s".to_string()],
+            codec: CompressionCodec::UNCOMPRESSED,
+            num_values: 10,
+            total_uncompressed_size: 100,
+            total_compressed_size: 100,
+            key_value_metadata: None,
+            data_page_offset: 4,
+            index_page_offset: None,
+            dictionary_page_offset: None,
+            statistics: Some(stats),
+            encoding_stats: None,
+            bloom_filter_offset: None,
+            bloom_filter_length: None,
+        };
+        let built = build_column_chunk_from_thrift(&meta).unwrap();
+        let sf = built.raw.stat_flags();
+        assert!(sf.has_min_stat() && !sf.is_min_inlined() && !sf.is_min_exact());
+        assert_eq!(built.ool_min.as_deref(), Some(long_min.as_slice()));
+    }
+
     #[test]
     fn convert_with_qdb_meta_flags() {
         let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
@@ -1750,6 +1953,7 @@ mod tests {
             column_top: 42,
             format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
             ascii: Some(true),
+            id: None,
         });
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
@@ -3333,6 +3537,7 @@ mod tests {
             column_top: 0,
             format: None,
             ascii: None,
+            id: None,
         });
         let qdb_meta_json = qdb_meta.serialize().unwrap();
         chunked

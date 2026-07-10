@@ -95,9 +95,6 @@ public class ConcurrentMemoryTrackerTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, LOW_LIMIT);
         node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, HIGH_LIMIT);
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, HIGH_LIMIT);
-        // A per-query breach is deterministic across the refresh's step-reduction
-        // retries, so drop the backoff sleep - it would only slow the test.
-        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 0);
         // alloc_tracked(l), used to drive a precise WAL_APPLY allocation, is dev-mode
         // only; the static setProperty form does not stick across the class's tests.
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
