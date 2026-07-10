@@ -1516,7 +1516,15 @@ public class CairoEngine implements Closeable, WriterSource {
                     // CREATE does not see a stale dependent.
                     LiveViewInstance partial = liveViewRegistry.removeView(op.getViewName());
                     dependentViewGraph.removeLiveView(liveViewToken, op.getBaseTableName());
-                    Misc.free(partial);
+                    // registerView already published the instance to getViews, so a
+                    // refresh worker may hold its latch. Free via the DROP path's
+                    // latch-aware teardown, not close() (which frees off-latch and
+                    // would race the worker into a UAF/leak): tryCloseIfDropped frees
+                    // only if unlatched, else defers to the worker's finally hook.
+                    if (partial != null) {
+                        partial.markAsDropped();
+                        partial.tryCloseIfDropped();
+                    }
                 } catch (Throwable rollbackErr) {
                     LOG.error().$("could not unregister partially-created live view [view=").$(liveViewToken)
                             .$(", error=").$(rollbackErr).I$();

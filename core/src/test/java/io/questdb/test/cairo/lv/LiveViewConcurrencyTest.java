@@ -26,13 +26,17 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.ForwardingLiveViewStateStore;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,6 +46,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
@@ -55,6 +60,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -208,6 +214,102 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         // A refresh-driver thread maintains the view while four writers ingest.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runConcurrent(rnd, 0, 4, 800, false, true));
+    }
+
+    @Test
+    public void testCreateRollbackDefersFreeWhileRefreshLatchHeld() throws Exception {
+        // createLiveView publishes the instance into the registry the refresh worker
+        // iterates (registerView -> getViews) BEFORE the CREATE commits. If a later
+        // CREATE step throws, the rollback must not free the instance off-latch. A
+        // worker that has latched the fresh instance and is installing its runtime
+        // state would then either race close() into a UAF, or (the case reproduced
+        // here) leak that state: the off-latch close() sets isClosed, so the worker's
+        // finally-hook tryCloseIfDropped short-circuits and never frees. The fix routes
+        // the rollback through the DROP path's latch-aware teardown, so the free defers
+        // to that finally hook.
+        //
+        // This forces exactly that window: registerBaseTable (the step right after
+        // registerView) throws while a worker holds the refresh latch on the fresh
+        // instance. Pre-fix the tier the worker installs after the teardown leaks
+        // (assertMemoryLeak fails); post-fix the worker's tryCloseIfDropped frees it.
+        final CountDownLatch instanceRegistered = new CountDownLatch(1);
+        final CountDownLatch workerLatched = new CountDownLatch(1);
+        final CountDownLatch rollbackDone = new CountDownLatch(1);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            final Thread worker = new Thread(() -> {
+                try {
+                    instanceRegistered.await();
+                    final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull("worker must see the registered instance", instance);
+                    // Mirror refreshInstance: take the latch, clear the fresh-instance
+                    // guards (all false), then hold it across the teardown.
+                    Assert.assertTrue(instance.tryLockForRefresh());
+                    Assert.assertFalse(instance.isDropped());
+                    workerLatched.countDown();
+                    // The rollback teardown runs now, while we hold the latch. Install the
+                    // runtime state only after it completes, reproducing the "worker sets
+                    // inMemoryTier after the teardown" window.
+                    rollbackDone.await();
+                    final IntList types = new IntList(1);
+                    types.add(ColumnType.LONG);
+                    instance.setInMemoryTier(new LiveViewInMemoryTier(types, 0, 4096L));
+                    // refreshInstance's finally hook: release the latch, then free if the
+                    // view was dropped mid-cycle. The fix makes this free the tier; the
+                    // off-latch close() would already have set isClosed, leaking it.
+                    instance.unlockAfterRefresh();
+                    instance.tryCloseIfDropped();
+                } catch (Throwable th) {
+                    errors.add(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-worker");
+
+            // Swap in a store whose registerBaseTable (called right after registerView)
+            // releases the worker to latch the instance, waits for it to hold the latch,
+            // then throws - so the rollback teardown runs against a latched instance.
+            final Field storeField = CairoEngine.class.getDeclaredField("liveViewStateStore");
+            storeField.setAccessible(true);
+            final LiveViewStateStore originalStore = (LiveViewStateStore) storeField.get(engine);
+            storeField.set(engine, new ForwardingLiveViewStateStore(originalStore) {
+                @Override
+                public void registerBaseTable(CharSequence baseTableName) {
+                    instanceRegistered.countDown();
+                    try {
+                        workerLatched.await();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    throw CairoException.critical(0).put("injected registerBaseTable failure");
+                }
+            });
+
+            worker.start();
+            boolean threw = false;
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " +
+                        "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+            } catch (Throwable expected) {
+                threw = true; // the injected registerBaseTable failure rolls the CREATE back
+            } finally {
+                rollbackDone.countDown();
+                storeField.set(engine, originalStore);
+            }
+
+            worker.join();
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+            Assert.assertTrue("CREATE LIVE VIEW must fail when registerBaseTable throws", threw);
+            // The rollback removed the half-built view; the name is free to reuse.
+            Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
