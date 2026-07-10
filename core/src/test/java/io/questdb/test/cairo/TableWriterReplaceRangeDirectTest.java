@@ -41,9 +41,10 @@ import org.junit.Test;
 
 /**
  * Direct-invocation tests for {@link TableWriter#replaceRange(long, long, io.questdb.cairo.sql.RecordCursor,
- * io.questdb.griffin.RecordToRowCopier, int)} - the empty-range (survivorCursor == null) path, which empties
- * {@code [lo, hiExcl)} in place. Mirrors {@code WalWriterReplaceRangeTest}'s NOT-BETWEEN reference approach but
- * exercises {@code replaceRange} directly on a {@link TableWriter} rather than through a WAL replace commit.
+ * io.questdb.griffin.RecordToRowCopier, int, io.questdb.griffin.SqlExecutionContext)} - the empty-range
+ * (survivorCursor == null) path, which empties {@code [lo, hiExcl)} in place. Mirrors
+ * {@code WalWriterReplaceRangeTest}'s NOT-BETWEEN reference approach but exercises {@code replaceRange} directly
+ * on a {@link TableWriter} rather than through a WAL replace commit.
  */
 public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
 
@@ -61,7 +62,7 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
             long hiExcl = MicrosTimestampDriver.floor("1970-01-01T02:00:00.000001Z");
             long deleted;
             try (TableWriter w = getWriter(tt)) {
-                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex());
+                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
             }
 
             // rows with ts in [01:00:00, 02:00:00] inclusive: minute rows 60..120 -> 61 rows
@@ -86,7 +87,7 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
             long hiExcl = MicrosTimestampDriver.floor("1970-01-03T00:00:00.000000Z");
             long deleted;
             try (TableWriter w = getWriter(tt)) {
-                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex());
+                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
             }
 
             // The entire 1970-01-02 partition (24 rows) is dropped.
@@ -112,7 +113,7 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
             long hiExcl = MicrosTimestampDriver.floor("1970-01-02T06:00:00.000000Z");
             long deleted;
             try (TableWriter w = getWriter(tt)) {
-                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex());
+                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
             }
 
             // 6 rows from day-1 (hours 18..23) + 6 rows from day-2 (hours 0..5) = 12 rows.
@@ -135,7 +136,7 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
             long hiExcl = MicrosTimestampDriver.floor("1970-01-02T00:00:00.000000Z");
             long deleted;
             try (TableWriter w = getWriter(tt)) {
-                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex());
+                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
             }
 
             // All 100 rows should be deleted.
@@ -160,7 +161,7 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
             long hiExcl = MicrosTimestampDriver.floor("1970-01-03T12:00:00.000000Z");
             long deleted;
             try (TableWriter w = getWriter(tt)) {
-                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex());
+                deleted = w.replaceRange(lo, hiExcl, null, null, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
             }
 
             // No rows in the range, so nothing is deleted.
@@ -204,7 +205,62 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
                             columnFilter,
                             configuration
                     );
-                    removed = w.replaceRange(partLo, partHi, cursor, copier, w.getMetadata().getTimestampIndex());
+                    removed = w.replaceRange(partLo, partHi, cursor, copier, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
+                }
+            }
+
+            // 300 rows, even-x deleted -> 150 removed, 150 odd-x survivors remain.
+            Assert.assertEquals(150, removed);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
+        });
+    }
+
+    /**
+     * Regression test for a latent NPE: {@code copier.copy(null, record, row)} used to pass a null
+     * {@link io.questdb.griffin.SqlExecutionContext} on the survivor-cursor path. That is fine for
+     * schema-identical copies of ordinary types, but {@code RecordToRowCopierUtils} has no same-type fast
+     * path for DECIMAL8..DECIMAL256 destination columns - the generated copier unconditionally calls
+     * {@code context.getDecimal256()}/{@code getDecimal128()} as scratch space whenever the destination
+     * column is a DECIMAL, even when source and destination types match exactly. A table with a DECIMAL
+     * column therefore NPE'd on every replaceRange survivor copy. This test fails with a
+     * NullPointerException against the pre-fix code and passes once a real context is threaded through.
+     */
+    @Test
+    public void testReplaceRangeSurvivorsWithDecimalColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            // 300 minute-spaced rows, all on 1970-01-01, with a decimal(18,4) column (DECIMAL64 storage -
+            // precision 18 falls in the 10-18 -> 8-byte bucket). cast(x as decimal(18,4)) mirrors
+            // UpdateTest#testUpdateDecimalColumn's cast(x as decimal(..)) pattern for seeding decimals from x.
+            execute("create table src (ts timestamp, x long, d decimal(18,4)) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into src select (x*60*1000000L)::timestamp, x, cast(x as decimal(18,4)) from long_sequence(300)");
+            // Survivors of "delete where x % 2 = 0" -> keep the odd-x rows.
+            execute("create table ref as (select * from src where not (x % 2 = 0)) timestamp(ts) partition by DAY BYPASS WAL");
+
+            TableToken tt = engine.verifyTableName("src");
+            // Single-partition seed -> the whole day spans it.
+            long partLo = MicrosTimestampDriver.floor("1970-01-01T00:00:00.000000Z");
+            long partHi = MicrosTimestampDriver.floor("1970-01-02T00:00:00.000000Z");
+
+            long removed;
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "select * from src where not (x % 2 = 0) and ts >= " + partLo + " and ts < " + partHi,
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final EntityColumnFilter columnFilter = new EntityColumnFilter();
+                columnFilter.of(factory.getMetadata().getColumnCount());
+                try (TableWriter w = getWriter(tt)) {
+                    final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                            new BytecodeAssembler(),
+                            factory.getMetadata(),
+                            w.getMetadata(),
+                            columnFilter,
+                            configuration
+                    );
+                    removed = w.replaceRange(partLo, partHi, cursor, copier, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
                 }
             }
 

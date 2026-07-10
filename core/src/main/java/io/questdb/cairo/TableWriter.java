@@ -75,6 +75,7 @@ import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -3091,6 +3092,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param survivorCursor       survivor rows to write into the range, or {@code null} to empty it
      * @param copier               copies a survivor record into a table row (cursor path only)
      * @param timestampCursorIndex designated-timestamp column index in the cursor (cursor path only)
+     * @param executionContext     context forwarded to {@code copier.copy} (cursor path only); required
+     *                             whenever the survivor row contains a DECIMAL column, since the generated
+     *                             copier unconditionally dereferences it for DECIMAL8..DECIMAL256 destinations
+     *                             (there is no same-type fast path). Ignored on the empty-range path, so
+     *                             {@code null} is fine there.
      * @return number of rows removed from the range
      */
     public long replaceRange(
@@ -3098,7 +3104,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long replaceRangeHiExclTs,
             @Nullable RecordCursor survivorCursor,
             @Nullable RecordToRowCopier copier,
-            int timestampCursorIndex
+            int timestampCursorIndex,
+            @Nullable SqlExecutionContext executionContext
     ) {
         checkDistressed();
 
@@ -3174,10 +3181,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         assert ts >= replaceRangeLoTs && ts < replaceRangeHiExclTs
                                 : "survivor timestamp out of replace range [ts=" + ts + ", lo=" + replaceRangeLoTs + ", hiExcl=" + replaceRangeHiExclTs + ']';
                         final Row row = newRow(ts);
-                        // No SqlExecutionContext at this layer: the DELETE survivor cursor is `select * from t`,
-                        // an identical-schema copier that performs only same-type field copies and never
-                        // dereferences the context (used solely for decimal-conversion helpers, none here).
-                        copier.copy(null, record, row);
+                        // executionContext must be a real context, not null: the generated copier
+                        // unconditionally dereferences it for any DECIMAL8..DECIMAL256 destination column
+                        // (RecordToRowCopierUtils has no same-type fast path for decimals), so a null context
+                        // NPEs even for a schema-identical select* copy when the table has a decimal column.
+                        copier.copy(executionContext, record, row);
                         row.append();
                     } while (survivorCursor.hasNext());
 
