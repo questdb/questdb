@@ -30,6 +30,20 @@ import org.junit.Test;
 public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testMultiRowCursorFails() throws Exception {
+        // a scalar sub-query yielding more than one row is an error, reported at the sub-query position
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 2500000) ts from long_sequence(2))");
+            // timestamp cursor column
+            assertQuery("select * from x where ts = (select ts from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            // string cursor column
+            assertQuery("select * from x where ts = (select '1970-01-01' from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
     public void testCompareNanoTimestampWithNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
@@ -188,13 +202,13 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
-            assertQuery("select * from x where ts = (select ts::varchar from x limit 2)")
+            assertQuery("select * from x where ts = (select ts::varchar from x limit 1)")
                     .noLeakCheck()
                     .timestamp("ts")
                     .withPlan("""
                             Async Filter workers: 1
                               filter: ts=cursor\s
-                                Limit value: 2
+                                Limit value: 1
                                     VirtualRecord
                                       functions: [ts::varchar]
                                         PageFrame
@@ -437,13 +451,13 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
-            assertQuery("select * from x where ts = (select ts::varchar from x limit 2)")
+            assertQuery("select * from x where ts = (select ts::varchar from x limit 1)")
                     .noLeakCheck()
                     .timestamp("ts")
                     .withPlan("""
                             Async Filter workers: 1
                               filter: ts=cursor\s
-                                Limit value: 2
+                                Limit value: 1
                                     VirtualRecord
                                       functions: [ts::varchar]
                                         PageFrame

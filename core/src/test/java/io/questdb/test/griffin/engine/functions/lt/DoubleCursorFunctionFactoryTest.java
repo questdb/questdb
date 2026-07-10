@@ -86,6 +86,10 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select price from t where price < (select avg(price) from t where 1 <> 1)")
                     .noLeakCheck()
                     .returns(empty);
+            // negated operator over an empty cursor (value == NaN) must also match no rows
+            assertQuery("select price from t where price >= (select avg(price) from t where 1 <> 1)")
+                    .noLeakCheck()
+                    .returns(empty);
         });
     }
 
@@ -104,6 +108,18 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
             execute("create table t as (select x::double price from long_sequence(10))");
             assertQuery("select price from t where price > (select 'abc' from t)")
                     .fails(35, "cannot compare DOUBLE and STRING");
+        });
+    }
+
+    @Test
+    public void testMultiRowCursorFails() throws Exception {
+        // a scalar sub-query yielding more than one row is an error, reported at the sub-query position
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::double price from long_sequence(10))");
+            assertQuery("select price from t where price > (select x::double from long_sequence(2))")
+                    .fails(35, "scalar sub-query returned more than one row");
+            assertQuery("select price from t where price < (select x::double from long_sequence(2))")
+                    .fails(35, "scalar sub-query returned more than one row");
         });
     }
 
@@ -274,6 +290,50 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select price from t where price > (select null)")
                     .noLeakCheck()
                     .returns(empty);
+            // negated operators exercise the hand-rolled null-under-negation branch (value == NaN)
+            assertQuery("select price from t where price >= (select null::double)")
+                    .noLeakCheck()
+                    .returns(empty);
+            assertQuery("select price from t where price <= (select null::double)")
+                    .noLeakCheck()
+                    .returns(empty);
+        });
+    }
+
+    @Test
+    public void testNullLeftColumn() throws Exception {
+        // long_sequence never yields null cells, so the null LEFT-column path needs an explicit null.
+        // A null left value must never match a non-null cursor scalar (any operator), and must follow
+        // QuestDB's null == null convention against a null cursor: >= and <= match, strict > / < do not.
+        assertMemoryLeak(() -> {
+            execute("create table t (id int, price double)");
+            execute("insert into t values (1, null), (2, 5.0), (3, 8.0)");
+            // null-left (id 1) is excluded for every operator against a non-null cursor
+            assertQuery("select id from t where price > (select min(price) from t)") // > 5
+                    .noLeakCheck()
+                    .returns("id\n3\n");
+            assertQuery("select id from t where price < (select max(price) from t)") // < 8
+                    .noLeakCheck()
+                    .returns("id\n2\n");
+            assertQuery("select id from t where price >= (select max(price) from t)") // >= 8
+                    .noLeakCheck()
+                    .returns("id\n3\n");
+            assertQuery("select id from t where price <= (select min(price) from t)") // <= 5
+                    .noLeakCheck()
+                    .returns("id\n2\n");
+            // null == null: a null left value matches a null cursor for >= and <= only
+            assertQuery("select id from t where price >= (select null::double)")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
+            assertQuery("select id from t where price <= (select null::double)")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
+            assertQuery("select id from t where price > (select null::double)")
+                    .noLeakCheck()
+                    .returns("id\n");
+            assertQuery("select id from t where price < (select null::double)")
+                    .noLeakCheck()
+                    .returns("id\n");
         });
     }
 

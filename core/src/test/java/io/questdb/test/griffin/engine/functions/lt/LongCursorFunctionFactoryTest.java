@@ -92,6 +92,18 @@ public class LongCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiRowCursorFails() throws Exception {
+        // a scalar sub-query yielding more than one row is an error, reported at the sub-query position
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::long l from long_sequence(10))");
+            assertQuery("select l from t where l > (select x::long from long_sequence(2))")
+                    .fails(27, "scalar sub-query returned more than one row");
+            assertQuery("select l from t where l < (select x::long from long_sequence(2))")
+                    .fails(27, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
     public void testGreaterThanLongCursor() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select x::long l from long_sequence(10))");
@@ -156,6 +168,53 @@ public class LongCursorFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("select l from t where l < (select max(l) from t where 1 <> 1)")
                     .noLeakCheck()
                     .returns("l\n");
+            // negated operators over a null / empty cursor must also match no rows
+            assertQuery("select l from t where l >= (select null)")
+                    .noLeakCheck()
+                    .returns("l\n");
+            assertQuery("select l from t where l <= (select null::long)")
+                    .noLeakCheck()
+                    .returns("l\n");
+            assertQuery("select l from t where l >= (select max(l) from t where 1 <> 1)")
+                    .noLeakCheck()
+                    .returns("l\n");
+        });
+    }
+
+    @Test
+    public void testNullLeftColumn() throws Exception {
+        // long_sequence never yields null cells, so the null LEFT-column path needs an explicit null.
+        // A null left value must never match a non-null cursor scalar (any operator), and must follow
+        // QuestDB's null == null convention against a null cursor: >= and <= match, strict > / < do not.
+        assertMemoryLeak(() -> {
+            execute("create table t (id int, l long)");
+            execute("insert into t values (1, null), (2, 5), (3, 8)");
+            // null-left (id 1) is excluded for every operator against a non-null cursor
+            assertQuery("select id from t where l > (select min(l) from t)") // > 5
+                    .noLeakCheck()
+                    .returns("id\n3\n");
+            assertQuery("select id from t where l < (select max(l) from t)") // < 8
+                    .noLeakCheck()
+                    .returns("id\n2\n");
+            assertQuery("select id from t where l >= (select max(l) from t)") // >= 8
+                    .noLeakCheck()
+                    .returns("id\n3\n");
+            assertQuery("select id from t where l <= (select min(l) from t)") // <= 5
+                    .noLeakCheck()
+                    .returns("id\n2\n");
+            // null == null: a null left value matches a null cursor for >= and <= only
+            assertQuery("select id from t where l >= (select null)")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
+            assertQuery("select id from t where l <= (select null)")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
+            assertQuery("select id from t where l > (select null)")
+                    .noLeakCheck()
+                    .returns("id\n");
+            assertQuery("select id from t where l < (select null)")
+                    .noLeakCheck()
+                    .returns("id\n");
         });
     }
 

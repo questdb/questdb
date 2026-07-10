@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -93,10 +94,10 @@ public class LtLongCursorFunctionFactory implements FunctionFactory {
             case ColumnType.INT:
             case ColumnType.LONG:
             case ColumnType.NULL:
-                return new LongCursorFunc(factory, arg0, args.getQuick(1), cursorTag);
+                return new LongCursorFunc(factory, arg0, args.getQuick(1), cursorTag, argPositions.getQuick(1));
             case ColumnType.FLOAT:
             case ColumnType.DOUBLE:
-                return new DoubleCursorFunc(factory, arg0, args.getQuick(1), cursorTag);
+                return new DoubleCursorFunc(factory, arg0, args.getQuick(1), cursorTag, argPositions.getQuick(1));
             default:
                 throw SqlException.$(argPositions.getQuick(1), "cannot compare LONG and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
         }
@@ -122,14 +123,16 @@ public class LtLongCursorFunctionFactory implements FunctionFactory {
         private final RecordCursorFactory factory;
         private final Function leftFunc;
         private final Function rightFunc;
+        private final int rightPos;
         private boolean stateInherited = false;
         private boolean stateShared = false;
         private double value;
 
-        public DoubleCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorTag) {
+        public DoubleCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorTag, int rightPos) {
             this.factory = factory;
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
+            this.rightPos = rightPos;
             this.cursorTag = cursorTag;
         }
 
@@ -160,6 +163,7 @@ public class LtLongCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     value = cursorTag == ColumnType.FLOAT ? cursor.getRecord().getFloat(0) : cursor.getRecord().getDouble(0);
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     value = Double.NaN;
                 }
@@ -203,14 +207,16 @@ public class LtLongCursorFunctionFactory implements FunctionFactory {
         private final RecordCursorFactory factory;
         private final Function leftFunc;
         private final Function rightFunc;
+        private final int rightPos;
         private boolean stateInherited = false;
         private boolean stateShared = false;
         private long value;
 
-        public LongCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorTag) {
+        public LongCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorTag, int rightPos) {
             this.factory = factory;
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
+            this.rightPos = rightPos;
             this.cursorTag = cursorTag;
         }
 
@@ -239,6 +245,7 @@ public class LtLongCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     value = readScalarLong(cursor.getRecord(), cursorTag);
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     value = Numbers.LONG_NULL;
                 }

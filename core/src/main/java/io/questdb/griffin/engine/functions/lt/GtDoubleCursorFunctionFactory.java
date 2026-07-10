@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -98,7 +99,7 @@ public class GtDoubleCursorFunctionFactory implements FunctionFactory {
             case ColumnType.SHORT:
             case ColumnType.BYTE:
             case ColumnType.NULL:
-                return new GtDoubleCursorFunc(factory, arg0, args.getQuick(1), ColumnType.tagOf(metadataType));
+                return new GtDoubleCursorFunc(factory, arg0, args.getQuick(1), ColumnType.tagOf(metadataType), argPositions.getQuick(1));
             default:
                 throw SqlException.$(argPositions.getQuick(1), "cannot compare DOUBLE and ").put(ColumnType.nameOf(metadataType));
         }
@@ -109,14 +110,16 @@ public class GtDoubleCursorFunctionFactory implements FunctionFactory {
         private final RecordCursorFactory factory;
         private final Function leftFunc;
         private final Function rightFunc;
+        private final int rightPos;
         private boolean stateInherited = false;
         private boolean stateShared = false;
         private double value;
 
-        public GtDoubleCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorColumnTypeTag) {
+        public GtDoubleCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorColumnTypeTag, int rightPos) {
             this.factory = factory;
             this.leftFunc = leftFunc;
             this.rightFunc = rightFunc;
+            this.rightPos = rightPos;
             this.cursorColumnTypeTag = cursorColumnTypeTag;
         }
 
@@ -147,6 +150,7 @@ public class GtDoubleCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     value = readValue(cursor.getRecord(), cursorColumnTypeTag);
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, rightPos);
                 } else {
                     value = Double.NaN;
                 }

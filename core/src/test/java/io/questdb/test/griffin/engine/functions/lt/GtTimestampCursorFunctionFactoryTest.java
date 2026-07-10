@@ -41,6 +41,20 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiRowCursorFails() throws Exception {
+        // a scalar sub-query yielding more than one row is an error, reported at the sub-query position
+        assertMemoryLeak(() -> {
+            execute("create table x as (select timestamp_sequence(0, 2500000) ts from long_sequence(2))");
+            // timestamp cursor column
+            assertQuery("select * from x where ts > (select ts from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            // string cursor column
+            assertQuery("select * from x where ts > (select '1970-01-01' from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
     public void testCompareTimestampWithString() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
@@ -282,7 +296,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence_ns(0, 2500000000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
-            assertQuery("select * from x where ts > (select ts::varchar from x limit 2) limit 3")
+            assertQuery("select * from x where ts > (select ts::varchar from x limit 1) limit 3")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -291,7 +305,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
                             """);
-            assertQuery("select * from x where ts > (select ts::varchar from y limit 2) limit 3")
+            assertQuery("select * from x where ts > (select ts::varchar from y limit 1) limit 3")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -300,7 +314,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z
                             ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z
                             """);
-            assertQuery("select * from y where ts > (select ts::varchar from x limit 2) limit 3")
+            assertQuery("select * from y where ts > (select ts::varchar from x limit 1) limit 3")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
@@ -309,7 +323,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             uﮭ3\uD8C8\uDD30\uDBDA\uDEC6\uE937簡믗\t1970-01-01T00:00:05.000000000Z
                             4\uE0CAcY\uD97C\uDDF1櫤ğ\t1970-01-01T00:00:07.500000000Z
                             """);
-            assertQuery("select * from y where ts > (select ts::varchar from y limit 2) limit 3")
+            assertQuery("select * from y where ts > (select ts::varchar from y limit 1) limit 3")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
