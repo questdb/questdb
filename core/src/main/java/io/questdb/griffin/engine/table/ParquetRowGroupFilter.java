@@ -262,8 +262,17 @@ public final class ParquetRowGroupFilter {
                             Function f = valueFunctions.getQuick(j);
                             int vType = f.getType();
                             if (vType == ColumnType.LONG) {
-                                // LONG precision: full width, clamped into the INT stats slot.
-                                filterValues.putInt(clampLongToInt(f.getLong(null)));
+                                // An out-of-INT-range LONG bound saturates in the 32-bit stats
+                                // slot and would false-prune a group whose INT stats sit on the
+                                // boundary (all INT_MAX vs "< 5e9"). Unlike BYTE/SHORT, INT stats
+                                // can reach it, so decline pushdown and let the row-level filter
+                                // evaluate it -- a superset scan is always safe.
+                                long v = f.getLong(null);
+                                if (v != Numbers.LONG_NULL && (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE)) {
+                                    supported = false;
+                                    break;
+                                }
+                                filterValues.putInt(clampLongToInt(v));
                             } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                 filterValues.putInt((int) f.getDouble(null));
                             } else {

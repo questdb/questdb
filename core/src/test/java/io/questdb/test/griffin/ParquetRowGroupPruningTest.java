@@ -4609,6 +4609,38 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongConstantBelowIntRangePushdownNotFalsePruned() throws Exception {
+        // Parquet partition saturated at INT_MIN+1 (-2147483647). A below-INT-range
+        // LONG bound saturates in the INT stats slot; c > -5e9 matches every row, so
+        // the group must NOT prune -- a false-prune would drop the parquet row.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(-2147483647, 0);
+
+            assertNativeMatchesPartialParquet("c6 > -5_000_000_000", "c6\n-2147483647\n0\n");
+            assertNativeMatchesPartialParquet("c6 >= -5_000_000_000", "c6\n-2147483647\n0\n");
+
+            // Control: no INT value is below the bound; empty result, group may prune.
+            assertNativeMatchesPartialParquet("c6 < -5_000_000_000", "c6\n");
+        });
+    }
+
+    @Test
+    public void testLongConstantOutsideIntRangePushdownNotFalsePruned() throws Exception {
+        // Parquet partition saturated at INT_MAX (2147483647). An above-INT-range LONG
+        // bound saturates in the INT stats slot; c < 5e9 matches every row, so the
+        // group must NOT prune -- a false-prune would drop the parquet row.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(2147483647, 0);
+
+            assertNativeMatchesPartialParquet("c6 < 5_000_000_000", "c6\n2147483647\n0\n");
+            assertNativeMatchesPartialParquet("c6 <= 5_000_000_000", "c6\n2147483647\n0\n");
+
+            // Control: no INT value exceeds the bound; empty result, group may prune.
+            assertNativeMatchesPartialParquet("c6 > 5_000_000_000", "c6\n");
+        });
+    }
+
+    @Test
     public void testOverflowingIntConstantPushdownWrapsToInt() throws Exception {
         // An overflowing INT constant compared against a narrow column (BYTE/SHORT/INT)
         // must wrap mod 2^32 in the parquet pushdown like the native INT-precision scan.
@@ -4643,6 +4675,18 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         execute("CREATE TABLE tp (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO tn VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
         execute("INSERT INTO tp VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-02T00:00:00.000000Z')");
+        execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    // All-native tn and a partial-parquet sibling tp with identical data. The first daily
+    // partition (single row = parquetValue) converts to parquet, so its INT stats are
+    // min == max == parquetValue -- a group saturated at that exact value. The second row
+    // (nativeValue) stays native so the pushdown actually scans the parquet partition.
+    private void createBoundarySaturatedPartialParquet(int parquetValue, int nativeValue) throws Exception {
+        execute("CREATE TABLE tn (c6 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tp (c6 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO tn VALUES (" + parquetValue + ", '2024-01-01T00:00:00.000000Z'), (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
+        execute("INSERT INTO tp VALUES (" + parquetValue + ", '2024-01-01T00:00:00.000000Z'), (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
         execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
     }
 
