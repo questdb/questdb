@@ -111,6 +111,38 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCloseDoesNotTruncateChainAppendedByAnotherWriter() throws Exception {
+        // A row-less squash target opens as a fresh frame index while the table
+        // indexer can still hold the same previously empty .pk open. The frame
+        // writer publishes the first chain entry; the stale table writer must
+        // not truncate that entry when configureFollowerAndWriter closes it.
+        assertMemoryLeak(() -> {
+            final String name = "posting_stale_close";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                PostingIndexWriter staleWriter = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                try {
+                    try (PostingIndexWriter appendWriter = new PostingIndexWriter(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                        appendWriter.add(1, 0);
+                        appendWriter.setMaxValue(0);
+                        appendWriter.commit();
+                    }
+                } finally {
+                    staleWriter.close();
+                }
+
+                try (PostingIndexWriter reopenedWriter = new PostingIndexWriter(configuration)) {
+                    reopenedWriter.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                    Assert.assertEquals(0, reopenedWriter.getMaxValue());
+                    Assert.assertEquals(1, reopenedWriter.getGenCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCloseNoTruncateSkipsSealOnPoisonedWriter() throws Exception {
         // SymbolMapWriter's emergency closeNoTruncate() runs a best-effort seal().
         // On a poisoned writer that seal() would throw via checkNotPoisoned() out
