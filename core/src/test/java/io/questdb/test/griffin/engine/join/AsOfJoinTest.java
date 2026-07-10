@@ -26,13 +26,20 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
+import io.questdb.griffin.engine.table.RetimestampedRecordCursorFactory;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -6270,6 +6277,128 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             2024-01-01T00:30:00.000000Z\t2024-01-01T04:00:00.000000Z\tB\t4
                             """);
         });
+    }
+
+    @Test
+    public void testSubqueryExplicitTimestampTimeFrameCursorReportsRedesignatedTimestamp() throws Exception {
+        // White-box coverage of RetimestampedRecordCursorFactory's TimeFrame path. A downstream
+        // time-frame consumer (interval scan, ASOF/LT slave, LATEST ON fast path) must see the
+        // REDESIGNATED column as the frame cursor's designated timestamp, and otherwise receive the
+        // base's frames and records byte-identically. The bare-subquery `(SELECT * FROM tab)
+        // timestamp(ts2)` redesignation reaches LATEST ON as a Retimestamp wrapper over a plain
+        // (time-frame-capable) table scan; here we reach into that wrapper and drive its
+        // TimeFrameCursor / ConcurrentTimeFrameCursor directly to prove they relabel the designated
+        // timestamp index to ts2 and pass every frame/record through unchanged.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, ts2 timestamp, k symbol, v long) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into tab " +
+                            "select (x * 3600L * 1000000L)::timestamp, " +
+                            "       (x * 3600L * 1000000L + 500000L)::timestamp, " +
+                            "       's' || (x % 3), x " +
+                            "from long_sequence(72)"
+            );
+            drainWalQueue();
+            try (RecordCursorFactory top = select(
+                    "SELECT * FROM (SELECT * FROM tab) timestamp(ts2) LATEST ON ts2 PARTITION BY k")) {
+                RetimestampedRecordCursorFactory wrapper = findRetimestamped(top);
+                Assert.assertNotNull("expected a RetimestampedRecordCursorFactory in the tree", wrapper);
+
+                final RecordMetadata metadata = wrapper.getMetadata();
+                final int ts2Index = metadata.getColumnIndex("ts2");
+                final int kIndex = metadata.getColumnIndex("k");
+                Assert.assertEquals(ts2Index, metadata.getTimestampIndex());
+                Assert.assertTrue("wrapper base must support time frames for this test", wrapper.supportsTimeFrameCursor());
+
+                // Cheap capability delegations must mirror the base 1:1.
+                final RecordCursorFactory base = wrapper.getBaseFactory();
+                Assert.assertEquals(base.supportsPageFrameCursor(), wrapper.supportsPageFrameCursor());
+                Assert.assertEquals(base.supportsSharedCursors(), wrapper.supportsSharedCursors());
+                Assert.assertEquals(base.recordCursorSupportsRandomAccess(), wrapper.recordCursorSupportsRandomAccess());
+                Assert.assertEquals(base.implementsLimit(), wrapper.implementsLimit());
+                Assert.assertEquals(base.usesIndex(), wrapper.usesIndex());
+                Assert.assertEquals(base.usesCompiledFilter(), wrapper.usesCompiledFilter());
+                Assert.assertEquals(base.followedOrderByAdvice(), wrapper.followedOrderByAdvice());
+                Assert.assertEquals(base.recordCursorSupportsLongTopK(ts2Index), wrapper.recordCursorSupportsLongTopK(ts2Index));
+                Assert.assertEquals(base.getScanDirection(), wrapper.getScanDirection());
+                Assert.assertEquals(base.getFilter(), wrapper.getFilter());
+                Assert.assertEquals(base.getCompiledFilter(), wrapper.getCompiledFilter());
+                Assert.assertEquals(base.getBindVarFunctions(), wrapper.getBindVarFunctions());
+                Assert.assertEquals(base.getBindVarMemory(), wrapper.getBindVarMemory());
+                Assert.assertEquals(0, wrapper.translateOrderByColumnToBase(0));
+
+                // Drive the sequential time-frame cursor: it must report ts2 as the designated
+                // timestamp and hand back the base's own records unchanged (ts2 = ts + 500us by
+                // construction, so a passed-through record still round-trips both columns).
+                long framesSeen = 0;
+                long rowsSeen = 0;
+                long prevTs2 = Long.MIN_VALUE;
+                try (TimeFrameCursor cursor = wrapper.getTimeFrameCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(ts2Index, cursor.getTimestampIndex());
+                    Record record = cursor.getRecord();
+                    Assert.assertNotNull(cursor.getRecordB());
+                    TimeFrame frame = cursor.getTimeFrame();
+                    while (cursor.next()) {
+                        framesSeen++;
+                        cursor.open();
+                        cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
+                        for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
+                            cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
+                            cursor.recordAt(record, frame.getFrameIndex(), row);
+                            // Passed-through records expose the redesignated column; ts2 = ts + const
+                            // by construction, so the ts2 read-out is strictly increasing frame-order.
+                            long ts2 = record.getTimestamp(ts2Index);
+                            Assert.assertTrue("ts2 must increase in frame order", ts2 > prevTs2);
+                            prevTs2 = ts2;
+                            rowsSeen++;
+                        }
+                    }
+                    Assert.assertTrue(framesSeen > 0);
+                    Assert.assertEquals(72, rowsSeen);
+
+                    // Random re-navigation surface: re-open the first frame and exercise the
+                    // remaining delegating entry points.
+                    cursor.toTop();
+                    Assert.assertTrue(cursor.next());
+                    cursor.open();
+                    cursor.jumpTo(frame.getFrameIndex());
+                    cursor.open();
+                    cursor.recordAtRowIndex(record, frame.getRowLo());
+                    cursor.seekEstimate(record.getTimestamp(ts2Index));
+                    Assert.assertNotNull(cursor.getSymbolTable(kIndex));
+                    Assert.assertNotNull(cursor.newSymbolTable(kIndex));
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.prev()) {
+                        // walk backwards to exercise prev()
+                    }
+                }
+
+                // Concurrent time-frame cursor: same relabel to ts2.
+                ConcurrentTimeFrameCursor concurrent = wrapper.newTimeFrameCursor();
+                if (concurrent != null) {
+                    try {
+                        Assert.assertEquals(ts2Index, concurrent.getTimestampIndex());
+                    } finally {
+                        Misc.free(concurrent);
+                    }
+                }
+            }
+        });
+    }
+
+    private static RetimestampedRecordCursorFactory findRetimestamped(RecordCursorFactory factory) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (cur instanceof RetimestampedRecordCursorFactory) {
+                return (RetimestampedRecordCursorFactory) cur;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        return null;
     }
 
     @Test
