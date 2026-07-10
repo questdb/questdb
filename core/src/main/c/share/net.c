@@ -22,6 +22,9 @@
  *
  ******************************************************************************/
 
+// Must precede every system header so glibc's <poll.h> exposes POLLRDHUP.
+#define _GNU_SOURCE
+
 #include <jni.h>
 #include <sys/socket.h>
 #include <sys/fcntl.h>
