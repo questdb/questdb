@@ -316,6 +316,7 @@ import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.griffin.engine.table.RetimestampedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
@@ -1425,6 +1426,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             metadata.add(new TableColumnMetadata(typesA.getColumnName(i), targetType));
         }
         return metadata;
+    }
+
+    // generateNoSelect, generateSelectDistinct and generateSelectGroupBy build their factory either
+    // as a bare passthrough of their nested subquery's factory, or from metadata derived from it,
+    // without otherwise consulting the model's own explicit timestamp() redesignation -- unlike
+    // generateSelectChoose, which already does. That silently drops a redesignation to a column
+    // other than the nested factory's own designated timestamp -- e.g. a SAMPLE BY result
+    // re-timestamped to a first()/last() aggregate column instead of the bucket-boundary column,
+    // or the production-default DISTINCT-to-GROUP-BY rewrite (see rewriteDistinct in SqlOptimiser)
+    // which drops the designation entirely -- so every downstream consumer (joins, LATEST ON,
+    // ordering, DISTINCT) would then keep reading the original timestamp column, or none, instead
+    // of the one the user asked for.
+    //
+    // The fix wraps the generated factory in a fully transparent RetimestampedRecordCursorFactory
+    // that re-labels ONLY the designated timestamp -- records pass through byte-identically, so it is
+    // safe to layer over a join-adjacent, cursor-stateful output (unlike a projecting wrap, which
+    // previously corrupted row-by-row random access on an ASOF JOIN whose master was a SAMPLE BY
+    // subquery). It is a no-op when the model has no explicit timestamp, or when the explicit
+    // timestamp already matches the factory's own designated timestamp. The one place it must NOT be
+    // applied is generateSampleBy's output: SAMPLE BY manages its own designated timestamp and the
+    // wrap is bypassed for it in generateSelectGroupBy.
+    private RecordCursorFactory applyExplicitTimestamp(
+            IQueryModel model,
+            RecordCursorFactory factory
+    ) throws SqlException {
+        if (!model.hasExplicitTimestamp()) {
+            return factory;
+        }
+        final RecordMetadata metadata = factory.getMetadata();
+        try {
+            final int explicitTimestampIndex = getTimestampIndex(model, metadata);
+            if (explicitTimestampIndex == metadata.getTimestampIndex()) {
+                return factory;
+            }
+            // Guard the ENTIRE ownership-transfer sequence: metadata copy and factory construction can
+            // throw (e.g. OOM), and until the wrapper fully owns `factory` we must free it on any throw.
+            final GenericRecordMetadata retimestampedMetadata = GenericRecordMetadata.copyOfNew(metadata);
+            retimestampedMetadata.setTimestampIndex(explicitTimestampIndex);
+            return new RetimestampedRecordCursorFactory(retimestampedMetadata, factory);
+        } catch (Throwable e) {
+            Misc.free(factory);
+            throw e;
+        }
     }
 
     private VectorAggregateFunctionConstructor assembleFunctionReference(RecordMetadata metadata, ExpressionNode ast) {
@@ -7395,56 +7439,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return applyExplicitTimestamp(model, generateSubQuery(model, executionContext));
     }
 
-    // generateNoSelect (above) and generateSelectDistinct build their factory either as a bare
-    // passthrough of their nested subquery's factory, or from metadata derived from it, without
-    // otherwise consulting the model's own explicit timestamp() redesignation -- unlike
-    // generateSelectChoose, which already does. That silently drops a redesignation to a column
-    // other than the nested factory's own designated timestamp -- e.g. a SAMPLE BY result
-    // re-timestamped to a first()/last() aggregate column instead of the bucket-boundary column
-    // -- so every downstream consumer (joins, LATEST ON, ordering, DISTINCT) would then keep
-    // reading the original timestamp column instead of the one the user asked for.
-    //
-    // Known gap: generateSelectGroupBy has the same defect for its general keyed-GROUP-BY path
-    // (notably the DISTINCT-to-GROUP-BY rewrite over more than one column, see rewriteDistinct in
-    // SqlOptimiser) but is deliberately NOT wired up here. A blanket post-generateSelect() wrap
-    // looked like the obvious central fix -- a no-op for arms like generateSelectChoose that
-    // already apply their own model's explicit timestamp -- but proved unsafe in practice: it
-    // corrupted row-by-row random access on an ASOF JOIN whose master was a SAMPLE BY subquery,
-    // because generateSelectGroupBy's SAMPLE BY path (generateSampleBy) already handles its own
-    // timestamp correctly and does not tolerate a second relabeling wrap over its join-adjacent,
-    // cursor-stateful output. Narrowing the wrap to generateSelectGroupBy's non-SAMPLE-BY branches
-    // still touched unrelated nested GROUP BY subqueries (e.g. the count_distinct() inside this
-    // same ASOF JOIN's master) and reproduced the same corruption. Call this method individually,
-    // per call site, only where verified safe -- do not add a blanket call without re-verifying
-    // against a query with a join-backed or otherwise cursor-stateful nested GROUP BY/SAMPLE BY.
-    private RecordCursorFactory applyExplicitTimestamp(
-            IQueryModel model,
-            RecordCursorFactory factory
-    ) throws SqlException {
-        if (!model.hasExplicitTimestamp()) {
-            return factory;
-        }
-        final RecordMetadata metadata = factory.getMetadata();
-        final int explicitTimestampIndex;
-        try {
-            explicitTimestampIndex = getTimestampIndex(model, metadata);
-        } catch (Throwable e) {
-            Misc.free(factory);
-            throw e;
-        }
-        if (explicitTimestampIndex == metadata.getTimestampIndex()) {
-            return factory;
-        }
-        final GenericRecordMetadata retimestampedMetadata = GenericRecordMetadata.copyOfNew(metadata);
-        retimestampedMetadata.setTimestampIndex(explicitTimestampIndex);
-        final int columnCount = metadata.getColumnCount();
-        final IntList columnCrossIndex = new IntList(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            columnCrossIndex.add(i);
-        }
-        return new SelectedRecordCursorFactory(retimestampedMetadata, columnCrossIndex, factory);
-    }
-
     private RecordCursorFactory generateOrderBy(
             RecordCursorFactory recordCursorFactory,
             IQueryModel model,
@@ -8607,9 +8601,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
+            // SAMPLE BY manages its own designated timestamp and does not tolerate a relabeling wrap
+            // over its cursor-stateful output, so it must NOT be retimestamped -- return it directly.
             return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
         }
+        // Wrap every non-SAMPLE-BY return path in one place so an explicit timestamp() redesignation
+        // (notably the production-default DISTINCT-to-GROUP-BY rewrite) survives. applyExplicitTimestamp
+        // is a no-op when there is no explicit timestamp or it already matches the generated factory.
+        return applyExplicitTimestamp(model, generateSelectGroupBy0(model, executionContext));
+    }
 
+    private RecordCursorFactory generateSelectGroupBy0(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         RecordCursorFactory factory = null;
         try {
             ObjList<QueryColumn> columns;

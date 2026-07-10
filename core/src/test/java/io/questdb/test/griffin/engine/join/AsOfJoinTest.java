@@ -42,6 +42,24 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class AsOfJoinTest extends AbstractCairoTest {
+    // Shared master sub-query for the ASOF and LT variants of
+    // testAsOfJoinMasterSubqueryExplicitTimestampAfterSampleBy: a SAMPLE BY result explicitly
+    // re-timestamped from the bucket boundary (s_ts) to the first snapshot timestamp within the bucket
+    // (s_f_ts). Extracted so the two join variants cannot silently diverge.
+    private static final String SAMPLE_BY_MASTER_RETIMESTAMPED_TO_S_F_TS = """
+            (
+              SELECT s_ts, first(s_ts) AS s_f_ts
+              FROM (
+                  SELECT ts AS s_ts, count_distinct(account_id) AS matched
+                  FROM snapshots
+                  WHERE ts >= '2026-07-07T17:30:00.000000Z'
+                      AND ts < '2026-07-07T21:00:00.000000Z'
+                      AND account_id = 0
+                  ORDER BY s_ts ASC
+              ) timestamp(s_ts)
+              WHERE matched = 1
+              SAMPLE BY 30m FILL(NONE) ALIGN TO CALENDAR
+            ) timestamp(s_f_ts)""";
     private final String defaultIndexTypeName;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
@@ -1340,6 +1358,84 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                     2\t2026-04-14T00:01:10.000000Z\t1.19\t1.21
                                     """,
                             leftTableTimestampType.getTypeName()));
+        });
+    }
+
+    @Test
+    public void testAsOfJoinMasterSubqueryExplicitTimestampAfterSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table snapshots (ts timestamp, account_id int) timestamp(ts) partition by DAY");
+            execute("create table balances (ts timestamp, account_id int, balance double) timestamp(ts) partition by DAY");
+
+            // bucket [17:30,18:00): only match is exactly at 17:30
+            execute("insert into snapshots values ('2026-07-07T17:30:00.000000Z', 0)");
+            // bucket [18:00,18:30): only match is at 18:24, NOT at the 18:00 bucket boundary
+            execute("insert into snapshots values ('2026-07-07T18:24:00.000000Z', 0)");
+
+            execute("insert into balances values ('2026-07-07T17:30:00.000000Z', 0, 100)");
+            execute("insert into balances values ('2026-07-07T17:56:00.000000Z', 0, 200)");
+            // A row strictly between the raw bucket boundary (18:00) and the re-timestamped s_f_ts
+            // (18:24): the LT JOIN below can only return this row when it reads the master timestamp
+            // as s_f_ts (18:24); a path that wrongly read s_ts (18:00) would still stop at 17:56/200.
+            execute("insert into balances values ('2026-07-07T18:10:00.000000Z', 0, 250)");
+            execute("insert into balances values ('2026-07-07T18:24:00.000000Z', 0, 300)");
+            execute("insert into balances values ('2026-07-07T18:40:00.000000Z', 0, 400)");
+
+            // The master side is explicitly re-timestamped to s_f_ts (the real, first snapshot
+            // timestamp within each 30m bucket), which differs from s_ts (the bucket boundary
+            // SAMPLE BY itself naturally produces). The ASOF match against balances.ts must be
+            // evaluated against s_f_ts: for bucket 2 (s_ts=18:00, s_f_ts=18:24) that's the
+            // balances row AT-OR-BEFORE 18:24 (ts=18:24, balance=300) -- NOT the row at-or-before
+            // the raw bucket boundary 18:00 (ts=17:56, balance=200).
+            assertQuery("SELECT balances.ts, balances.balance, s_ts, s_f_ts\nFROM "
+                    + SAMPLE_BY_MASTER_RETIMESTAMPED_TO_S_F_TS + " ASOF JOIN balances\nORDER BY balances.ts ASC")
+                    // The OUTPUT's designated timestamp is balances.ts (this query's ORDER BY column),
+                    // not the master's s_f_ts; the fix is that the ASOF MATCH is evaluated against
+                    // s_f_ts, which the returned balance values (100/300, not 100/200) prove.
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("AsOf Join", "Retimestamp")
+                    .returns("""
+                            ts\tbalance\ts_ts\ts_f_ts
+                            2026-07-07T17:30:00.000000Z\t100.0\t2026-07-07T17:30:00.000000Z\t2026-07-07T17:30:00.000000Z
+                            2026-07-07T18:24:00.000000Z\t300.0\t2026-07-07T18:00:00.000000Z\t2026-07-07T18:24:00.000000Z
+                            """);
+
+            // same master subquery, LT JOIN instead of ASOF JOIN: must match strictly before
+            // s_f_ts (18:24) -- i.e. the balances row at 17:56 (balance=200) -- confirming the
+            // fix isn't ASOF-JOIN-specific, since LT JOIN reads the master timestamp the same way.
+            assertQuery("SELECT balances.ts, balances.balance, s_ts, s_f_ts\nFROM "
+                    + SAMPLE_BY_MASTER_RETIMESTAMPED_TO_S_F_TS + " LT JOIN balances\nORDER BY s_f_ts ASC")
+                    .timestamp("s_f_ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Retimestamp")
+                    .returns("""
+                            ts\tbalance\ts_ts\ts_f_ts
+                            \tnull\t2026-07-07T17:30:00.000000Z\t2026-07-07T17:30:00.000000Z
+                            2026-07-07T18:10:00.000000Z\t250.0\t2026-07-07T18:00:00.000000Z\t2026-07-07T18:24:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinMasterSubqueryExplicitTimestampMatchesNaturalTimestampIsNoop() throws Exception {
+        // when the explicit timestamp() names the same column the nested factory already
+        // reports, generateNoSelect's fix must be a no-op (no extra wrapping/relabeling).
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v int) timestamp(ts) partition by DAY");
+            execute("insert into tab values ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("insert into tab values ('2024-01-01T00:01:00.000000Z', 2)");
+
+            assertQuery("SELECT * FROM (SELECT ts, v FROM tab) timestamp(ts)")
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanNotContaining("Retimestamp")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T00:01:00.000000Z\t2
+                            """);
         });
     }
 
@@ -6146,6 +6242,78 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubqueryExplicitTimestampDrivesLatestOn() throws Exception {
+        // Downstream LATEST ON over a BARE-subquery redesignation: the subquery `(SELECT * FROM tab)
+        // timestamp(ts2)` is generated through generateNoSelect and becomes the base of the LatestBy
+        // operator (plan: LatestBy -> Retimestamp designatedTimestamp: ts2). `LATEST ON ts2` requires
+        // ts2 to be the DESIGNATED timestamp of that base -- without the generateNoSelect fix the
+        // redesignation is dropped, the base keeps ts as designated, and the query fails to compile.
+        // So the fact that it compiles, plans a Retimestamp-to-ts2 base, and picks the latest-by-ts2
+        // row per key proves the LATEST ON consumer reads ts2 (see the negative control in the PR).
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, ts2 timestamp, k symbol, v long) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into tab values " +
+                            "('2024-01-01T00:00:00.000000Z','2024-01-01T01:00:00.000000Z','A',1)," +
+                            "('2024-01-01T00:10:00.000000Z','2024-01-01T02:00:00.000000Z','B',2)," +
+                            "('2024-01-01T00:20:00.000000Z','2024-01-01T03:00:00.000000Z','A',3)," +
+                            "('2024-01-01T00:30:00.000000Z','2024-01-01T04:00:00.000000Z','B',4)"
+            );
+            // LATEST ON output is unordered (designated timestamp -1), so we pin the ts2-driven
+            // Retimestamp base and the per-key latest-by-ts2 rows rather than an output timestamp.
+            assertQuery("SELECT * FROM (SELECT * FROM tab) timestamp(ts2) LATEST ON ts2 PARTITION BY k")
+                    .withPlanContaining("LatestBy", "Retimestamp", "designatedTimestamp: ts2")
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tts2\tk\tv
+                            2024-01-01T00:20:00.000000Z\t2024-01-01T03:00:00.000000Z\tA\t3
+                            2024-01-01T00:30:00.000000Z\t2024-01-01T04:00:00.000000Z\tB\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testSubqueryExplicitTimestampToNonTimestampColumnRejected() throws Exception {
+        // A timestamp() naming a non-TIMESTAMP column must be rejected without leaking. NOTE: for a
+        // bare `(subquery) timestamp(col)` the "not a TIMESTAMP" check fires during query-model
+        // validation (upstream of factory generation), so this guards the overall reject-without-leak
+        // path rather than applyExplicitTimestamp's own getTimestampIndex-throws-then-Misc.free branch
+        // specifically (that branch's leak-safety is exercised by the ownership-transfer catch(Throwable)
+        // and covered under assertMemoryLeak).
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, v int) timestamp(ts) partition by DAY");
+            assertException("SELECT * FROM (SELECT ts, v FROM tab) timestamp(v)", 48, "not a TIMESTAMP");
+        });
+    }
+
+    @Test
+    public void testSubqueryExplicitTimestampWithNullValues() throws Exception {
+        // The redesignated timestamp column contains NULL(s): the subquery must still compile,
+        // designate ts2, and pass rows (the NULL-timestamped row included) transparently through the
+        // Retimestamp wrapper. NULL sorts as the smallest timestamp, so keeping ts2 ascending with the
+        // NULL first honors the ordering contract. LATEST ON ts2 forces the subquery through
+        // generateNoSelect (Retimestamp base); partition Z's only row is the NULL-ts2 row, so LATEST ON
+        // returns it -- proving a NULL designated timestamp round-trips through the wrapper unharmed.
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, ts2 timestamp, k symbol, v long) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into tab values " +
+                            "('2024-01-01T00:00:00.000000Z',null,'Z',9)," +
+                            "('2024-01-01T00:10:00.000000Z','2024-01-01T01:00:00.000000Z','A',1)," +
+                            "('2024-01-01T00:20:00.000000Z','2024-01-01T03:00:00.000000Z','A',2)"
+            );
+            assertQuery("SELECT * FROM (SELECT * FROM tab) timestamp(ts2) LATEST ON ts2 PARTITION BY k")
+                    .withPlanContaining("LatestBy", "Retimestamp", "designatedTimestamp: ts2")
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tts2\tk\tv
+                            2024-01-01T00:00:00.000000Z\t\tZ\t9
+                            2024-01-01T00:20:00.000000Z\t2024-01-01T03:00:00.000000Z\tA\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testWithIntrisifiedTimestampFilter() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (pair SYMBOL, ts #TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY YEAR", leftTableTimestampType.getTypeName());
@@ -6321,119 +6489,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     }
                 }
             }
-        });
-    }
-
-    @Test
-    public void testAsOfJoinMasterSubqueryExplicitTimestampAfterSampleBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table snapshots (ts timestamp, account_id int) timestamp(ts) partition by DAY");
-            execute("create table balances (ts timestamp, account_id int, balance double) timestamp(ts) partition by DAY");
-
-            // bucket [17:30,18:00): only match is exactly at 17:30
-            execute("insert into snapshots values ('2026-07-07T17:30:00.000000Z', 0)");
-            // bucket [18:00,18:30): only match is at 18:24, NOT at the 18:00 bucket boundary
-            execute("insert into snapshots values ('2026-07-07T18:24:00.000000Z', 0)");
-
-            execute("insert into balances values ('2026-07-07T17:30:00.000000Z', 0, 100)");
-            execute("insert into balances values ('2026-07-07T17:56:00.000000Z', 0, 200)");
-            execute("insert into balances values ('2026-07-07T18:24:00.000000Z', 0, 300)");
-            execute("insert into balances values ('2026-07-07T18:40:00.000000Z', 0, 400)");
-
-            // The master side is explicitly re-timestamped to s_f_ts (the real, first snapshot
-            // timestamp within each 30m bucket), which differs from s_ts (the bucket boundary
-            // SAMPLE BY itself naturally produces). The ASOF match against balances.ts must be
-            // evaluated against s_f_ts: for bucket 2 (s_ts=18:00, s_f_ts=18:24) that's the
-            // balances row AT-OR-BEFORE 18:24 (ts=18:24, balance=300) -- NOT the row at-or-before
-            // the raw bucket boundary 18:00 (ts=17:56, balance=200).
-            assertQuery("""
-                    SELECT balances.ts, balances.balance, s_ts, s_f_ts
-                    FROM (
-                      SELECT s_ts, first(s_ts) AS s_f_ts
-                      FROM (
-                          SELECT ts AS s_ts, count_distinct(account_id) AS matched
-                          FROM snapshots
-                          WHERE ts >= '2026-07-07T17:30:00.000000Z'
-                              AND ts < '2026-07-07T21:00:00.000000Z'
-                              AND account_id = 0
-                          ORDER BY s_ts ASC
-                      ) timestamp(s_ts)
-                      WHERE matched = 1
-                      SAMPLE BY 30m FILL(NONE) ALIGN TO CALENDAR
-                    ) timestamp(s_f_ts) ASOF JOIN balances
-                    ORDER BY balances.ts ASC
-                    """)
-                    .inferTimestamp()
-                    .inferRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("AsOf Join", "SelectedRecord")
-                    .returns("""
-                            ts\tbalance\ts_ts\ts_f_ts
-                            2026-07-07T17:30:00.000000Z\t100.0\t2026-07-07T17:30:00.000000Z\t2026-07-07T17:30:00.000000Z
-                            2026-07-07T18:24:00.000000Z\t300.0\t2026-07-07T18:00:00.000000Z\t2026-07-07T18:24:00.000000Z
-                            """);
-
-            // same master subquery, LT JOIN instead of ASOF JOIN: must match strictly before
-            // s_f_ts (18:24) -- i.e. the balances row at 17:56 (balance=200) -- confirming the
-            // fix isn't ASOF-JOIN-specific, since LT JOIN reads the master timestamp the same way.
-            assertQuery("""
-                    SELECT balances.ts, balances.balance, s_ts, s_f_ts
-                    FROM (
-                      SELECT s_ts, first(s_ts) AS s_f_ts
-                      FROM (
-                          SELECT ts AS s_ts, count_distinct(account_id) AS matched
-                          FROM snapshots
-                          WHERE ts >= '2026-07-07T17:30:00.000000Z'
-                              AND ts < '2026-07-07T21:00:00.000000Z'
-                              AND account_id = 0
-                          ORDER BY s_ts ASC
-                      ) timestamp(s_ts)
-                      WHERE matched = 1
-                      SAMPLE BY 30m FILL(NONE) ALIGN TO CALENDAR
-                    ) timestamp(s_f_ts) LT JOIN balances
-                    ORDER BY s_f_ts ASC
-                    """)
-                    .inferTimestamp()
-                    .inferRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("SelectedRecord")
-                    .returns("""
-                            ts\tbalance\ts_ts\ts_f_ts
-                            \tnull\t2026-07-07T17:30:00.000000Z\t2026-07-07T17:30:00.000000Z
-                            2026-07-07T17:56:00.000000Z\t200.0\t2026-07-07T18:00:00.000000Z\t2026-07-07T18:24:00.000000Z
-                            """);
-        });
-    }
-
-    @Test
-    public void testAsOfJoinMasterSubqueryExplicitTimestampMatchesNaturalTimestampIsNoop() throws Exception {
-        // when the explicit timestamp() names the same column the nested factory already
-        // reports, generateNoSelect's fix must be a no-op (no extra wrapping/relabeling).
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, v int) timestamp(ts) partition by DAY");
-            execute("insert into tab values ('2024-01-01T00:00:00.000000Z', 1)");
-            execute("insert into tab values ('2024-01-01T00:01:00.000000Z', 2)");
-
-            assertQuery("SELECT * FROM (SELECT ts, v FROM tab) timestamp(ts)")
-                    .timestamp("ts")
-                    .expectSize()
-                    .withPlanNotContaining("SelectedRecord")
-                    .returns("""
-                            ts\tv
-                            2024-01-01T00:00:00.000000Z\t1
-                            2024-01-01T00:01:00.000000Z\t2
-                            """);
-        });
-    }
-
-    @Test
-    public void testSubqueryExplicitTimestampToNonTimestampColumnRejected() throws Exception {
-        // applyExplicitTimestamp resolves the redesignation against the generated factory's
-        // metadata; a timestamp() naming a non-TIMESTAMP column is rejected, and the subquery
-        // factory it wraps is freed on the way out (assertMemoryLeak proves no leak).
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, v int) timestamp(ts) partition by DAY");
-            assertException("SELECT * FROM (SELECT ts, v FROM tab) timestamp(v)", 48, "not a TIMESTAMP");
         });
     }
 }

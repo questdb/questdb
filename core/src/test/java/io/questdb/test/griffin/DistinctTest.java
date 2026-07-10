@@ -25,7 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -71,6 +73,46 @@ public class DistinctTest extends AbstractCairoTest {
                         -1	2	2
                         -1	3	3
                         """);
+    }
+
+    @Test
+    public void testDistinctExplicitTimestampSurvivesGroupByRewrite() throws Exception {
+        // Critical regression, run under the PRODUCTION-DEFAULT configuration (no overrides): the
+        // DISTINCT-to-GROUP-BY rewrite is enabled, so `select distinct *` reaches generateSelectGroupBy.
+        // An explicit timestamp() redesignation on the subquery used to be silently dropped there --
+        // the DISTINCT result reported designated timestamp -1 instead of ts2. generateSelectGroupBy
+        // now re-applies the redesignation via a transparent RetimestampedRecordCursorFactory, so ts2
+        // survives as the designated timestamp of the DISTINCT result.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, ts2 TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:01.000000Z', 1)");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:01:00.000000Z', '2024-01-01T00:01:01.000000Z', 2)");
+            drainWalQueue();
+
+            // The reviewer's repro/oracle: the DISTINCT result's designated timestamp index must be
+            // ts2 (index 1), not -1. We assert the index directly rather than via .timestamp("ts2"):
+            // a keyed GROUP BY is unordered, so the retimestamp honestly reports scan direction OTHER
+            // (not ASCENDING) and .timestamp() would additionally (wrongly) pin ASCENDING order. The
+            // fluent returns() below (inferTimestamp, which tolerates OTHER) then pins the rows and the
+            // "Retimestamp" node; a downstream temporal consumer over a re-timestamped master is covered
+            // separately and end-to-end by AsOfJoinTest#...ExplicitTimestampAfterSampleBy.
+            final String bare = "SELECT DISTINCT * FROM (SELECT * FROM tab) timestamp(ts2)";
+            try (RecordCursorFactory f = select(bare)) {
+                final int tsIdx = f.getMetadata().getTimestampIndex();
+                Assert.assertEquals("designated timestamp must survive the DISTINCT-to-GROUP-BY rewrite", 1, tsIdx);
+                Assert.assertEquals("ts2", f.getMetadata().getColumnName(tsIdx));
+            }
+            assertQuery(bare)
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .expectSize()
+                    .withPlanContaining("Retimestamp")
+                    .returns("""
+                            ts\tts2\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t1
+                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t2
+                            """);
+        });
     }
 
     @Test
