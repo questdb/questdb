@@ -1001,10 +1001,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not remap file");
                     }
 
-                    // valueMem is now closed while keyMem stays open and the batch is still
-                    // pending. The rollback that a failed commit triggers must not flush into
-                    // the closed valueMem: before the fix this asserts (or wild-writes) inside
-                    // flushAllPending; after it, a clean CairoException surfaces instead.
+                    // valueMem is closed, keyMem stays open, and the batch is still pending.
+                    // rollbackValues() re-enters flushAllPending here; the method javadoc covers
+                    // why that must surface a clean CairoException instead of dereferencing it.
                     try {
                         writer.rollbackValues(gen0MaxValue);
                         Assert.fail("rollbackValues must not flush into closed value memory");
@@ -1018,8 +1017,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     try {
                         writer.close();
                     } catch (CairoException ignore) {
-                        // A close()-path flush over the still-closed valueMem fails through the
-                        // same clean guard; the finally in close() frees every resource anyway.
+                        // close() frees resources without flushing, so it should not throw here;
+                        // the catch is defensive against keyMem trim I/O, and close()'s finally
+                        // frees every resource regardless.
                     }
                 }
             }
