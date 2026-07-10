@@ -130,6 +130,34 @@ public class TimerShardsTest {
     }
 
     @Test
+    public void testShutdownDoesNotDropPoppedEntry() {
+        // A shard daemon that pops a due entry in the window after shutdown() clears the
+        // running flag but before its drain snapshot runs must still fire that entry's
+        // terminal hook: take() already removed it from the heap, so the drain cannot see
+        // it, and dropping it would strand the continuation bound to it. Race register-due-now
+        // against shutdown() many times; every entry must receive exactly one terminal call
+        // (expire or shutdown), never zero.
+        final int iterations = 200;
+        final int perIteration = 64;
+        for (int iter = 0; iter < iterations; iter++) {
+            TimerShards shards = new TimerShards(1, "test-timer", LOG);
+            shards.start();
+            AtomicInteger terminalCalls = new AtomicInteger();
+            Runnable terminal = terminalCalls::incrementAndGet;
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < perIteration; i++) {
+                shards.register(new TestEntry(now, terminal, terminal));
+            }
+            shards.shutdown();
+            Assert.assertEquals(
+                    "iteration " + iter + ": every entry must get exactly one terminal call (no drop, no double)",
+                    perIteration,
+                    terminalCalls.get()
+            );
+        }
+    }
+
+    @Test
     public void testShutdownDrainsAllRegardlessOfDeadline() throws InterruptedException {
         TimerShards shards = new TimerShards(2, "test-timer", LOG);
         shards.start();

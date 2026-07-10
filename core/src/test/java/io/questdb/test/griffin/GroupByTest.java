@@ -1067,6 +1067,44 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctSymbolOptimizationOnQuoteProtectedAlias() throws Exception {
+        // SELECT DISTINCT over an indexed SYMBOL takes the distinct-symbol optimization in
+        // generateSelectGroupBy, which builds the result metadata name via toColumnName. A
+        // compiler-protected alias (dotted or operator token) must surface clean, not quoted.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX)");
+            execute("INSERT INTO t VALUES ('x'), ('y'), ('x')");
+            assertQuery("SELECT DISTINCT s AS \"a.b\" FROM t ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a.b\nx\ny\n");
+            assertQuery("SELECT DISTINCT s AS \"in\" FROM t ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("in\nx\ny\n");
+        });
+    }
+
+    @Test
+    public void testGroupByKeyOnQuoteProtectedAlias() throws Exception {
+        // A GROUP BY key that is a compiler-protected alias (dotted or operator token), referenced
+        // through the qualified subquery form, must resolve (the key-index strip-retry) and surface a
+        // clean column name (the GroupByUtils keep-alias metadata path via toColumnName).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g INT, v DOUBLE)");
+            execute("INSERT INTO t VALUES (1, 10.0), (1, 20.0), (2, 30.0)");
+            assertQuery("SELECT sub.\"a.b\", sum(v) FROM (SELECT g AS \"a.b\", v FROM t) sub GROUP BY sub.\"a.b\" ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a.b\tsum\n1\t30.0\n2\t30.0\n");
+            assertQuery("SELECT sub.\"in\", sum(v) FROM (SELECT g AS \"in\", v FROM t) sub GROUP BY sub.\"in\" ORDER BY 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("in\tsum\n1\t30.0\n2\t30.0\n");
+        });
+    }
+
+    @Test
     public void testGroupByConstantsOnlyMultiKey() throws Exception {
         // SqlOptimiser drops effectively-constant GROUP BY keys when at least one
         // other group-by key remains, but used to leave the dropped entries in

@@ -131,6 +131,17 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean producesMaterializedPageFrames() {
+        // Must delegate to the immediate base like supportsPageFrameCursor() /
+        // getPageFrameCursor() do: getBaseFactory() here returns base.getBaseFactory()
+        // (it skips this wrapper's own base for top-K peeling), so the default
+        // getBaseFactory()-delegating implementation would step over a metadata-only
+        // producer (e.g. a single-key covering scan) and wrongly report it as
+        // materialized -- re-opening the all-null covered-column parquet export.
+        return base.producesMaterializedPageFrames();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return this.base.recordCursorSupportsRandomAccess();
     }
