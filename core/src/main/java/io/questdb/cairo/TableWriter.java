@@ -76,6 +76,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
@@ -936,6 +937,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
         return alterOp.apply(this, contextAllowsAnyStructureChanges);
+    }
+
+    @Override
+    public long apply(DeleteOperation operation) {
+        // v1: non-WAL DELETE is rejected at compile; a direct TableWriter apply is unsupported.
+        operation.authorize();
+        return operation.apply(this, true); // DeleteOperation.apply throws for the non-WAL path
     }
 
     @Override

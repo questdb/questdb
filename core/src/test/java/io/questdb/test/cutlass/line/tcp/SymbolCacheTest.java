@@ -44,6 +44,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.SymbolCache;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -855,6 +856,11 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
         @Override
         public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+            return 0;
+        }
+
+        @Override
+        public long apply(DeleteOperation operation) {
             return 0;
         }
 

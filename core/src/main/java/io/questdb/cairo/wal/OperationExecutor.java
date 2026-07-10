@@ -136,6 +136,10 @@ class OperationExecutor implements Closeable {
         }
     }
 
+    public long executeDelete(TableWriter tableWriter, CharSequence deleteSql, long seqTxn) throws SqlException {
+        throw new UnsupportedOperationException("executeDelete not implemented yet");
+    }
+
     public long executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {
         final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
