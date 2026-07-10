@@ -83,6 +83,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      */
     public static final int CLOSE_ECHO_DISCARD_READ_BUDGET = 8;
     /**
+     * Per-dispatch BYTE budget for the close-echo discard loop, applied
+     * alongside {@link #CLOSE_ECHO_DISCARD_READ_BUDGET}. The read-count
+     * guard alone scales with the configured recv buffer: eight reads
+     * against the default 2 MiB HTTP buffer permit 16 MiB of copying in a
+     * single worker turn, and larger configured buffers raise that without
+     * a fixed cap. Each recv is capped at
+     * {@code min(recvBufferSize, remainingByteBudget)} so the drain work one
+     * dispatch can perform is configuration-independent; leftover readiness
+     * re-fires the dispatcher and the drain continues next dispatch with a
+     * fresh budget.
+     */
+    public static final int CLOSE_ECHO_DISCARD_BYTE_BUDGET = 256 * 1024;
+    /**
      * Read budget for the best-effort inbound drain performed immediately
      * before a graceful teardown ({@link #gracefulCloseAndDisconnect}). The
      * drain lowers the chance of the fd close turning abortive (an RST
@@ -92,6 +105,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * on the one path that must complete promptly.
      */
     public static final int GRACEFUL_CLOSE_DRAIN_READ_BUDGET = 8;
+    /**
+     * BYTE budget companion to {@link #GRACEFUL_CLOSE_DRAIN_READ_BUDGET}:
+     * without it the pre-teardown drain's worst case scales with the
+     * configured recv buffer (16 MiB per teardown at the 2 MiB default) on
+     * the graceful-expiry path, whose entire purpose is prompt teardown.
+     * Each recv is capped at {@code min(recvBufferSize, remainingBudget)}.
+     */
+    public static final int GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET = 256 * 1024;
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 8;
     // HTTP response templates
@@ -926,7 +947,24 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int recvBufferSize = context.getRecvBufferSize();
         int read;
         int reads = 0;
-        while ((read = socket.recv(recvBuffer, recvBufferSize)) > 0) {
+        int bytesDrained = 0;
+        while (true) {
+            // Both guards are per-dispatch: the read-count budget bounds
+            // syscalls, the byte budget bounds copy work independently of
+            // the configured recv buffer size (a count-only budget permits
+            // reads x bufferSize bytes -- 16 MiB per dispatch at the 2 MiB
+            // default). Cap each recv at the remaining byte budget.
+            int cap = Math.min(recvBufferSize, CLOSE_ECHO_DISCARD_BYTE_BUDGET - bytesDrained);
+            if (cap <= 0) {
+                LOG.debug().$("WebSocket close-echo discard byte budget exhausted, yielding worker [fd=")
+                        .$(context.getFd()).I$();
+                return;
+            }
+            read = socket.recv(recvBuffer, cap);
+            if (read <= 0) {
+                break;
+            }
+            bytesDrained += read;
             LOG.debug().$("WebSocket bytes discarded awaiting close echo [fd=").$(context.getFd())
                     .$(", bytes=").$(read).I$();
             // The poll must live INSIDE the loop: only here does a
@@ -1125,8 +1163,21 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 socket.shutdown(Net.SHUT_WR);
                 long recvBuffer = context.getRecvBuffer();
                 int recvBufferSize = context.getRecvBufferSize();
-                for (int i = 0; i < GRACEFUL_CLOSE_DRAIN_READ_BUDGET
-                        && socket.recv(recvBuffer, recvBufferSize) > 0; i++) {
+                // Dual guard: read count bounds syscalls, byte budget bounds
+                // copy work independently of the configured buffer size --
+                // this is the prompt-teardown path and must not perform
+                // bufferSize-scaled work against a still-streaming peer.
+                int drained = 0;
+                for (int i = 0; i < GRACEFUL_CLOSE_DRAIN_READ_BUDGET; i++) {
+                    int cap = Math.min(recvBufferSize, GRACEFUL_CLOSE_DRAIN_BYTE_BUDGET - drained);
+                    if (cap <= 0) {
+                        break;
+                    }
+                    int n = socket.recv(recvBuffer, cap);
+                    if (n <= 0) {
+                        break;
+                    }
+                    drained += n;
                 }
             }
         } catch (Throwable ignored) {
