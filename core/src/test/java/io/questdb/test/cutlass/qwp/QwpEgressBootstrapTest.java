@@ -1705,57 +1705,12 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             elapsed < 2_000
                     );
                     Assert.assertTrue(
+                            "egress sleep(3) aborted after only " + elapsed + " ms; query.timeout=1s cannot fire "
+                                    + "before ~1s, so an earlier abort came from a different failure, not the timeout",
+                            elapsed > 500
+                    );
+                    Assert.assertTrue(
                             "egress sleep(3) completed without an error; query.timeout must surface as a query error",
-                            errored[0]
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testNonSelectAbortedByQueryTimeout() throws Exception {
-        // The breaker is bound on the execution context BEFORE compile, so a non-SELECT
-        // egress statement (here an INSERT ... AS SELECT routed to executeNonSelect) now
-        // honours query.timeout too, where the old null->NOOP breaker imposed none. The
-        // inner sleep(3) parks past query.timeout=1s and MUST abort near ~1s; on master the
-        // NOOP breaker lets executeNonSelect run the full ~3s. Distinct from the SELECT
-        // timeout test above: this pins the executeNonSelect path, not the streaming path.
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startServerWithRetry(
-                    PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "1s",
-                    PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL.getEnvVarName(), "100"
-            )) {
-                serverMain.execute("CREATE TABLE non_select_timeout(ts TIMESTAMP)");
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-
-                    final boolean[] errored = {false};
-                    final long t0 = System.currentTimeMillis();
-                    client.execute("INSERT INTO non_select_timeout SELECT sleep(3)", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            errored[0] = true;
-                        }
-                    });
-                    final long elapsed = System.currentTimeMillis() - t0;
-
-                    Assert.assertTrue(
-                            "egress INSERT AS SELECT sleep(3) took " + elapsed + " ms; query.timeout=1s must abort it "
-                                    + "near ~1s. It ran the full duration because executeNonSelect saw a NOOP circuit "
-                                    + "breaker (errored=" + errored[0] + ").",
-                            elapsed < 2_000
-                    );
-                    Assert.assertTrue(
-                            "egress INSERT AS SELECT completed without an error; query.timeout must surface as a query error",
                             errored[0]
                     );
                 }

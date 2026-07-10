@@ -240,6 +240,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
 // destructor closes it. The stored value is (kq + 1) so the unset default (NULL) is
 // distinguishable from a valid kqueue fd of 0.
 static pthread_key_t peer_probe_kq_key;
+static int peer_probe_kq_key_ready = 0;
 static pthread_once_t peer_probe_kq_once = PTHREAD_ONCE_INIT;
 
 static void close_peer_probe_kq(void *value) {
@@ -250,7 +251,9 @@ static void close_peer_probe_kq(void *value) {
 }
 
 static void make_peer_probe_kq_key(void) {
-    pthread_key_create(&peer_probe_kq_key, close_peer_probe_kq);
+    if (pthread_key_create(&peer_probe_kq_key, close_peer_probe_kq) == 0) {
+        peer_probe_kq_key_ready = 1;
+    }
 }
 #endif
 
@@ -262,6 +265,9 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
     // the circuit breaker on every spin iteration -- so a per-call kqueue()+close() would add a
     // syscall pair plus file-descriptor table churn to that loop.
     pthread_once(&peer_probe_kq_once, make_peer_probe_kq_key);
+    if (!peer_probe_kq_key_ready) {
+        return JNI_FALSE;
+    }
     intptr_t stored = (intptr_t) pthread_getspecific(peer_probe_kq_key);
     int cached_kq;
     if (stored > 0) {
@@ -271,7 +277,10 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
         if (cached_kq < 0) {
             return JNI_FALSE;
         }
-        pthread_setspecific(peer_probe_kq_key, (void *) (intptr_t) (cached_kq + 1));
+        if (pthread_setspecific(peer_probe_kq_key, (void *) (intptr_t) (cached_kq + 1)) != 0) {
+            close(cached_kq);
+            return JNI_FALSE;
+        }
     }
     struct kevent change;
     struct kevent event;

@@ -173,19 +173,11 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
 
                     // Measure how long the server keeps the parked sleep alive after the
                     // client left. The entry drops from the registry when the query ends.
-                    // The deadline sits above query.timeout so the loop always terminates,
+                    // The deadline sits above query.timeout so the wait always terminates,
                     // whether the query ends via disconnect detection (fast) or via
                     // query.timeout (slow).
                     long closeMs = System.currentTimeMillis();
-                    long deadlineMs = closeMs + 20_000;
-                    long endedAfterMs = -1;
-                    while (System.currentTimeMillis() < deadlineMs) {
-                        if (registry.getEntry(queryId) == null) {
-                            endedAfterMs = System.currentTimeMillis() - closeMs;
-                            break;
-                        }
-                        Thread.sleep(50);
-                    }
+                    long endedAfterMs = awaitQueryEnded(registry, queryId, closeMs);
                     sleeper.join(5_000);
 
                     Assert.assertTrue(
@@ -254,15 +246,7 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                         sock.close();
 
                         long closeMs = System.currentTimeMillis();
-                        long deadlineMs = closeMs + 20_000;
-                        long endedAfterMs = -1;
-                        while (System.currentTimeMillis() < deadlineMs) {
-                            if (registry.getEntry(queryId) == null) {
-                                endedAfterMs = System.currentTimeMillis() - closeMs;
-                                break;
-                            }
-                            Thread.sleep(50);
-                        }
+                        long endedAfterMs = awaitQueryEnded(registry, queryId, closeMs);
 
                         Assert.assertTrue(
                                 "sleep(3600) never ended within 20s of the HTTP client closing the connection",
@@ -809,6 +793,17 @@ public class ServerMainSleepTest extends AbstractBootstrapTest {
                 }
             }
         });
+    }
+
+    private static long awaitQueryEnded(QueryRegistry registry, long queryId, long closeMs) throws InterruptedException {
+        long deadlineMs = closeMs + 20_000;
+        while (System.currentTimeMillis() < deadlineMs) {
+            if (registry.getEntry(queryId) == null) {
+                return System.currentTimeMillis() - closeMs;
+            }
+            Thread.sleep(50);
+        }
+        return -1;
     }
 
     private static void drainResponse(Response response, StringSink sink) {
