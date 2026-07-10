@@ -296,12 +296,14 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     /**
      * Renders the IN value list for EXPLAIN. Merges the INT-width and long-width
-     * sets into one sorted, de-duplicated list so the output is a single
-     * {@code [...]} block, byte-for-byte identical to the original single-set
-     * plan regardless of how the elements were partitioned by width. A value
+     * sets into one sorted, de-duplicated list so the mixed-width case still
+     * renders as a single {@code [...]} block regardless of how the elements were
+     * partitioned by width. The merge sorts, so the mixed-width output is in
+     * ascending order and does NOT match the hash order of the single-set
+     * branches ({@code sink.val(intSet)} / {@code sink.val(longSet)}); an EXPLAIN
+     * assertion over a mixed-width IN list must expect ascending order. A value
      * present at BOTH widths (e.g. {@code i IN (5, 5::long, 7)}) lands in both
-     * sets, so the merge drops the adjacent duplicate to render it once, exactly
-     * as a single hash set would.
+     * sets, so the merge drops the adjacent duplicate to render it once.
      */
     private static void plan(PlanSink sink, DirectLongHashSet intSet, DirectLongHashSet longSet) {
         boolean hasInt = intSet != null && intSet.size() > 0;

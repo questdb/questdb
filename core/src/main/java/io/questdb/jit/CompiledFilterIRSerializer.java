@@ -2562,7 +2562,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw NumericException.INSTANCE;
         }
         if (node.type == ExpressionNode.CONSTANT) {
-            return (int) Numbers.parseLong(node.token);
+            // A leaf constant here is always in INT range: an out-of-INT leaf routes
+            // to the I8/widen branch instead of the I4 fold. parseInt throws on an
+            // out-of-range token rather than silently truncating a LONG-range literal,
+            // so if that invariant is ever violated the caller cleanly falls back to
+            // descending the subtree as per-op IR.
+            return Numbers.parseInt(node.token);
         }
         if (node.type != ExpressionNode.OPERATION) {
             throw NumericException.INSTANCE;
