@@ -186,10 +186,10 @@ public class ReplicaOnlyIndexMultiColumnFuzzTest extends AbstractCairoTest {
                     throw ce;
                 }
                 Assert.assertFalse("a SECOND seed hit the accepted posting-reader .pk defect -> the "
-                        + "tolerance is too broad or a new regression appeared (seed=0x" + Long.toHexString(seed) + ')',
+                                + "tolerance is too broad or a new regression appeared (seed=0x" + Long.toHexString(seed) + ')',
                         toleratedDefectSeen);
                 Assert.assertEquals("only the documented seed may unmask the accepted posting-reader defect; "
-                        + "a different seed faulting means the scenario shifted -- investigate, do not widen the mask",
+                                + "a different seed faulting means the scenario shifted -- investigate, do not widen the mask",
                         KNOWN_POSTING_DEFECT_SEED, seed);
                 toleratedDefectSeen = true;
             }
