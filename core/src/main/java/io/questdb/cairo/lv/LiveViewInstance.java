@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -100,6 +101,18 @@ public class LiveViewInstance implements QuietCloseable {
     // LONG_NULL or a near-future floor, so a stale read costs at most one extra re-drain or a
     // one-tick defer, never a permanently wrong skip.
     private volatile long applyLagDeferUntilUs = Numbers.LONG_NULL;
+    // Base-table reader pinned across the whole multi-turn backfill sweep so every
+    // turn reads one stable MVCC snapshot. Without it, re-opening the base at the
+    // latest applied seqTxn each turn makes the positional skipRows() resume
+    // unsound: an out-of-order base commit landing below the swept prefix between
+    // turns shifts physical row positions, so the next turn's skipRows() lands on a
+    // different set - silently dropping the back-dated row and re-feeding the old
+    // boundary row (double-advancing the accumulators). Borrowed (not detached) so
+    // any thread can release it via close(); held from the first sweep turn until
+    // the sweep completes or the view is dropped/invalidated/closed. Null when no
+    // sweep is in flight. Accessed under the refresh latch (and the latch-guarded
+    // free hooks / shutdown).
+    private TableReader backfillBaseReader;
     // In-memory count of base data-cursor rows the backfill sweep has consumed
     // so far - the skipRows() resume position for the next turn. Persists in
     // memory across in-process turns (window state persists with it), and is
@@ -119,6 +132,12 @@ public class LiveViewInstance implements QuietCloseable {
     // however many turns the catch-up needs; persists across turns (the per-turn
     // budget can split the catch-up). Mutated under the refresh latch only.
     private long backfillSkipWriteFloor;
+    // The pinned snapshot's seqTxn, fixed for the whole sweep (see backfillBaseReader).
+    // The BACKFILLING -> ACTIVE handoff advances the watermarks to exactly this value
+    // so the ACTIVE phase's incremental drain (with O3 detection) covers everything
+    // committed after the snapshot from backfillSweepSeqTxn + 1. LONG_NULL until the
+    // sweep's first turn pins it; reset to LONG_NULL when the reader is released.
+    private long backfillSweepSeqTxn = Numbers.LONG_NULL;
     // Cumulative count of in-order (forward-append) base rows dropped because their
     // timestamp fell below viewLowerBoundTimestamp. Surfaced via
     // live_views().below_lower_bound_count. Complements o3RejectedCount, which
@@ -425,6 +444,7 @@ public class LiveViewInstance implements QuietCloseable {
         dropped = true;
         if (!isClosed) {
             isClosed = true;
+            freeBackfillBaseReader();
             compiledFactory = Misc.free(compiledFactory);
             anchorWindow = Misc.free(anchorWindow);
             anchorFunction = Misc.free(anchorFunction);
@@ -471,6 +491,21 @@ public class LiveViewInstance implements QuietCloseable {
         latestSeenTs = ts;
     }
 
+    /**
+     * Releases the base-table snapshot pinned across the backfill sweep (see
+     * {@link #getBackfillBaseReader()}). The reader is borrowed, not detached, so
+     * {@code close()} returns it to the pool from any thread. Idempotent (null-safe).
+     * <p>
+     * Callers must guarantee no concurrent sweep turn is reading from it: the sweep
+     * completion / recompile call sites hold the refresh latch, the drop/invalidate
+     * free hooks CAS the latch, and the engine-shutdown call site runs after the
+     * refresh workers have stopped.
+     */
+    public void freeBackfillBaseReader() {
+        backfillBaseReader = Misc.free(backfillBaseReader);
+        backfillSweepSeqTxn = Numbers.LONG_NULL;
+    }
+
     public Function getAnchorFunction() {
         return anchorFunction;
     }
@@ -487,12 +522,20 @@ public class LiveViewInstance implements QuietCloseable {
         return applyLagDeferUntilUs;
     }
 
+    public TableReader getBackfillBaseReader() {
+        return backfillBaseReader;
+    }
+
     public long getBackfillDataOffset() {
         return backfillDataOffset;
     }
 
     public long getBackfillSkipWriteFloor() {
         return backfillSkipWriteFloor;
+    }
+
+    public long getBackfillSweepSeqTxn() {
+        return backfillSweepSeqTxn;
     }
 
     public long getBelowLowerBoundCount() {
@@ -1021,12 +1064,20 @@ public class LiveViewInstance implements QuietCloseable {
         this.applyLagDeferUntilUs = applyLagDeferUntilUs;
     }
 
+    public void setBackfillBaseReader(TableReader backfillBaseReader) {
+        this.backfillBaseReader = backfillBaseReader;
+    }
+
     public void setBackfillDataOffset(long backfillDataOffset) {
         this.backfillDataOffset = backfillDataOffset;
     }
 
     public void setBackfillSkipWriteFloor(long backfillSkipWriteFloor) {
         this.backfillSkipWriteFloor = backfillSkipWriteFloor;
+    }
+
+    public void setBackfillSweepSeqTxn(long backfillSweepSeqTxn) {
+        this.backfillSweepSeqTxn = backfillSweepSeqTxn;
     }
 
     /**
@@ -1297,6 +1348,7 @@ public class LiveViewInstance implements QuietCloseable {
         try {
             if (!isClosed) {
                 isClosed = true;
+                freeBackfillBaseReader();
                 compiledFactory = Misc.free(compiledFactory);
                 anchorWindow = Misc.free(anchorWindow);
                 anchorFunction = Misc.free(anchorFunction);
@@ -1337,6 +1389,7 @@ public class LiveViewInstance implements QuietCloseable {
             return;
         }
         try {
+            freeBackfillBaseReader();
             compiledFactory = Misc.free(compiledFactory);
             anchorWindow = Misc.free(anchorWindow);
             anchorFunction = Misc.free(anchorFunction);

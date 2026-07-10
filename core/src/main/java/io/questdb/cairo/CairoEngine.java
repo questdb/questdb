@@ -1167,6 +1167,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public void close() {
+        // Return any base-table readers pinned by an in-flight backfill sweep to the
+        // reader pool before it is freed below, so the pool teardown does not report
+        // a still-borrowed reader as left behind. Safe here: close() runs after the
+        // refresh workers have stopped, so no sweep turn is reading from them.
+        liveViewRegistry.freeBackfillBaseReaders();
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
         Misc.free(readerPool);

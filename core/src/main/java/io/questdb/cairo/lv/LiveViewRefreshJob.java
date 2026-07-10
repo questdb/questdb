@@ -2921,14 +2921,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     .bcp}). Later turns continue from the in-memory window state + offset
      *     ({@code getIncrementalCursor} preserves accumulated state across
      *     turns), so no per-turn restore is needed.</li>
-     *     <li>Each turn re-opens the MVCC base reader at {@code backfillTargetSeqTxn},
+     *     <li>The first turn pins ONE MVCC base snapshot (an
+     *     {@link LiveViewInstance#getBackfillBaseReader() instance-held reader}) at
+     *     {@code sweepSeqTxn >= backfillTargetSeqTxn} and every turn reads that same
+     *     snapshot; re-opening at the latest applied seqTxn each turn would make the
+     *     positional {@code skipRows()} resume unsound under concurrent out-of-order
+     *     base commits (they reorder physical rows below the swept prefix). Each turn
      *     {@code skipRows()} past already-swept rows, feeds up to a row/duration
-     *     budget, commits the batch, applies it, and writes a {@code .bcp} on
-     *     the checkpoint cadence.</li>
+     *     budget, commits the batch, applies it, and writes a {@code .bcp} on the
+     *     checkpoint cadence.</li>
      *     <li>On cursor exhaustion the turn flips {@code backfillState} to ACTIVE,
-     *     writes a steady head {@code .cp} from the now-complete state, and
-     *     retires the {@code .bcp}; the next tick begins the deferred drain from
-     *     {@code sweepSeqTxn + 1}.</li>
+     *     writes a steady head {@code .cp} from the now-complete state, releases the
+     *     pinned snapshot, and retires the {@code .bcp}; the next tick begins the
+     *     deferred drain from {@code sweepSeqTxn + 1}, where the ACTIVE phase's O3
+     *     detection materialises anything the base committed after the snapshot.</li>
      * </ul>
      * Crash idempotency: the on-disk output is a deterministic prefix of the
      * eventual result, so a re-feed past the last {@code .bcp} recomputes rows
@@ -3029,11 +3035,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long skipWriteUntil = instance.getBackfillSkipWriteFloor();
         long dataOffset = instance.getBackfillDataOffset();
 
-        TableReader reader = waitForApply(baseToken, backfillTargetSeqTxn);
-        // The reader may sit at a seqTxn strictly greater than the target if
-        // ApplyWal2TableJob caught up further while waitForApply was running;
-        // sweepSeqTxn pins the deferred drain to resume from after the snapshot.
-        final long sweepSeqTxn = Math.max(backfillTargetSeqTxn, reader.getSeqTxn());
+        // Pin ONE stable base snapshot for the entire multi-turn sweep. Opened lazily
+        // on the first turn (or after a fresh-snapshot re-arm) and held on the instance
+        // across turns. Re-opening the base at the latest applied seqTxn each turn (as
+        // this did before) makes the positional skipRows() resume unsound: an
+        // out-of-order base commit landing below the swept prefix between turns
+        // shifts physical row positions, so the next turn's skipRows(dataOffset) skips
+        // a different set - silently dropping the back-dated row and re-feeding the old
+        // boundary row (double-advancing the accumulators). Holding one snapshot keeps
+        // the physical order stable across turns; everything committed after it is
+        // handed to the ACTIVE phase's O3 detection from sweepSeqTxn + 1.
+        //
+        // Lazily null-guarded rather than folded into the isBackfillResumeAttempted
+        // block above: waitForApply can throw (apply-lag timeout), and the flag is
+        // stamped before it. Gating the open on a null reader instead re-attempts it
+        // on the next turn without re-running the window-state restore.
+        TableReader reader = instance.getBackfillBaseReader();
+        if (reader == null) {
+            reader = waitForApply(baseToken, backfillTargetSeqTxn);
+            instance.setBackfillBaseReader(reader);
+            // The reader may sit at a seqTxn strictly greater than the target if
+            // ApplyWal2TableJob caught up further while waitForApply was running;
+            // sweepSeqTxn pins the deferred drain to resume from after the snapshot.
+            instance.setBackfillSweepSeqTxn(Math.max(backfillTargetSeqTxn, reader.getSeqTxn()));
+        }
+        final long sweepSeqTxn = instance.getBackfillSweepSeqTxn();
 
         final long turnMaxRows = engine.getConfiguration().getLiveViewCheckpointRows();
         final long turnMaxDurationUs = engine.getConfiguration().getLiveViewRefreshTurnMaxDurationMicros();
@@ -3043,11 +3069,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long appendedThisTurn = 0;
         long processedThisTurn = 0;
         boolean yielded = false;
-        boolean readerAttached = false;
+        boolean readerBound = false;
         try {
-            engine.detachReader(reader);
+            // The pinned reader is borrowed (not detached), so the base SELECT reads a
+            // copy at the reader's fixed snapshot txn via getReaderAtTxn's copy path.
+            // It is NOT closed per turn: it stays pinned across turns and is released on
+            // sweep completion (below) or by the drop/invalidate/shutdown hooks.
             executionContext.of(reader);
-            readerAttached = true;
+            readerBound = true;
 
             RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
             final Function filter = filterFactory.getFilter();
@@ -3117,11 +3146,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         } finally {
-            if (readerAttached) {
+            if (readerBound) {
                 executionContext.clearReader();
-                engine.attachReader(reader);
             }
-            reader.close();
         }
 
         instance.setLvRowsTotal(lvRows);
@@ -3147,6 +3174,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         maybeWriteHeadCheckpoint(instance, windowFactory, sweepSeqTxn, instance.getLatestSeenTs(), 0L);
         instance.setBackfillState(LiveViewState.BACKFILL_STATE_ACTIVE);
         instance.setBackfillTargetSeqTxn(Numbers.LONG_NULL);
+        // Release the pinned base snapshot: the sweep is done and the ACTIVE phase
+        // opens its own readers from sweepSeqTxn + 1. Runs under the refresh latch,
+        // so no concurrent turn is reading from it.
+        instance.freeBackfillBaseReader();
         try {
             // Persists backfillState=ACTIVE + watermarks durably before the .bcp
             // is retired, so a crash between the two recovers as ACTIVE.
@@ -4481,6 +4512,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (instance.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING) {
             // Mid-backfill: re-arm the sweep resume, which rebuilds from the surviving
             // .bcp (or re-sweeps from 0 behind the skip-write floor). Idempotent.
+            // Deliberately KEEP the pinned base snapshot (do not freeBackfillBaseReader):
+            // the fault is transient (map/staging OOM, bad read), the snapshot is intact,
+            // and resuming the .bcp data offset against the SAME snapshot stays sound. A
+            // fresh snapshot would reintroduce the positional-resume hazard this fix closes.
             instance.resetBackfillResumeAttempted();
             LOG.info().$("live view mid-backfill refresh failure, sweep will resume [view=")
                     .$(instance.getDefinition().getViewName()).I$();
@@ -5025,6 +5060,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return null;
         }
         if (instance.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING) {
+            // The recompiled factory expects the base's NEW metadata; the pinned base
+            // snapshot is at the OLD metadata version. Drop it so the next sweep turn
+            // re-pins a fresh snapshot consistent with the recompiled factory. A
+            // metadata-only change preserves physical row order, so the .bcp data
+            // offset still resumes correctly against the re-pinned snapshot.
+            instance.freeBackfillBaseReader();
             instance.resetBackfillResumeAttempted();
             LOG.info().$("live view base table metadata changed mid-backfill, sweep will resume recompiled [view=")
                     .$(viewName).I$();
