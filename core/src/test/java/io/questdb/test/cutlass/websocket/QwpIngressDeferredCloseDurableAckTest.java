@@ -838,6 +838,93 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Echo-eligibility gap: the exactly-once guard must depend on WHAT the
+     * close delivers, not on WHETHER the close was ever deferred. Here the
+     * uploader catches up in the gap between the last committed batch and
+     * the demote's first gate-rejected frame, so
+     * {@code roleChangeCloseWithUploadGrace} finds coverage already complete
+     * and never arms the deferral. The final durable ack still goes out only
+     * now -- durable acks are recv-driven, so no send opportunity existed
+     * between the registry advance and the rejected frame -- and
+     * {@code sendFatalClose} emits [durable ack][CLOSE] exactly like the
+     * deferred path. Skipping the echo wait
+     * ({@code beginCloseEchoWaitIfEligible} requires
+     * {@code isRoleChangeCloseDeferred}) tears the fd down against a client
+     * that is still streaming: unread in-flight frames make the close
+     * abortive (RST) and destroy the client's unread [durable ack][CLOSE]
+     * tail -- full-corpus replay, duplicates on tables without DEDUP UPSERT
+     * KEYS. Same delivery contract, same wait: upload completion a moment
+     * before the first rejection must not be weaker than a moment after.
+     */
+    @Test
+    public void testCloseEchoWaitMustArmWhenCoverageCompletesBeforeFirstRejectedFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabq (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabq", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabq", 200L, 2_000_000L));
+                byte[] closeEcho = closeEchoFrame();
+                byte[] wire = concat(frame0, frame1, closeEcho);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Phase A: PRIMARY. seq=0 commits; the cumulative ACK
+                    // drains, but the durable ack stays pending -- the
+                    // registry watermark still lags at -1.
+                    drive(processor, context, nf, frame0.length);
+                    Assert.assertTrue("test setup: cumulative ACK must have drained", state.isSendReady());
+                    Assert.assertTrue(
+                            "test setup: seq=0's durable ack must still be pending",
+                            state.hasPendingDurableWork()
+                    );
+
+                    // Phase B: the uploader catches up BEFORE the demote's
+                    // first rejected frame. Durable acks are recv-driven, so
+                    // the client has still not seen the durable ack when the
+                    // next frame arrives.
+                    durableWatermark.set(Long.MAX_VALUE);
+
+                    // Phase C: in-place demote. seq=1 is gate-rejected;
+                    // coverage is already complete, so the close completes
+                    // immediately: sendFatalClose flushes the FIRST durable
+                    // ack, then the CLOSE. Delivery of that ack is only
+                    // provable via the close-echo handshake -- the connection
+                    // must enter the echo wait exactly as the deferred path
+                    // does, not tear down.
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    Assert.assertTrue(
+                            "connection must await the client's close echo: the durable ack sent just before"
+                                    + " the CLOSE is unconfirmed, whether or not the close was ever deferred",
+                            state.isAwaitingCloseEcho()
+                    );
+
+                    // Phase D: the client's CLOSE echo completes the handshake.
+                    completeCloseEcho(processor, context, nf, closeEcho.length);
+
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * Pins the close-echo wait window itself: after the coverage-complete
      * CLOSE goes out, the connection stays up but inert -- in-flight client
      * data frames are read and DISCARDED (no engine work, or an in-place
@@ -1515,6 +1602,244 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                     }
 
                     capture.assertLogged("close echo wait expired");
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * The sync-lost drain must be bounded per dispatch. Pre-fix,
+     * {@code discardInboundBytes} looped until recv() returned zero with the
+     * echo deadline polled only BEFORE the loop: a peer that keeps the
+     * kernel receive buffer non-empty (flooding garbage behind the oversized
+     * frame that killed frame sync) keeps recv() positive indefinitely,
+     * pinning the HTTP worker, starving every other connection dispatched to
+     * it, and never re-polling the deadline. Pins: one dispatch consumes at
+     * most CLOSE_ECHO_DISCARD_READ_BUDGET reads then yields via
+     * PeerIsSlowToWriteException with the wait still armed (the leftover
+     * readiness re-fires the dispatcher, so the drain continues next
+     * dispatch with a fresh budget); and a dispatch entered past the grace
+     * deadline tears down promptly even against a still-flooding peer, its
+     * pre-close best-effort drain bounded by GRACEFUL_CLOSE_DRAIN_READ_BUDGET
+     * rather than delegated to HttpConnectionContext.drainRecvBuffer's
+     * unbounded {@code while (recv() > 0)} loop.
+     */
+    @Test
+    public void testCloseEchoWaitSyncLostDrainYieldsWithinReadBudgetAgainstFloodingPeer() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return RECV_BUFFER_SIZE;
+                }
+            };
+
+            execute("create table tabr (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabr", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabr", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabr", 300L, 3_000_000L));
+                // Declared payload (2000) exceeds the recv buffer (1024): the
+                // header alone kills frame sync inside the echo wait.
+                byte[] oversizedHeader = {
+                        (byte) 0x82,          // FIN | BINARY
+                        (byte) (0x80 | 126),  // MASK | 16-bit extended length
+                        0x07, (byte) 0xD0,    // payload length 2000, big-endian
+                        0x12, 0x34, 0x56, 0x78 // mask key
+                };
+                byte[] wire = concat(frame0, frame1, frame2, oversizedHeader);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phases A-C: commit, demote, coverage complete; the
+                    // role-change CLOSE goes out and the echo wait arms.
+                    drive(processor, context, nf, frame0.length);
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "test setup: connection must await the client's close echo",
+                            state.isAwaitingCloseEcho()
+                    );
+                    int framesAtClose = rawSocket.sentFrames.size();
+
+                    // Phase D: the oversized header kills frame sync inside
+                    // the wait; the connection is now in discard mode.
+                    drive(processor, context, nf, oversizedHeader.length);
+                    Assert.assertTrue(
+                            "test setup: the too-big header must flip the connection into the sync-lost discard mode",
+                            state.hasLostCloseEchoSync()
+                    );
+
+                    // Phase E: the peer floods -- every recv returns a full
+                    // buffer of garbage. One dispatch must consume exactly
+                    // the read budget, then yield the worker.
+                    nf.startFlood(64, null, 0);
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("resumeRecv must yield via PeerIsSlowToWriteException when the discard read budget is exhausted");
+                    } catch (PeerIsSlowToWriteException expected) {
+                    }
+                    Assert.assertEquals(
+                            "one dispatch must drain exactly the per-dispatch read budget from a flooding peer, then yield the worker",
+                            QwpIngressUpgradeProcessor.CLOSE_ECHO_DISCARD_READ_BUDGET, nf.floodReadsObserved()
+                    );
+                    Assert.assertTrue(
+                            "echo wait must survive the budget-bounded dispatch",
+                            state.isAwaitingCloseEcho()
+                    );
+
+                    // Phase F: the dispatcher re-fires on the leftover
+                    // readiness; the next dispatch continues with a FRESH
+                    // budget -- progress without monopolization.
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("resumeRecv must yield via PeerIsSlowToWriteException when the discard read budget is exhausted");
+                    } catch (PeerIsSlowToWriteException expected) {
+                    }
+                    Assert.assertEquals(
+                            "the drain must continue on the next dispatch with a fresh budget",
+                            2 * QwpIngressUpgradeProcessor.CLOSE_ECHO_DISCARD_READ_BUDGET, nf.floodReadsObserved()
+                    );
+                    Assert.assertEquals(
+                            "nothing may be sent while discarding flood bytes",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+
+                    // Phase G: grace expires. The teardown must be prompt
+                    // even though the peer keeps flooding: the pre-close
+                    // best-effort drain is bounded, not "until recv() == 0".
+                    nowMicros[0] += QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS;
+                    int floodReadsBeforeExpiry = nf.floodReadsObserved();
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("Expected ServerDisconnectException (echo wait expired)");
+                    } catch (ServerDisconnectException expected) {
+                    }
+                    Assert.assertTrue(
+                            "the expiry teardown's best-effort drain must be bounded against a flooding peer",
+                            nf.floodReadsObserved() - floodReadsBeforeExpiry
+                                    <= QwpIngressUpgradeProcessor.GRACEFUL_CLOSE_DRAIN_READ_BUDGET
+                    );
+                    assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
+                    assertCloseIsFinalFrame(rawSocket.sentFrames);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * The echo deadline must be observable WHILE the drain runs, not only on
+     * dispatch entry. The flood advances the test clock per read, modeling
+     * wall-clock time passing while the worker drains a peer that keeps the
+     * kernel buffer non-empty: the deadline is crossed mid-drain and the
+     * SAME dispatch must tear the connection down with the duplicate-risk
+     * diagnostic. Pre-fix the loop never re-checked the deadline: the
+     * dispatch consumed the entire flood (bounded by the facade here so the
+     * suite cannot hang; unbounded in production) and returned with the
+     * connection still alive arbitrarily far past its grace.
+     */
+    @Test
+    public void testCloseEchoWaitSyncLostDrainPollsDeadlineAgainstFloodingPeer() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return RECV_BUFFER_SIZE;
+                }
+            };
+
+            execute("create table tabs (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabs", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabs", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabs", 300L, 3_000_000L));
+                byte[] oversizedHeader = {
+                        (byte) 0x82,          // FIN | BINARY
+                        (byte) (0x80 | 126),  // MASK | 16-bit extended length
+                        0x07, (byte) 0xD0,    // payload length 2000, big-endian
+                        0x12, 0x34, 0x56, 0x78 // mask key
+                };
+                byte[] wire = concat(frame0, frame1, frame2, oversizedHeader);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Phases A-C: commit, demote, coverage complete; the
+                    // role-change CLOSE goes out and the echo wait arms at
+                    // clock 0 (deadline = CLOSE_ECHO_WAIT_GRACE_MICROS).
+                    drive(processor, context, nf, frame0.length);
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "test setup: connection must await the client's close echo",
+                            state.isAwaitingCloseEcho()
+                    );
+
+                    // Phase D: the oversized header kills frame sync inside
+                    // the wait; the connection is now in discard mode.
+                    drive(processor, context, nf, oversizedHeader.length);
+                    Assert.assertTrue(
+                            "test setup: the too-big header must flip the connection into the sync-lost discard mode",
+                            state.hasLostCloseEchoSync()
+                    );
+
+                    // Phase E: the peer floods and the clock advances by a
+                    // generous grace-quarter per read: the fourth read
+                    // crosses the deadline MID-DRAIN, well inside the read
+                    // budget -- only an in-loop poll can observe it.
+                    nf.startFlood(64, nowMicros, QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS / 4 + 1);
+                    capture.start();
+                    try {
+                        try {
+                            processor.resumeRecv(context);
+                            Assert.fail("deadline crossed mid-drain must tear the connection down in the same dispatch");
+                        } catch (ServerDisconnectException expected) {
+                        }
+                        drainLogQueue(capture, "sentinel: flooding-peer deadline poll done");
+                    } finally {
+                        capture.stop();
+                    }
+
+                    capture.assertLogged("close echo wait expired");
+                    Assert.assertTrue(
+                            "teardown must complete within the deadline-crossing reads plus the bounded pre-close drain",
+                            nf.floodReadsObserved()
+                                    <= 4 + QwpIngressUpgradeProcessor.GRACEFUL_CLOSE_DRAIN_READ_BUDGET
+                    );
                     assertFinalDurableAckPrecedesClose(rawSocket.sentFrames, 1000 /* NORMAL_CLOSURE */);
                     assertCloseIsFinalFrame(rawSocket.sentFrames);
                 } finally {
@@ -2217,6 +2542,10 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
      */
     private static class PhasedNetworkFacade extends NetworkFacadeImpl {
         private final byte[] data;
+        private long advanceClockPerFloodRead;
+        private long[] floodClock;
+        private int floodReadsObserved;
+        private int floodReadsRemaining;
         private int limit;
         private boolean peerClosed;
         private int pos;
@@ -2233,6 +2562,19 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         @Override
         public int recvRaw(long fd, long buffer, int bufferLen) {
             if (pos >= limit) {
+                if (floodReadsRemaining > 0) {
+                    floodReadsRemaining--;
+                    floodReadsObserved++;
+                    if (floodClock != null) {
+                        floodClock[0] += advanceClockPerFloodRead;
+                    }
+                    // mid-frame garbage: the sync-lost discard gate never
+                    // parses these bytes, it only has to keep consuming them
+                    for (int i = 0; i < bufferLen; i++) {
+                        Unsafe.putByte(buffer + i, (byte) 0x55);
+                    }
+                    return bufferLen;
+                }
                 return peerClosed ? -1 : 0; // peer FIN / would block
             }
             int n = Math.min(bufferLen, limit - pos);
@@ -2246,12 +2588,34 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
             peerClosed = true;
         }
 
+        int floodReadsObserved() {
+            return floodReadsObserved;
+        }
+
         int pendingBytes() {
             return limit - pos;
         }
 
         void release(int bytes) {
             limit = Math.min(data.length, limit + bytes);
+        }
+
+        /**
+         * Flips the facade into "flooding peer" mode once the scripted wire
+         * bytes are exhausted: every recvRaw returns a FULL buffer of
+         * unparseable garbage, modeling a peer that keeps the kernel receive
+         * buffer non-empty faster than the server can drain it -- the
+         * continuously readable socket of the review finding. Bounded by
+         * {@code maxReads} so an unbounded server-side drain FAILS the
+         * test's read-count assertions instead of hanging the suite. Each
+         * flood read may advance the test clock by
+         * {@code advancePerRead}, modeling wall-clock time passing while
+         * the worker is stuck draining.
+         */
+        void startFlood(int maxReads, long[] clock, long advancePerRead) {
+            floodReadsRemaining = maxReads;
+            floodClock = clock;
+            advanceClockPerFloodRead = advancePerRead;
         }
     }
 

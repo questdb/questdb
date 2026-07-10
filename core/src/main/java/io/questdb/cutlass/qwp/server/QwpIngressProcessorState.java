@@ -191,6 +191,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // events (gate-rejected frames, keepalive PINGs) until the durable-upload
     // registry covers pendingDurableSeqTxns or the grace budget expires.
     private long roleChangeCloseDeferredDeadline = -1;
+    // Set the moment a role-change close is initiated (the first gate-rejected
+    // frame enters roleChangeCloseWithUploadGrace), whether or not the deferral
+    // ever arms. Close-echo eligibility must depend on WHAT the close delivers
+    // (the final durable ack flushed immediately before the CLOSE frame), not on
+    // WHETHER uploads happened to still lag at the first rejected frame: when the
+    // uploader catches up in the gap between the last committed batch and the
+    // demote's first rejection, the deferral is never armed yet sendFatalClose
+    // still emits the client's FIRST durable ack right before the CLOSE -- the
+    // same delivery contract the echo wait exists to confirm. Like the deferral
+    // deadline this survives per-message clear()/clearMessageState() and
+    // parked-close resumes; reset only on onDisconnected().
+    private boolean roleChangeCloseInitiated;
     // Lowest sequence number consumed from the wire but neither committed nor
     // answered with an error response. Only the role-change close path can
     // leave a sequence in this limbo: it consumes the sequence, then either
@@ -571,6 +583,26 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * True once a role-change close has been initiated on this connection,
+     * whether it deferred awaiting upload coverage or completed on the first
+     * attempt (coverage already in place). This -- not
+     * {@link #isRoleChangeCloseDeferred()} -- is the close-echo eligibility
+     * predicate: the CLOSE frame carries the final durable ack in both cases.
+     */
+    public boolean isRoleChangeCloseInitiated() {
+        return roleChangeCloseInitiated;
+    }
+
+    /**
+     * Marks this connection as closing due to a role change (in-place
+     * PRIMARY-&gt;REPLICA demote). Idempotent; survives per-message state
+     * clears and parked-close resumes, reset only on {@code onDisconnected()}.
+     */
+    public void initiateRoleChangeClose() {
+        roleChangeCloseInitiated = true;
+    }
+
+    /**
      * True when a deferred role-change close has exhausted its grace budget and
      * must proceed even with un-acked durable work (availability over the
      * duplicate guard). Always false when no deferral is in progress.
@@ -765,6 +797,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         closeEchoDeadline = -1;
         hasLostCloseEchoSync = false;
         roleChangeCloseDeferredDeadline = -1;
+        roleChangeCloseInitiated = false;
         roleChangeCloseReason.clear();
         firstUnresolvedSequence = -1;
         wsHandshakeSent = false;
