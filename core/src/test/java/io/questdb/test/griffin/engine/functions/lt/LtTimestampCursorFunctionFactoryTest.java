@@ -55,6 +55,24 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiRowCursorFailsOnDesignatedTimestamp() throws Exception {
+        // On a designated-timestamp column, ts < (select ...) is extracted as an interval intrinsic and
+        // evaluated by RuntimeIntervalModel instead of the cursor-comparison factory. A scalar sub-query
+        // must still reject more than one row here rather than silently taking an arbitrary first row.
+        // The interval model does not thread the sub-query parse position, so it is reported at 0 - the
+        // distinct position (vs 28 for the factory path) also confirms the intrinsic path was taken.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select * from x where ts < (select ts from x limit 2)")
+                    .fails(0, "scalar sub-query returned more than one row");
+            assertQuery("select * from x where ts <= (select ts from x limit 2)")
+                    .fails(0, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
     public void testCompareTimestampWithString() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
@@ -410,12 +428,14 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (i int)");
+            execute("insert into tab values (1), (2), (3)");
 
             // int left operand routes to the dedicated int/cursor overload (<(IC)); it is a valid
-            // numeric comparison (never an implicit cast to TIMESTAMP) and selects no rows here
-            assertQuery("select * from tab where i < (select max(i) from tab)")
+            // numeric comparison (never an implicit cast to TIMESTAMP). Rows are present so the
+            // assertion exercises the IC comparison itself, not merely that it compiles.
+            assertQuery("select * from tab where i < (select max(i) from tab)") // < 3
                     .noLeakCheck()
-                    .returns("i\n");
+                    .returns("i\n1\n2\n");
         });
     }
 
@@ -428,6 +448,18 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
             assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)")
                     .fails(22, "left operand must be a DOUBLE or FLOAT, found: VARCHAR");
+        });
+    }
+
+    @Test
+    public void testPreventStringImplicitCastingToTimestampInSubQuery() throws Exception {
+        // A STRING left operand re-routes to <(DC) exactly like VARCHAR: the DC guard rejects a
+        // non-DOUBLE/FLOAT left operand, so the error flips from "must be a TIMESTAMP" to
+        // "must be a DOUBLE or FLOAT". Lock the routing so it cannot silently regress.
+        assertMemoryLeak(() -> {
+            execute("create table x (a string, ts timestamp) timestamp(ts) partition by day");
+            assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::string)")
+                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: STRING");
         });
     }
 

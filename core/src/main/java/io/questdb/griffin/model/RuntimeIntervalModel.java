@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Interval;
@@ -347,12 +348,21 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             }
             return Numbers.LONG_NULL;
         } else if (functionType == ColumnType.CURSOR) {
-            // special case for ts = (<subquery>) and similar cases
+            // special case for ts = (<subquery>) and similar cases, where the designated timestamp
+            // column routes ts =/</> (select ...) into an interval intrinsic instead of a cursor-
+            // comparison factory. A scalar sub-query must still yield at most one row: read the first
+            // row, then enforce there is no second one - otherwise an arbitrary first row would be
+            // taken silently, diverging from the cursor-comparison factories that reject it.
             final RecordCursorFactory factory = dynamicFunction.getRecordCursorFactory();
             assert factory != null;
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 if (cursor.hasNext()) {
-                    return timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
+                    final long timestamp = timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
+                    // The interval model does not thread the sub-query parse position through the
+                    // dynamicRangeList, so report at position 0 (interim). The important part is that a
+                    // malformed multi-row bound becomes an error rather than a silent wrong result.
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, 0);
+                    return timestamp;
                 } else {
                     return Numbers.LONG_NULL;
                 }

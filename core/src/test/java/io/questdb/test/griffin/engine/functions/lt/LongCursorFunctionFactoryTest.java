@@ -83,6 +83,62 @@ public class LongCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatCursorColumn() throws Exception {
+        // A FLOAT-typed cursor scalar routes to the DoubleCursorFunc FLOAT arm (read via Record#getFloat).
+        // A float value derived from a table column widens to DOUBLE in projection, so a FLOAT constant
+        // sub-query is used to keep the cursor column FLOAT and actually exercise the getFloat(0) path.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::long l from long_sequence(10))");
+            // l > 5.5f -> 6..10
+            assertQuery("select l from t where l > (select cast(5.5 as float))")
+                    .noLeakCheck()
+                    .returns("l\n6\n7\n8\n9\n10\n");
+            // l < 5.5f -> 1..5
+            assertQuery("select l from t where l < (select cast(5.5 as float))")
+                    .noLeakCheck()
+                    .returns("l\n1\n2\n3\n4\n5\n");
+            // negated operators over the FLOAT arm
+            assertQuery("select l from t where l <= (select cast(5.5 as float))")
+                    .noLeakCheck()
+                    .returns("l\n1\n2\n3\n4\n5\n");
+        });
+    }
+
+    @Test
+    public void testIntCursorColumn() throws Exception {
+        // An INT-typed cursor scalar goes through readScalarLong's INT branch (Numbers.intToLong).
+        // That mapping is the sole guard that an INT_NULL cursor scalar becomes LONG_NULL (matching no
+        // rows) rather than -2147483648L; a plain widening would make l > (select null::int) match rows.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::long l from long_sequence(10))");
+            // non-null INT cursor scalar: l > 5 -> 6..10, l < 5 -> 1..4
+            assertQuery("select l from t where l > (select 5::int)")
+                    .noLeakCheck()
+                    .returns("l\n6\n7\n8\n9\n10\n");
+            assertQuery("select l from t where l < (select 5::int)")
+                    .noLeakCheck()
+                    .returns("l\n1\n2\n3\n4\n");
+            // negated: l <= 5 -> 1..5
+            assertQuery("select l from t where l <= (select 5::int)")
+                    .noLeakCheck()
+                    .returns("l\n1\n2\n3\n4\n5\n");
+            // INT_NULL cursor scalar must map to LONG_NULL -> matches no rows for every operator
+            assertQuery("select l from t where l > (select null::int)")
+                    .noLeakCheck()
+                    .returns("l\n");
+            assertQuery("select l from t where l < (select null::int)")
+                    .noLeakCheck()
+                    .returns("l\n");
+            assertQuery("select l from t where l >= (select null::int)")
+                    .noLeakCheck()
+                    .returns("l\n");
+            assertQuery("select l from t where l <= (select null::int)")
+                    .noLeakCheck()
+                    .returns("l\n");
+        });
+    }
+
+    @Test
     public void testErrorNonNumericCursorColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select x::long l from long_sequence(10))");
@@ -100,6 +156,29 @@ public class LongCursorFunctionFactoryTest extends AbstractCairoTest {
                     .fails(27, "scalar sub-query returned more than one row");
             assertQuery("select l from t where l < (select x::long from long_sequence(2))")
                     .fails(27, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
+    public void testBareLiteralNullComparison() throws Exception {
+        // End-to-end guard for the ColumnType NULL->CURSOR overload fix: a bare `null` literal is a scalar,
+        // never a cursor. `l <= null` (i.e. not(l > null)) must compile to a scalar null-comparison instead
+        // of binding to the `>(?C)` cursor-comparison factory and blowing up on getRecordCursorFactory().
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::long l from long_sequence(10))");
+            // null comparison matches no rows for every operator, and must not throw at compile time
+            assertQuery("select l from t where l <= null")
+                    .noLeakCheck()
+                    .returns("l\n");
+            assertQuery("select l from t where l >= null")
+                    .noLeakCheck()
+                    .returns("l\n");
+            assertQuery("select l from t where l > null")
+                    .noLeakCheck()
+                    .returns("l\n");
+            assertQuery("select l from t where l < null")
+                    .noLeakCheck()
+                    .returns("l\n");
         });
     }
 

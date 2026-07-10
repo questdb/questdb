@@ -76,6 +76,81 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBareLiteralNullComparison() throws Exception {
+        // End-to-end guard for the ColumnType NULL->CURSOR overload fix: a bare `null` literal is a scalar,
+        // never a cursor. `price <= null` (i.e. not(price > null)) must compile to a scalar null-comparison
+        // instead of binding to the `>(?C)` cursor-comparison factory and blowing up on
+        // getRecordCursorFactory() of the NULL constant. The existing null tests all use (select null...),
+        // a different code path, so this pins the bare-literal end-to-end path.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::double price from long_sequence(10))");
+            // null comparison matches no rows for every operator, and must not throw at compile time
+            assertQuery("select price from t where price <= null")
+                    .noLeakCheck()
+                    .returns("price\n");
+            assertQuery("select price from t where price >= null")
+                    .noLeakCheck()
+                    .returns("price\n");
+            assertQuery("select price from t where price > null")
+                    .noLeakCheck()
+                    .returns("price\n");
+            assertQuery("select price from t where price < null")
+                    .noLeakCheck()
+                    .returns("price\n");
+        });
+    }
+
+    @Test
+    public void testCursorOnLeftIsSupportedViaSwap() throws Exception {
+        // (select ...) > col is supported: the optimizer swaps the operands so the cursor becomes the
+        // right-hand scalar sub-query. Pin the correctness of the swapped comparison so it can never
+        // silently degrade into an internal failure.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::double price from long_sequence(10))");
+            // (avg = 5.5) > price -> price < 5.5 -> 1..5
+            assertQuery("select price from t where (select avg(price) from t) > price")
+                    .noLeakCheck()
+                    .returns("price\n1.0\n2.0\n3.0\n4.0\n5.0\n");
+            // (avg = 5.5) < price -> price > 5.5 -> 6..10
+            assertQuery("select price from t where (select avg(price) from t) < price")
+                    .noLeakCheck()
+                    .returns("price\n6.0\n7.0\n8.0\n9.0\n10.0\n");
+        });
+    }
+
+    @Test
+    public void testCursorVsCursorFailsCleanly() throws Exception {
+        // Comparing two scalar sub-queries has no supporting factory; it must surface a clean
+        // "no matching operator" error rather than an internal failure.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::double price from long_sequence(10))");
+            assertQuery("select price from t where (select max(price) from t) > (select min(price) from t)")
+                    .fails(53, "there is no matching operator `>` with the argument types: CURSOR > CURSOR");
+            assertQuery("select price from t where (select max(price) from t) < (select min(price) from t)")
+                    .fails(53, "there is no matching operator `<` with the argument types: CURSOR < CURSOR");
+        });
+    }
+
+    @Test
+    public void testWalTableCursorPredicate() throws Exception {
+        // Correctness of the cursor-scalar predicate on a WAL table (non-async, non-parallel execution
+        // path) - the correctness/plan tests elsewhere run only under the parallel async-filter path.
+        assertMemoryLeak(() -> {
+            execute("create table w (price double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into w select x::double, timestamp_sequence(0, 1000000) from long_sequence(10)");
+            drainWalQueue();
+            // avg(price) = 5.5 -> price > 5.5 -> 6..10
+            assertQuery("select price from w where price > (select avg(price) from w)")
+                    .noLeakCheck()
+                    .returns("price\n6.0\n7.0\n8.0\n9.0\n10.0\n");
+            // negated: price <= 5.5 -> 1..5
+            assertQuery("select price from w where price <= (select avg(price) from w)")
+                    .noLeakCheck()
+                    .returns("price\n1.0\n2.0\n3.0\n4.0\n5.0\n");
+        });
+    }
+
+    @Test
     public void testEmptyCursorSelectsNoRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select x::double price from long_sequence(10))");

@@ -44,6 +44,22 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiRowCursorFailsOnDesignatedTimestamp() throws Exception {
+        // On a designated-timestamp column, ts = (select ...) is extracted as an interval intrinsic and
+        // evaluated by RuntimeIntervalModel instead of the cursor-comparison factory. A scalar sub-query
+        // must still reject more than one row here rather than silently taking an arbitrary first row.
+        // The interval model does not thread the sub-query parse position, so it is reported at 0 - the
+        // distinct position (vs 28 for the factory path) also confirms the intrinsic path was taken.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select * from x where ts = (select ts from x limit 2)")
+                    .fails(0, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
     public void testCompareNanoTimestampWithNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +

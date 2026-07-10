@@ -93,6 +93,28 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatCursorColumn() throws Exception {
+        // A FLOAT-typed cursor scalar routes to the DoubleCursorFunc FLOAT arm (read via Record#getFloat).
+        // A float value derived from a table column widens to DOUBLE in projection, so a FLOAT constant
+        // sub-query is used to keep the cursor column FLOAT and actually exercise the getFloat(0) path.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::int i from long_sequence(10))");
+            // i > 5.5f -> 6..10
+            assertQuery("select i from t where i > (select cast(5.5 as float))")
+                    .noLeakCheck()
+                    .returns("i\n6\n7\n8\n9\n10\n");
+            // i < 5.5f -> 1..5
+            assertQuery("select i from t where i < (select cast(5.5 as float))")
+                    .noLeakCheck()
+                    .returns("i\n1\n2\n3\n4\n5\n");
+            // negated operators over the FLOAT arm
+            assertQuery("select i from t where i >= (select cast(5.5 as float))")
+                    .noLeakCheck()
+                    .returns("i\n6\n7\n8\n9\n10\n");
+        });
+    }
+
+    @Test
     public void testErrorNonNumericCursorColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select x::int i from long_sequence(10))");
@@ -110,6 +132,29 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
                     .fails(27, "scalar sub-query returned more than one row");
             assertQuery("select i from t where i < (select x::int from long_sequence(2))")
                     .fails(27, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
+    public void testBareLiteralNullComparison() throws Exception {
+        // End-to-end guard for the ColumnType NULL->CURSOR overload fix: a bare `null` literal is a scalar,
+        // never a cursor. `i <= null` (i.e. not(i > null)) must compile to a scalar null-comparison instead
+        // of binding to the `>(?C)` cursor-comparison factory and blowing up on getRecordCursorFactory().
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::int i from long_sequence(10))");
+            // null comparison matches no rows for every operator, and must not throw at compile time
+            assertQuery("select i from t where i <= null")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where i >= null")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where i > null")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where i < null")
+                    .noLeakCheck()
+                    .returns("i\n");
         });
     }
 
