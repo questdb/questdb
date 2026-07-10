@@ -887,9 +887,9 @@ public final class WhereClauseParser implements Mutable {
                                 Misc.free(func);
                             } else if (func.isRuntimeConstant()) {
                                 if (!isNegated) {
-                                    model.intersectRuntimeIntervals(func);
+                                    model.intersectRuntimeIntervals(func, inArg.position);
                                 } else {
-                                    model.subtractRuntimeIntervals(func);
+                                    model.subtractRuntimeIntervals(func, inArg.position);
                                 }
                             } else {
                                 Misc.free(func);
@@ -910,9 +910,9 @@ public final class WhereClauseParser implements Mutable {
                                 return true;
                             } else if (func.isRuntimeConstant()) {
                                 if (!isNegated) {
-                                    model.intersectRuntimeIntervals(func);
+                                    model.intersectRuntimeIntervals(func, inArg.position);
                                 } else {
-                                    model.subtractRuntimeIntervals(func);
+                                    model.subtractRuntimeIntervals(func, inArg.position);
                                 }
                                 in.intrinsicValue = IntrinsicModel.TRUE;
                                 return true;
@@ -1800,11 +1800,11 @@ public final class WhereClauseParser implements Mutable {
             Misc.free(func);
             return true;
         } else if (func.isRuntimeConstant()) {
-            model.intersectRuntimeTimestamp(func);
+            model.intersectRuntimeTimestamp(func, functionPosition);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         } else if (func.getType() == ColumnType.CURSOR) {
-            model.intersectRuntimeTimestamp(func);
+            model.intersectRuntimeTimestamp(func, functionPosition);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
@@ -1852,7 +1852,7 @@ public final class WhereClauseParser implements Mutable {
                     Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
+                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1866,7 +1866,7 @@ public final class WhereClauseParser implements Mutable {
             final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
+                    model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1917,7 +1917,7 @@ public final class WhereClauseParser implements Mutable {
                     Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
+                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1931,7 +1931,7 @@ public final class WhereClauseParser implements Mutable {
             final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
                 if (checkCursorFunctionReturnsSingleTimestamp(func)) {
-                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
+                    model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false), compareWithNode.position);
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
@@ -1957,7 +1957,7 @@ public final class WhereClauseParser implements Mutable {
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         } else if (function.isRuntimeConstant()) {
-            model.subtractEquals(function);
+            model.subtractEquals(function, functionPosition);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
@@ -2064,9 +2064,9 @@ public final class WhereClauseParser implements Mutable {
                 }
             } else if (func.isRuntimeConstant()) {
                 if (isFirst) {
-                    model.intersectRuntimeTimestamp(func);
+                    model.intersectRuntimeTimestamp(func, funcNode.position);
                 } else {
-                    model.unionRuntimeTimestamp(func);
+                    model.unionRuntimeTimestamp(func, funcNode.position);
                 }
             } else {
                 Misc.free(func);
@@ -3031,7 +3031,7 @@ public final class WhereClauseParser implements Mutable {
                     Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.setBetweenBoundary(func);
+                    model.setBetweenBoundary(func, node.position);
                     return true;
                 }
                 Misc.free(func);

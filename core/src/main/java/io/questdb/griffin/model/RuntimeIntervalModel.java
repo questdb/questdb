@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -50,6 +51,9 @@ import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_IN
 public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private static final Log LOG = LogFactory.getLog(RuntimeIntervalModel.class);
     private final ObjList<Function> dynamicRangeList;
+    // parse positions of the dynamic range functions, parallel to dynamicRangeList;
+    // used to point error messages at the offending expression in the query text
+    private final IntList dynamicRangePositions;
     // These 2 are incoming model
     private final LongList intervals;
     private final int partitionBy;
@@ -59,12 +63,23 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private LongList outIntervals;
 
     public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList intervals) {
-        this(timestampDriver, partitionBy, intervals, null);
+        this(timestampDriver, partitionBy, intervals, null, null);
     }
 
     public RuntimeIntervalModel(TimestampDriver timestampDriver, int partitionBy, LongList staticIntervals, ObjList<Function> dynamicRangeList) {
+        this(timestampDriver, partitionBy, staticIntervals, dynamicRangeList, null);
+    }
+
+    public RuntimeIntervalModel(
+            TimestampDriver timestampDriver,
+            int partitionBy,
+            LongList staticIntervals,
+            ObjList<Function> dynamicRangeList,
+            IntList dynamicRangePositions
+    ) {
         this.intervals = staticIntervals;
         this.dynamicRangeList = dynamicRangeList;
+        this.dynamicRangePositions = dynamicRangePositions;
         this.timestampDriver = timestampDriver;
         this.partitionBy = partitionBy;
     }
@@ -165,7 +180,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         boolean firstFuncApplied = false;
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
-            Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
+            Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
+            int dynamicFunctionPosition = getDynamicFunctionPosition(dynamicIndex);
+            dynamicIndex++;
             short operation = IntervalUtils.getEncodedOperation(intervals, i);
             boolean negated = operation > IntervalOperation.NEGATED_BORDERLINE;
             int divider = outIntervals.size();
@@ -208,14 +225,16 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 dynamicFunction.init(null, sqlExecutionContext);
 
                 if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
-                    long dynamicValue = getTimestamp(dynamicFunction, sqlExecutionContext);
+                    long dynamicValue = getTimestamp(dynamicFunction, sqlExecutionContext, dynamicFunctionPosition);
                     long dynamicValue2 = 0;
                     if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
                         // Both ends of BETWEEN are dynamic and different values. Take the next dynamic point.
                         i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-                        dynamicFunction = dynamicRangeList.getQuick(dynamicIndex++);
+                        dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
+                        dynamicFunctionPosition = getDynamicFunctionPosition(dynamicIndex);
+                        dynamicIndex++;
                         dynamicFunction.init(null, sqlExecutionContext);
-                        dynamicValue2 = hi = getTimestamp(dynamicFunction, sqlExecutionContext);
+                        dynamicValue2 = hi = getTimestamp(dynamicFunction, sqlExecutionContext, dynamicFunctionPosition);
                         lo = dynamicValue;
                     } else {
                         if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
@@ -335,7 +354,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
     }
 
-    private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private int getDynamicFunctionPosition(int dynamicIndex) {
+        return dynamicRangePositions != null && dynamicIndex < dynamicRangePositions.size()
+                ? dynamicRangePositions.getQuick(dynamicIndex)
+                : 0;
+    }
+
+    private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext, int functionPosition) throws SqlException {
         final int functionType = dynamicFunction.getType();
         if (ColumnType.isString(functionType)) {
             final CharSequence value = dynamicFunction.getStrA(null);
@@ -358,10 +383,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 if (cursor.hasNext()) {
                     final long timestamp = timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
-                    // The interval model does not thread the sub-query parse position through the
-                    // dynamicRangeList, so report at position 0 (interim). The important part is that a
-                    // malformed multi-row bound becomes an error rather than a silent wrong result.
-                    ScalarSubQueryUtils.assertNoMoreRows(cursor, 0);
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, functionPosition);
                     return timestamp;
                 } else {
                     return Numbers.LONG_NULL;

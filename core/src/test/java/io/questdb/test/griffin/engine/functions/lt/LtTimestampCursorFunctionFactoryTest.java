@@ -51,6 +51,9 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             // string cursor column
             assertQuery("select * from x where ts < (select '1970-01-01' from x)")
                     .fails(28, "scalar sub-query returned more than one row");
+            // varchar cursor column (separately implemented reader)
+            assertQuery("select * from x where ts < (select '1970-01-01'::varchar from x)")
+                    .fails(28, "scalar sub-query returned more than one row");
         });
     }
 
@@ -58,17 +61,16 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testMultiRowCursorFailsOnDesignatedTimestamp() throws Exception {
         // On a designated-timestamp column, ts < (select ...) is extracted as an interval intrinsic and
         // evaluated by RuntimeIntervalModel instead of the cursor-comparison factory. A scalar sub-query
-        // must still reject more than one row here rather than silently taking an arbitrary first row.
-        // The interval model does not thread the sub-query parse position, so it is reported at 0 - the
-        // distinct position (vs 28 for the factory path) also confirms the intrinsic path was taken.
+        // must still reject more than one row here rather than silently taking an arbitrary first row,
+        // and the error must point at the offending sub-query, same as the factory path does.
         assertMemoryLeak(() -> {
             execute("create table x as (" +
                     "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
                     ") timestamp(ts) partition by day");
             assertQuery("select * from x where ts < (select ts from x limit 2)")
-                    .fails(0, "scalar sub-query returned more than one row");
+                    .fails(28, "scalar sub-query returned more than one row");
             assertQuery("select * from x where ts <= (select ts from x limit 2)")
-                    .fails(0, "scalar sub-query returned more than one row");
+                    .fails(29, "scalar sub-query returned more than one row");
         });
     }
 

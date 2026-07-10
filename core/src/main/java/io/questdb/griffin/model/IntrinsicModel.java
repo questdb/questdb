@@ -105,15 +105,15 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    public void intersectIntervals(long lo, Function function, short funcAdjust) {
-        runtimeIntervalBuilder.intersect(lo, function, funcAdjust);
+    public void intersectIntervals(long lo, Function function, short funcAdjust, int functionPosition) {
+        runtimeIntervalBuilder.intersect(lo, function, funcAdjust, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
     }
 
-    public void intersectIntervals(Function function, long hi, short funcAdjust) {
-        runtimeIntervalBuilder.intersect(function, hi, funcAdjust);
+    public void intersectIntervals(Function function, long hi, short funcAdjust, int functionPosition) {
+        runtimeIntervalBuilder.intersect(function, hi, funcAdjust, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
@@ -126,15 +126,15 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    public void intersectRuntimeIntervals(Function intervalFunction) {
-        runtimeIntervalBuilder.intersectRuntimeIntervals(intervalFunction);
+    public void intersectRuntimeIntervals(Function intervalFunction, int functionPosition) {
+        runtimeIntervalBuilder.intersectRuntimeIntervals(intervalFunction, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
     }
 
-    public void intersectRuntimeTimestamp(Function function) {
-        runtimeIntervalBuilder.intersectRuntimeTimestamp(function);
+    public void intersectRuntimeTimestamp(Function function, int functionPosition) {
+        runtimeIntervalBuilder.intersectRuntimeTimestamp(function, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
@@ -167,16 +167,16 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp);
     }
 
-    public void setBetweenBoundary(Function timestamp) {
-        runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+    public void setBetweenBoundary(Function timestamp, int functionPosition) {
+        runtimeIntervalBuilder.setBetweenBoundary(timestamp, functionPosition);
     }
 
     public void setBetweenNegated(boolean isNegated) {
         runtimeIntervalBuilder.setBetweenNegated(isNegated);
     }
 
-    public void subtractEquals(Function function) {
-        runtimeIntervalBuilder.subtractEquals(function);
+    public void subtractEquals(Function function, int functionPosition) {
+        runtimeIntervalBuilder.subtractEquals(function, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
@@ -196,8 +196,8 @@ public class IntrinsicModel implements Mutable {
         }
     }
 
-    public void subtractRuntimeIntervals(Function intervalFunction) {
-        runtimeIntervalBuilder.subtractRuntimeIntervals(intervalFunction);
+    public void subtractRuntimeIntervals(Function intervalFunction, int functionPosition) {
+        runtimeIntervalBuilder.subtractRuntimeIntervals(intervalFunction, functionPosition);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }
@@ -220,8 +220,8 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.unionIntervals(seq, lo, lim, position);
     }
 
-    public void unionRuntimeTimestamp(Function function) {
-        runtimeIntervalBuilder.unionRuntimeTimestamp(function);
+    public void unionRuntimeTimestamp(Function function, int functionPosition) {
+        runtimeIntervalBuilder.unionRuntimeTimestamp(function, functionPosition);
     }
 
     static {

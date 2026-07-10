@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -53,6 +54,9 @@ import io.questdb.std.str.StringSink;
  */
 public class RuntimeIntervalModelBuilder implements Mutable {
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
+    // parse positions of the dynamic range functions, parallel to dynamicRangeList;
+    // used to point error messages at the offending expression in the query text
+    private final IntList dynamicRangePositionList = new IntList();
     private final StringSink sink = new StringSink();
     // All data needed to re-evaluate intervals
     // is stored in 2 lists - ListLong and List of functions
@@ -61,6 +65,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private final LongList staticIntervals = new LongList();
     private long betweenBoundary = Numbers.LONG_NULL;
     private Function betweenBoundaryFunc;
+    private int betweenBoundaryFuncPosition;
     private boolean betweenBoundarySet;
     private boolean betweenNegated;
     private CairoConfiguration configuration;
@@ -75,7 +80,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 timestampDriver,
                 partitionBy,
                 new LongList(staticIntervals),
-                new ObjList<>(dynamicRangeList)
+                new ObjList<>(dynamicRangeList),
+                new IntList(dynamicRangePositionList)
         );
     }
 
@@ -86,6 +92,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             isOwnershipTransferred = false;
             staticIntervals.clear();
             dynamicRangeList.clear();
+            dynamicRangePositionList.clear();
             intervalApplied = false;
             clearBetweenParsing();
         } else {
@@ -105,6 +112,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             betweenBoundaryFunc.close();
         }
         Misc.freeObjListAndClear(dynamicRangeList);
+        dynamicRangePositionList.clear();
         staticIntervals.clear();
         intervalApplied = false;
         clearBetweenParsing();
@@ -113,6 +121,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void clearBetweenParsing() {
         betweenBoundarySet = false;
         betweenBoundaryFunc = null;
+        betweenBoundaryFuncPosition = 0;
         betweenBoundary = Numbers.LONG_NULL;
     }
 
@@ -120,23 +129,23 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return intervalApplied;
     }
 
-    public void intersect(long lo, Function hi, short adjustment) {
+    public void intersect(long lo, Function hi, short adjustment, int functionPosition) {
         if (isEmptySet()) {
             return;
         }
 
         IntervalUtils.encodeInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        dynamicRangeList.add(hi);
+        addDynamicFunction(hi, functionPosition);
         intervalApplied = true;
     }
 
-    public void intersect(Function lo, long hi, short adjustment) {
+    public void intersect(Function lo, long hi, short adjustment, int functionPosition) {
         if (isEmptySet()) {
             return;
         }
 
         IntervalUtils.encodeInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        dynamicRangeList.add(lo);
+        addDynamicFunction(lo, functionPosition);
         intervalApplied = true;
     }
 
@@ -152,7 +161,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
         } else {
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);
-            dynamicRangeList.add(null);
+            addDynamicFunction(null, 0);
         }
         intervalApplied = true;
     }
@@ -190,7 +199,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
             int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
             for (int i = 0; i < intervalsAdded; i++) {
-                dynamicRangeList.add(null);
+                addDynamicFunction(null, 0);
             }
         }
         intervalApplied = true;
@@ -203,27 +212,27 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(inverter);
+        addDynamicFunction(inverter, 0);
         intervalApplied = true;
     }
 
-    public void intersectRuntimeIntervals(Function intervalFunction) {
+    public void intersectRuntimeIntervals(Function intervalFunction, int functionPosition) {
         if (isEmptySet()) {
             return;
         }
 
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(intervalFunction);
+        addDynamicFunction(intervalFunction, functionPosition);
         intervalApplied = true;
     }
 
-    public void intersectRuntimeTimestamp(Function function) {
+    public void intersectRuntimeTimestamp(Function function, int functionPosition) {
         if (isEmptySet()) {
             return;
         }
 
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        dynamicRangeList.add(function);
+        addDynamicFunction(function, functionPosition);
         intervalApplied = true;
     }
 
@@ -257,7 +266,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
         } else {
             // else - nothing to do, interval already encoded in staticPeriods as 4 longs
-            dynamicRangeList.add(null);
+            addDynamicFunction(null, 0);
         }
         intervalApplied = true;
     }
@@ -342,21 +351,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     }
                 }
             } else {
-                intersectBetweenSemiDynamic(betweenBoundaryFunc, timestamp);
+                intersectBetweenSemiDynamic(betweenBoundaryFunc, betweenBoundaryFuncPosition, timestamp);
             }
             betweenBoundarySet = false;
         }
     }
 
-    public void setBetweenBoundary(Function timestamp) {
+    public void setBetweenBoundary(Function timestamp, int functionPosition) {
         if (!betweenBoundarySet) {
             betweenBoundaryFunc = timestamp;
+            betweenBoundaryFuncPosition = functionPosition;
             betweenBoundarySet = true;
         } else {
             if (betweenBoundaryFunc == null) {
-                intersectBetweenSemiDynamic(timestamp, betweenBoundary);
+                intersectBetweenSemiDynamic(timestamp, functionPosition, betweenBoundary);
             } else {
-                intersectBetweenDynamic(timestamp, betweenBoundaryFunc);
+                intersectBetweenDynamic(timestamp, functionPosition, betweenBoundaryFunc, betweenBoundaryFuncPosition);
             }
             betweenBoundarySet = false;
         }
@@ -366,13 +376,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         betweenNegated = isNegated;
     }
 
-    public void subtractEquals(Function function) {
+    public void subtractEquals(Function function, int functionPosition) {
         if (isEmptySet()) {
             return;
         }
 
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
-        dynamicRangeList.add(function);
+        addDynamicFunction(function, functionPosition);
         intervalApplied = true;
     }
 
@@ -390,7 +400,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
         } else {
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.SUBTRACT, staticIntervals);
-            dynamicRangeList.add(null);
+            addDynamicFunction(null, 0);
         }
         intervalApplied = true;
     }
@@ -421,19 +431,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
             int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
             for (int i = 0; i < intervalsAdded; i++) {
-                dynamicRangeList.add(null);
+                addDynamicFunction(null, 0);
             }
         }
         intervalApplied = true;
     }
 
-    public void subtractRuntimeIntervals(Function intervalFunction) {
+    public void subtractRuntimeIntervals(Function intervalFunction, int functionPosition) {
         if (isEmptySet()) {
             return;
         }
 
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(intervalFunction);
+        addDynamicFunction(intervalFunction, functionPosition);
         intervalApplied = true;
     }
 
@@ -449,7 +459,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
         } else {
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.UNION, staticIntervals);
-            dynamicRangeList.add(null);
+            addDynamicFunction(null, 0);
         }
         intervalApplied = true;
     }
@@ -480,19 +490,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
             int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
             for (int i = 0; i < intervalsAdded; i++) {
-                dynamicRangeList.add(null);
+                addDynamicFunction(null, 0);
             }
         }
         intervalApplied = true;
     }
 
-    public void unionRuntimeTimestamp(Function function) {
+    public void unionRuntimeTimestamp(Function function, int functionPosition) {
         if (isEmptySet()) {
             return;
         }
 
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.UNION, staticIntervals);
-        dynamicRangeList.add(function);
+        addDynamicFunction(function, functionPosition);
         intervalApplied = true;
     }
 
@@ -525,6 +535,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
+    private void addDynamicFunction(Function function, int functionPosition) {
+        dynamicRangeList.add(function);
+        dynamicRangePositionList.add(functionPosition);
+    }
+
     private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
         for (int i = lo; i < lim - 1; i++) {
             if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
@@ -534,7 +549,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return false;
     }
 
-    private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
+    private void intersectBetweenDynamic(Function funcValue1, int funcPosition1, Function funcValue2, int funcPosition2) {
         if (isEmptySet()) {
             return;
         }
@@ -542,12 +557,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        dynamicRangeList.add(funcValue1);
-        dynamicRangeList.add(funcValue2);
+        addDynamicFunction(funcValue1, funcPosition1);
+        addDynamicFunction(funcValue2, funcPosition2);
         intervalApplied = true;
     }
 
-    private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
+    private void intersectBetweenSemiDynamic(Function funcValue, int funcPosition, long constValue) {
         if (constValue == Numbers.LONG_NULL) {
             if (!betweenNegated) {
                 intersectEmpty();
@@ -566,7 +581,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
-        dynamicRangeList.add(funcValue);
+        addDynamicFunction(funcValue, funcPosition);
         intervalApplied = true;
     }
 
@@ -575,7 +590,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(expr);
+        addDynamicFunction(expr, 0);
         intervalApplied = true;
     }
 
@@ -584,7 +599,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(expr);
+        addDynamicFunction(expr, 0);
         intervalApplied = true;
     }
 
@@ -593,7 +608,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);
-        dynamicRangeList.add(expr);
+        addDynamicFunction(expr, 0);
         intervalApplied = true;
     }
 
