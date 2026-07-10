@@ -414,6 +414,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int partitionEncoderParquetRowGroupSize;
     private final boolean partitionEncoderParquetStatisticsEnabled;
     private final int partitionEncoderParquetVersion;
+    private final boolean partitionSplitDonorLinkEnabled;
     private final boolean partitionTopNonWalEnabled;
     private final boolean partitionTopWalEnabled;
     private final PGConfiguration pgConfiguration = new PropPGConfiguration();
@@ -1897,6 +1898,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
             this.partitionTopWalEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_TOP_WAL_ENABLED, false);
             this.partitionTopNonWalEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_TOP_NON_WAL_ENABLED, false);
+            this.partitionSplitDonorLinkEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_SPLIT_DONOR_LINK_ENABLED, false);
 
             parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -5321,6 +5323,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPartitionO3OverwriteControlEnabled() {
             return o3PartitionOverwriteControlEnabled;
+        }
+
+        @Override
+        public boolean isPartitionSplitDonorLinkEnabled() {
+            return partitionSplitDonorLinkEnabled;
         }
 
         @Override

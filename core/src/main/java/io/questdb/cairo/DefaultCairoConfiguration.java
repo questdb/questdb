@@ -1653,6 +1653,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionSplitDonorLinkEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isPartitionTopNonWalEnabled() {
         return false;
     }

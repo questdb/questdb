@@ -1579,6 +1579,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
+                // Donor-link v1 limitation: an O3 append/merge/re-split reads the EXISTING partition's
+                // column files, but a DONOR_LINKED child holds none (only a _dlink to the donor version
+                // dir). Redirecting the worker source read to the donor dir is a follow-up (see
+                // DONOR_LINK_FILE_IMPL.md); until then fail fast rather than read empty files and corrupt.
+                // Not reachable in the shipped default (link mode is off); a mid link child that becomes
+                // the active last partition materializes via openPartition before any O3 touches it.
+                if (srcDataMax > 0 && tableWriter.isPartitionDonorLinkedByTimestamp(oldPartitionTimestamp)) {
+                    throw CairoException.critical(0)
+                            .put("O3 into a donor-link child is not yet supported; squash the partition or disable cairo.partition.split.donor.link.enabled [table=")
+                            .put(tableWriter.getTableToken().getTableName())
+                            .put(']');
+                }
                 boolean canAppendOnly = !partitionSplit;
                 if (tableWriter.isCommitReplaceMode()) {
                     canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);

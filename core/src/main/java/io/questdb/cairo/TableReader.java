@@ -97,6 +97,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountShl;
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
+    // Donor-link resolution memo: a DONOR_LINKED suffix child holds no column files, only a _dlink
+    // pointing at its donor version dir. pathGenNativePartition redirects such a child's column/index
+    // opens to the donor dir; this single-entry memo reads the child's _dlink at most once per open.
+    private long donorLinkMemoChildNameTxn = -1;
+    private long donorLinkMemoChildTs = Numbers.LONG_NULL;
+    private long donorLinkMemoDonorNameTxn;
+    private long donorLinkMemoDonorTs;
+    private long donorLinkScratch = Unsafe.malloc(TableUtils.DONOR_LINK_FILE_SIZE, MemoryTag.NATIVE_TABLE_READER);
     private boolean hasActiveColumns;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
@@ -1230,6 +1238,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (tempMem8b != 0) {
             tempMem8b = Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         }
+        if (donorLinkScratch != 0) {
+            donorLinkScratch = Unsafe.free(donorLinkScratch, TableUtils.DONOR_LINK_FILE_SIZE, MemoryTag.NATIVE_TABLE_READER);
+        }
     }
 
     private void init() {
@@ -1589,8 +1600,39 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    // True for a native suffix child that reads its columns from a donor version dir via _dlink.
+    private boolean isPartitionDonorLinked(int partitionIndex) {
+        return !txFile.isPartitionParquet(partitionIndex) && txFile.isPartitionDonorLinked(partitionIndex);
+    }
+
     private Path pathGenNativePartition(int partitionIndex, long nameTxn) {
+        // A DONOR_LINKED suffix child has no column files of its own -- resolve to the donor version
+        // dir its columns/index files physically live in. Every native column/index/reload open goes
+        // through here, so this one redirect covers them all.
+        if (isPartitionDonorLinked(partitionIndex)) {
+            return pathGenDonorPartition(partitionIndex, nameTxn);
+        }
         formatNativePartitionDirName(partitionIndex, path.slash(), nameTxn);
+        return path;
+    }
+
+    private Path pathGenDonorPartition(int partitionIndex, long childNameTxn) {
+        // Memo keyed on the child's (floor ts, nameTxn) -- a globally stable partition-version identity,
+        // unlike partitionIndex which is reused across reloads. Read the floor ts fresh so a reload that
+        // reassigns this index re-resolves rather than returning a stale donor dir.
+        final long childTs = txFile.getPartitionTimestampByIndex(partitionIndex);
+        if (childTs != donorLinkMemoChildTs || childNameTxn != donorLinkMemoChildNameTxn) {
+            final int base = path.size();
+            formatNativePartitionDirName(partitionIndex, path.slash(), childNameTxn);
+            path.concat(TableUtils.DONOR_LINK_FILE_NAME);
+            TableUtils.readDonorLinkFile(ff, path.$(), donorLinkScratch);
+            path.trimTo(base);
+            donorLinkMemoChildTs = childTs;
+            donorLinkMemoChildNameTxn = childNameTxn;
+            donorLinkMemoDonorTs = Unsafe.getLong(donorLinkScratch);
+            donorLinkMemoDonorNameTxn = Unsafe.getLong(donorLinkScratch + Long.BYTES);
+        }
+        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, donorLinkMemoDonorTs, donorLinkMemoDonorNameTxn);
         return path;
     }
 

@@ -180,6 +180,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         partitionTableVersion++;
     }
 
+    public void clearPartitionDonorLinked(long timestamp) {
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        assert !isPartitionParquetByRawIndex(indexRaw);
+        // Clear the DONOR_LINKED flag (bit 59) while preserving partitionTop and the DONOR flag,
+        // then normalize a now-empty slot back to the -1L sentinel.
+        long cur = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
+        if (cur == -1L) {
+            cur = 0;
+        }
+        long packed = cur & ~PARTITION_DONOR_LINKED_FLAG;
+        attachedPartitions.setQuick(indexRaw + PARTITION_TOP_OFFSET, packed == 0 ? -1L : packed);
+        recordStructureVersion++;
+        partitionTableVersion++;
+    }
+
     @Override
     public void close() {
         try {
@@ -479,6 +497,23 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             cur = 0;
         }
         attachedPartitions.setQuick(indexRaw + PARTITION_TOP_OFFSET, cur | PARTITION_DONOR_FLAG);
+        recordStructureVersion++;
+        partitionTableVersion++;
+    }
+
+    public void setPartitionDonorLinked(long timestamp) {
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        assert !isPartitionParquetByRawIndex(indexRaw);
+        // Set the DONOR_LINKED flag (bit 59) while preserving partitionTop and the DONOR flag
+        // (treat -1L as 0).
+        long cur = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
+        if (cur == -1L) {
+            cur = 0;
+        }
+        attachedPartitions.setQuick(indexRaw + PARTITION_TOP_OFFSET, cur | PARTITION_DONOR_LINKED_FLAG);
         recordStructureVersion++;
         partitionTableVersion++;
     }

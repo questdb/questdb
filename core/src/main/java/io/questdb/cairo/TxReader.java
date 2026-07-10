@@ -52,14 +52,19 @@ public class TxReader implements Closeable, Mutable {
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
     // Slot 3 (PARTITION_TOP_OFFSET) of a NATIVE partition packs a per-partition "partition top"
     // (the count of file rows below this child's logical row 0, in bits 0-43, masked by
-    // PARTITION_TOP_MASK) together with a DONOR flag in bit 63. The DONOR flag marks a partition
-    // that shares its hardlinked column files with another partition: it must never be appended,
-    // overwritten in place, or squashed into. The legacy/unset value -1L decodes to
-    // {partitionTop: 0, donor: false}, so existing tables read unchanged with no migration.
-    // Slot 3 carries this packed value only for native partitions; for parquet partitions the same
-    // slot holds the parquet file size (the parquet-format bit is clear on native partitions, and
-    // bit 63 would be an impossible 8 EiB file size).
+    // PARTITION_TOP_MASK) together with a DONOR flag in bit 63 and a DONOR_LINKED flag in bit 59.
+    // The DONOR flag marks a partition that shares its column files (hardlinked, or via a donor-link
+    // file) with another partition: it must never be appended, overwritten in place, or squashed
+    // into. The DONOR_LINKED flag marks a suffix child that holds NO column files of its own -- just
+    // a single immutable donor-link file (_dlink) pointing at the donor version dir it reads from.
+    // The legacy/unset value -1L decodes to {partitionTop: 0, donor: false, donorLinked: false}, so
+    // existing tables read unchanged with no migration. Slot 3 carries this packed value only for
+    // native partitions; for parquet partitions the same slot holds the parquet file size (the
+    // parquet-format bit is clear on native partitions, and bit 63 would be an impossible 8 EiB
+    // file size). Bits 44-62 are otherwise free in slot 3 (the squash counter, parquet-format,
+    // parquet-generated and read-only bits all live in slot 1, PARTITION_MASKED_SIZE_OFFSET).
     protected static final long PARTITION_DONOR_FLAG = 0x8000000000000000L; // bit 63 (== Long.MIN_VALUE)
+    protected static final long PARTITION_DONOR_LINKED_FLAG = 1L << 59; // bit 59 of native slot 3
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
@@ -495,6 +500,18 @@ public class TxReader implements Closeable, Mutable {
         // The -1L unset sentinel has bit 63 set but is NOT a donor; decode by mask, not by sign.
         final long v = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
         return v != -1L && (v & PARTITION_DONOR_FLAG) != 0;
+    }
+
+    public boolean isPartitionDonorLinked(int partitionIndex) {
+        return isPartitionDonorLinkedByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionDonorLinkedByRawIndex(int indexRaw) {
+        assert !isPartitionParquetByRawIndex(indexRaw);
+        // A DONOR_LINKED child holds no column files -- only a _dlink pointer to its donor version dir.
+        // Decode by mask (the -1L sentinel is not donor-linked).
+        final long v = attachedPartitions.getQuick(indexRaw + PARTITION_TOP_OFFSET);
+        return v != -1L && (v & PARTITION_DONOR_LINKED_FLAG) != 0;
     }
 
     public boolean isPartitionParquet(int i) {

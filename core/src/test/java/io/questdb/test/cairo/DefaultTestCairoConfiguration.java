@@ -109,6 +109,13 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionSplitDonorLinkEnabled() {
+        // Off by default so the test-wide split path stays on the proven hardlink mode.
+        // Donor-link tests opt in per-test via setProperty(CAIRO_PARTITION_SPLIT_DONOR_LINK_ENABLED).
+        return false;
+    }
+
+    @Override
     public boolean isPartitionTopNonWalEnabled() {
         return true;
     }

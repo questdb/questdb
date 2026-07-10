@@ -32,10 +32,12 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
@@ -53,10 +55,18 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
     private final CairoConfiguration configuration;
+    // Scratch buffer for reading a DONOR_LINKED child's 16-byte _dlink pointer file.
+    private final long donorLinkScratch;
     private final CairoEngine engine;
     private final Utf8StringSink fileNameSink;
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final DirectLongList partitionList;
+    // Donor version dirs (floorTs, nameTxn) that a DONOR_LINKED child still points at via its _dlink,
+    // stored as flat [floorTs, nameTxn] pairs. Rebuilt from disk per table before purging; such a
+    // version must NEVER be purged, regardless of scoreboard txn (the link file removed the kernel
+    // inode refcount, so this set is the only thing keeping the donor bytes alive). Derived from disk
+    // so this job needs no live writer registry. Small (a handful of link children), so a flat scan.
+    private final LongList retainedDonorVersions = new LongList();
     private final TxReader txnReader;
 
     public O3PartitionPurgeJob(CairoEngine engine) {
@@ -73,6 +83,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     configuration.getPartitionPurgeListCapacity() * 2L,
                     MemoryTag.NATIVE_O3
             );
+            this.donorLinkScratch = Unsafe.malloc(TableUtils.DONOR_LINK_FILE_SIZE, MemoryTag.NATIVE_O3);
             this.txnReader = new TxReader(configuration.getFilesFacade());
         } catch (Throwable th) {
             close();
@@ -99,6 +110,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         if (halted.compareAndSet(false, true)) {
             Misc.free(partitionList);
             Misc.free(txnReader);
+            if (donorLinkScratch != 0) {
+                Unsafe.free(donorLinkScratch, TableUtils.DONOR_LINK_FILE_SIZE, MemoryTag.NATIVE_O3);
+            }
         }
     }
 
@@ -153,6 +167,67 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
+    /**
+     * Builds {@link #retainedDonorVersions} by scanning EVERY on-disk partition version dir (from the
+     * already-collected {@code partitionList}) for a {@code _dlink} file and retaining the donor it
+     * points at. Scanning the DISK, not just the attached {@code _txn} children, is required: a
+     * superseded-but-scoreboard-pinned link-child version dir (a reader can still lazily open it) is
+     * no longer attached, yet its donor must survive until that child dir is itself purged. A donor is
+     * therefore retained as long as any on-disk {@code _dlink} references it, and reclaimed a pass
+     * later once every referencing child dir is gone (dependency order, no deadlock).
+     * <p>
+     * Returns false if a present {@code _dlink} could not be read: the caller must then skip purging
+     * this table entirely rather than risk purging a donor a child still needs (the link file removed
+     * the kernel inode refcount, so a fail-OPEN here would silently destroy the child's data). A read
+     * failure is anomalous (the writer fsyncs the _dlink before committing), so retrying next pass is
+     * the safe response.
+     */
+    private boolean collectRetainedDonorVersions(
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TableToken tableToken,
+            DirectLongList partitionList,
+            int timestampType,
+            int partitionBy
+    ) {
+        retainedDonorVersions.clear();
+        // partitionList holds sorted [version+1 (low), ts (high)] pairs, one per on-disk version dir.
+        for (int i = 0, n = (int) partitionList.size(); i < n; i += 2) {
+            final long nameTxn = partitionList.get(i) - 1; // undo the +1 the parser added (-1 == no suffix)
+            final long ts = partitionList.get(i + 1);
+            path.trimTo(tableRootLen);
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, ts, nameTxn);
+            path.concat(TableUtils.DONOR_LINK_FILE_NAME);
+            if (!ff.exists(path.$())) {
+                path.trimTo(tableRootLen);
+                continue; // ordinary (non-link) partition version dir
+            }
+            try {
+                TableUtils.readDonorLinkFile(ff, path.$(), donorLinkScratch);
+                retainedDonorVersions.add(Unsafe.getLong(donorLinkScratch), Unsafe.getLong(donorLinkScratch + Long.BYTES));
+            } catch (CairoException e) {
+                // Fail CLOSED: we cannot resolve this child's donor, so we cannot prove any candidate is
+                // safe to purge. Abort the whole pass for this table; a later trigger retries.
+                LOG.error().$("could not read donor-link during purge scan, skipping table purge [table=").$(tableToken)
+                        .$(", errno=").$(e.getErrno()).I$();
+                path.trimTo(tableRootLen);
+                return false;
+            }
+            path.trimTo(tableRootLen);
+        }
+        return true;
+    }
+
+    private boolean isRetainedDonorVersion(long partitionTimestamp, long nameTxn) {
+        for (int i = 0, n = retainedDonorVersions.size(); i < n; i += 2) {
+            if (retainedDonorVersions.getQuick(i) == partitionTimestamp && retainedDonorVersions.getQuick(i + 1) == nameTxn) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void discoverPartitions(
             FilesFacade ff,
             Utf8StringSink fileNameSink,
@@ -198,6 +273,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txnScoreboard = engine.getTxnScoreboard(tableToken);
             txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), timestampType, partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            // Derive the donor version dirs a DONOR_LINKED child still points at by scanning EVERY
+            // on-disk version dir for a _dlink (not just attached _txn children -- a superseded child
+            // version a reader can still lazily open must keep its donor alive too). If a _dlink cannot
+            // be read, abort the pass (fail closed) rather than risk purging a donor a child still needs.
+            if (!collectRetainedDonorVersions(ff, path, tableRootLen, tableToken, partitionList, timestampType, partitionBy)) {
+                return;
+            }
 
             for (int i = 0; i < n; i += 2) {
                 long currentPartitionTs = partitionList.get(i + 1);
@@ -286,7 +368,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // When a backup checkpoint is in progress, skip deletion — the checkpoint may reference
             // these partitions via snapshotted metadata even if the scoreboard is not pinned yet.
             boolean rangeUnlocked = !checkpointInProgress
-                    && nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+                    && nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn)
+                    // Never purge a donor version dir a DONOR_LINKED child still points at, regardless
+                    // of scoreboard (the link file removed the kernel inode refcount).
+                    && !isRetainedDonorVersion(partitionTimestamp, nameTxn - 1);
 
             path.trimTo(tableRootLen);
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn - 1);
@@ -384,7 +469,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
                 boolean rangeUnlocked = !checkpointInProgress
                         && previousNameVersion < nextNameVersion
-                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
+                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion)
+                        // Never purge a donor version dir a DONOR_LINKED child still points at, regardless
+                        // of scoreboard (the link file removed the kernel inode refcount). The partition
+                        // version parser stored nameTxn+1, so undo the +1 to get the true donor nameTxn.
+                        && !isRetainedDonorVersion(partitionTimestamp, previousNameVersion - 1);
 
                 // Sometimes TableWriter can create a partition folder before committing the transaction
                 // and then clean it before committing because it was not necessary to do a copy on write.

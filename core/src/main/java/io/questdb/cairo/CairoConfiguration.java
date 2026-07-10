@@ -1085,6 +1085,12 @@ public interface CairoConfiguration {
 
     boolean isPartitionO3OverwriteControlEnabled();
 
+    // Whether a zero-copy suffix child is materialized as a single immutable donor-link file
+    // (one 16-byte pointer to the donor version dir) instead of per-column hardlinks. Cuts the
+    // file/inode/fd count per split from ~2C to 1. Only gates split creation; reading a linked
+    // child is always supported. Requires isPartitionTop{Wal,NonWal}Enabled to have any effect.
+    boolean isPartitionSplitDonorLinkEnabled();
+
     // Whether the O3 commit may produce zero-copy (hardlink) partition splits for non-WAL tables.
     // Such splits create partitions with a non-zero partition top (a row offset into hardlinked
     // column files). Reading partition tops is always supported; this only gates their creation.

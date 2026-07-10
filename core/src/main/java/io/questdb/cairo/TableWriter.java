@@ -294,6 +294,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Object parquetSealPurgeLock = new Object();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
+    // Reverse index of the table's donor-link families: donor version -> set<link child floor ts>.
+    // Authoritative on the writer thread; drives the purge interlock and clearPartitionDonor unstick.
+    private final PartitionFamilyRegistry partitionFamilyRegistry = new PartitionFamilyRegistry();
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
     private final int pathRootSize;
@@ -591,6 +594,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
+            rebuildPartitionFamilyRegistry();
             clearTodoLog();
             this.slaveTxReader = new TxReader(ff);
             commandQueue = new RingQueue<>(
@@ -2182,7 +2186,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long activePartitionRows = txWriter.getPartitionSize(partitionIndex);
                     long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
                     long txn = txWriter.getPartitionNameTxn(partitionIndex);
-                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
+                    setPathForColumnSource(path.trimTo(pathSize), activePartitionTs, txn);
                     try {
                         readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, getPartitionTopByTimestamp(activePartitionTs, metadata.getTimestampIndex()), activePartitionRows);
                         maxTimestamp = attachMaxTimestamp;
@@ -2553,6 +2557,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return indexRaw > -1
                 && !txWriter.isPartitionParquet(indexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
                 && txWriter.isPartitionDonorByRawIndex(indexRaw);
+    }
+
+    // True when the native partition at the given floor timestamp is a donor-link suffix child: it
+    // holds no column files of its own, only a _dlink pointer to the donor version dir it reads from.
+    public boolean isPartitionDonorLinkedByTimestamp(long partitionTimestamp) {
+        final int indexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+        return indexRaw > -1
+                && !txWriter.isPartitionParquet(indexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
+                && txWriter.isPartitionDonorLinkedByRawIndex(indexRaw);
     }
 
     public boolean isPartitionReadOnly(int partitionIndex) {
@@ -3131,6 +3144,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 closeActivePartition(false);
                 purgeUnusedPartitions();
                 configureAppendPosition();
+                // Rebuild the family registry from the rolled-back on-disk state, discarding edges the
+                // aborted txn added and restoring any it removed.
+                rebuildPartitionFamilyRegistry();
                 o3InError = false;
                 // when we rolled transaction back, hasO3() has to be false
                 o3MasterRef = -1;
@@ -6540,7 +6556,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
                 try {
-                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                    setPathForColumnSource(path.trimTo(pathSize), prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
                     readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetFileSize, getPartitionTopByTimestamp(prevTimestamp, metadata.getTimestampIndex()), newTransientRowCount);
                     nextMaxTimestamp = attachMaxTimestamp;
                 } finally {
@@ -6599,6 +6615,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionRemoveCandidates.add(timestamp, partitionNameTxn);
+        // A dropped partition that was a link child no longer references its donor (no-op otherwise).
+        partitionFamilyRegistry.removeChild(timestamp);
         return true;
     }
 
@@ -6658,6 +6676,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return Long.MAX_VALUE;
+    }
+
+    /**
+     * Rebuilds the donor-link family registry from the durable on-disk state: for every partition
+     * flagged DONOR_LINKED in {@code _txn}, reads its {@code _dlink} file and adds the donor->child
+     * edge. Crash-recoverable (link files + the DONOR_LINKED bit are on disk). Run on writer open and
+     * after rollback so the in-memory registry always matches disk. Also emits a leak/dangle log when a
+     * link child's donor version dir is missing (invariant in DONOR_LINK_FILE_IMPL.md).
+     */
+    private void rebuildPartitionFamilyRegistry() {
+        partitionFamilyRegistry.clear();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            final int indexRaw = i * LONGS_PER_TX_ATTACHED_PARTITION;
+            if (txWriter.isPartitionParquet(i) || !txWriter.isPartitionDonorLinkedByRawIndex(indexRaw)) {
+                continue;
+            }
+            final long childTs = txWriter.getPartitionTimestampByIndex(i);
+            final long childNameTxn = txWriter.getPartitionNameTxnByRawIndex(indexRaw);
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, childTs, childNameTxn);
+            other.concat(DONOR_LINK_FILE_NAME);
+            try {
+                readDonorLinkFile(ff, other.$(), tempMem16b);
+            } catch (CairoException e) {
+                LOG.error().$("donor-link child is missing its _dlink file [table=").$(tableToken)
+                        .$(", child=").$ts(childTs).$(", errno=").$(e.getErrno()).I$();
+                other.trimTo(pathSize);
+                continue;
+            }
+            other.trimTo(pathSize);
+            final long donorTs = Unsafe.getLong(tempMem16b);
+            final long donorNameTxn = Unsafe.getLong(tempMem16b + Long.BYTES);
+            partitionFamilyRegistry.addLinkChild(donorTs, donorNameTxn, childTs);
+            // Leak/dangle detection: the donor version dir a live link child points at must exist.
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, donorTs, donorNameTxn);
+            if (!ff.exists(other.$())) {
+                LOG.critical().$("donor-link child references a missing donor version [table=").$(tableToken)
+                        .$(", child=").$ts(childTs).$(", donor=").$ts(donorTs).$(", donorNameTxn=").$(donorNameTxn).I$();
+            }
+            other.trimTo(pathSize);
+        }
     }
 
     private int findParquetColumnIndex(ParquetMetaFileReader parquetMetadata, int metadataColumnIndex) {
@@ -7146,18 +7204,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // is stored separately in _txn slot 3 by the caller; the read path combines them as
     // file_row = logical + R2 - colTop. The child shares the donor's inodes, so POSIX link-count keeps them
     // alive until the last hardlinked directory is unlinked.
-    private void hardlinkSuffixChild(long donorTs, long donorNameTxn, long childTs, long childNameTxn, long r2, long suffixRowCount) {
+    /**
+     * Materializes a zero-copy suffix child of a split. In HARDLINK mode ({@code useLinkFile ==
+     * false}) it populates a fresh child dir with hardlinks of the donor's column (and index) files.
+     * In DONOR-LINK mode ({@code useLinkFile == true}) it writes a single immutable {@code _dlink}
+     * pointer to the donor version dir and NO column files. Either way it writes the child's own
+     * {@code _cv} records (identical in both modes), so the read path resolves the same donor bytes
+     * via {@code file_row = logical + partitionTop - columnTop}.
+     */
+    private void createSuffixChild(long donorTs, long donorNameTxn, long childTs, long childNameTxn, long r2, long suffixRowCount, boolean useLinkFile, long linkDonorTs, long linkDonorNameTxn) {
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, donorTs, donorNameTxn);
         final int srcDirLen = path.size();
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, childTs, childNameTxn);
         final int dstDirLen = other.size();
         createDirsOrFail(ff, other, configuration.getMkDirMode());
         try {
+            if (useLinkFile) {
+                // The child holds NO column files -- only a single immutable _dlink pointing at the
+                // REAL byte-holding donor version dir (linkDonorTs/linkDonorNameTxn, resolved by the
+                // caller in ONE hop even when donorTs is itself a link child of a re-split).
+                other.trimTo(dstDirLen).concat(DONOR_LINK_FILE_NAME);
+                writeDonorLinkFile(ff, other.$(), linkDonorTs, linkDonorNameTxn, tempMem16b, configuration.getWriterFileOpenOpts());
+                other.trimTo(dstDirLen);
+            }
             final long donorFullSize = txWriter.getPartitionRowCountByTimestamp(donorTs);
             // When the donor is itself a suffix child (re-split), its LOCAL records (columns born
             // at/after the donor) and its logical size are donor-local, not shared-file-relative:
             // shift them by the donor's own partition top so the child's records are uniformly
-            // relative to the shared files it links (matching its composed slot-3 top).
+            // relative to the shared files it reads (matching its composed slot-3 top).
             final long donorPartitionTop = getPartitionTopByTimestamp(donorTs);
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
@@ -7174,51 +7248,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnVersionWriter.upsert(childTs, i, columnNameTxn, donorPartitionTop + donorFullSize);
                     continue;
                 }
-                // Primary .d for every column; .i aux for var-size.
-                linkFile(ff,
-                        dFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
-                        dFile(other.trimTo(dstDirLen), columnName, columnNameTxn));
-                if (ColumnType.isVarSize(columnType)) {
+                if (!useLinkFile) {
+                    // Primary .d for every column; .i aux for var-size.
                     linkFile(ff,
-                            iFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
-                            iFile(other.trimTo(dstDirLen), columnName, columnNameTxn));
-                }
-                // Index files are shared with the donor. The donor already indexed all of [0, donorFullSize)
-                // at PHYSICAL row ids, so the child reads its rows [R2, donorFullSize) through the
-                // +partitionTop read shift with NO rebuild. Sharing is safe because the donor is frozen
-                // after the split (its index is never written in place -- appends and merges rewrite into a
-                // fresh directory), and the child only ever appends physical ids above every donor entry.
-                //   BITMAP: hardlink .k/.v outright. Only one writer is ever live per index inode (the
-                //   child-as-last reuses the table writer's indexer; transient writers open fresh), and
-                //   every writer loads its sizes from the .k header at open, so a truncate-to-cached-size
-                //   close only ever trims slack beyond both siblings' data.
-                //   POSTING: hardlink the immutable .pv/.pc/.pci data but COPY the mutable .pk manifest --
-                //   donor and child seal independently and cannot share one chain head. The copied .pk
-                //   points at the hardlinked live .pv; the donor's own reseal (this commit's seal sweep)
-                //   rotates the donor onto a fresh .pv, leaving the shared live .pv referenced only by the
-                //   child, whose hardlink keeps it alive when the donor's superseded copy is purged.
-                if (ColumnType.isSymbol(columnType)
-                        && metadata.isColumnIndexed(i)
-                        && donorColumnTop < donorFullSize) {
-                    final byte indexType = metadata.getColumnIndexType(i);
-                    linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, donorTs, donorNameTxn, IndexType.isPosting(indexType));
+                            dFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                            dFile(other.trimTo(dstDirLen), columnName, columnNameTxn));
+                    if (ColumnType.isVarSize(columnType)) {
+                        linkFile(ff,
+                                iFile(path.trimTo(srcDirLen), columnName, columnNameTxn),
+                                iFile(other.trimTo(dstDirLen), columnName, columnNameTxn));
+                    }
+                    // Index files are shared with the donor. The donor already indexed all of [0, donorFullSize)
+                    // at PHYSICAL row ids, so the child reads its rows [R2, donorFullSize) through the
+                    // +partitionTop read shift with NO rebuild. Sharing is safe because the donor is frozen
+                    // after the split (its index is never written in place -- appends and merges rewrite into a
+                    // fresh directory), and the child only ever appends physical ids above every donor entry.
+                    //   BITMAP: hardlink .k/.v outright. Only one writer is ever live per index inode (the
+                    //   child-as-last reuses the table writer's indexer; transient writers open fresh), and
+                    //   every writer loads its sizes from the .k header at open, so a truncate-to-cached-size
+                    //   close only ever trims slack beyond both siblings' data.
+                    //   POSTING: hardlink the immutable .pv/.pc/.pci data but COPY the mutable .pk manifest --
+                    //   donor and child seal independently and cannot share one chain head. The copied .pk
+                    //   points at the hardlinked live .pv; the donor's own reseal (this commit's seal sweep)
+                    //   rotates the donor onto a fresh .pv, leaving the shared live .pv referenced only by the
+                    //   child, whose hardlink keeps it alive when the donor's superseded copy is purged.
+                    if (ColumnType.isSymbol(columnType)
+                            && metadata.isColumnIndexed(i)
+                            && donorColumnTop < donorFullSize) {
+                        final byte indexType = metadata.getColumnIndexType(i);
+                        linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, donorTs, donorNameTxn, IndexType.isPosting(indexType));
+                    }
                 }
                 // The child records the donor's FULL column top in shared-file coordinates (NOT
                 // max(0, T - R2)); the caller stores the composed top in slot 3 and the read path
                 // combines them as file_row = logical + partitionTop - columnTop. A donor-LOCAL record
                 // (column born at/after the donor of a re-split) shifts by the donor's own top.
-                // Record the donor's actual columnNameTxn (the file just linked), NOT the default, so
-                // a column whose txn moved (e.g. after UPDATE) still resolves to the hardlinked file.
+                // Record the donor's actual columnNameTxn (the file just shared), NOT the default, so
+                // a column whose txn moved (e.g. after UPDATE) still resolves to the donor file.
                 final boolean isDonorSharedRecord = donorPartitionTop > 0
                         && columnVersionWriter.getColumnTopPartitionTimestamp(i) < donorTs;
                 columnVersionWriter.upsert(childTs, i, columnNameTxn, isDonorSharedRecord ? donorColumnTop : donorPartitionTop + donorColumnTop);
             }
         } catch (Throwable e) {
-            // Partial-failure cleanup: remove the half-linked child dir before rethrowing so no orphan
+            // Partial-failure cleanup: remove the half-built child dir before rethrowing so no orphan
             // directory survives under disk pressure (risk #7). The _txn entries are not committed yet.
             other.trimTo(dstDirLen);
             if (!ff.rmdir(other.slash())) {
-                LOG.error().$("could not remove suffix child dir after failed hardlink [path=").$(other).I$();
+                LOG.error().$("could not remove suffix child dir after failed split [path=").$(other).I$();
             }
             throw e;
         } finally {
@@ -8411,18 +8487,56 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         closeActivePartition(committedLastPartitionSize);
                     }
                     if (isHardlinkSplit) {
-                        // Zero-copy suffix child: hardlink the donor's column files into a fresh child dir,
-                        // attach the child with partition top R2, and mark BOTH shared-inode partitions
-                        // (the prefix donor and the suffix child) as donors so neither is appended /
-                        // overwritten in place. The donor is resized to R1 below (the shared 8281 path).
+                        // Zero-copy suffix child: share the donor's column files (hardlinks, or a single
+                        // _dlink pointer in donor-link mode) into a fresh child dir, attach the child with
+                        // partition top R2, and mark BOTH shared-file partitions (the prefix donor and the
+                        // suffix child) as donors so neither is appended / overwritten in place. The donor
+                        // is resized to R1 below (the shared 8281 path).
                         final long donorNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-                        hardlinkSuffixChild(partitionTimestamp, donorNameTxn, suffixChildTimestamp, txWriter.txn, suffixChildPartitionTop, suffixChildRowCount);
+                        // Donor-link mode (a single _dlink instead of ~2C hardlinks) applies when enabled,
+                        // EXCEPT when the donor is itself a hardlink child (top>0, not link-flagged): a link
+                        // grandchild pointing at a hardlink child's dir would be orphaned if that dir were
+                        // purged (its files are hardlinks, kept alive only by the child's own hardlinks, not
+                        // by a _dlink). Such a re-split stays on the hardlink path.
+                        final long donorTop = getPartitionTopByTimestamp(partitionTimestamp);
+                        // Donor-link mode benefits MID pieces (a linked child is never opened for append).
+                        // A suffix child of the LAST partition becomes the new active last partition and the
+                        // writer must open it for append -- the immutable donor cannot be extended, so it
+                        // would materialize on activation (a wasteful copy right after writing the _dlink).
+                        // Keep last-partition splits on the proven hardlink path (v1; DONOR_LINK_FILE_IMPL.md
+                        // phase 4 adds a hybrid linked-head + own-tail geometry for the active child).
+                        final boolean childBecomesLast = partitionTimestamp == lastPartitionTimestamp;
+                        final boolean useLinkFile = configuration.isPartitionSplitDonorLinkEnabled()
+                                && !childBecomesLast
+                                && (donorTop == 0 || isPartitionDonorLinkedByTimestamp(partitionTimestamp));
+                        // Resolve the REAL byte-holding donor version the child's _dlink and registry edge
+                        // point at: one hop through the donor's own _dlink when the donor is a link child.
+                        long linkDonorTs = partitionTimestamp;
+                        long linkDonorNameTxn = donorNameTxn;
+                        if (useLinkFile && isPartitionDonorLinkedByTimestamp(partitionTimestamp)) {
+                            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, donorNameTxn);
+                            other.concat(DONOR_LINK_FILE_NAME);
+                            readDonorLinkFile(ff, other.$(), tempMem16b);
+                            linkDonorTs = Unsafe.getLong(tempMem16b);
+                            linkDonorNameTxn = Unsafe.getLong(tempMem16b + Long.BYTES);
+                            other.trimTo(pathSize);
+                        }
+                        createSuffixChild(partitionTimestamp, donorNameTxn, suffixChildTimestamp, txWriter.txn, suffixChildPartitionTop, suffixChildRowCount, useLinkFile, linkDonorTs, linkDonorNameTxn);
                         // Attach after the middle insert so the child's insertion point reflects it.
                         final int suffixChildIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(suffixChildTimestamp);
                         txWriter.updateAttachedPartitionSizeByRawIndex(suffixChildIndexRaw, suffixChildTimestamp, suffixChildRowCount, txWriter.txn);
                         txWriter.setPartitionTop(suffixChildTimestamp, suffixChildPartitionTop);
                         txWriter.setPartitionDonor(suffixChildTimestamp);
                         txWriter.setPartitionDonor(partitionTimestamp);
+                        if (useLinkFile) {
+                            // The child holds only a _dlink -> donor version dir. Flag it so the read/open
+                            // path resolves columns from the donor, and register the family edge so the
+                            // async purge job and the writer both retain the donor version until this child
+                            // is folded / materialized. The link file removed the kernel's inode refcount,
+                            // so this registry is now the only thing keeping the donor bytes alive.
+                            txWriter.setPartitionDonorLinked(suffixChildTimestamp);
+                            partitionFamilyRegistry.addLinkChild(linkDonorTs, linkDonorNameTxn, suffixChildTimestamp);
+                        }
                         this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, suffixChildTimestamp);
                     }
                 }
@@ -8445,6 +8559,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // stale donor flag, and for a suffix child also the partition top: the rewrite
                         // materialized a full private copy addressed from file row 0 with local column tops.
                         txWriter.resetPartitionTop(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION);
+                        // If the rewritten partition was a LINK child it is now self-contained -> drop its
+                        // edge. A rewritten DONOR keeps its outgoing edges: its children still read the OLD
+                        // (now superseded) donor version, which the interlock must retain (no-op here).
+                        partitionFamilyRegistry.removeChild(partitionTimestamp);
                     }
 
                     if (isCommitReplaceMode() && srcDataNewPartitionSize == 0) {
@@ -8564,7 +8682,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // We need to read the min timestamp from the next partition
                         long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                         long partitionSize = txWriter.getPartitionSize(0);
-                        setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
+                        setPathForColumnSource(path, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
                         readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, getPartitionTopByTimestamp(firstPartitionTimestamp, metadata.getTimestampIndex()), partitionSize);
                         txWriter.minTimestamp = attachMinTimestamp;
                     }
@@ -8573,7 +8691,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         int lastPartitionIndex = txWriter.getPartitionCount() - 1;
                         long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastPartitionIndex);
                         long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
-                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
+                        setPathForColumnSource(path.trimTo(pathSize), lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
                         readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), -1, getPartitionTopByTimestamp(lastPartitionTimestamp, metadata.getTimestampIndex()), partitionSize);
                         txWriter.maxTimestamp = attachMaxTimestamp;
                     }
@@ -8682,8 +8800,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } else {
                     try {
                         // The safe way to remove the split is to split one line from the parent partition
-                        // See comment in the beginning of this method.
-                        long prevPartitionNameTxn = setStateForTimestamp(path, prevPartitionTimestamp);
+                        // See comment in the beginning of this method. A DONOR_LINKED prev piece reads
+                        // its slice from the donor version dir (setStateForColumnSource resolves it) but
+                        // the returned nameTxn is the child's own version, recorded for removal below.
+                        long prevPartitionNameTxn = setStateForColumnSource(path, prevPartitionTimestamp);
                         o3ConsumePartitionUpdateSink_findNewSplitPartitionSizeTimestamp(
                                 path,
                                 prevPartitionTimestamp,
@@ -9106,6 +9226,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void openPartition(long timestamp, long rowCount) {
         try {
             timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
+            // A DONOR_LINKED child holds no column files, only a _dlink -- it cannot be opened for
+            // append/write. The immutable donor cannot be extended, so materialize the child (copy the
+            // donor slice into real files) before opening it. v1 behavior: the first write to a linked
+            // child costs one whole-child copy (see DONOR_LINK_FILE_IMPL.md "Append into a linked child").
+            if (isPartitionDonorLinkedByTimestamp(timestamp)) {
+                materializeDonorLinkChild(timestamp);
+            }
             lastOpenPartitionTxnName = setStateForTimestamp(path, timestamp);
             partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(timestamp);
             int plen = path.size();
@@ -9954,6 +10081,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 final long timestamp = partitionRemoveCandidates.getQuick(i);
                 final long txn = partitionRemoveCandidates.get(i + 1);
+                // Never remove a donor version dir a DONOR_LINKED child still points at, regardless of
+                // scoreboard: hold it and defer to the async purge job, which re-derives the retained
+                // set from disk and is the single authority that ultimately reclaims it once the last
+                // child folds/materializes. The link file removed the kernel inode refcount.
+                if (partitionFamilyRegistry.hasLinkChildFor(timestamp, txn)) {
+                    scheduleAsyncPurge = true;
+                    continue;
+                }
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
                 // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
@@ -13443,6 +13578,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param path      path instance to modify
      * @param timestamp to determine the interval for
      */
+    /**
+     * Sets {@code sink} to the directory a partition's column files physically live in for READING:
+     * the donor version dir for a DONOR_LINKED suffix child (resolved via its own {@code _dlink}),
+     * otherwise the partition's own native dir. Use this instead of {@code setPathForNativePartition}
+     * at every writer site that opens a linked child's column/timestamp files (squash sources, min/max
+     * reads). No-op vs {@code setPathForNativePartition} for a plain or hardlink partition.
+     */
+    private void setPathForColumnSource(Path sink, long partitionTimestamp, long nameTxn) {
+        if (isPartitionDonorLinkedByTimestamp(partitionTimestamp)) {
+            final int base = sink.size();
+            setPathForNativePartition(sink, timestampType, partitionBy, partitionTimestamp, nameTxn);
+            sink.concat(DONOR_LINK_FILE_NAME);
+            readDonorLinkFile(ff, sink.$(), tempMem16b);
+            final long donorTs = Unsafe.getLong(tempMem16b);
+            final long donorNameTxn = Unsafe.getLong(tempMem16b + Long.BYTES);
+            sink.trimTo(base);
+            setPathForNativePartition(sink, timestampType, partitionBy, donorTs, donorNameTxn);
+        } else {
+            setPathForNativePartition(sink, timestampType, partitionBy, partitionTimestamp, nameTxn);
+        }
+    }
+
+    /**
+     * Like {@link #setStateForTimestamp} but resolves a DONOR_LINKED child to its donor version dir
+     * (for reading). Returns the CHILD's own nameTxn (the version the caller records for removal),
+     * NOT the donor's.
+     */
+    private long setStateForColumnSource(Path path, long timestamp) {
+        long partitionTxnName = PartitionBy.isPartitioned(partitionBy) ? txWriter.getTxn() - 1 : -1;
+        partitionTxnName = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp, partitionTxnName);
+        setPathForColumnSource(path, timestamp, partitionTxnName);
+        return partitionTxnName;
+    }
+
     private long setStateForTimestamp(Path path, long timestamp) {
         // When partition is created, a txn name must always be set to purge dropped partitions.
         // When partition is created outside O3 merge use `txn-1` as the version
@@ -13647,6 +13816,47 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Turns a DONOR_LINKED suffix child into an ordinary self-contained partition: copies the donor
+     * slice {@code [top, top+size)} into real column files in a fresh child dir, then clears the link
+     * (partition top, DONOR and DONOR_LINKED flags) and drops the registry edge. Used before the
+     * writer appends to / O3-merges into a linked child (the immutable donor cannot be extended).
+     * The old {@code _dlink} dir is queued for removal, so the donor's retention drops with this edge.
+     */
+    private void materializeDonorLinkChild(long childTs) {
+        final int childIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(childTs);
+        final int childIndex = childIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION;
+        final long childNameTxn = txWriter.getPartitionNameTxnByRawIndex(childIndexRaw);
+        final long childSize = txWriter.getPartitionRowCountByTimestamp(childTs);
+        final long childTop = getPartitionTopByTimestamp(childTs);
+        final FrameFactory frameFactory = engine.getFrameFactory();
+        LOG.info().$("materializing donor-link child [table=").$(tableToken)
+                .$(", child=").$ts(childTs).$(", size=").$(childSize).$(", top=").$(childTop).I$();
+        // Source: the donor version dir, reading this child's logical slice at file rows
+        // [childTop, childTop+childSize). Dest: a FRESH child dir version (new nameTxn); readers pinned
+        // on the old _dlink dir stay valid until purge.
+        setPathForColumnSource(path.trimTo(pathSize), childTs, childNameTxn);
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, childTs, txWriter.txn);
+        createDirsOrFail(ff, other, configuration.getMkDirMode());
+        try {
+            try (Frame src = frameFactory.openRO(path, childTs, metadata, columnVersionWriter, childSize, childTop);
+                 Frame dst = frameFactory.createRW(other, childTs, metadata, columnVersionWriter, 0)) {
+                FrameAlgebra.append(dst, src, txWriter.getTxn() + 1L, configuration.getCommitMode());
+            }
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+        addPhysicallyWrittenRows(childSize);
+        // Queue the old _dlink dir for removal and drop the family edge (donor retention now
+        // reflects one fewer child); switch the child to its fresh self-contained version and clear
+        // the top/donor/donorLinked flags. resetPartitionTop writes -1L, clearing all of slot 3.
+        partitionRemoveCandidates.add(childTs, childNameTxn);
+        partitionFamilyRegistry.removeChild(childTs);
+        txWriter.updatePartitionSizeAndTxnByRawIndex(childIndexRaw, childSize);
+        txWriter.resetPartitionTop(childIndex);
+    }
+
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
@@ -13688,7 +13898,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
-        setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
+        // The target is opened for READING (copy-out) only when it is donor-flagged/reader-locked;
+        // a DONOR_LINKED target resolves to its donor version dir. An overwritable (rw) target is
+        // never donor-flagged, so this is a plain own-dir path there.
+        setPathForColumnSource(path, targetPartition, targetPartitionNameTxn);
         final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
 
         boolean rw = !copyTargetFrame;
@@ -13714,6 +13927,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                     txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
                     partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
+                    // A copied-out target that was a link child is now self-contained (its fresh dir).
+                    partitionFamilyRegistry.removeChild(targetPartition);
                     targetPartitionNameTxn = txWriter.txn;
                 } finally {
                     Misc.free(firstPartitionFrame);
@@ -13734,7 +13949,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 other.trimTo(pathSize);
                 long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
-                setPathForNativePartition(other, timestampType, partitionBy, sourcePartition, sourceNameTxn);
+                // A DONOR_LINKED source reads its slice from the donor version dir (via _dlink).
+                setPathForColumnSource(other, sourcePartition, sourceNameTxn);
                 long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
                 lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
                 if (lastPartitionSquashed) {
@@ -13766,6 +13982,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.removeAttachedPartitions(sourcePartition);
                 columnVersionWriter.squashPartition(targetPartition, sourcePartition);
                 partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
+                // A folded source that was a link child no longer references its donor.
+                partitionFamilyRegistry.removeChild(sourcePartition);
                 if (sourcePartition == minSplitPartitionTimestamp) {
                     minSplitPartitionTimestamp = getPartitionTimestampOrMax(targetPartitionIndex + 1);
                 }
@@ -14105,6 +14323,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.truncate();
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
         clearTodoLog();
+        partitionFamilyRegistry.clear();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
 

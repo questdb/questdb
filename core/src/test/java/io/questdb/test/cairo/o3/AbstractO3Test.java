@@ -81,7 +81,10 @@ public class AbstractO3Test extends AbstractTest {
     protected static boolean mixedIOEnabled;
     protected static boolean mixedIOEnabledFFDefault;
     protected static int o3ColumnMemorySize = -1;
+    protected static boolean donorLinkSplitEnabled = false;
+    protected static int o3LastPartitionMaxSplits = -1;
     protected static int o3MemMaxPages = -1;
+    protected static int o3MidPartitionMaxSplits = -1;
     protected static long partitionO3SplitThreshold = -1;
     protected static boolean partitionTopEnabled = true;
     protected final Rnd rnd;
@@ -128,8 +131,11 @@ public class AbstractO3Test extends AbstractTest {
         dataAppendPageSize = -1;
         o3ColumnMemorySize = -1;
         o3MemMaxPages = -1;
+        o3MidPartitionMaxSplits = -1;
+        o3LastPartitionMaxSplits = -1;
         partitionO3SplitThreshold = -1;
         partitionTopEnabled = true;
+        donorLinkSplitEnabled = false;
         cairoCommitLatency = 30_000_000;
         super.tearDown();
     }
@@ -407,6 +413,21 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
+                    public int getO3LastPartitionMaxSplits() {
+                        return o3LastPartitionMaxSplits > -1 ? o3LastPartitionMaxSplits : super.getO3LastPartitionMaxSplits();
+                    }
+
+                    @Override
+                    public int getO3MidPartitionMaxSplits() {
+                        return o3MidPartitionMaxSplits > -1 ? o3MidPartitionMaxSplits : super.getO3MidPartitionMaxSplits();
+                    }
+
+                    @Override
+                    public boolean isPartitionSplitDonorLinkEnabled() {
+                        return donorLinkSplitEnabled;
+                    }
+
+                    @Override
                     public boolean isPartitionTopNonWalEnabled() {
                         return partitionTopEnabled && super.isPartitionTopNonWalEnabled();
                     }
@@ -513,6 +534,21 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public boolean isPartitionEncoderParquetStatisticsEnabled() {
                         return isParquetStatisticsEnabled();
+                    }
+
+                    @Override
+                    public int getO3LastPartitionMaxSplits() {
+                        return o3LastPartitionMaxSplits > -1 ? o3LastPartitionMaxSplits : super.getO3LastPartitionMaxSplits();
+                    }
+
+                    @Override
+                    public int getO3MidPartitionMaxSplits() {
+                        return o3MidPartitionMaxSplits > -1 ? o3MidPartitionMaxSplits : super.getO3MidPartitionMaxSplits();
+                    }
+
+                    @Override
+                    public boolean isPartitionSplitDonorLinkEnabled() {
+                        return donorLinkSplitEnabled;
                     }
 
                     @Override

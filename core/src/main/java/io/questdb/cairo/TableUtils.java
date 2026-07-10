@@ -105,6 +105,11 @@ public final class TableUtils {
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
+    // Donor-link file: a 16-byte, little-endian, write-once pointer that a zero-copy suffix child
+    // stores in its partition dir INSTEAD of per-column hardlinks. [0,8) = donor partition floor
+    // timestamp; [8,16) = donor partition version (nameTxn). Marked in _txn by PARTITION_DONOR_LINKED_FLAG.
+    public static final String DONOR_LINK_FILE_NAME = "_dlink";
+    public static final int DONOR_LINK_FILE_SIZE = 2 * Long.BYTES;
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
@@ -1675,6 +1680,45 @@ public final class TableUtils {
             return fd;
         }
         throw CairoException.critical(ff.errno()).put("could not open read-write [file=").put(path).put(']');
+    }
+
+    /**
+     * Reads a donor-link file into a caller-owned 16-byte native scratch buffer. After the call
+     * {@code Unsafe.getLong(scratch16)} is the donor partition floor timestamp and
+     * {@code Unsafe.getLong(scratch16 + Long.BYTES)} is the donor partition version (nameTxn).
+     * {@code path} must already resolve to {@code <child dir>/_dlink}.
+     */
+    public static void readDonorLinkFile(FilesFacade ff, LPSZ path, long scratch16) {
+        final long fd = openRO(ff, path, LOG);
+        try {
+            if (ff.read(fd, scratch16, DONOR_LINK_FILE_SIZE, 0) != DONOR_LINK_FILE_SIZE) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not read donor-link file [path=").put(path).put(']');
+            }
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
+     * Writes the write-once donor-link file: a 16-byte little-endian pointer to the donor version
+     * dir. {@code path} must already resolve to {@code <child dir>/_dlink}; {@code scratch16} is a
+     * caller-owned native buffer of at least 16 bytes. Fsyncs before returning so the pointer is
+     * durable ahead of the _txn commit that references it.
+     */
+    public static void writeDonorLinkFile(FilesFacade ff, LPSZ path, long donorTs, long donorNameTxn, long scratch16, int fileOpenOpts) {
+        final long fd = openRW(ff, path, LOG, fileOpenOpts);
+        try {
+            Unsafe.putLong(scratch16, donorTs);
+            Unsafe.putLong(scratch16 + Long.BYTES, donorNameTxn);
+            if (ff.write(fd, scratch16, DONOR_LINK_FILE_SIZE, 0) != DONOR_LINK_FILE_SIZE) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not write donor-link file [path=").put(path).put(']');
+            }
+            ff.fsync(fd);
+        } finally {
+            ff.close(fd);
+        }
     }
 
     public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {

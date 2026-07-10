@@ -1679,6 +1679,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionSplitDonorLinkEnabled() {
+        return getDelegate().isPartitionSplitDonorLinkEnabled();
+    }
+
+    @Override
     public boolean isPartitionTopNonWalEnabled() {
         return getDelegate().isPartitionTopNonWalEnabled();
     }
