@@ -43,6 +43,7 @@
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/event.h>
 #include <sys/time.h>
+#include <pthread.h>
 #endif
 #ifndef POLLRDHUP
 #define POLLRDHUP 0x2000
@@ -228,20 +229,46 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isDead
     return (jboolean) (res < 1);
 }
 
+#if defined(__APPLE__) || defined(__FreeBSD__)
+// Per-thread kqueue for isPeerDisconnected, closed when the thread exits. A plain __thread int
+// would leak the descriptor: worker threads terminate on WorkerPool.halt() with no cleanup hook,
+// and a kqueue fd is not auto-closed on thread exit, so each ServerMain create->halt cycle would
+// leak one fd per probing worker (toward EMFILE across a long macOS test run). A pthread_key
+// destructor closes it. The stored value is (kq + 1) so the unset default (NULL) is
+// distinguishable from a valid kqueue fd of 0.
+static pthread_key_t peer_probe_kq_key;
+static pthread_once_t peer_probe_kq_once = PTHREAD_ONCE_INIT;
+
+static void close_peer_probe_kq(void *value) {
+    intptr_t stored = (intptr_t) value;
+    if (stored > 0) {
+        close((int) (stored - 1));
+    }
+}
+
+static void make_peer_probe_kq_key(void) {
+    pthread_key_create(&peer_probe_kq_key, close_peer_probe_kq);
+}
+#endif
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
         (JNIEnv *e, jclass cl, jint fd) {
 #if defined(__APPLE__) || defined(__FreeBSD__)
     // Reuse one kqueue per thread instead of creating and destroying one on every probe.
     // isPeerDisconnected sits on a query hot path -- the parallel work-steal busy-wait probes
     // the circuit breaker on every spin iteration -- so a per-call kqueue()+close() would add a
-    // syscall pair plus file-descriptor table churn to that loop. The kqueue is created lazily
-    // and lives for the thread's lifetime (worker threads are pooled and bounded in number).
-    static __thread int cached_kq = -1;
-    if (cached_kq < 0) {
+    // syscall pair plus file-descriptor table churn to that loop.
+    pthread_once(&peer_probe_kq_once, make_peer_probe_kq_key);
+    intptr_t stored = (intptr_t) pthread_getspecific(peer_probe_kq_key);
+    int cached_kq;
+    if (stored > 0) {
+        cached_kq = (int) (stored - 1);
+    } else {
         cached_kq = kqueue();
         if (cached_kq < 0) {
             return JNI_FALSE;
         }
+        pthread_setspecific(peer_probe_kq_key, (void *) (intptr_t) (cached_kq + 1));
     }
     struct kevent change;
     struct kevent event;
@@ -251,7 +278,10 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_isPeerDisconnected
     // surfaces as an EV_ERROR event in the eventlist (kevent returns it rather than failing).
     EV_SET(&change, (uintptr_t) fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
     RESTARTABLE(kevent(cached_kq, &change, 1, &event, 1, &immediate), n);
-    jboolean disconnected = (jboolean) (n > 0 && (event.flags & (EV_EOF | EV_ERROR)) != 0);
+    // event.ident == fd is defensive: EV_DELETE below leaves the kqueue empty at rest, so only
+    // this fd is ever registered, but the check makes the result robust to a future delete gap.
+    jboolean disconnected = (jboolean) (n > 0 && event.ident == (uintptr_t) fd
+                                        && (event.flags & (EV_EOF | EV_ERROR)) != 0);
     // Drop the registration so a later probe of a different fd on this thread cannot pick up
     // this fd's event by mistake. ENOENT (the socket already closed) is harmless and ignored.
     EV_SET(&change, (uintptr_t) fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);

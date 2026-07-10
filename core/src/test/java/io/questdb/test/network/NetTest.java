@@ -140,6 +140,35 @@ public class NetTest {
             clientFd = closeFd(clientFd);
             serverFd = closeFd(serverFd);
 
+            // Live socket, readable inbound data, NO FIN: must stay false on every platform. This
+            // is the dangerous false-positive to guard -- misreading merely-readable bytes (e.g. a
+            // pipelined follow-up request during a running query) as a hangup would abort live
+            // queries. Distinct from the FIN-behind-a-byte block below, which couples data WITH a
+            // FIN; here the peer never shuts down.
+            clientFd = Net.socketTcp(true);
+            TestUtils.assertConnect(clientFd, sockAddr);
+            serverFd = Net.accept(acceptFd);
+            Net.configureNonBlocking(serverFd);
+            buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.getUnsafe().putByte(buf, (byte) 'x');
+            Assert.assertEquals(1, Net.send(clientFd, buf, 1));
+            // Wait until the byte is actually buffered on the server so the probe faces
+            // readable-but-no-FIN data rather than an empty socket.
+            boolean buffered = false;
+            for (int i = 0; i < 1000 && !buffered; i++) {
+                if (Net.peek(serverFd, buf, 1) == 1) {
+                    buffered = true;
+                } else {
+                    Os.sleep(1);
+                }
+            }
+            Assert.assertTrue("test byte did not arrive on the server side", buffered);
+            Assert.assertFalse("readable data without a FIN must not read as a disconnect",
+                    Net.isPeerDisconnected(serverFd));
+            buf = Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+            clientFd = closeFd(clientFd);
+            serverFd = closeFd(serverFd);
+
             // Error branch (not a bare FIN): SO_LINGER 0 makes the client's close send an RST
             // instead of a FIN. The probe must still report a disconnect, via the error/hangup
             // side of the mask (Linux POLLERR|POLLHUP, macOS kqueue EV_EOF, Windows recv error) --

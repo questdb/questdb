@@ -1186,6 +1186,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     circuitBreaker.of(context.getFd())
             );
             sqlCtx.initNow();
+            // The breaker is reused per connection. Egress has no per-statement timeout, so reset
+            // to the default up front, matching JsonQueryProcessor, so a per-statement timeout can
+            // never leak from an earlier query onto this one if egress ever wires one.
+            circuitBreaker.resetMaxTimeToDefault();
 
             // Bounded retry loop: a factory returned by the compile cache may have a
             // stale TableReader reference if the table was dropped+recreated after

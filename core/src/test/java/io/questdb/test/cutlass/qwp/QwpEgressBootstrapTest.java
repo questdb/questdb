@@ -41,6 +41,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -1727,6 +1728,11 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         // via the breaker probe, so the counter advancing well inside the 20s deadline -- far below
         // query.timeout=30s -- proves the disconnect was detected. A regression in the fd binding
         // would leave the query running until the 30s timeout, past the deadline.
+        //
+        // Windows still peeks (recv(MSG_PEEK)) and cannot see the FIN behind the buffered WebSocket
+        // Close frame, so it only aborts at query.timeout -- same reason the PGWire twin
+        // ServerMainSleepTest.testSleepAbortedWhenClientClosesConnection is skipped on Windows.
+        Assume.assumeFalse(Os.isWindows());
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(
                     PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
@@ -1777,6 +1783,17 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                             10
                     );
                     Os.sleep(300);
+
+                    // Pin the errored counter to the disconnect: if the query had already errored
+                    // for any other reason (compile/transport/setup) the post-close poll would trip
+                    // on its first iteration and pass vacuously, masking a real fd-binding
+                    // regression. Assert nothing has errored yet, so a later increment can only come
+                    // from the disconnect.
+                    Assert.assertEquals(
+                            "egress query errored before the client disconnected; a later abort would be "
+                                    + "misattributed to the disconnect",
+                            erroredBefore, metrics.queriesErroredCounter().getValue()
+                    );
 
                     // Cleanly close the client while the sleep is parked. close() writes a WebSocket
                     // Close frame, then FIN -- buffered bytes ahead of the FIN.
