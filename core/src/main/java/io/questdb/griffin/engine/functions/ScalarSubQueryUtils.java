@@ -74,8 +74,10 @@ public final class ScalarSubQueryUtils {
 
     /**
      * Reads the single-column scalar of a sub-query record widened to {@code double}. Typed integer
-     * NULLs map to {@link Double#NaN} so the comparison follows SQL {@code null} semantics (matches
-     * no rows) instead of comparing against a sentinel value.
+     * NULLs map to {@link Double#NaN} so the comparison follows QuestDB's sentinel-null convention
+     * instead of comparing against a raw sentinel value: strict comparisons match no rows, while the
+     * negated inclusive forms ({@code >=}, {@code <=}) match rows whose left operand is also null
+     * (null equals null).
      *
      * @param record        the sub-query record positioned on the scalar row
      * @param columnTypeTag the {@link ColumnType} tag of the cursor column
@@ -105,7 +107,9 @@ public final class ScalarSubQueryUtils {
     /**
      * Reads the single-column scalar of a sub-query record as an {@code int}. Only narrow integer
      * cursor columns are expected here; anything else (including the NULL type) yields
-     * {@link Numbers#INT_NULL}, which matches no rows.
+     * {@link Numbers#INT_NULL}, which follows QuestDB's sentinel-null convention: strict comparisons
+     * match no rows, while the negated inclusive forms ({@code >=}, {@code <=}) match rows whose
+     * left operand is also null (null equals null).
      *
      * @param record        the sub-query record positioned on the scalar row
      * @param columnTypeTag the {@link ColumnType} tag of the cursor column
@@ -126,8 +130,10 @@ public final class ScalarSubQueryUtils {
 
     /**
      * Reads the single-column scalar of a sub-query record widened to {@code long}. An INT_NULL
-     * cursor scalar maps to {@link Numbers#LONG_NULL} (via {@link Numbers#intToLong}) so it matches
-     * no rows rather than behaving like {@code Integer.MIN_VALUE}.
+     * cursor scalar maps to {@link Numbers#LONG_NULL} (via {@link Numbers#intToLong}) so it follows
+     * QuestDB's sentinel-null convention rather than behaving like {@code Integer.MIN_VALUE}: strict
+     * comparisons match no rows, while the negated inclusive forms ({@code >=}, {@code <=}) match
+     * rows whose left operand is also null (null equals null).
      *
      * @param record        the sub-query record positioned on the scalar row
      * @param columnTypeTag the {@link ColumnType} tag of the cursor column

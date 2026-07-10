@@ -151,7 +151,10 @@ abstract class AbstractScalarCursorFunction extends NegatableBooleanFunction imp
     protected abstract void readValue(Record record);
 
     /**
-     * Caches the typed null value (empty sub-query); the predicate then matches no rows.
+     * Caches the typed null value (empty sub-query); the predicate then follows QuestDB's
+     * sentinel-null convention: strict comparisons match no rows, while the negated inclusive
+     * forms ({@code >=}, {@code <=}) match rows whose left operand is also null (null equals
+     * null).
      */
     protected abstract void setNullValue();
 }

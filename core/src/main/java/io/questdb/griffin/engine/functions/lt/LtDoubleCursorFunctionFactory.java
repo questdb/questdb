@@ -33,8 +33,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
  * <p>
  * The sub-query is executed once per query execution - not per row - in {@link Function#init}
  * and the resulting value is cached as a scalar {@code double}. If the cursor selects no rows,
- * or the value is {@code null}, the cached value is {@link Double#NaN} and the predicate matches
- * no rows (SQL {@code null}-comparison semantics).
+ * or the value is {@code null}, the cached value is {@link Double#NaN} and the predicate follows
+ * QuestDB's sentinel-null convention: the strict comparison matches no rows, while its negated
+ * inclusive form matches rows whose left operand is also null (null equals null).
  */
 public class LtDoubleCursorFunctionFactory extends AbstractDoubleCursorFunctionFactory {
 
