@@ -4884,6 +4884,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (!metadata.isWalEnabled()) {
                 throw SqlException.$(model.getModelPosition(), "DELETE is only supported on WAL tables");
             }
+            checkViewModification(tableToken);
             checkMatViewModification(tableToken);
 
             // Validate that the WHERE predicate compiles against the table by building (and immediately

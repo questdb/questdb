@@ -1,0 +1,98 @@
+# Review package: 6fc7472cb9..7846101b34
+
+## Commits
+7846101b34 feat(delete): add SecurityContext.authorizeTableDelete (OSS impls)
+
+## Files changed
+ core/src/main/java/io/questdb/cairo/SecurityContext.java             | 2 ++
+ .../main/java/io/questdb/cairo/security/AllowAllSecurityContext.java | 4 ++++
+ .../main/java/io/questdb/cairo/security/ReadOnlySecurityContext.java | 5 +++++
+ 3 files changed, 11 insertions(+)
+
+## Diff
+diff --git a/core/src/main/java/io/questdb/cairo/SecurityContext.java b/core/src/main/java/io/questdb/cairo/SecurityContext.java
+index 7d9ec8dd51..eaaa0124e1 100644
+--- a/core/src/main/java/io/questdb/cairo/SecurityContext.java
++++ b/core/src/main/java/io/questdb/cairo/SecurityContext.java
+@@ -163,20 +163,22 @@ public interface SecurityContext extends Mutable {
+ 
+     void authorizeTableDrop(TableToken tableToken);
+ 
+     // columnNames - empty means all indexed columns
+     void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+ 
+     void authorizeTableRename(TableToken tableToken);
+ 
+     void authorizeTableTruncate(TableToken tableToken);
+ 
++    void authorizeTableDelete(TableToken tableToken);
++
+     void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+ 
+     void authorizeTableVacuum(TableToken tableToken);
+ 
+     void authorizeViewCompile(TableToken tableToken);
+ 
+     void authorizeViewCreate();
+ 
+     void authorizeViewDrop(TableToken tableToken);
+ 
+diff --git a/core/src/main/java/io/questdb/cairo/security/AllowAllSecurityContext.java b/core/src/main/java/io/questdb/cairo/security/AllowAllSecurityContext.java
+index 834bb974f1..c51d4cbf6f 100644
+--- a/core/src/main/java/io/questdb/cairo/security/AllowAllSecurityContext.java
++++ b/core/src/main/java/io/questdb/cairo/security/AllowAllSecurityContext.java
+@@ -222,20 +222,24 @@ public class AllowAllSecurityContext implements SecurityContext {
+     }
+ 
+     @Override
+     public void authorizeTableRename(TableToken tableToken) {
+     }
+ 
+     @Override
+     public void authorizeTableTruncate(TableToken tableToken) {
+     }
+ 
++    @Override
++    public void authorizeTableDelete(TableToken tableToken) {
++    }
++
+     @Override
+     public void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+     }
+ 
+     @Override
+     public void authorizeTableVacuum(TableToken tableToken) {
+     }
+ 
+     @Override
+     public void authorizeViewCompile(TableToken tableToken) {
+diff --git a/core/src/main/java/io/questdb/cairo/security/ReadOnlySecurityContext.java b/core/src/main/java/io/questdb/cairo/security/ReadOnlySecurityContext.java
+index 1bdebe7344..42e626ffb0 100644
+--- a/core/src/main/java/io/questdb/cairo/security/ReadOnlySecurityContext.java
++++ b/core/src/main/java/io/questdb/cairo/security/ReadOnlySecurityContext.java
+@@ -258,20 +258,25 @@ public class ReadOnlySecurityContext implements SecurityContext {
+     @Override
+     public void authorizeTableRename(TableToken tableToken) {
+         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+     }
+ 
+     @Override
+     public void authorizeTableTruncate(TableToken tableToken) {
+         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+     }
+ 
++    @Override
++    public void authorizeTableDelete(TableToken tableToken) {
++        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
++    }
++
+     @Override
+     public void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+     }
+ 
+     @Override
+     public void authorizeTableVacuum(TableToken tableToken) {
+         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+     }
+ 

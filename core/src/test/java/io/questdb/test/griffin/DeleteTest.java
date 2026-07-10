@@ -73,6 +73,20 @@ public class DeleteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeleteRejectsPlainView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+            execute("create view t_view as (select ts, max(x) as x from t sample by 1h)");
+            try {
+                execute("DELETE FROM t_view WHERE x = 1");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "view");
+            }
+        });
+    }
+
+    @Test
     public void testDeleteRejectsUnknownColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, x int) timestamp(ts) partition by DAY WAL");

@@ -1,0 +1,134 @@
+# Review package: 9a58d18f3b..f5608f5af7
+
+## Commits
+f5608f5af7 feat(delete): register DELETE command, compiled-query and execution-model types
+
+## Files changed
+ core/src/main/java/io/questdb/griffin/CompiledQuery.java        | 3 ++-
+ core/src/main/java/io/questdb/griffin/model/ExecutionModel.java | 4 +++-
+ core/src/main/java/io/questdb/tasks/TableWriterTask.java        | 2 ++
+ 3 files changed, 7 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/core/src/main/java/io/questdb/griffin/CompiledQuery.java b/core/src/main/java/io/questdb/griffin/CompiledQuery.java
+index bc96926a3b..2760be3034 100644
+--- a/core/src/main/java/io/questdb/griffin/CompiledQuery.java
++++ b/core/src/main/java/io/questdb/griffin/CompiledQuery.java
+@@ -67,21 +67,22 @@ public interface CompiledQuery {
+     short ALTER_USER = CREATE_USER + 1; // 29
+     short CANCEL_QUERY = ALTER_USER + 1; // 30
+     short TABLE_SUSPEND = CANCEL_QUERY + 1; // 31
+     short CREATE_MAT_VIEW = TABLE_SUSPEND + 1; // 32
+     short REFRESH_MAT_VIEW = CREATE_MAT_VIEW + 1; // 33
+     short CREATE_VIEW = REFRESH_MAT_VIEW + 1; // 34
+     short COMPILE_VIEW = CREATE_VIEW + 1; // 35
+     short ALTER_VIEW = COMPILE_VIEW + 1; // 36
+     short ALTER_STORAGE_POLICY = ALTER_VIEW + 1; // 37
+     short TABLE_REBASE = ALTER_STORAGE_POLICY + 1; // 38
+-    short EMPTY = TABLE_REBASE + 1;
++    short DELETE = TABLE_REBASE + 1; // 39
++    short EMPTY = DELETE + 1;
+     short TYPES_COUNT = EMPTY;
+ 
+     void closeAllButSelect();
+ 
+     /**
+      * Executes the query.
+      * If execution is done in sync returns an instance of OperationFuture where isDone() is true.
+      * If execution happened async, OperationFuture.await() method should be called for blocking wait
+      * or OperationFuture.await(long) for wait with specified timeout.
+      *
+diff --git a/core/src/main/java/io/questdb/griffin/model/ExecutionModel.java b/core/src/main/java/io/questdb/griffin/model/ExecutionModel.java
+index 83681702a2..dd642df03d 100644
+--- a/core/src/main/java/io/questdb/griffin/model/ExecutionModel.java
++++ b/core/src/main/java/io/questdb/griffin/model/ExecutionModel.java
+@@ -30,21 +30,22 @@ public interface ExecutionModel {
+     int QUERY = 1;                          // 1
+     int CREATE_TABLE = QUERY + 1;           // 2
+     int RENAME_TABLE = CREATE_TABLE + 1;    // 3
+     int INSERT = RENAME_TABLE + 1;          // 4
+     int COPY = INSERT + 1;                  // 5
+     int UPDATE = COPY + 1;                  // 6
+     int EXPLAIN = UPDATE + 1;               // 7
+     int CREATE_MAT_VIEW = EXPLAIN + 1;      // 8
+     int CREATE_VIEW = CREATE_MAT_VIEW + 1;  // 9
+     int COMPILE_VIEW = CREATE_VIEW + 1;     // 10
+-    int MAX = COMPILE_VIEW + 1;
++    int DELETE = COMPILE_VIEW + 1;          // 11
++    int MAX = DELETE + 1;
+ 
+     int getModelType();
+ 
+     default IQueryModel getQueryModel() {
+         return null;
+     }
+ 
+     default @Nullable CharSequence getSelectText() {
+         return null;
+     }
+@@ -68,16 +69,17 @@ public interface ExecutionModel {
+             typeNameMap[ExecutionModel.QUERY] = "Query";
+             typeNameMap[ExecutionModel.CREATE_TABLE] = "Create";
+             typeNameMap[ExecutionModel.RENAME_TABLE] = "Rename";
+             typeNameMap[ExecutionModel.INSERT] = "Insert into";
+             typeNameMap[ExecutionModel.COPY] = "Copy";
+             typeNameMap[ExecutionModel.UPDATE] = "Update";
+             typeNameMap[ExecutionModel.EXPLAIN] = "Explain";
+             typeNameMap[ExecutionModel.CREATE_MAT_VIEW] = "Create materialized";
+             typeNameMap[ExecutionModel.CREATE_VIEW] = "Create view";
+             typeNameMap[ExecutionModel.COMPILE_VIEW] = "Compile view";
++            typeNameMap[ExecutionModel.DELETE] = "Delete from";
+         }
+     }
+ }
+ 
+ 
+ 
+diff --git a/core/src/main/java/io/questdb/tasks/TableWriterTask.java b/core/src/main/java/io/questdb/tasks/TableWriterTask.java
+index f3fee885ba..2762712a83 100644
+--- a/core/src/main/java/io/questdb/tasks/TableWriterTask.java
++++ b/core/src/main/java/io/questdb/tasks/TableWriterTask.java
+@@ -27,20 +27,21 @@ package io.questdb.tasks;
+ import io.questdb.cairo.CairoException;
+ import io.questdb.cairo.TableToken;
+ import io.questdb.cairo.sql.AsyncWriterCommand;
+ import io.questdb.std.Chars;
+ import io.questdb.std.Unsafe;
+ 
+ import java.io.Closeable;
+ 
+ public class TableWriterTask implements Closeable {
+     public static final int CMD_ALTER_TABLE = 2;
++    public static final int CMD_DELETE_TABLE = 5;
+     public static final int CMD_STORAGE_POLICY = 4;
+     public static final int CMD_UNUSED = 1;
+     public static final int CMD_UPDATE_TABLE = 3;
+ 
+     public static final int TSK_BEGIN = 64;
+     public static final int TSK_COMPLETE = 65;
+ 
+     private final long data;
+     private final long dataSize;
+     private long appendLim;
+@@ -56,20 +57,21 @@ public class TableWriterTask implements Closeable {
+         this.data = data;
+         this.dataSize = dataSize;
+         reset();
+     }
+ 
+     public static String getCommandName(int cmd) {
+         return switch (cmd) {
+             case CMD_ALTER_TABLE -> "ALTER TABLE";
+             case CMD_STORAGE_POLICY -> "STORAGE POLICY";
+             case CMD_UPDATE_TABLE -> "UPDATE TABLE";
++            case CMD_DELETE_TABLE -> "DELETE TABLE";
+             default -> "UNKNOWN COMMAND";
+         };
+     }
+ 
+     @Override
+     public void close() {
+         appendPtr = 0;
+         appendLim = 0;
+     }
+ 
