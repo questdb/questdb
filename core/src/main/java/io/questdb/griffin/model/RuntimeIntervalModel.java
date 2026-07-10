@@ -258,6 +258,18 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         }
                     }
 
+                    if (adjustment > 0 && dynamicValue == Long.MAX_VALUE) {
+                        // a strict bound just past the timestamp domain matches nothing;
+                        // the adjustment would wrap around to Long.MIN_VALUE and select every row
+                        if (!negated) {
+                            outIntervals.clear();
+                            return;
+                        } else {
+                            negatedNothing(outIntervals, divider);
+                            continue;
+                        }
+                    }
+
                     if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
                         long tempHi = Math.max(hi, lo);
                         lo = Math.min(hi, lo);

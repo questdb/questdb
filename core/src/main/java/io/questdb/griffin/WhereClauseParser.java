@@ -1833,7 +1833,14 @@ public final class WhereClauseParser implements Mutable {
             } catch (NumericException e) {
                 throw SqlException.invalidDate(compareWithNode.token, compareWithNode.position);
             }
-            model.intersectIntervals(lo, Long.MAX_VALUE);
+            if (!equalsTo && lo == Long.MIN_VALUE) {
+                // a strict bound at Long.MAX_VALUE wrapped around during adjustment inside
+                // parseFullOrPartialDate; such a bound is just past the timestamp domain
+                // and matches nothing
+                model.intersectEmpty();
+            } else {
+                model.intersectIntervals(lo, Long.MAX_VALUE);
+            }
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         } else if (isFunc(compareWithNode)) {
@@ -1844,6 +1851,10 @@ public final class WhereClauseParser implements Mutable {
                     lo = getTimestampFromConstFunction(timestampDriver, func, compareWithNode.position, false);
                     if (lo == Numbers.LONG_NULL) {
                         // make it empty set
+                        model.intersectEmpty();
+                    } else if (!equalsTo && lo == Long.MAX_VALUE) {
+                        // a strict bound just past the timestamp domain matches nothing;
+                        // lo + 1 would wrap around to Long.MIN_VALUE and select every row
                         model.intersectEmpty();
                     } else {
                         model.intersectIntervals(lo + adjustComparison(equalsTo, true), Long.MAX_VALUE);
