@@ -227,6 +227,14 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
     }
 
+    /**
+     * Number of tables currently held in the update-details cache. Exposed for
+     * monitoring and tests (e.g. verifying dropped tables are evicted).
+     */
+    public int getCachedTableCount() {
+        return tudCache.size();
+    }
+
     public long getDroppedBadMagicCount() {
         return droppedBadMagicCount;
     }
