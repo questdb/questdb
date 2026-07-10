@@ -2212,7 +2212,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         long timestampMergeIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
         long timestampMergeIndexAddr = 0;
-        int numChunks = 1;
+        int numChunks;
 
         // Re-zero per-row-group buffers. The getters already zero them for the
         // first call, but mergeRowGroup is called in a loop (once per MERGE action),
@@ -3812,7 +3812,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final PartitionDescriptor descriptor = ctx.getFreshPartitionDescriptor();
         descriptor.clear();
 
-        long parquetFileSize = 0;
+        long parquetFileSize;
         long parquetMetaFd = -1;
         boolean partitionDirCreated = false;
         try {
