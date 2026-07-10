@@ -25,11 +25,15 @@
 package io.questdb.test.griffin.engine.functions.lt;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -51,7 +55,50 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
+        // enables the test_timestamp_counter() function used to count sub-query executions
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+    }
+
+    @Test
+    public void testWorkerStateSharedExecutesCursorOnceAndRefreshes() throws Exception {
+        // Proves the worker-state contract of the async filter path with a non-thread-safe left
+        // operand: (1) the scalar sub-query executes exactly once per query execution even with 4
+        // workers; (2) every worker clone observes the owner's scalar (rows across the threshold are
+        // classified correctly); (3) re-executing the same compiled factory refreshes the cached state.
+        // test_timestamp_counter() increments once per row the sub-query cursor reads, so the counter
+        // equals the number of RHS executions.
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table src (ts timestamp)", ctx);
+            execute(compiler, "insert into src values (5000)", ctx);
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::int i, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(
+                    "select count() c from t where i::string::int > (select test_timestamp_counter(ts)::int from src)",
+                    ctx
+            ).getRecordCursorFactory()) {
+                // threshold = 5000 -> 5001..10000 -> 5000 rows
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("c\n5000\n", cursor, factory.getMetadata(), true, sink);
+                }
+                Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+
+                // change the RHS and re-execute the same compiled factory: the cached scalar must refresh
+                execute(compiler, "update src set ts = 9000", ctx);
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("c\n1000\n", cursor, factory.getMetadata(), true, sink);
+                }
+                Assert.assertEquals(2, TestTimestampCounterFactory.COUNTER.get());
+            }
+        });
     }
 
     @Test
@@ -85,9 +132,12 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testErrorMultipleColumns() throws Exception {
+        // the < and > factories duplicate the validation code, so both must be asserted
         assertMemoryLeak(() -> {
             execute("create table t as (select x::int i from long_sequence(10))");
             assertQuery("select i from t where i > (select max(i), 1 x from t)")
+                    .fails(27, "select must provide exactly one column");
+            assertQuery("select i from t where i < (select max(i), 1 x from t)")
                     .fails(27, "select must provide exactly one column");
         });
     }
@@ -116,22 +166,80 @@ public class IntCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testErrorNonNumericCursorColumn() throws Exception {
+        // the < and > factories duplicate the validation code, so both must be asserted
         assertMemoryLeak(() -> {
             execute("create table t as (select x::int i from long_sequence(10))");
             assertQuery("select i from t where i > (select 'abc' from t)")
+                    .fails(27, "cannot compare INT and STRING");
+            assertQuery("select i from t where i < (select 'abc' from t)")
                     .fails(27, "cannot compare INT and STRING");
         });
     }
 
     @Test
     public void testMultiRowCursorFails() throws Exception {
-        // a scalar sub-query yielding more than one row is an error, reported at the sub-query position
+        // A scalar sub-query yielding more than one row is an error, reported at the sub-query position.
+        // The INT/LONG/DOUBLE(FLOAT) cursor modes are separately implemented readers inside each factory,
+        // so each mode is asserted for both operators.
         assertMemoryLeak(() -> {
             execute("create table t as (select x::int i from long_sequence(10))");
+            // INT cursor mode
             assertQuery("select i from t where i > (select x::int from long_sequence(2))")
                     .fails(27, "scalar sub-query returned more than one row");
             assertQuery("select i from t where i < (select x::int from long_sequence(2))")
                     .fails(27, "scalar sub-query returned more than one row");
+            // LONG cursor mode
+            assertQuery("select i from t where i > (select x from long_sequence(2))")
+                    .fails(27, "scalar sub-query returned more than one row");
+            assertQuery("select i from t where i < (select x from long_sequence(2))")
+                    .fails(27, "scalar sub-query returned more than one row");
+            // DOUBLE cursor mode
+            assertQuery("select i from t where i > (select x::double from long_sequence(2))")
+                    .fails(27, "scalar sub-query returned more than one row");
+            assertQuery("select i from t where i < (select x::double from long_sequence(2))")
+                    .fails(27, "scalar sub-query returned more than one row");
+            // FLOAT cursor mode (shares DoubleCursorFunc, distinct reader arm)
+            assertQuery("select i from t where i > (select x::float from long_sequence(2))")
+                    .fails(27, "scalar sub-query returned more than one row");
+            assertQuery("select i from t where i < (select x::float from long_sequence(2))")
+                    .fails(27, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
+    public void testTypedNumericCursorScalars() throws Exception {
+        // pins the BYTE/SHORT readers of the cursor scalar and the typed FLOAT/DOUBLE NULL
+        // branches of the double comparison mode
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::int i from long_sequence(10))");
+            // BYTE cursor scalar
+            assertQuery("select i from t where i > (select 5::byte)")
+                    .noLeakCheck()
+                    .returns("i\n6\n7\n8\n9\n10\n");
+            assertQuery("select i from t where i < (select 5::byte)")
+                    .noLeakCheck()
+                    .returns("i\n1\n2\n3\n4\n");
+            // SHORT cursor scalar, boundaries via the negated operators
+            assertQuery("select i from t where i >= (select 5::short)")
+                    .noLeakCheck()
+                    .returns("i\n5\n6\n7\n8\n9\n10\n");
+            assertQuery("select i from t where i <= (select 5::short)")
+                    .noLeakCheck()
+                    .returns("i\n1\n2\n3\n4\n5\n");
+            // typed FLOAT/DOUBLE NULL scalars route through the double comparison mode and
+            // must match no rows for every operator
+            assertQuery("select i from t where i > (select null::double)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where i < (select null::float)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where i >= (select null::double)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where i <= (select null::float)")
+                    .noLeakCheck()
+                    .returns("i\n");
         });
     }
 

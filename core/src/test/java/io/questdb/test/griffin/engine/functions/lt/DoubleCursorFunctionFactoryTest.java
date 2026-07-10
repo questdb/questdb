@@ -25,11 +25,15 @@
 package io.questdb.test.griffin.engine.functions.lt;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -51,7 +55,78 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
+        // enables the test_timestamp_counter() function used to count sub-query executions
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+    }
+
+    @Test
+    public void testAsyncGroupByExpressionKeyExecutesCursorOnce() throws Exception {
+        // The cursor comparison as a GROUP BY expression key runs on the parallel Async Group By path,
+        // where per-worker clones of the key function are initialized with the owner's state donated
+        // up front. The scalar sub-query must execute exactly once per query - not once per worker -
+        // and every worker must observe the same threshold. test_timestamp_counter() increments once
+        // per row the sub-query cursor reads, so the counter equals the number of RHS executions.
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table src (ts timestamp)", ctx);
+            execute(compiler, "insert into src values (50000)", ctx);
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double price, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(100000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+
+            final String query = "select price::string::double > (select test_timestamp_counter(ts)::long from src) k, count() c " +
+                    "from t group by k order by k";
+
+            // the non-thread-safe left operand must still run on the parallel group by
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Group By workers: 4");
+
+            TestTimestampCounterFactory.COUNTER.set(0);
+            // threshold = 50000 -> 1..50000 false, 50001..100000 true
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            k\tc
+                            false\t50000
+                            true\t50000
+                            """);
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
+    public void testGroupByCursorComparisonKey() throws Exception {
+        // regression: compiling the sub-query of a cursor comparison used as a GROUP BY key must not
+        // corrupt the outer projection scratch state of the code generator (used to throw
+        // ArrayIndexOutOfBoundsException from extractVirtualFunctionsFromProjection)
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::double d from long_sequence(10000))");
+            // avg(d) = 5000.5 -> two groups of 5000 rows each
+            assertQuery("select d > (select avg(d) from t) b, count() c from t group by b order by b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\tc
+                            false\t5000
+                            true\t5000
+                            """);
+            assertQuery("select d < (select avg(d) from t) b, count() c from t group by b order by b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b\tc
+                            false\t5000
+                            true\t5000
+                            """);
+        });
     }
 
     @Test
@@ -170,19 +245,108 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testErrorMultipleColumns() throws Exception {
+        // the < and > factories duplicate the validation code, so both must be asserted
         assertMemoryLeak(() -> {
             execute("create table t as (select x::double price from long_sequence(10))");
             assertQuery("select price from t where price > (select avg(price), 1 x from t)")
+                    .fails(35, "select must provide exactly one column");
+            assertQuery("select price from t where price < (select avg(price), 1 x from t)")
                     .fails(35, "select must provide exactly one column");
         });
     }
 
     @Test
     public void testErrorNonNumericCursorColumn() throws Exception {
+        // the < and > factories duplicate the validation code, so both must be asserted
         assertMemoryLeak(() -> {
             execute("create table t as (select x::double price from long_sequence(10))");
             assertQuery("select price from t where price > (select 'abc' from t)")
                     .fails(35, "cannot compare DOUBLE and STRING");
+            assertQuery("select price from t where price < (select 'abc' from t)")
+                    .fails(35, "cannot compare DOUBLE and STRING");
+        });
+    }
+
+    @Test
+    public void testTypedNumericCursorScalars() throws Exception {
+        // pins the BYTE/SHORT/INT readers of the cursor scalar plus the typed-NULL branches
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::double price from long_sequence(10))");
+            // BYTE cursor scalar
+            assertQuery("select price from t where price > (select 5::byte)")
+                    .noLeakCheck()
+                    .returns("price\n6.0\n7.0\n8.0\n9.0\n10.0\n");
+            assertQuery("select price from t where price < (select 5::byte)")
+                    .noLeakCheck()
+                    .returns("price\n1.0\n2.0\n3.0\n4.0\n");
+            // SHORT cursor scalar, boundary via the negated operator (price == 5.0 matches <=)
+            assertQuery("select price from t where price > (select 5::short)")
+                    .noLeakCheck()
+                    .returns("price\n6.0\n7.0\n8.0\n9.0\n10.0\n");
+            assertQuery("select price from t where price <= (select 5::short)")
+                    .noLeakCheck()
+                    .returns("price\n1.0\n2.0\n3.0\n4.0\n5.0\n");
+            // INT cursor scalar, boundary via the negated operator (price == 5.0 matches >=)
+            assertQuery("select price from t where price < (select 5::int)")
+                    .noLeakCheck()
+                    .returns("price\n1.0\n2.0\n3.0\n4.0\n");
+            assertQuery("select price from t where price >= (select 5::int)")
+                    .noLeakCheck()
+                    .returns("price\n5.0\n6.0\n7.0\n8.0\n9.0\n10.0\n");
+            // typed INT/LONG NULL scalars must map to NaN and match no rows for every operator
+            assertQuery("select price from t where price > (select null::int)")
+                    .noLeakCheck()
+                    .returns("price\n");
+            assertQuery("select price from t where price < (select null::int)")
+                    .noLeakCheck()
+                    .returns("price\n");
+            assertQuery("select price from t where price >= (select null::long)")
+                    .noLeakCheck()
+                    .returns("price\n");
+            assertQuery("select price from t where price <= (select null::long)")
+                    .noLeakCheck()
+                    .returns("price\n");
+        });
+    }
+
+    @Test
+    public void testWorkerStateSharedExecutesCursorOnceAndRefreshes() throws Exception {
+        // Proves the worker-state contract of the async filter path with a non-thread-safe left
+        // operand: (1) the scalar sub-query executes exactly once per query execution even with 4
+        // workers; (2) every worker clone observes the owner's scalar (rows across the threshold are
+        // classified correctly); (3) re-executing the same compiled factory refreshes the cached state.
+        // test_timestamp_counter() increments once per row the sub-query cursor reads, so the counter
+        // equals the number of RHS executions.
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table src (ts timestamp)", ctx);
+            execute(compiler, "insert into src values (5000)", ctx);
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double price, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(
+                    "select count() c from t where price::string::double > (select test_timestamp_counter(ts)::long from src)",
+                    ctx
+            ).getRecordCursorFactory()) {
+                // threshold = 5000 -> 5001..10000 -> 5000 rows
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("c\n5000\n", cursor, factory.getMetadata(), true, sink);
+                }
+                Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+
+                // change the RHS and re-execute the same compiled factory: the cached scalar must refresh
+                execute(compiler, "update src set ts = 9000", ctx);
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("c\n1000\n", cursor, factory.getMetadata(), true, sink);
+                }
+                Assert.assertEquals(2, TestTimestampCounterFactory.COUNTER.get());
+            }
         });
     }
 
