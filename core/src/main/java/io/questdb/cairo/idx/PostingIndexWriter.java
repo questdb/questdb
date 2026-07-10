@@ -1154,7 +1154,26 @@ public class PostingIndexWriter implements IndexWriter {
 
             allocateNativeBuffers();
         } catch (Throwable e) {
-            close();
+            // A failed (re)open leaves chain.regionLimit at the reset sentinel
+            // (KEY_FILE_RESERVED): openExisting is what publishes the real
+            // regionLimit into the chain, and it may not have run yet (a throw
+            // from keyMem.of / peekRegionLimit / jumpTo, or from openExisting
+            // itself). The normal truncating close() sizes its .pk trim from
+            // that stale sentinel, so it would shrink the file back to
+            // KEY_FILE_RESERVED and discard the live chain region [8192,
+            // regionLimit) that is physically on disk. Release keyMem WITHOUT
+            // truncation so the on-disk index is left intact for the next open;
+            // the close() below then skips the already-closed keyMem. Do the
+            // keyMem release in a try/finally so a failure to release it still
+            // runs the full close() (freeing valueMem / native buffers and
+            // resetting state) instead of leaking them.
+            try {
+                if (keyMem.isOpen()) {
+                    keyMem.close(false);
+                }
+            } finally {
+                close();
+            }
             if (kFdUnassigned) {
                 LOG.error().$("could not open posting index [path=").$(path).$(']').$();
             }
@@ -5658,7 +5677,7 @@ public class PostingIndexWriter implements IndexWriter {
         // packedResiduals auto-grow at their use sites, so their pre-allocation
         // below is only a per-stride realloc saver.
         long maxBPStrideDataSize = Math.max(maxDirtyStrideTrialL, maxHeaderSize);
-        long mergedValuesSize = Math.max((long) maxDirtyStrideTotal, 1024L) * Long.BYTES;
+        long mergedValuesSize = Math.max(maxDirtyStrideTotal, 1024L) * Long.BYTES;
 
         // Pre-flight: if even the correctly-sized incremental buffers would
         // breach the RSS limit (one stride genuinely too large for this box),

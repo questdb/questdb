@@ -2635,10 +2635,16 @@ public class WalWriterTest extends AbstractCairoTest {
             );
             assertQuery("SELECT count() FROM pidx")
                     .noLeakCheck().noRandomAccess().expectSize().returns("count\n768\n");
-            // The reseal rebuilt new_col's posting index from the column data: an indexed
-            // lookup must return exactly the 68 O3 rows that carry a new_col value.
+            // The reseal rebuilt new_col's posting index from the column data. The plan check
+            // pins the count to the index execution path -- an "Index forward scan on: new_col"
+            // per IN value -- so the query is guaranteed to exercise the rebuilt index and not a
+            // full/async-filter scan (a routing or optimizer change that silently stopped using
+            // the index would fail here). count() == 68 then proves the index returns exactly the
+            // O3 rows carrying a new_col value; a rebuild that produced wrong rowids fails the count.
             assertQuery("SELECT count() FROM pidx WHERE new_col IN ('K1','K2','K3')")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n68\n");
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .withPlanContaining("Index forward scan on: new_col")
+                    .returns("count\n68\n");
         });
     }
 
