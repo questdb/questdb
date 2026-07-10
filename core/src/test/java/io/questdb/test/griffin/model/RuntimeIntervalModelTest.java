@@ -27,6 +27,8 @@ package io.questdb.test.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.IntervalDynamicIndicator;
 import io.questdb.griffin.model.IntervalOperation;
@@ -36,6 +38,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,7 +46,8 @@ import org.junit.Test;
  * Covers the legacy position-list fallback of {@link RuntimeIntervalModel}: models constructed
  * without a dynamic-range position list (or with a shorter one, as legacy callers could produce)
  * must evaluate their dynamic intervals normally, falling back to position 0 for error
- * reporting instead of failing on the missing list.
+ * reporting instead of failing on the missing list. The error path is exercised with a
+ * multi-row scalar sub-query, whose rejection must carry the fallback position 0.
  */
 public class RuntimeIntervalModelTest extends AbstractCairoTest {
 
@@ -110,5 +114,61 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
                 model.close();
             }
         });
+    }
+
+    @Test
+    public void testMultiRowSubQueryErrorFallsBackToPositionZeroWithNullPositionList() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwoRowTable();
+            assertMultiRowSubQueryErrorAtPositionZero(null);
+        });
+    }
+
+    @Test
+    public void testMultiRowSubQueryErrorFallsBackToPositionZeroWithShortPositionList() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwoRowTable();
+            assertMultiRowSubQueryErrorAtPositionZero(new IntList());
+        });
+    }
+
+    private void assertMultiRowSubQueryErrorAtPositionZero(IntList positions) throws Exception {
+        final LongList intervals = new LongList();
+        IntervalUtils.encodeInterval(
+                1_000L,
+                0,
+                (short) 0,
+                IntervalDynamicIndicator.IS_HI_DYNAMIC,
+                IntervalOperation.INTERSECT,
+                intervals
+        );
+        final ObjList<Function> dynamicFunctions = new ObjList<>();
+        dynamicFunctions.add(new CursorFunction(select("select ts from tab")));
+        final RuntimeIntervalModel model = new RuntimeIntervalModel(
+                ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                PartitionBy.DAY,
+                intervals,
+                dynamicFunctions,
+                positions
+        );
+        try {
+            model.calculateIntervals(sqlExecutionContext);
+            Assert.fail("multi-row scalar sub-query must be rejected");
+        } catch (SqlException e) {
+            Assert.assertEquals(
+                    "error must fall back to position 0 when the position list is missing or short",
+                    0,
+                    e.getPosition()
+            );
+            TestUtils.assertContains(e.getFlyweightMessage(), "scalar sub-query returned more than one row");
+        } finally {
+            model.close();
+        }
+    }
+
+    private void createTwoRowTable() throws SqlException {
+        execute("create table tab as (" +
+                "select timestamp_sequence(0, 1000) ts from long_sequence(2)" +
+                ") timestamp(ts)");
     }
 }
