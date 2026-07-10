@@ -225,6 +225,78 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotAliasedAggregateProtectedColumnNames() throws Exception {
+        // Regression: a pivot with an ALIASED aggregate builds a composite output column name
+        // (value_aggregate). When the value is a protective-quoted operator token or dotted name,
+        // the composite used to embed those quotes mid-name ("in"_s / "FNCL 2.5"_s), which
+        // toColumnName could not strip, so the quotes leaked into result set metadata and broke
+        // CREATE TABLE AS SELECT. The components are now stripped and the whole composite
+        // re-protected, so the names surface clean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+
+            // operator-token values with an aliased aggregate -> clean in_s / and_s
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) AS s FOR cat IN ('in', 'and') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_s\tand_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) AS s FOR cat IN ('in', 'and') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, in_s, and_s FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_s\tand_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+
+            // dotted values with an aliased aggregate -> clean FNCL 2.5_s (dot stays content, no leaked quotes)
+            execute("CREATE TABLE sec (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO sec VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 3.0', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 3.0', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM sec
+                    PIVOT (SUM(val) AS s FOR cat IN ('FNCL 2.5', 'FNCL 3.0') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tFNCL 2.5_s\tFNCL 3.0_s
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotDefaultNamingRules() throws Exception {
         assertQuery("""
                 trades PIVOT (
@@ -290,6 +362,117 @@ public class PivotTest extends AbstractSqlParserTest {
                         buy\t101502.2\t5.775E-5
                         sell\t101502.1\t1.4443E-4
                         """);
+    }
+
+    @Test
+    public void testPivotDottedValueTruncatedToOperatorTokenDedups() throws Exception {
+        // Regression (createExprColumnAlias quote-path dedup gap): at a small generated-alias max size,
+        // a dotted pivot value ('in .x') truncates past its dot and its residual 'in ' trims back to the
+        // operator token 'in', colliding on the display name with a sibling value 'in'. The dedup must
+        // key on the trimmed content and yield distinct, quote-free column names; before the fix the
+        // second column surfaced as a second bare 'in', so the projection metadata build threw
+        // "Duplicate column [name=in]" and the (otherwise valid) PIVOT failed to compile.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_GENERATED_MAX_SIZE, 6);
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'in .x', 20),
+                        ('B', 'in', 30),
+                        ('B', 'in .x', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'in .x') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	i_2
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotDottedValueWithTrailingSpace() throws Exception {
+        // A dotted pivot value with a trailing space ('FNCL 2.5 ') surfaces a clean column name with
+        // no bare trailing space (an interop hazard over PG / HTTP / CSV) and dedups against the
+        // space-free variant (FNCL 2.5 / FNCL 2.5_2), matching the operator-token trailing-space
+        // behavior rather than two columns differing only by a space.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 2.5 ', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 2.5 ', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('FNCL 2.5', 'FNCL 2.5 ') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tFNCL 2.5\tFNCL 2.5_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotDuplicateOperatorTokenValuesThroughJoin() throws Exception {
+        // Two pivots produce operator-token columns ('in') that collide in the outer wildcard.
+        // The dedup must yield clean, quote-free names (in / in1) and the join must compile
+        // (regression: the composed reference t2."in" threw "wtf? t2.\"in\"" / Invalid column).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("""
+                    SELECT * FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t2
+                    ORDER BY grp, grp1
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	grp1	in1
+                            A	10	A	10
+                            A	10	B	30
+                            B	30	A	10
+                            B	30	B	30
+                            """);
+        });
+    }
+
+    @Test(timeout = 30000)
+    public void testPivotEmptyValue() throws Exception {
+        // An empty-string pivot value has no content to build an alias from; it must terminate
+        // with a "column" placeholder instead of spinning the compiler forever (regression for
+        // the PIVOT IN ('') hang / NegativeArraySizeException).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', '', 10), ('B', '', 30);");
+            assertQuery("""
+                    SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('') GROUP BY grp) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	column
+                            A	10
+                            B	30
+                            """);
+        });
     }
 
     @Test
@@ -504,6 +687,37 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotMultiForProtectedColumnNames() throws Exception {
+        // Regression: a multi-FOR pivot concatenates one value alias per FOR column (value1_value2).
+        // Protective-quoted operator-token values used to embed their quotes mid-name ("in"_"and");
+        // the components are now stripped so the composite surfaces clean (in_and).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, c1 STRING, c2 STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 'and', 10),
+                        ('B', 'in', 'and', 30);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (
+                        SUM(val)
+                        FOR c1 IN ('in')
+                            c2 IN ('and')
+                        GROUP BY grp
+                    ) ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin_and
+                            A\t10
+                            B\t30
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotNestedPivot() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
@@ -578,6 +792,133 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotOperatorTokenColumnCollidesWithSiblingColumn() throws Exception {
+        // An operator-token pivot column ('in') surfaces bare as `in` via toColumnName, so a SELECT *
+        // that pairs it with a same-named sibling column must deduplicate on the DISPLAY name, not the
+        // raw compiler alias: the dedup used to key on the quote-protected "in", missing the collision
+        // with a bare in, so the projection metadata build threw "duplicate column [name=in]"
+        // (regression). Both representation orders are covered.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+
+            // bare column `in` beside a protective-quoted "in" pivot column -> in / in1
+            execute("CREATE TABLE t1 (\"in\" INT);");
+            execute("INSERT INTO t1 VALUES (99);");
+            assertQuery("""
+                    SELECT * FROM t1
+                      CROSS JOIN (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) p
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            in	grp	in1
+                            99	A	10
+                            99	B	30
+                            """);
+
+            // protective-quoted "in" pivot column beside a bare `in` user alias -> in / in1
+            assertQuery("""
+                    SELECT * FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) p
+                      CROSS JOIN (SELECT 1 AS "in") k
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in1
+                            A	10	1
+                            B	30	1
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotOperatorTokenValueThroughJoin() throws Exception {
+        // An operator-token pivot column ('in') referenced through a join wildcard produces the
+        // composed reference t1."in"; it must resolve against the join metadata (stored bare as
+        // t1.in) and surface the clean name (regression: threw "wtf? t1.\"in\"" at compile time).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("""
+                    SELECT * FROM
+                      (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1
+                      CROSS JOIN (SELECT 1 x) t2
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	x
+                            A	10	1
+                            B	30	1
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotOperatorTokenValueWithTrailingSpace() throws Exception {
+        // Regression: an operator-token pivot value ('in') and the same token plus trailing
+        // whitespace ('in ') both reduce to the display name `in` - the space is trimmed from the
+        // bare alias. The un-suffixed bare 'in ' candidate used to skip the quoted-sibling check and
+        // surface a second column also named `in`, so the projection metadata build threw
+        // "Duplicate column [name=in]". The dedup must now yield clean, quote-free names in / in_2,
+        // and CREATE TABLE AS SELECT over the pivot must succeed. Both value orders are covered:
+        // the result set was scan-order dependent (non-deterministic for a dynamic pivot) before.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'in ', 20),
+                        ('B', 'in', 30),
+                        ('B', 'in ', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'in ') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	10	20
+                            B	30	40
+                            """);
+            // reverse value order collides the other way but still dedups cleanly to in / in_2
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in ', 'in') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	20	10
+                            B	40	30
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in', 'in ') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, \"in\", in_2 FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	in_2
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotPositionalGroupByNotAllowed() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
@@ -592,6 +933,204 @@ public class PivotTest extends AbstractSqlParserTest {
                     )
                     """)
                     .fails(97, "cannot use positional group by inside `PIVOT`");
+        });
+    }
+
+    @Test
+    public void testPivotProtectedColumnNotReferenceableFromEnclosingQuery() throws Exception {
+        // Documented limitation: a compiler-protected output column - a dotted user alias, or an
+        // operator-token pivot value - is not referenceable by name from an enclosing query, because
+        // the protective quotes cannot survive to the outer reference. These must keep failing
+        // cleanly in the parser with a SqlException, never a "wtf?" AssertionError from an
+        // unresolved compile-time lookup (a future refactor of the resolution path could regress it).
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT \"a.b\" FROM (SELECT 1 AS \"a.b\")")
+                    .fails(7, "Invalid table name or alias");
+            assertQuery("SELECT * FROM (SELECT 1 AS \"a.b\") ORDER BY \"a.b\"")
+                    .fails(43, "Invalid table name or alias");
+
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'in', 10), ('B', 'in', 30);");
+            assertQuery("SELECT t1.\"in\" FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in') GROUP BY grp)) t1")
+                    .fails(7, "Invalid column: t1.in");
+        });
+    }
+
+    @Test
+    public void testPivotQuotedContentValueCollidesWithOperatorToken() throws Exception {
+        // Regression: a pivot value whose data is literally "in" displays as in (the documented
+        // quoted-content-value tradeoff) and collides with the operator-token value 'in'. The dedup
+        // must yield clean in / in_2, not in / "in"_2 - the leaked quotes broke result set metadata
+        // and CREATE TABLE AS SELECT, and were non-deterministic for a dynamic pivot (scan order
+        // decided the collision).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', '"in"', 20),
+                        ('B', 'in', 30),
+                        ('B', '"in"', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', '"in"') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin\tin_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('in', '"in"') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("SELECT grp, \"in\", in_2 FROM pivoted ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tin\tin_2
+                            A\t10\t20
+                            B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithCaseVariantOperatorTokenValues() throws Exception {
+        // 'in' and 'IN' are distinct values (the duplicate-value guard is case-sensitive) but
+        // collide in the case-insensitive alias space, so the second gets a dedup suffix. The
+        // suffix turns the operator token into a plain identifier, so the protective quotes must
+        // not leak into the column name (regression: the old name was the literal "IN_2", which
+        // also broke CREATE TABLE AS SELECT over the pivot).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'IN', 20),
+                        ('B', 'in', 30),
+                        ('B', 'IN', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'IN') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	IN_2
+                            A	10	20
+                            B	30	40
+                            """);
+            // the clean names make the pivot result a valid physical table
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) FOR cat IN ('in', 'IN') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("""
+                    SELECT grp, "in", "IN_2" FROM pivoted ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	IN_2
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithDottedValues() throws Exception {
+        // A static IN-list dotted value goes through the SqlParser alias path (distinct from the
+        // dynamic subquery path the *Type tests cover); its column name must be clean.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'FNCL 2.5', 10),
+                        ('A', 'FNCL 3.0', 20),
+                        ('B', 'FNCL 2.5', 30),
+                        ('B', 'FNCL 3.0', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('FNCL 2.5', 'FNCL 3.0') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	FNCL 2.5	FNCL 3.0
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithOperatorTokenValues() throws Exception {
+        // Values that collide with operator tokens ('in', 'and') are quote-protected internally;
+        // the result set surfaces the clean names, not "in" / "and".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('in', 'and') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	and
+                            A	10	20
+                            B	30	40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotStaticListWithQuotedContentValue() throws Exception {
+        // Documented limitation: a pivot value whose data genuinely begins and ends with a double
+        // quote AND contains a dot (or matches an operator token) cannot be distinguished from a
+        // compiler-protected alias, so toColumnName strips those quotes and the column surfaces as
+        // 'a.b' rather than '"a.b"'. This pins the tradeoff so it cannot drift silently; preserving
+        // such quotes would require tracking alias provenance out-of-band.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', '"a.b"', 10),
+                        ('B', '"a.b"', 20);
+                    """);
+            assertQuery("""
+                    SELECT * FROM data
+                    PIVOT (SUM(val) FOR cat IN ('"a.b"') GROUP BY grp)
+                    ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	a.b
+                            A	10
+                            B	20
+                            """);
         });
     }
 
@@ -788,7 +1327,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"2024-01-01T00:00:00.000Z"	"2024-01-02T00:00:00.000Z"
+                            grp	2024-01-01T00:00:00.000Z	2024-01-02T00:00:00.000Z
                             A	10	20
                             B	30	40
                             """);
@@ -976,7 +1515,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"1.5"	"2.5"
+                            grp	1.5	2.5
                             A	10	20
                             B	30	40
                             """);
@@ -1039,7 +1578,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"1.5"	"2.5"
+                            grp	1.5	2.5
                             A	10	20
                             B	30	40
                             """);
@@ -1097,7 +1636,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"192.168.1.1"	"192.168.1.2"
+                            grp	192.168.1.1	192.168.1.2
                             A	10	20
                             B	30	40
                             """);
@@ -1455,7 +1994,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("""
-                            grp	"2024-01-01T00:00:00.000000Z"	"2024-01-02T00:00:00.000000Z"
+                            grp	2024-01-01T00:00:00.000000Z	2024-01-02T00:00:00.000000Z
                             A	10	20
                             B	30	40
                             """);
@@ -1490,6 +2029,59 @@ public class PivotTest extends AbstractSqlParserTest {
                             grp\tX\tY
                             A\t10\t20
                             B\t30\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotToTableWithDottedColumnNamesFailsCleanly() throws Exception {
+        // Documented limitation: a dotted pivot value yields a display column name that contains a
+        // dot (FNCL 2.5), which is not a valid PHYSICAL column name - TableUtils.isValidColumnName
+        // rejects '.'. So CREATE TABLE AS SELECT (and a materialized view) over such a pivot cannot
+        // materialize the column and must fail cleanly with an "invalid column name" SqlException,
+        // never a crash. Operator-token pivot values (in, and) ARE valid physical names and CTAS
+        // succeeds - see testPivotToTableWithOperatorTokenColumnNames. The dotted display name still
+        // works for plain SELECT and over the wire; only physical persistence is unsupported.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("INSERT INTO data VALUES ('A', 'FNCL 2.5', 10), ('B', 'FNCL 2.5', 30);");
+            assertExceptionNoLeakCheck(
+                    "CREATE TABLE pivoted AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('FNCL 2.5') GROUP BY grp))",
+                    13,
+                    "invalid column name [name=FNCL 2.5"
+            );
+        });
+    }
+
+    @Test
+    public void testPivotToTableWithOperatorTokenColumnNames() throws Exception {
+        // Operator-token pivot values now yield clean physical column names, so CREATE TABLE AS
+        // SELECT succeeds (the old "in"-with-quotes name was rejected as invalid) and the columns
+        // remain addressable via quoted identifiers.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING, val INT);");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'in', 10),
+                        ('A', 'and', 20),
+                        ('B', 'in', 30),
+                        ('B', 'and', 40);
+                    """);
+            execute("""
+                    CREATE TABLE pivoted AS (
+                        SELECT * FROM data
+                        PIVOT (SUM(val) FOR cat IN ('in', 'and') GROUP BY grp)
+                    );
+                    """);
+            assertQuery("""
+                    SELECT grp, "in", "and" FROM pivoted ORDER BY grp
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp	in	and
+                            A	10	20
+                            B	30	40
                             """);
         });
     }

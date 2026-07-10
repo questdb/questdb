@@ -214,6 +214,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final CairoConfiguration configuration;
     private final LongList coveringAddrs = new LongList();
     private final LongList coveringAuxAddrs = new LongList();
+    private final Decimal128 coveringDecimal128 = new Decimal128();
+    private final Decimal256 coveringDecimal256 = new Decimal256();
+    private final Decimal64 coveringDecimal64 = new Decimal64();
     private final IntList coveringIndices = new IntList();
     private final LongList coveringNameTxns = new LongList();
     private final ObjList<CharSequence> coveringNames = new ObjList<>();
@@ -3900,8 +3903,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * (data + aux) in {@code covMmaps} grows via mmap extend; the caller
      * passes the final base addresses to PostingIndexWriter after the loop.
      *
-     * <p>{@code covSlotMeta} layout per slot (3 longs):
-     * [0] decodedChunkIdx (-1 if skipped), [1] colType, [2] dataVecBytesWritten.
+     * <p>{@code covSlotMeta} layout per slot (4 longs):
+     * [0] decodedChunkIdx (-1 if skipped), [1] colType, [2] dataVecBytesWritten,
+     * [3] parquetColType (the parquet-stored type, which differs from colType
+     * when a lazy ALTER COLUMN TYPE is pending on the covered column).
      */
     private void accumulateCoveredColumnsFromRowGroup(
             IntList coveringColumnIndices,
@@ -3913,48 +3918,135 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         final int coverCount = coveringColumnIndices.size();
         for (int slot = 0; slot < coverCount; slot++) {
-            final int decodedChunkIdx = (int) covSlotMeta.get(3L * slot);
+            final int decodedChunkIdx = (int) covSlotMeta.get(4L * slot);
             if (decodedChunkIdx < 0) {
                 continue;
             }
-            final int columnType = (int) covSlotMeta.get(3L * slot + 1);
+            final int columnType = (int) covSlotMeta.get(4L * slot + 1);
+            final int parquetColType = (int) covSlotMeta.get(4L * slot + 3);
             final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(decodedChunkIdx);
             final long srcDataSize = rowGroupBuffers.getChunkDataSize(decodedChunkIdx);
-            long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedChunkIdx);
-            long srcAuxSize = rowGroupBuffers.getChunkAuxSize(decodedChunkIdx);
+            final long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedChunkIdx);
+            final long srcAuxSize = rowGroupBuffers.getChunkAuxSize(decodedChunkIdx);
 
             final MemoryMARW dataMem = covMmaps.getQuick(2 * slot + 1);
             if (ColumnType.isVarSize(columnType)) {
                 final MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
                 final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                final long dataVecBytesWritten = covSlotMeta.get(3L * slot + 2);
+                final long dataVecBytesWritten = covSlotMeta.get(4L * slot + 2);
 
-                if (srcDataPtr == 0 && srcAuxPtr == 0) {
+                if (srcDataSize == 0 && srcAuxSize == 0) {
                     accumulateAllNullVarSizeChunk(
                             driver, auxMem, dataMem, rowGroupIndex,
                             rowGroupRowCount, dataVecBytesWritten);
-                    covSlotMeta.set(3L * slot + 2,
+                    covSlotMeta.set(4L * slot + 2,
                             dataVecBytesWritten + rowGroupRowCount * driver.getDataVectorMinEntrySize());
                     continue;
                 }
+
+                if (srcAuxSize == 0 && srcDataPtr != 0) {
+                    final long convertedDataSize = accumulateFixedToVarChunk(
+                            driver, columnType, parquetColType, dataMem, auxMem,
+                            rowGroupBuffers, decodedChunkIdx, srcDataPtr,
+                            rowGroupIndex, rowGroupRowCount, dataVecBytesWritten);
+                    covSlotMeta.set(4L * slot + 2, dataVecBytesWritten + convertedDataSize);
+                    continue;
+                }
+
+                long auxPtr = srcAuxPtr;
+                long auxSize = srcAuxSize;
                 if (rowGroupIndex > 0) {
                     driver.shiftCopyAuxVector(
-                            -dataVecBytesWritten, srcAuxPtr, 0,
-                            rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
+                            -dataVecBytesWritten, auxPtr, 0,
+                            rowGroupRowCount - 1, auxPtr, auxSize);
                     final long adjust = driver.getMinAuxVectorSize();
-                    srcAuxPtr += adjust;
-                    srcAuxSize -= adjust;
+                    auxPtr += adjust;
+                    auxSize -= adjust;
                 }
                 dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
-                auxMem.putBlockOfBytes(srcAuxPtr, srcAuxSize);
-                covSlotMeta.set(3L * slot + 2, dataVecBytesWritten + srcDataSize);
+                auxMem.putBlockOfBytes(auxPtr, auxSize);
+                covSlotMeta.set(4L * slot + 2, dataVecBytesWritten + srcDataSize);
             } else {
-                if (srcDataPtr == 0) {
+                if (srcDataSize == 0 && srcAuxSize == 0) {
                     accumulateAllNullFixedChunk(dataMem, columnType, rowGroupRowCount);
+                    continue;
+                }
+                final int srcTag = ColumnType.tagOf(parquetColType);
+                final int dstTag = ColumnType.tagOf(columnType);
+                if ((ColumnType.isVarSize(srcTag) || ColumnType.isSymbol(srcTag))
+                        && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
+                    final int effectiveSrcType = ColumnType.isSymbol(srcTag) ? ColumnType.VARCHAR : parquetColType;
+                    // Convert straight into the destination mmap. The fixed output size is
+                    // exact (rowCount * entrySize) and convertVarColumnToFixed writes every
+                    // row positionally (a value or a null sentinel), so the whole region is
+                    // filled with no intermediate buffer or copy.
+                    final long fixSize = rowGroupRowCount * ColumnType.sizeOf(columnType);
+                    final long dstPtr = dataMem.appendAddressFor(fixSize);
+                    O3PartitionJob.convertVarColumnToFixed(
+                            effectiveSrcType, columnType, srcDataPtr, srcAuxPtr,
+                            (int) rowGroupRowCount, dstPtr,
+                            utf8Sink, utf16Sink,
+                            coveringDecimal64, coveringDecimal128, coveringDecimal256);
                 } else {
                     dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
                 }
             }
+        }
+    }
+
+    private long accumulateFixedToVarChunk(
+            ColumnTypeDriver driver,
+            int columnType,
+            int parquetColType,
+            MemoryMARW dataMem,
+            MemoryMARW auxMem,
+            RowGroupBuffers rowGroupBuffers,
+            int decodedChunkIdx,
+            long srcDataPtr,
+            int rowGroupIndex,
+            long rowGroupRowCount,
+            long dataVecBytesWritten
+    ) {
+        final long auxSize = driver.getAuxVectorSize(rowGroupRowCount);
+        final long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            final long dataBufCap;
+            final long dataBuf;
+            if (ColumnType.isVarchar(columnType)) {
+                dataBufCap = O3PartitionJob.estimateVarcharDataSize(parquetColType, (int) rowGroupRowCount);
+                dataBuf = dataBufCap > 0 ? Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_TABLE_WRITER) : 0;
+            } else {
+                dataBufCap = O3PartitionJob.estimateStringDataSize(parquetColType, (int) rowGroupRowCount);
+                dataBuf = Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_TABLE_WRITER);
+            }
+            try {
+                final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodedChunkIdx);
+                if (ColumnType.isVarchar(columnType)) {
+                    O3PartitionJob.convertFixedColumnToVarchar(parquetColType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                } else {
+                    O3PartitionJob.convertFixedColumnToString(parquetColType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                }
+                final long actualDataSize = driver.getDataVectorSizeAt(auxBuf, rowGroupRowCount - 1);
+                long auxWritePtr = auxBuf;
+                long auxWriteSize = auxSize;
+                if (rowGroupIndex > 0) {
+                    driver.shiftCopyAuxVector(-dataVecBytesWritten, auxBuf, 0, rowGroupRowCount - 1, auxBuf, auxSize);
+                    final long adjust = driver.getMinAuxVectorSize();
+                    auxWritePtr += adjust;
+                    auxWriteSize -= adjust;
+                }
+                if (actualDataSize > 0) {
+                    dataMem.putBlockOfBytes(dataBuf, actualDataSize);
+                }
+                auxMem.putBlockOfBytes(auxWritePtr, auxWriteSize);
+                return actualDataSize;
+            } finally {
+                if (dataBuf != 0) {
+                    Unsafe.free(dataBuf, dataBufCap, MemoryTag.NATIVE_TABLE_WRITER);
+                }
+            }
+        } finally {
+            Unsafe.free(auxBuf, auxSize, MemoryTag.NATIVE_TABLE_WRITER);
         }
     }
 
@@ -7397,9 +7489,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
 
             // covSlotMeta packs per-slot state: [decodedChunkIdx, colType,
-            // dataVecBytesWritten] (3 longs per slot). Slots whose column
-            // is absent from parquet have decodedChunkIdx == -1.
-            final DirectLongList covSlotMeta = hasCovering ? getTempDirectLongList(3L * coverCount) : null;
+            // dataVecBytesWritten, parquetColType] (4 longs per slot). Slots whose
+            // column is absent from parquet have decodedChunkIdx == -1. parquetColType
+            // is the type stored in the parquet file, which differs from colType when a
+            // lazy ALTER COLUMN TYPE is pending on the covered column.
+            final DirectLongList covSlotMeta = hasCovering ? getTempDirectLongList(4L * coverCount) : null;
             // Mmap-backed temp files for covered column data (+ aux for
             // var-size). Written via mmap in the row-group loop and read
             // from the same addresses during seal — no write()/re-mmap
@@ -9098,9 +9192,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * to the configured data-append page size for var-size data, whose
      * decoded size is not derivable from metadata.
      *
-     * <p>{@code covSlotMeta} is filled with 3 longs per slot:
-     * [decodedChunkIdx, colType, dataVecBytesWritten].
+     * <p>{@code covSlotMeta} is filled with 4 longs per slot:
+     * [decodedChunkIdx, colType, dataVecBytesWritten, parquetColType].
      * Slots whose column is absent from parquet get decodedChunkIdx == -1.
+     * parquetColType is the parquet-stored type, which differs from colType
+     * when a lazy ALTER COLUMN TYPE is pending on the covered column.
      *
      * <p>{@code covMmaps} is filled with 2 entries per slot:
      * [auxMem (null for fixed-size), dataMem]. Both are null for skipped slots.
@@ -9135,6 +9231,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 covSlotMeta.add(-1L);
                 covSlotMeta.add(0L);
                 covSlotMeta.add(0L);
+                covSlotMeta.add(0L);
                 covMmaps.add(null);
                 covMmaps.add(null);
                 continue;
@@ -9142,6 +9239,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long coveredColTop = columnVersionWriter.getColumnTop(partitionTimestamp, tableColIdx);
             if (coveredColTop >= partitionSize) {
                 covSlotMeta.add(-1L);
+                covSlotMeta.add(0L);
                 covSlotMeta.add(0L);
                 covSlotMeta.add(0L);
                 covMmaps.add(null);
@@ -9153,12 +9251,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 covSlotMeta.add(-1L);
                 covSlotMeta.add(0L);
                 covSlotMeta.add(0L);
+                covSlotMeta.add(0L);
                 covMmaps.add(null);
                 covMmaps.add(null);
                 continue;
             }
 
             final int columnType = metadata.getColumnType(tableColIdx);
+            final int parquetColType = parquetMetadata.getColumnType(parquetColIdx);
+            final int decodeType = O3PartitionJob.chooseParquetDecodeType(parquetColType, columnType);
             final boolean isVarSize = ColumnType.isVarSize(columnType);
             final CharSequence colName = metadata.getColumnName(tableColIdx);
             final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
@@ -9183,6 +9284,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             covSlotMeta.add(includedCount + 1);
             covSlotMeta.add(columnType);
             covSlotMeta.add(0L);
+            covSlotMeta.add(parquetColType);
             covMmaps.add(null);
             covMmaps.add(dataMem);
 
@@ -9200,7 +9302,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             parquetColumnIdsAndTypes.add(parquetColIdx);
-            parquetColumnIdsAndTypes.add(columnType);
+            parquetColumnIdsAndTypes.add(decodeType);
             includedCount++;
         }
         path.trimTo(plen);
