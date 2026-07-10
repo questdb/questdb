@@ -2564,6 +2564,85 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPostingIndexResealAfterSplitSquashReadsShortKeyFile() throws Exception {
+        // Reproduces the WalWriterFuzzTest.testConvertPartitionToParquet crash: a freshly-added
+        // non-covering POSTING symbol column whose post-squash reseal opens its .pk
+        // (PostingIndexWriter.of(isInit=false)) while the reported key-file length lags the writer
+        // that extended it. The old code sized the mapping from ff.length(keyFile), so the head
+        // entry fell outside a short mapping and openExisting read past it, distressing the writer
+        // and suspending the table. The FilesFacade below makes ff.length report only
+        // KEY_FILE_RESERVED (8192) for new_col.pk on the squash-target partition, while the header
+        // still points at a head entry in the entry region. The fix sizes the mapping from the
+        // header's regionLimit instead, so a lagging length no longer matters.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
+
+        final long postingKeyFileReserved = 8192L; // PostingIndexUtils.KEY_FILE_RESERVED
+        final AtomicBoolean sabotageKeyFileLength = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long length(LPSZ name) {
+                // Shorten new_col.pk only on the main 2022-02-24 partition (not the
+                // "2022-02-24T..." split tail nor the 2022-02-25 spill partition).
+                if (sabotageKeyFileLength.get()
+                        && Utf8s.containsAscii(name, "new_col.pk")
+                        && Utf8s.containsAscii(name, "2022-02-24")
+                        && !Utf8s.containsAscii(name, "2022-02-24T")) {
+                    final long real = super.length(name);
+                    return real > postingKeyFileReserved ? postingKeyFileReserved : real;
+                }
+                return super.length(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE pidx (" +
+                    "  c1 LONG," +
+                    "  ts TIMESTAMP," +
+                    "  v LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // In-order fill across the whole 2022-02-24 day (max ts ~23:55).
+            execute("INSERT INTO pidx SELECT x, " +
+                    "  ('2022-02-24'::timestamp + x*123000000L)::timestamp, x " +
+                    "FROM long_sequence(700)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("pidx");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+
+            // Non-covering POSTING symbol column with columnTop == partition size (row-less).
+            execute("ALTER TABLE pidx ADD COLUMN new_col SYMBOL INDEX TYPE POSTING");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+
+            sabotageKeyFileLength.set(true);
+
+            // O3 batch inside 2022-02-24's tail (23:49:38) spilling into 2022-02-25: splits
+            // 2022-02-24 (row-less head; new_col rows in the split tail), then squashes the tail
+            // back into the head, whose reseal opens the short new_col.pk on the main partition.
+            execute("INSERT INTO pidx (c1, ts, v, new_col) SELECT " +
+                    "  1000 + x, " +
+                    "  ('2022-02-24T23:49:38.712565Z'::timestamp + x*12000000L)::timestamp, " +
+                    "  1000 + x, " +
+                    "  rnd_symbol('K1','K2','K3') " +
+                    "FROM long_sequence(68)");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "posting-index reseal after split/squash must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            assertQuery("SELECT count() FROM pidx")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n768\n");
+            // The reseal rebuilt new_col's posting index from the column data: an indexed
+            // lookup must return exactly the 68 O3 rows that carry a new_col value.
+            assertQuery("SELECT count() FROM pidx WHERE new_col IN ('K1','K2','K3')")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n68\n");
+        });
+    }
+
+    @Test
     public void testReadAndWriteAllTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTableAllTypes";

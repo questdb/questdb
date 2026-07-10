@@ -442,6 +442,28 @@ public final class PostingIndexChainWriter {
     }
 
     /**
+     * Read only the chain header and return its {@code regionLimit} -- the
+     * live-region high-water offset. Lets a caller size the {@code keyMem}
+     * mapping from the header (which is self-consistent with the head entry
+     * it references) instead of from {@code ff.length()}, which can lag the
+     * writer that extended the .pk during parallel apply and leave the head
+     * entry outside a short mapping. Needs only the header pages mapped.
+     * Validates the header the same way {@link #openExisting} does.
+     */
+    public long peekRegionLimit(MemoryR keyMem) {
+        if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)) {
+            throw CairoException.critical(0).put("posting index header unreadable");
+        }
+        if (headerScratch.formatVersion != PostingIndexUtils.V2_FORMAT_VERSION) {
+            throw CairoException.critical(0)
+                    .put("Unsupported Posting index version [expected=")
+                    .put(PostingIndexUtils.V2_FORMAT_VERSION)
+                    .put(", actual=").put(headerScratch.formatVersion).put(']');
+        }
+        return headerScratch.regionLimit;
+    }
+
+    /**
      * Read the current head entry's cover end-offset footer into {@code out}
      * (cleared first). Lets a caller preserve the footer across a republish it
      * cannot recompute -- e.g. a same-sealTxn gen flush whose writer-side
