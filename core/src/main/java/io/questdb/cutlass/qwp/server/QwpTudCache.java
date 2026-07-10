@@ -283,6 +283,17 @@ public class QwpTudCache implements QuietCloseable {
                     LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
                 }
 
+                // A writer distressed by a dropped table does not always surface as
+                // CommitFailedException.isTableDropped() - it can throw a plain
+                // CairoException, caught above. Left in the cache, its commit is
+                // retried on every interval forever (a busy error-log storm). Evict
+                // when the cached token is no longer the current table for its name;
+                // this name->token check stays correct even after the dropped table's
+                // dir is purged from the registry (unlike isTableDropped()).
+                if (!tud.isDropped() && engine.getTableTokenIfExists(tud.getTableToken().getTableName()) != tud.getTableToken()) {
+                    tud.setIsDropped();
+                }
+
                 if (tud.isDropped()) {
                     tableUpdateDetails.remove(tableName);
                     Misc.free(tud);
@@ -320,6 +331,17 @@ public class QwpTudCache implements QuietCloseable {
                     LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
                 }
 
+                // A writer distressed by a dropped table does not always surface as
+                // CommitFailedException.isTableDropped() - it can throw a plain
+                // CairoException, caught above. Left in the cache, its commit is
+                // retried on every interval forever (a busy error-log storm). Evict
+                // when the cached token is no longer the current table for its name;
+                // this name->token check stays correct even after the dropped table's
+                // dir is purged from the registry (unlike isTableDropped()).
+                if (!tud.isDropped() && engine.getTableTokenIfExists(tud.getTableToken().getTableName()) != tud.getTableToken()) {
+                    tud.setIsDropped();
+                }
+
                 if (tud.isDropped()) {
                     tableUpdateDetails.remove(tableName);
                     Misc.free(tud);
@@ -340,7 +362,23 @@ public class QwpTudCache implements QuietCloseable {
     ) {
         int key = tableUpdateDetails.keyIndex(tableNameUtf8);
         if (key < 0) {
-            return tableUpdateDetails.valueAt(key);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
+            // The cache is keyed by table name, so a cached TUD can outlive its
+            // table: a DROP (and any later re-CREATE, or a rename) leaves it bound
+            // to the old table's WAL writer. Reusing that stale writer distresses
+            // it and the datagram's rows are silently lost. Verify the cached token
+            // is still the current one for this name and, if not, evict and rebuild
+            // against the current table below. This name->token check stays correct
+            // even after the dropped table's dir is purged from the registry (when
+            // isTableDropped() would no longer report it as dropped).
+            if (engine.getTableTokenIfExists(tud.getTableToken().getTableName()) == tud.getTableToken()) {
+                return tud;
+            }
+            tableUpdateDetails.removeAt(key);
+            Misc.free(tud);
+            // removeAt invalidated the negative hit index; recompute the insertion
+            // index for the rebuild path (putAt) below.
+            key = tableUpdateDetails.keyIndex(tableNameUtf8);
         }
 
         if (tableUpdateDetails.size() >= maxTables) {
@@ -399,6 +437,14 @@ public class QwpTudCache implements QuietCloseable {
 
     public void setDistressed() {
         this.isDistressed = true;
+    }
+
+    /**
+     * Number of tables currently held in the cache. Exposed for monitoring and
+     * tests (e.g. verifying that dropped tables are evicted rather than retained).
+     */
+    public int size() {
+        return tableUpdateDetails.size();
     }
 
     /**
