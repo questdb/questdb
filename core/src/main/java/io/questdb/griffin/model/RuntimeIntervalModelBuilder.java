@@ -39,18 +39,24 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
 /**
- * Collects the interval during query parsing
- * and records them as 2 types:
- * - static list of intervals as 2 long points [lo, hi] in staticIntervals list
- * - dynamic list of functions.
+ * Collects intervals during query parsing and records them in two phases within the shared
+ * staticIntervals list:
  * <p>
- * When the first interval involving function is added, all data starts to be encoded in 4 longs in staticPeriods
+ * While dynamicRangeList is empty, intervals are stored as plain [lo, hi] long pairs and
+ * eagerly combined in place according to the pending operation (intersected, unioned, or
+ * subtracted).
+ * <p>
+ * Once the first interval involving a function is added, every subsequent entry is encoded
+ * as 4 longs appended to staticIntervals:
  * 0: lo (long)
  * 1: hi (long)
  * 2: operation (short), period type (short), adjustment (short), dynamicIndicator (short)
  * 3: period (int), count (int)
  * <p>
- * and the index when it happens stored in pureStaticCount
+ * Each encoded entry has a parallel slot in dynamicRangeList (the dynamic Function, or null
+ * for an encoded static interval) and in dynamicRangePositionList (the expression position
+ * for error reporting), so the encoded suffix of staticIntervals always spans
+ * dynamicRangeList.size() * 4 longs and needs no separate boundary index.
  */
 public class RuntimeIntervalModelBuilder implements Mutable {
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
@@ -58,10 +64,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     // used to point error messages at the offending expression in the query text
     private final IntList dynamicRangePositionList = new IntList();
     private final StringSink sink = new StringSink();
-    // All data needed to re-evaluate intervals
-    // is stored in 2 lists - ListLong and List of functions
-    // ListLongs has STATIC_LONGS_PER_DYNAMIC_INTERVAL entries per 1 dynamic interval
-    // and pairs of static intervals in the end
+    // All data needed to re-evaluate intervals is stored in 2 lists - a LongList and a list of
+    // functions. The LongList starts with plain [lo, hi] static interval pairs and ends with
+    // STATIC_LONGS_PER_DYNAMIC_INTERVAL encoded entries per dynamic interval (see the class doc)
     private final LongList staticIntervals = new LongList();
     private long betweenBoundary = Numbers.LONG_NULL;
     private Function betweenBoundaryFunc;
@@ -132,7 +137,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * from it) owns it.
      */
     public void clearBetweenParsing() {
-        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
+        if (betweenBoundaryFunc != null) {
+            // Every successful handoff nulls betweenBoundaryFunc before the callee adopts the
+            // function into dynamicRangeList (see setBetweenBoundary), so a non-null field always
+            // denotes a pending, not-yet-adopted function that this rollback owns. Closing it
+            // directly avoids an O(n) list scan per rollback; the assert keeps the invariant
+            // checked in tests.
+            assert dynamicRangeList.indexOf(betweenBoundaryFunc) < 0;
             betweenBoundaryFunc.close();
         }
         betweenBoundarySet = false;
@@ -289,7 +300,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, intersectDividerIndex);
             }
         } else {
-            // else - nothing to do, interval already encoded in staticPeriods as 4 longs
+            // else - nothing to do, interval already encoded in staticIntervals as 4 longs
             addDynamicFunction(null, 0);
         }
         intervalApplied = true;
@@ -572,6 +583,12 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private void addDynamicFunction(Function function, int functionPosition) {
+        // Grow both parallel lists before adopting: growth is the only failure mode of add(),
+        // so pre-sizing makes the two adds effectively atomic. A growth failure then leaves the
+        // incoming function unadopted (still owned by the caller) and the lists aligned, instead
+        // of stranding a half-adopted function or misaligning the parallel position list.
+        dynamicRangeList.checkCapacity(dynamicRangeList.size() + 1);
+        dynamicRangePositionList.checkCapacity(dynamicRangePositionList.size() + 1);
         dynamicRangeList.add(function);
         dynamicRangePositionList.add(functionPosition);
     }

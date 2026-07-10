@@ -382,27 +382,9 @@ public class GroupByUtils {
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable th) {
-            // The first loop adds each parsed Function to both lists, so they share
-            // references. The timestamp column appends null to outer but skips inner,
-            // so subsequent entries sit at outer[i] and inner[i-1]. The third loop
-            // may also replace outer entries with column-ref Functions, leaving the
-            // original parsed Function reachable only via inner. Free outer first
-            // (Misc.free is null-safe), keeping the list as a reference-identity
-            // index, then walk inner and free only references not already in outer.
-            // Closing the same Function twice would underflow allocator counters.
-            for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
-                Misc.free(outerProjectionFunctions.getQuick(i));
-            }
-            for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
-                Function f = innerProjectionFunctions.getQuick(i);
-                if (f != null && !containsIdentity(outerProjectionFunctions, f)) {
-                    Misc.free(f);
-                }
-            }
-            outerProjectionFunctions.clear();
-            innerProjectionFunctions.clear();
+            freeAssembledProjectionFunctions(outerProjectionFunctions, innerProjectionFunctions);
             // Every group-by function was also added to outerProjectionFunctions (same
-            // instance) and freed by the loop above. Clear the list so callers that free
+            // instance) and freed by the call above. Clear the list so callers that free
             // it on their own error path (the JOIN callsites call
             // Misc.freeObjList(groupByFunctions)) don't close the same instance twice.
             outGroupByFunctions.clear();
@@ -545,6 +527,41 @@ public class GroupByUtils {
             return cf.getColumnIndex();
         }
         return -1;
+    }
+
+    /**
+     * Frees the projection functions produced by {@link #assembleGroupByFunctions} exactly once
+     * when generation fails after a successful assembly. The first assembly loop adds each parsed
+     * Function to both lists, so they share references. The timestamp column appends null to
+     * outer but skips inner, so subsequent entries sit at outer[i] and inner[i-1]. The key-rewrite
+     * loop may also replace outer entries with column-ref Functions, leaving the original parsed
+     * Function reachable only via inner. Frees outer first (Misc.free is null-safe), keeping the
+     * list as a reference-identity index, then walks inner and frees only references not already
+     * in outer, then clears both lists. Closing the same Function twice would underflow allocator
+     * counters, so callers must not additionally free the group-by function list - its entries
+     * are aliased in the outer list and are already closed by this call.
+     */
+    public static void freeAssembledProjectionFunctions(
+            @Nullable ObjList<Function> outerProjectionFunctions,
+            @Nullable ObjList<Function> innerProjectionFunctions
+    ) {
+        if (outerProjectionFunctions != null) {
+            for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
+                Misc.free(outerProjectionFunctions.getQuick(i));
+            }
+        }
+        if (innerProjectionFunctions != null) {
+            for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
+                final Function f = innerProjectionFunctions.getQuick(i);
+                if (f != null && (outerProjectionFunctions == null || !containsIdentity(outerProjectionFunctions, f))) {
+                    Misc.free(f);
+                }
+            }
+            innerProjectionFunctions.clear();
+        }
+        if (outerProjectionFunctions != null) {
+            outerProjectionFunctions.clear();
+        }
     }
 
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {

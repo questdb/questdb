@@ -75,6 +75,31 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInclusiveBoundAtTypeMaximumSelectsFullDomain() throws Exception {
+        // ts <= (select scalar at Long.MAX_VALUE) encodes an inclusive runtime bound with no
+        // adjustment, so it must not wrap around and must select the full non-null domain, for
+        // both the microsecond and the nanosecond designated timestamp drivers. The strict
+        // (ts > scalar) wrap-around guard is covered separately; the negated arm of that guard
+        // is unreachable because no subtract operation encodes a positive adjustment.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select count() c from x where ts <= (select 9223372036854775807::timestamp)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n5\n");
+            execute("create table y as (" +
+                    "select timestamp_sequence(0, 2500000)::timestamp_ns ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select count() c from y where ts <= (select 9223372036854775807::timestamp_ns)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n5\n");
+        });
+    }
+
+    @Test
     public void testCompareTimestampWithString() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +

@@ -65,6 +65,9 @@ abstract class AbstractIntCursorFunctionFactory implements FunctionFactory {
             case ColumnType.BYTE:
             case ColumnType.SHORT:
             case ColumnType.INT:
+            case ColumnType.NULL:
+                // a bare NULL literal reads as the int/long/double null sentinel and follows the
+                // sentinel-null comparison convention on whichever typed path the cursor selects
                 break;
             default:
                 throw SqlException.$(argPositions.getQuick(0), "left operand must be BYTE, SHORT or INT, found: ")

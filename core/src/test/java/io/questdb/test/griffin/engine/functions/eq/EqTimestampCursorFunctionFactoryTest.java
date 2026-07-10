@@ -62,6 +62,73 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubQueryBetweenEndpointsAreRejectedByParser() throws Exception {
+        // The expression parser forbids sub-queries inside BETWEEN (ExpressionParser rejects any
+        // SELECT lambda while betweenCount > 0), so a scalar sub-query can never reach the
+        // dynamic BETWEEN endpoint handoff in WhereClauseParser and no runtime multi-row check
+        // is reachable there. Pin the rejection for each endpoint independently so a future
+        // parser relaxation is forced to add the runtime position coverage.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select * from x where ts between (select ts from x limit 2) and (select max(ts) from x)")
+                    .failsWith("constant expected");
+            assertQuery("select * from x where ts between (select min(ts) from x) and (select ts from x limit 2)")
+                    .failsWith("constant expected");
+        });
+    }
+
+    @Test
+    public void testMultiRowCursorFailsOnDesignatedTimestampNs() throws Exception {
+        // The designated TIMESTAMP_NS variant routes ts = (select ...) through the same runtime
+        // interval model as the microsecond one; the nanosecond scalar conversion and the
+        // multi-row rejection at the sub-query position must hold for that driver too.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000)::timestamp_ns ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select * from x where ts = (select ts from x limit 2)")
+                    .fails(28, "scalar sub-query returned more than one row");
+            // single-row control: the nanosecond scalar converts and selects exactly the max row
+            assertQuery("select count() c from x where ts = (select max(ts) from x)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n1\n");
+        });
+    }
+
+    @Test
+    public void testMultiRowCursorFailsOnDesignatedTimestampNotEquals() throws Exception {
+        // Unlike ts = (select ...), the not-equals intrinsic accepts only runtime constants, so a
+        // cursor sub-query bypasses the interval model and lands on the negated cursor-comparison
+        // factory even on a designated timestamp. The multi-row rejection and its exact sub-query
+        // position must hold on that path too.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select * from x where ts != (select ts from x limit 2)")
+                    .fails(29, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
+    public void testMultiRowCursorFailsOnDesignatedTimestampOrUnion() throws Exception {
+        // The OR interval analysis accepts only constant and runtime-constant arms, so cursor
+        // sub-queries make the whole disjunction fall back to a boolean filter over two
+        // cursor-comparison functions. A multi-row scalar sub-query in the second arm must be
+        // rejected at that arm's sub-query position on this fallback path.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(5)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select * from x where ts = (select min(ts) from x) or ts = (select ts from x limit 2)")
+                    .fails(60, "scalar sub-query returned more than one row");
+        });
+    }
+
+    @Test
     public void testCompareNanoTimestampWithNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +

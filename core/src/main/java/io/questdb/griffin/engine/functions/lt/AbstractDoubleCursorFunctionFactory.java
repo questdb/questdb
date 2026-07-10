@@ -63,11 +63,12 @@ abstract class AbstractDoubleCursorFunctionFactory implements FunctionFactory {
         // 2. the column must be a numeric type we can widen to double (or null)
         final RecordMetadata metadata = ScalarSubQueryUtils.assertSingleColumn(factory, argPositions.getQuick(1));
         final Function arg0 = args.getQuick(0);
-        // Accept DOUBLE and FLOAT left operands. FLOAT widens to double losslessly via
-        // Function#getDouble, so the comparison stays exact; other numeric types route to their
+        // Accept DOUBLE, FLOAT and NULL left operands. FLOAT widens to double losslessly via
+        // Function#getDouble, so the comparison stays exact; a bare NULL literal reads as NaN and
+        // follows the sentinel-null comparison convention; other numeric types route to their
         // own (IC/LC) cursor factories and never reach this DOUBLE cursor factory.
         final int arg0Tag = ColumnType.tagOf(arg0.getType());
-        if (arg0Tag != ColumnType.DOUBLE && arg0Tag != ColumnType.FLOAT) {
+        if (arg0Tag != ColumnType.DOUBLE && arg0Tag != ColumnType.FLOAT && arg0Tag != ColumnType.NULL) {
             throw SqlException.$(argPositions.getQuick(0), "left operand must be a DOUBLE or FLOAT, found: ")
                     .put(ColumnType.nameOf(arg0.getType()));
         }

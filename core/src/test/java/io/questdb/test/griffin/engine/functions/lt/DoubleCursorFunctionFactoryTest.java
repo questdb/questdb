@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -324,6 +325,78 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     }
 
     @Test
+    public void testWindowJoinAggregateArgumentExecutesCursorOnce() throws Exception {
+        // A WINDOW JOIN whose aggregate argument contains a cursor comparison runs on the parallel
+        // path (AsyncWindowJoinAtom) with per-worker clones of the group-by functions. The scalar
+        // sub-query must execute exactly once per query execution - not once per worker - and
+        // every worker clone must observe the same threshold. test_timestamp_counter() increments
+        // once per row the sub-query cursor reads, so the counter equals the number of RHS
+        // executions.
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table src (ts timestamp)", ctx);
+            execute(compiler, "insert into src values (5000)", ctx);
+            // master and slave rows align 10 seconds apart, so a one-second window holds exactly
+            // the aligned slave row and nothing else
+            execute(
+                    compiler,
+                    "create table trades as (" +
+                            "  select x::double qty, timestamp_sequence(10_000_000, 10_000_000) ts" +
+                            "  from long_sequence(10_000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            execute(
+                    compiler,
+                    "create table prices as (" +
+                            "  select x::double price, timestamp_sequence(10_000_000, 10_000_000) ts" +
+                            "  from long_sequence(10_000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+
+            final String query = "SELECT sum(s) t FROM (" +
+                    "  SELECT sum((p.price::string::double > (SELECT test_timestamp_counter(ts)::long FROM src))::int) s " +
+                    "  FROM trades t " +
+                    "  WINDOW JOIN prices p RANGE BETWEEN 1 seconds PRECEDING AND 1 seconds FOLLOWING EXCLUDE PREVAILING" +
+                    ")";
+
+            // the non-thread-safe aggregate argument must still run on the parallel window join
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Window Join workers: 4");
+
+            // threshold = 5000 -> prices 5001..10000 cross it -> 5000 of 10000 windows contribute 1
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            t
+                            5000
+                            """);
+
+            // one explicitly compiled execution pins the exact sub-query execution count
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("t\n5000\n", cursor, factory.getMetadata(), true, sink);
+                }
+                Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+
+                // change the RHS and re-execute the same compiled factory: the cached scalar must
+                // refresh, again with a single sub-query execution
+                execute(compiler, "update src set ts = 9000", ctx);
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("t\n1000\n", cursor, factory.getMetadata(), true, sink);
+                }
+                Assert.assertEquals(2, TestTimestampCounterFactory.COUNTER.get());
+            }
+        });
+    }
+
+    @Test
     public void testSampleByFillLinearCursorComparisonKey() throws Exception {
         // regression: compiling the scalar sub-query of a cursor-comparison key must not corrupt
         // generateSampleBy's projection scratch state, and the execution plan must render across
@@ -347,6 +420,85 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                             false\t15.0\t1970-01-01T00:00:00.000000Z
                             true\t40.0\t1970-01-01T00:00:00.000000Z
                             """);
+        });
+    }
+
+    @Test
+    public void testWorkerGroupByCloneCompilationFailureFreesPartialClones() throws Exception {
+        // compileWorkerGroupByFunctionsConditionally compiles one clone list per worker. When a
+        // later clone's compilation throws, the helper must free the already-compiled clones, or
+        // their resources leak. alloc() places tracked native memory in the aggregate argument
+        // and the armed test_fault() makes a later worker clone's compilation throw after the
+        // owner and at least one clone compiled successfully. The plain parallel not-keyed GROUP
+        // BY reaches this helper as its only clone pass, so the armed compile count is
+        // deterministic (a HORIZON JOIN would clone the projection first and absorb the fault
+        // there instead).
+        runWithPool((compiler, ctx) -> {
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double qty, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+            final String query = "SELECT avg(qty + alloc(32) + (case when test_fault() then 1.0 else 2.0 end)) a FROM t";
+            // owner assembly compiles test_fault() once, then each of the 4 worker clones
+            // compiles it once more; fail on the second clone
+            TestFaultFunctionFactory.armToFailAfterCompiles(2);
+            try {
+                compiler.compile(query, ctx);
+                Assert.fail("compilation should have failed with the injected fault");
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "test_fault: injected compile failure");
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
+    public void testWorkerKeyCloneCompilationFailureFreesPartialClones() throws Exception {
+        // compilePerWorkerInnerProjectionFunctions compiles one projection clone list per worker.
+        // When a later clone's compilation throws, the helper must free the already-compiled
+        // clones, or their resources - including the cursor-comparison key's nested sub-query
+        // factory - leak. alloc() places tracked native memory in the key expression and the
+        // armed test_fault() makes a later worker clone's compilation throw after the owner and
+        // at least one clone compiled successfully.
+        runWithPool((compiler, ctx) -> {
+            createHorizonJoinTables(compiler, ctx);
+            final String query = "SELECT t.qty + alloc(32) + (case when test_fault() then 1.0 else 2.0 end) > (SELECT max(price) FROM prices) k, avg(p.price) a " +
+                    "FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) LIST (0) AS h " +
+                    "GROUP BY k ORDER BY k";
+            // owner assembly compiles test_fault() once, then each of the 4 worker clones
+            // compiles it once more; fail on the second clone
+            TestFaultFunctionFactory.armToFailAfterCompiles(2);
+            try {
+                compiler.compile(query, ctx);
+                Assert.fail("compilation should have failed with the injected fault");
+            } catch (Throwable e) {
+                TestUtils.assertContains(e.getMessage(), "test_fault: injected compile failure");
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByKeyedFromToFailureFreesAssembledFunctions() throws Exception {
+        // generateSampleBy assembles the group-by and projection functions (including any
+        // resource-bearing scalar sub-query keys and aggregate arguments) before rejecting the
+        // unsupported keyed FROM/TO combination. When guardAgainstFromToWithKeyedSampleBy throws,
+        // the catch must free the assembled owner lists. alloc() places tracked native memory in
+        // both the key and the aggregate argument so assertMemoryLeak() sees the leak.
+        assertMemoryLeak(() -> {
+            execute("create table t as (" +
+                    "select x::double price, x::double qty, timestamp_sequence(0, 60000000) ts" +
+                    " from long_sequence(10)" +
+                    ") timestamp(ts) partition by day");
+            assertQuery("select price + alloc(32) > (select avg(price) from t) k, sum(qty + alloc(32)) s " +
+                    "from t sample by 1h from dateadd('h', 0, '1970-01-01'::timestamp) fill(prev)")
+                    .fails(-1, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
         });
     }
 
@@ -378,6 +530,47 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                             true\t2.0
                             true\t2.0
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinPostAssemblyFailureFreesKeyFunctions() throws Exception {
+        // A keyed HORIZON JOIN with a cursor-comparison key assembles the projection (including
+        // the resource-bearing scalar sub-query key) before the single-threaded path validates
+        // that the master supports random access. When that validation throws, the generator's
+        // catch must free the extracted owner key functions, or the whole key chain - including
+        // the nested sub-query factory - leaks. alloc() places tracked native memory inside the
+        // key chain so assertMemoryLeak() sees the leak. The UNION ALL master supports neither
+        // page frames (downgrading to the single-threaded path) nor random access (triggering the
+        // post-assembly failure), while timestamp(ts) re-designates the timestamp so the
+        // pre-assembly master validation passes.
+        assertMemoryLeak(() -> {
+            execute("create table trades (sym symbol, qty double, ts timestamp) timestamp(ts) partition by day");
+            execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
+            assertQuery("select t.qty + alloc(32) > (select max(price) from prices) k, avg(p.price) a " +
+                    "from ((select * from trades union all select * from trades) timestamp(ts)) t " +
+                    "horizon join prices p on (t.sym = p.sym) list (0) as h " +
+                    "group by k")
+                    .fails(-1, "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+        });
+    }
+
+    @Test
+    public void testMultiHorizonJoinPostAssemblyFailureFreesKeyFunctions() throws Exception {
+        // Multi-slave counterpart of testHorizonJoinPostAssemblyFailureFreesKeyFunctions: the
+        // multi-HORIZON generator assembles the projection (including the cursor-comparison key)
+        // before the single-threaded path validates that the master supports random access. The
+        // catch must free the extracted owner key functions. alloc() places tracked native memory
+        // inside the key chain so assertMemoryLeak() sees the leak.
+        assertMemoryLeak(() -> {
+            execute("create table trades (sym symbol, qty double, ts timestamp) timestamp(ts) partition by day");
+            execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts)");
+            execute("create table asks (ts timestamp, sym symbol, ask double) timestamp(ts)");
+            assertQuery("select t.qty + alloc(32) > (select max(price) from prices) k, avg(p.price) a, avg(a2.ask) b " +
+                    "from ((select * from trades union all select * from trades) timestamp(ts)) t " +
+                    "horizon join prices p on (t.sym = p.sym) horizon join asks a2 on (t.sym = a2.sym) list (0) as h " +
+                    "group by k")
+                    .fails(-1, "left-hand side of HORIZON JOIN can only be a table with an optional filter");
         });
     }
 
@@ -512,6 +705,80 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             assertQuery("select price from t where price < null")
                     .noLeakCheck()
                     .returns("price\n");
+        });
+    }
+
+    @Test
+    public void testBareNullLeftOperandComparison() throws Exception {
+        // A bare NULL literal on the left of a numeric scalar sub-query comparison must compile
+        // and follow QuestDB's NULL comparison convention (see LtNullComparisonTest): the strict
+        // forms match no rows when either side is NULL; the inclusive forms match only when both
+        // sides are NULL, i.e. when the scalar is NULL or the sub-query yields no rows.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::int i from long_sequence(3))");
+
+            // non-null scalar: no direction matches
+            assertQuery("select i from t where null > (select max(i) from t)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where null < (select max(i) from t)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where null >= (select max(i) from t)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where null <= (select max(i) from t)")
+                    .noLeakCheck()
+                    .returns("i\n");
+
+            // NULL scalar: null equals null -> only the inclusive forms match, and they match
+            // every row because the left operand is always NULL
+            assertQuery("select i from t where null > (select null::int)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where null < (select null::int)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where null >= (select null::int)")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            1
+                            2
+                            3
+                            """);
+            assertQuery("select i from t where null <= (select null::int)")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            1
+                            2
+                            3
+                            """);
+
+            // empty sub-query: the cached scalar is NULL, same outcome as the NULL scalar
+            assertQuery("select i from t where null > (select i from t where i < 0)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where null < (select i from t where i < 0)")
+                    .noLeakCheck()
+                    .returns("i\n");
+            assertQuery("select i from t where null >= (select i from t where i < 0)")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            1
+                            2
+                            3
+                            """);
+            assertQuery("select i from t where null <= (select i from t where i < 0)")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            1
+                            2
+                            3
+                            """);
         });
     }
 
@@ -844,6 +1111,29 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     public void testLongCursorColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select x::double price from long_sequence(10))");
+            // sum(x) over 1..3 = 6 -> prices 7..10 cross the LONG threshold, 1..6 do not; a
+            // broken LONG reader (e.g. one that always yields NaN) matches no rows and fails here
+            assertQuery("select price from t where price > (select sum(x) from long_sequence(3))")
+                    .noLeakCheck()
+                    .returns("""
+                            price
+                            7.0
+                            8.0
+                            9.0
+                            10.0
+                            """);
+            // the negated inclusive form across the same LONG threshold selects the complement
+            assertQuery("select price from t where price <= (select sum(x) from long_sequence(3))")
+                    .noLeakCheck()
+                    .returns("""
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            4.0
+                            5.0
+                            6.0
+                            """);
             // sum(x) over 1..10 = 55, so no price > 55
             assertQuery("select price from t where price > (select sum(x) from long_sequence(10))")
                     .noLeakCheck()
@@ -993,6 +1283,36 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                                     Row forward scan
                                     Frame forward scan on: t
                             """);
+        });
+    }
+
+    @Test
+    public void testPlanNestedSingleValueBaseMetadataRestored() throws Exception {
+        // The values list of a GROUP BY plan renders with base metadata. The first aggregate's
+        // argument contains a scalar sub-query whose own async-filter plan goes through the
+        // single-Plannable optAttr(name, value, useBaseMetadata) overload; that nested render
+        // must restore the ambient base-metadata mode, or the second aggregate's column names
+        // render from the wrong metadata. The sibling ObjList overload is covered elsewhere;
+        // this pins the single-value overload.
+        assertMemoryLeak(() -> {
+            execute("create table tab (price double, qty double, ts timestamp) timestamp(ts) partition by day");
+            // the string cast keeps the nested filter off the JIT path so the plan is stable
+            // across platforms
+            assertQuery("select avg((qty > (select avg(price) from tab where price::string::double > 0))::int) a, vwap(price, qty) v from tab")
+                    .assertsPlan("Async Group By workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  values: [avg(qty [thread-safe] > cursor \n" +
+                            "    Async Group By workers: 1\n" +
+                            "      vectorized: false\n" +
+                            "      values: [avg(price)]\n" +
+                            "      filter: 0<price::string::double\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab::int),vwap(price,qty)]\n" +
+                            "  filter: null\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
         });
     }
 

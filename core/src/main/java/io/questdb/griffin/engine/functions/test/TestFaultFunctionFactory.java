@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
@@ -43,11 +44,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  * then throws once on its Nth per-row evaluation. The query fuzzer emits it
  * into a generated query and arms it to verify that a factory frees its
  * resources when an expression throws mid-cursor, and that the query recovers
- * once the fault is removed. Outside dev mode it folds to the BOOLEAN constant
- * true, so it is inert in production.
+ * once the fault is removed. A separate compile-time arm
+ * ({@link #armToFailAfterCompiles}) makes the Nth {@link #newInstance} call
+ * throw instead, so tests can fail a specific per-worker clone compilation
+ * mid-loop. Outside dev mode it folds to the BOOLEAN constant true, so it is
+ * inert in production.
  */
 public class TestFaultFunctionFactory implements FunctionFactory {
     public static final String CALL = "test_fault()";
+    // -1 means disarmed. When armed to N, newInstance() succeeds on the first
+    // N calls and throws on call N+1, then disarms itself.
+    private static final AtomicInteger COMPILE_COUNTDOWN = new AtomicInteger(-1);
     // -1 means disarmed. When armed to N, the function returns true on the first
     // N getBool() calls and throws on call N+1, then disarms itself.
     private static final AtomicInteger COUNTDOWN = new AtomicInteger(-1);
@@ -58,7 +65,13 @@ public class TestFaultFunctionFactory implements FunctionFactory {
         COUNTDOWN.set(successfulCalls);
     }
 
+    public static void armToFailAfterCompiles(int successfulCompiles) {
+        TRIGGERED.set(0);
+        COMPILE_COUNTDOWN.set(successfulCompiles);
+    }
+
     public static void disarm() {
+        COMPILE_COUNTDOWN.set(-1);
         COUNTDOWN.set(-1);
     }
 
@@ -78,9 +91,13 @@ public class TestFaultFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         if (!configuration.isDevModeEnabled()) {
             return BooleanConstant.TRUE;
+        }
+        if (COMPILE_COUNTDOWN.get() >= 0 && COMPILE_COUNTDOWN.getAndDecrement() == 0) {
+            TRIGGERED.incrementAndGet();
+            throw SqlException.$(position, "test_fault: injected compile failure");
         }
         return new Func();
     }

@@ -61,7 +61,10 @@ abstract class AbstractLongCursorFunctionFactory implements FunctionFactory {
 
         final RecordMetadata metadata = ScalarSubQueryUtils.assertSingleColumn(factory, argPositions.getQuick(1));
         final Function arg0 = args.getQuick(0);
-        if (ColumnType.tagOf(arg0.getType()) != ColumnType.LONG) {
+        // a bare NULL literal reads as the long/double null sentinel and follows the
+        // sentinel-null comparison convention on whichever typed path the cursor selects
+        final int arg0Tag = ColumnType.tagOf(arg0.getType());
+        if (arg0Tag != ColumnType.LONG && arg0Tag != ColumnType.NULL) {
             throw SqlException.$(argPositions.getQuick(0), "left operand must be a LONG, found: ")
                     .put(ColumnType.nameOf(arg0.getType()));
         }
