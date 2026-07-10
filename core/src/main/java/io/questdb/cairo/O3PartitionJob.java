@@ -72,6 +72,12 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
+    // TEMPORARY (benching): byte-equivalent clock cost of one hardlink() call. A zero-copy hardlink
+    // split is admitted only when the suffix's estimated bytes exceed columnCount * this value, i.e.
+    // when linking the suffix's column files is cheaper than copying them. Uncapped by piece count;
+    // the post-commit squash budget bounds the piece count instead. TODO: promote to a config property
+    // (cairo.o3.hardlink.split.link.cost).
+    private static final long HARDLINK_SPLIT_LINK_COST = 0; // TEMP: 0 = always hardlink when geometry allows
     private static final CarrierLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
             new CarrierLocal<>(O3ParquetMergeContext::new);
     public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT::removeAndFree;
@@ -1463,6 +1469,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long suffixChildTimestamp = suffixChildRowCount > 0
                         ? Unsafe.getLong(srcTimestampVecAddr + suffixChildPartitionTop * Long.BYTES)
                         : Long.MIN_VALUE;
+                // TEMPORARY (benching): admit the zero-copy hardlink split on cost alone, uncapped by
+                // piece count. Hardlink only when the suffix is large enough that linking its column files
+                // beats copying them - i.e. estimated suffix bytes exceed columnCount * the byte-equivalent
+                // clock cost of one hardlink() call. The byte estimate reuses the o3.partition.split.min.size
+                // per-row model (estimateAvgRecordSize). Piece-count control now lives entirely in the
+                // post-commit squash budget.
+                final long estimatedSuffixBytes = suffixChildRowCount * estimateAvgRecordSize(metadata);
                 final boolean canHardlinkSplit = !isParquet
                         && tableWriter.isHardlinkSplitEnabled()
                         && suffixType == O3_BLOCK_DATA
@@ -1471,7 +1484,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         && suffixChildRowCount > 0
                         && suffixChildTimestamp > o3TimestampHi
                         && !tableWriter.isHardlinkSplitBlockedByBackfilledColumn(partitionTimestamp)
-                        && tableWriter.isHardlinkSplitWithinSquashCap(partitionTimestamp);
+                        && estimatedSuffixBytes > (long) metadata.getColumnCount() * HARDLINK_SPLIT_LINK_COST;
 
                 // Split partition if the prefix is large enough (relatively and absolutely), OR whenever the
                 // zero-copy hardlink path applies (nothing to copy, so no cost threshold to amortize).

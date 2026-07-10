@@ -204,6 +204,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int ROW_ACTION_O3 = 3;
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
+    // TEMPORARY (benching): the post-commit squash holds every settled logical partition at this many
+    // pieces (never folds below it, never touches the active last partition). Replaces the per-group
+    // last/mid caps for the write-amplification bench; stats-driven folding replaces it later.
+    private static final int SQUASH_TEMP_MIN_PIECES = 5;
     private static final int TODO_META_INDEX_OFFSET = 48;
     final ObjList<MemoryMA> columns;
     // Latest command sequence per command source.
@@ -2536,30 +2540,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return metadata.isWalEnabled()
                 ? configuration.isPartitionTopWalEnabled()
                 : configuration.isPartitionTopNonWalEnabled();
-    }
-
-    // Whether a 3-way hardlink split of the given partition keeps its logical partition's piece count
-    // within the split cap the post-commit squash enforces (the split adds TWO pieces: the merged middle
-    // and the hardlinked suffix child). When the cap would be exceeded, the commit folds the pieces back
-    // immediately, and a fold range that contains a hardlink donor must copy the whole partition - more
-    // expensive than the classic 2-way copy split whose fold is a cheap tail-append. The split decision
-    // falls back to the 2-way copy in that case. maxTimestamp is read pre-commit: a commit that extends
-    // the table into a later logical partition can demote this one from last to mid after the fact; the
-    // resulting fold pays the donor copy once and later splits see the updated state.
-    public boolean isHardlinkSplitWithinSquashCap(long partitionTimestamp) {
-        final long logicalTs = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        final boolean lastLogical = txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp()) == logicalTs;
-        final int cap = Math.max(1, lastLogical
-                ? configuration.getO3LastPartitionMaxSplits()
-                : configuration.getO3MidPartitionMaxSplits());
-        int pieces = 0;
-        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
-            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) == logicalTs
-                    && ++pieces + 2 > cap) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public boolean isOpen() {
@@ -7280,7 +7260,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void housekeep(long wallClockMicros) {
         try {
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
+            squashSplitPartitionsToBudget();
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
             enforceTtl(wallClockMicros);
@@ -13561,6 +13541,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // TEMPORARY (benching): total number of extra partition pieces created by splitting, table-wide
+    // (0 when no logical partition is split). housekeep uses it to test the (last + mid) squash budget.
+    private int splitPieceCount() {
+        final int partitionCount = txWriter.getPartitionCount();
+        int logicalCount = 0;
+        long prevLogical = Long.MIN_VALUE;
+        for (int i = 0; i < partitionCount; i++) {
+            long logical = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i));
+            if (logical != prevLogical) {
+                logicalCount++;
+                prevLogical = logical;
+            }
+        }
+        return partitionCount - logicalCount;
+    }
+
     private void squashPartitionForce(int partitionIndex) {
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
@@ -13594,69 +13590,59 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void squashPartitionRange(int maxLastSubPartitionCount, int partitionIndexLo, int partitionIndexHi) {
-        if (partitionIndexHi > partitionIndexLo) {
-            int subpartitions = partitionIndexHi - partitionIndexLo;
-            int optimalPartitionCount = partitionIndexHi == txWriter.getPartitionCount() ? maxLastSubPartitionCount : configuration.getO3MidPartitionMaxSplits();
-            if (subpartitions > Math.max(1, optimalPartitionCount)) {
-                squashSplitPartitions(partitionIndexLo, partitionIndexHi, optimalPartitionCount, false);
-            } else if (subpartitions == 1) {
-                if (partitionIndexLo >= 0 &&
-                        partitionIndexLo < txWriter.getPartitionCount() && minSplitPartitionTimestamp == txWriter.getPartitionTimestampByIndex(partitionIndexLo)) {
-                    minSplitPartitionTimestamp = getPartitionTimestampOrMax(partitionIndexLo + 1);
+    // TEMPORARY (benching): fold each logical partition down to SQUASH_TEMP_MIN_PIECES pieces, walking
+    // earliest first. When force is false, only groups whose FIRST piece is mutable (not a zero-copy
+    // donor) are folded - the later pieces are squashed into that first piece. When force is true,
+    // donor-led groups are folded too (the donor first piece is copied out to a fresh dir first). When
+    // stopAtBudget is set, returns as soon as the table-wide split-piece count is at or below budget.
+    // Returns whether it folded anything.
+    private boolean squashLogicalPartitionsToFloor(boolean force, boolean stopAtBudget, int budget) {
+        boolean anySquashed = false;
+        int lo = 0;
+        while (lo < txWriter.getPartitionCount()) {
+            final long logicalTs = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(lo));
+            int hi = lo + 1;
+            while (hi < txWriter.getPartitionCount()
+                    && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == logicalTs) {
+                hi++;
+            }
+            if (hi - lo > SQUASH_TEMP_MIN_PIECES && (force || !txWriter.isPartitionDonor(lo))) {
+                final int before = txWriter.getPartitionCount();
+                squashSplitPartitions(lo, hi, SQUASH_TEMP_MIN_PIECES, force);
+                if (txWriter.getPartitionCount() < before) {
+                    anySquashed = true;
+                    if (stopAtBudget && splitPieceCount() <= budget) {
+                        return true;
+                    }
+                    // The partition list shrank; re-find this group's (now folded) extent before advancing.
+                    lo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalTs);
+                    hi = lo + 1;
+                    while (hi < txWriter.getPartitionCount()
+                            && txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(hi)) == logicalTs) {
+                        hi++;
+                    }
                 }
             }
+            lo = hi;
         }
+        return anySquashed;
     }
 
-    private void squashSplitPartitions(long timestampMin, long timestampMax, int maxLastSubPartitionCount) {
-        if (timestampMin > txWriter.getMaxTimestamp() || txWriter.getPartitionCount() < 2) {
+    // TEMPORARY (benching): the post-commit piece-count control. Split creation is byte-gated and uncapped
+    // in O3PartitionJob, so this sweep bounds the piece count. Pass 1 folds every logical partition whose
+    // first piece is mutable down to SQUASH_TEMP_MIN_PIECES pieces. If pass 1 folded nothing yet the
+    // table-wide split-piece count still exceeds the (last + mid) budget, pass 2 folds again allowing
+    // donor-led groups (copying the donor first piece out), earliest first, until back within budget.
+    private void squashSplitPartitionsToBudget() {
+        if (txWriter.getPartitionCount() < 2) {
             return;
         }
-
-        // Take control of the split partition population here.
-        // When the number of split partitions is too big, start merging them together.
-        // This is to avoid having too many partitions / files in the system which penalizes the reading performance.
-        long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(timestampMin);
-        int partitionIndexLo = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(logicalPartitionTimestamp);
-
-        boolean splitsKept = false;
-        if (partitionIndexLo < txWriter.getPartitionCount()) {
-            int partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
-            int partitionIndex = partitionIndexLo + 1;
-
-            for (; partitionIndex < partitionIndexHi; partitionIndex++) {
-
-                long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                long nextPartitionLogicalTimestamp = txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp);
-
-                if (nextPartitionLogicalTimestamp != logicalPartitionTimestamp) {
-                    int splitCount = partitionIndex - partitionIndexLo;
-                    if (splitCount > 1) {
-                        int partitionCount = txWriter.getPartitionCount();
-                        squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
-                        int partitionReduction = partitionCount - txWriter.getPartitionCount();
-                        splitsKept = partitionReduction < splitCount - 1;
-
-                        logicalPartitionTimestamp = nextPartitionTimestamp;
-
-                        // Squashing changes the partitions, re-calculate the loop index and boundaries
-                        partitionIndexLo = partitionIndex = squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(nextPartitionTimestamp);
-                        partitionIndexHi = Math.min(squashSplitPartitions_findPartitionIndexAtOrGreaterTimestamp(timestampMax) + 1, txWriter.getPartitionCount());
-                    } else {
-                        partitionIndexLo = partitionIndex;
-                        logicalPartitionTimestamp = nextPartitionLogicalTimestamp;
-                    }
-
-                    if (!splitsKept && timestampMin == minSplitPartitionTimestamp) {
-                        // All splits seen are squashed, move minSplitPartitionTimestamp forward.
-                        minSplitPartitionTimestamp = nextPartitionTimestamp;
-                    }
-                }
-            }
-
-            if (partitionIndex - partitionIndexLo > 1) {
-                squashPartitionRange(maxLastSubPartitionCount, partitionIndexLo, partitionIndex);
+        final boolean squashed = squashLogicalPartitionsToFloor(false, false, 0);
+        if (!squashed) {
+            final int budget = Math.max(1, configuration.getO3LastPartitionMaxSplits())
+                    + Math.max(1, configuration.getO3MidPartitionMaxSplits());
+            if (splitPieceCount() > budget) {
+                squashLogicalPartitionsToFloor(true, true, budget);
             }
         }
     }
@@ -13675,9 +13661,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Move targetPartitionIndex to the first unlocked partition in the range.
         // A donor-flagged partition (a zero-copy split prefix donor or suffix child) shares hardlinked
         // files with another partition; it must never be squashed INTO (overwritten in place). Non-force
-        // squash skips donor targets (isHardlinkSplitWithinSquashCap keeps hardlink children within the
-        // split cap, so donors rarely block a policy fold; a mid-commit copy-target fold is NOT safe
-        // here). Force squash (ALTER SQUASH, partition switch) accepts any first target and copies it
+        // squash skips donor targets (a leading donor prefix stays unfolded; a mid-commit copy-target fold
+        // is NOT safe here). Force squash (ALTER SQUASH, partition switch) accepts any first target and copies it
         // out to a fresh contiguous dir when it cannot be overwritten in place (reader-locked or donor).
         // The && order matters: isPartitionDonor asserts !isPartitionParquet, and a parquet tail is
         // never overwritable.
