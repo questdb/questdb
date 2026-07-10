@@ -170,6 +170,8 @@ public interface SecurityContext extends Mutable {
 
     void authorizeTableTruncate(TableToken tableToken);
 
+    void authorizeTableDelete(TableToken tableToken);
+
     void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeTableVacuum(TableToken tableToken);
