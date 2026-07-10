@@ -27,6 +27,7 @@ package io.questdb.mp;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.mp.continuation.ContinuationQueue;
+import io.questdb.mp.continuation.QueryFiber;
 import io.questdb.mp.continuation.WorkerContinuation;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Misc;
@@ -64,6 +65,10 @@ public class Worker extends Thread {
     private final String criticalErrorLine;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
+    // Fiber-host mode: the worker runs a plain loop (never wrapped in a
+    // continuation) and mounts parked QueryFibers from the pool's queue
+    // directly. See WorkerPoolConfiguration.isFiberHost().
+    private final boolean isFiberHost;
     private final AtomicLong jobStartMicros = new AtomicLong();
     private final ObjHashSet<? extends Job> jobs;
     private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
@@ -83,6 +88,7 @@ public class Worker extends Thread {
     // converges to the workload's concurrent-suspend high-water mark; empty on
     // cold start.
     private final ObjList<ObjList<Job>> snapshotPool = new ObjList<>();
+    private final int workerId;
     // The per-tick context handed to every job. carrierId() is pulled lazily by the
     // job: on a continuation-aware pool it reads WORKER_ID (carrier-aware, so it
     // tracks a remount onto a peer carrier); on a legacy pool, which never migrates,
@@ -100,7 +106,6 @@ public class Worker extends Thread {
             return lifecycle.get() == WorkerLifecycle.HALTED;
         }
     };
-    private final int workerId;
     private final long yieldThreshold;
 
     public Worker(
@@ -117,9 +122,11 @@ public class Worker extends Thread {
             long sleepMs,
             Metrics metrics,
             @Nullable ContinuationQueue continuationQueue,
+            boolean isFiberHost,
             @Nullable Log log
     ) {
         assert yieldThreshold > 0L;
+        assert !isFiberHost || continuationQueue != null;
         this.setName(poolName + '_' + workerId);
         this.poolName = poolName;
         this.workerId = workerId;
@@ -135,6 +142,7 @@ public class Worker extends Thread {
         this.sleepMs = sleepMs;
         this.metrics = metrics;
         this.continuationQueue = continuationQueue;
+        this.isFiberHost = isFiberHost;
         this.log = log;
     }
 
@@ -208,6 +216,11 @@ public class Worker extends Thread {
                     loopBody(currentJobsGen);
                     return;
                 }
+                if (isFiberHost) {
+                    fiberHostLoopBody(currentJobsGen);
+                    drainShutdownContinuations();
+                    return;
+                }
 
                 // Outer driver: this thread is NOT carrying any cont here.
                 //
@@ -267,6 +280,7 @@ public class Worker extends Thread {
                     // would deplete the pool whenever a stale or shutdown-race cont
                     // surfaces, and leave parked queries with no remounter. The
                     // authoritative exit signal is the outer while's lifecycle check.
+                    boolean isOwnContDone = false;
                     while (true) {
                         WorkerContinuation handoff = cont.takeHandoff();
                         if (handoff == null) {
@@ -277,10 +291,30 @@ public class Worker extends Thread {
                             // minted after this loop.
                             break;
                         }
-                        // cont suspended only to surrender the dequeued handoff cont;
-                        // its handoff slot is non-null only after a successful handoff
-                        // suspend (loopBody resets it to null on a refused one). Such a
-                        // cont is never re-enqueued and never resumed -- it is spent --
+                        if (handoff instanceof QueryFiber) {
+                            // Guest mount: a fiber is a task-runner that yields back
+                            // promptly, not a worker loop to adopt. Our handoff-suspended
+                            // cont was never registered with a waiter, so nothing can race
+                            // us for its remount: run the fiber, then RESUME our own cont
+                            // -- its suspend() returns true and loopBody continues on the
+                            // same generation. No fresh continuation is minted per fiber
+                            // mount, keeping fiber launches allocation-free.
+                            if (mountForeignCont(handoff)) {
+                                QueryFiber.reclaimIfIdle(handoff);
+                            }
+                            cont.run();
+                            if (cont.isDone()) {
+                                recycleJobList(cont);
+                                isOwnContDone = true;
+                                break;
+                            }
+                            continue;
+                        }
+                        // cont suspended to surrender a dequeued worker-loop cont; the
+                        // handoff slot is non-null only after a successful handoff
+                        // suspend (loopBody resets it to null on a refused one). The
+                        // dequeued cont resumes ITS OWN loop on this carrier, making ours
+                        // redundant -- it is spent, never re-enqueued and never resumed --
                         // and it parked between job iterations, so its stateful clones
                         // (e.g. the HTTP selector + handler set) are idle. Recycle its
                         // generation now, during RUNNING, returning those clones to the
@@ -292,10 +326,20 @@ public class Worker extends Thread {
                             // the cont is no longer ours to inspect. Stop walking the chain.
                             break;
                         }
+                        if (QueryFiber.reclaimIfIdle(cont)) {
+                            // fibers never set a handoff; a wait-frozen fiber falls
+                            // through to the null-handoff break, owned by its waiter
+                            break;
+                        }
                         if (cont.isDone()) {
                             recycleJobList(cont);
                             break;
                         }
+                    }
+                    if (isOwnContDone) {
+                        // The resumed own cont observed lifecycle HALTED and returned.
+                        // Break to drain any parked conts before exiting the pool.
+                        break;
                     }
                     // The next outer cont always runs on a freshly minted generation.
                     // Either the deep-parked cont still owns currentJobsGen (cold path
@@ -334,6 +378,20 @@ public class Worker extends Thread {
     }
 
     /**
+     * Builds the initial job generation from the registered Job instances.
+     * Gen-0 references the very same Job instances assigned to the pool; no
+     * cloning happens on the hot path. Subsequent generations are minted via
+     * {@link #mintNextGen(ObjList)} only when a suspend creates demand.
+     */
+    private static ObjList<Job> buildInitialGeneration(ObjHashSet<? extends Job> registered) {
+        ObjList<Job> gen = new ObjList<>(registered.size());
+        for (int i = 0, n = registered.size(); i < n; i++) {
+            gen.add(registered.get(i));
+        }
+        return gen;
+    }
+
+    /**
      * Drains continuations scheduled for resume during shutdown, run after the worker's
      * RUNNING loop exits. Mirrors the outer driver's handoff walk: each parked cont is
      * remounted and run to completion so its body observes {@code isShuttingDown()} and
@@ -359,6 +417,9 @@ public class Worker extends Thread {
                 Os.pause();
                 continue;
             }
+            if (QueryFiber.reclaimIfIdle(cont)) {
+                continue;
+            }
             while (!cont.isDone()) {
                 WorkerContinuation handoff = cont.takeHandoff();
                 if (handoff == null) {
@@ -376,6 +437,56 @@ public class Worker extends Thread {
             }
             if (cont != null && cont.isDone()) {
                 recycleJobList(cont);
+            }
+        }
+    }
+
+    /**
+     * End-state worker loop of the fiber-host mode: plain code, never wrapped in a
+     * continuation. Jobs on this pool must not suspend on the loop -- all query
+     * suspension happens inside the fibers this loop hosts. A wait function
+     * reached inline anyway finds no mounted continuation and takes its legacy
+     * polling fallback, so a misconfigured pool degrades to pre-continuation
+     * behavior instead of failing.
+     *
+     * <p>Because this frame carries no continuation, parked fibers from the
+     * pool's queue are mounted DIRECTLY: no handoff suspend, no generation
+     * minting, no allocation of any kind per mount. The loop iterates the same
+     * per-worker job instances for the worker's lifetime, like a legacy pool.
+     *
+     * <p>Only {@link QueryFiber}s can appear on a fiber-host pool's queue:
+     * a worker-loop continuation could only get there via a waiter, and nothing
+     * on this pool ever binds one. {@link QueryFiber#reclaimIfIdle} returns
+     * free-yielded and completed fibers to their pool; a wait-frozen fiber is
+     * left with its waiter, which re-enqueues it on the next wakeup.
+     */
+    private void fiberHostLoopBody(ObjList<Job> myJobs) {
+        final ContinuationQueue.ResumeTask scratchResumeTask = new ContinuationQueue.ResumeTask();
+        long ticker = 0L;
+        while (lifecycle.get() == WorkerLifecycle.RUNNING) {
+            boolean runAsap = runJobs(myJobs);
+
+            WorkerContinuation cont;
+            while ((cont = continuationQueue.tryDequeue(scratchResumeTask)) != null) {
+                runAsap = true;
+                if (mountForeignCont(cont)) {
+                    QueryFiber.reclaimIfIdle(cont);
+                }
+            }
+
+            if (runAsap) {
+                ticker = 0;
+                continue;
+            }
+            if (++ticker < 0) {
+                ticker = sleepThreshold + 1; // overflow
+            }
+            if (ticker > sleepThreshold) {
+                Os.sleep(sleepMs);
+            } else if (ticker > napThreshold) {
+                Os.sleep(1);
+            } else if (ticker > yieldThreshold) {
+                Os.pause();
             }
         }
     }
@@ -412,33 +523,7 @@ public class Worker extends Thread {
         // window so a future pin episode logs immediately.
         long nextYieldRefusedLogMicros = 0L;
         while (lifecycle.get() == WorkerLifecycle.RUNNING) {
-            boolean runAsap = false;
-            // measure latency of all jobs tick
-            jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
-            for (int i = 0, n = myJobs.size(); i < n; i++) {
-                Unsafe.loadFence();
-                try {
-                    runAsap |= myJobs.get(i).run(workerContext);
-                } catch (Throwable e) {
-                    if (metrics.isEnabled()) {
-                        try {
-                            metrics.healthMetrics().incrementUnhandledErrors();
-                        } catch (Throwable t) {
-                            stdErrCritical(t);
-                        }
-                    }
-                    if (log != null) {
-                        log.critical().$("unhandled error [job=").$(myJobs.get(i).toString()).$(", ex=").$(e).I$();
-                    } else {
-                        stdErrCritical(e); // log regardless
-                    }
-                    if (haltOnError) {
-                        throw e;
-                    }
-                } finally {
-                    Unsafe.storeFence();
-                }
-            }
+            boolean runAsap = runJobs(myJobs);
 
             // Attempt to claim a parked cont from the pool's queue. Only the
             // worker that wins the dequeue actually yields -- peer workers that
@@ -450,14 +535,16 @@ public class Worker extends Thread {
                 WorkerContinuation toResume = continuationQueue.tryDequeue(scratchResumeTask);
                 if (toResume != null) {
                     self.setHandoff(toResume);
-                    // suspend() only ever returns to this frame with the refused
-                    // (false) outcome below. On a successful yield the carrier unmounts
-                    // here and this cont is NOT resumed at this point: the outer driver
-                    // reads the handoff (takeHandoff), recycles this now-spent cont's
-                    // job generation, and mounts toResume in its place. A deep park
-                    // inside a job (Job.run) resumes at the job call, not here. So there
-                    // is no resumed-after-success branch. See DESIGN_NOTES.md, "Worker
-                    // loop control flow: handoff suspend vs deep park".
+                    // Two outcomes at this suspend. (1) The handoff target is a worker
+                    // loop cont: on a successful yield the carrier unmounts here, the
+                    // outer driver adopts the target's loop and this cont is spent --
+                    // suspend() never returns true for that shape. (2) The handoff
+                    // target is a QueryFiber: the outer driver mounts the guest fiber
+                    // and then RESUMES this cont -- suspend() returns true and the loop
+                    // continues below on the same generation, allocation-free. The
+                    // refused (false) branch is the carrier-pinned fallback either way.
+                    // See DESIGN_NOTES.md, "Worker loop control flow: handoff suspend
+                    // vs deep park".
                     if (!WorkerContinuation.suspend()) {
                         // Yield refused (carrier pinned). We can't escape this cont
                         // to mount the dequeued one. Re-queue it so a peer worker
@@ -495,20 +582,6 @@ public class Worker extends Thread {
                 Os.pause();
             }
         }
-    }
-
-    /**
-     * Builds the initial job generation from the registered Job instances.
-     * Gen-0 references the very same Job instances assigned to the pool; no
-     * cloning happens on the hot path. Subsequent generations are minted via
-     * {@link #mintNextGen(ObjList)} only when a suspend creates demand.
-     */
-    private static ObjList<Job> buildInitialGeneration(ObjHashSet<? extends Job> registered) {
-        ObjList<Job> gen = new ObjList<>(registered.size());
-        for (int i = 0, n = registered.size(); i < n; i++) {
-            gen.add(registered.get(i));
-        }
-        return gen;
     }
 
     /**
@@ -619,6 +692,43 @@ public class Worker extends Thread {
             }
         }
         snapshotPool.add(snapshot);
+    }
+
+    /**
+     * One sweep over the worker's job set with the per-job fence pair and the
+     * unhandled-error policy. Returns {@code true} when any job asked to be
+     * rescheduled ASAP. Shared by the continuation-mode {@link #loopBody} and the
+     * fiber-host loop.
+     */
+    private boolean runJobs(ObjList<Job> myJobs) {
+        boolean runAsap = false;
+        // measure latency of all jobs tick
+        jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
+        for (int i = 0, n = myJobs.size(); i < n; i++) {
+            Unsafe.loadFence();
+            try {
+                runAsap |= myJobs.get(i).run(workerContext);
+            } catch (Throwable e) {
+                if (metrics.isEnabled()) {
+                    try {
+                        metrics.healthMetrics().incrementUnhandledErrors();
+                    } catch (Throwable t) {
+                        stdErrCritical(t);
+                    }
+                }
+                if (log != null) {
+                    log.critical().$("unhandled error [job=").$(myJobs.get(i).toString()).$(", ex=").$(e).I$();
+                } else {
+                    stdErrCritical(e); // log regardless
+                }
+                if (haltOnError) {
+                    throw e;
+                }
+            } finally {
+                Unsafe.storeFence();
+            }
+        }
+        return runAsap;
     }
 
     private void stdErrCritical(Throwable e) {

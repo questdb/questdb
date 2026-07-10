@@ -39,8 +39,12 @@ import jdk.internal.vm.ContinuationScope;
  *
  * <p>Requires {@code --add-exports java.base/jdk.internal.vm=io.questdb} on the JVM
  * command line.
+ *
+ * <p>Extended by {@link QueryFiber}, the pooled, non-completing task-runner variant
+ * of the query-fiber tier. All state here remains private; the subclass only adds
+ * its own slots.
  */
-public final class WorkerContinuation {
+public class WorkerContinuation {
     public static final ContinuationScope SCOPE = new ContinuationScope("questdb-worker");
     // Thread-local pointer to the WorkerContinuation currently mounted on this thread.
     // Set on entry to {@link #run()} and cleared on exit. Suspending functions

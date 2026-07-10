@@ -69,6 +69,10 @@ public class WorkerPool implements Closeable {
     private final ObjList<Job> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
+    // Fiber-host pools run a plain loop (no WorkerContinuation wrapping, no
+    // handoff, no generation minting) and mount parked QueryFibers from the
+    // continuation queue directly. See WorkerPoolConfiguration.isFiberHost().
+    private final boolean isFiberHost;
     // Legacy pools run their loop body directly (no WorkerContinuation
     // wrapping) and accept per-worker Job assignment via
     // {@link #assign(int, Job)}. Used today for the ILP TCP IO and writer
@@ -109,6 +113,10 @@ public class WorkerPool implements Closeable {
         this.haltOnError = configuration.haltOnError();
         this.daemons = configuration.isDaemonPool();
         this.legacy = configuration.isLegacy();
+        this.isFiberHost = configuration.isFiberHost();
+        if (legacy && isFiberHost) {
+            throw new IllegalArgumentException("worker pool cannot be both legacy and fiber-host [pool=" + configuration.getPoolName() + "]");
+        }
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.napThreshold = configuration.getNapThreshold();
@@ -241,6 +249,10 @@ public class WorkerPool implements Closeable {
     @TestOnly
     public void haltAndAssertCleanForTest(long timeoutNanos) {
         halt(timeoutNanos, true);
+    }
+
+    public boolean isLegacy() {
+        return legacy;
     }
 
     private void halt(long timeoutNanos, boolean strict) {
@@ -397,6 +409,7 @@ public class WorkerPool implements Closeable {
                         sleepMs,
                         metrics,
                         continuationQueue,
+                        isFiberHost,
                         log
                 );
                 worker.setPriority(priority);

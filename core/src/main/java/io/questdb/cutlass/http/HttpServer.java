@@ -41,6 +41,7 @@ import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
 import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.continuation.QueryFiberPool;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
@@ -75,6 +76,10 @@ public class HttpServer implements Closeable {
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
+    // Non-null when the full-fat configuration enables fiber-mode dispatch:
+    // connection operations run as QueryTasks on pooled fibers resumed by this
+    // same worker pool. Null = direct inline dispatch (min server, flag off).
+    private final QueryFiberPool queryFiberPool;
     private final WaitProcessor rescheduleContext;
     private final AssociativeCache<RecordCursorFactory> selectCache;
     // Per-worker selector storage with a master factory registration list.
@@ -110,9 +115,20 @@ public class HttpServer implements Closeable {
             } else {
                 this.selectCache = NO_OP_CACHE;
             }
+            if (serverConfiguration.isQueryFiberEnabled() && !networkSharedPool.isLegacy()) {
+                // Fibers resume on the same pool that runs the dispatch jobs, so
+                // registerChannel/disconnect keep their existing threading.
+                this.queryFiberPool = new QueryFiberPool(
+                        Math.max(4, 2 * workerCount),
+                        networkSharedPool.getContinuationSink()
+                );
+            } else {
+                this.queryFiberPool = null;
+            }
         } else {
             // Min server doesn't need select cache, so we use no-op impl.
             this.selectCache = NO_OP_CACHE;
+            this.queryFiberPool = null;
         }
 
         this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
@@ -137,7 +153,8 @@ public class HttpServer implements Closeable {
                     selectorFactory,
                     selector,
                     false,
-                    acceptOpen
+                    acceptOpen,
+                    queryFiberPool
             ));
 
             // http context factory has thread local pools
@@ -345,6 +362,7 @@ public class HttpServer implements Closeable {
     @Override
     public void close() {
         Misc.free(dispatcher);
+        Misc.free(queryFiberPool);
         Misc.free(rescheduleContext);
         Misc.free(selectorFactory);
         Misc.freeObjListAndClear(closeables);
@@ -416,6 +434,9 @@ public class HttpServer implements Closeable {
         // Propagated to every rotation clone so the gate holds across continuation generations.
         private final AtomicBoolean acceptOpen;
         private final IODispatcher<HttpConnectionContext> dispatcher;
+        // Non-null in fiber mode: the processor launches connection tasks on pooled
+        // fibers instead of dispatching inline. Propagated to rotation clones.
+        private final QueryFiberPool fiberPool;
         private final HttpServer owner;
         private final IORequestProcessor<HttpConnectionContext> processor;
         private final boolean recyclableSelector;
@@ -434,7 +455,8 @@ public class HttpServer implements Closeable {
                 HttpRequestProcessorSelectorFactory selectorFactory,
                 HttpRequestProcessorSelectorImpl selector,
                 boolean recyclableSelector,
-                AtomicBoolean acceptOpen
+                AtomicBoolean acceptOpen,
+                QueryFiberPool fiberPool
         ) {
             this.owner = owner;
             this.dispatcher = dispatcher;
@@ -443,11 +465,32 @@ public class HttpServer implements Closeable {
             this.selector = selector;
             this.recyclableSelector = recyclableSelector;
             this.acceptOpen = acceptOpen;
-            // Lambda reads this.selector at invocation time (field access via
-            // captured `this`), so a recycle/re-acquire cycle flows through
-            // transparently.
-            this.processor = (operation, context, disp) ->
-                    owner.handleClientOperation(context, operation, this.selector, rescheduleContext, disp);
+            this.fiberPool = fiberPool;
+            if (fiberPool != null) {
+                this.processor = (operation, context, disp) -> {
+                    if (operation == IOOperation.HEARTBEAT) {
+                        disp.registerChannel(context, IOOperation.HEARTBEAT);
+                        return false;
+                    }
+                    // the fd is armed for nothing while a step runs, so at every event
+                    // the gate is IDLE, or terminal after a disconnect; the task
+                    // acquires its own selector per step, never this job's
+                    final HttpConnectionFiberTask task = context.getFiberTask(disp, selectorFactory, rescheduleContext);
+                    if (task.isDone() || task.isCancelled()) {
+                        task.reopen();
+                    }
+                    task.prepare(operation);
+                    final boolean launched = fiberPool.launch(task);
+                    assert launched : "fiber launch refused: task gate not idle";
+                    return true;
+                };
+            } else {
+                // Lambda reads this.selector at invocation time (field access via
+                // captured `this`), so a recycle/re-acquire cycle flows through
+                // transparently.
+                this.processor = (operation, context, disp) ->
+                        owner.handleClientOperation(context, operation, this.selector, rescheduleContext, disp);
+            }
         }
 
         @Override
@@ -463,7 +506,8 @@ public class HttpServer implements Closeable {
                     selectorFactory,
                     selectorFactory.acquire(),
                     true,
-                    acceptOpen
+                    acceptOpen,
+                    fiberPool
             );
         }
 
@@ -517,7 +561,7 @@ public class HttpServer implements Closeable {
      * boolean)} so that the same URL maps to the same handler id across
      * every selector this factory ever creates.
      */
-    private static class HttpRequestProcessorSelectorFactory implements Closeable {
+    static class HttpRequestProcessorSelectorFactory implements Closeable {
         private final ObjList<FactoryHolder> factoryHolders = new ObjList<>();
         // Pool of selectors released by HttpRequestJob.recycleInstance() when a
         // continuation snapshot completes. cloneInstance() pops from here
@@ -653,7 +697,7 @@ public class HttpServer implements Closeable {
         }
     }
 
-    private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
+    static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
         private final ObjList<HttpRequestHandler> handlersByIdList = new ObjList<>();
         private final Utf8SequenceObjHashMap<IndexedHandler> requestHandlerMap = new Utf8SequenceObjHashMap<>();

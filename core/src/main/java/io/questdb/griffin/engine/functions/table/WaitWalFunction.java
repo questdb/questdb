@@ -93,7 +93,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
         // can safely flip state back to PENDING for the next park. Stale
         // shard entries from a prior cycle are harmless: expire() is purely
         // state-driven, never reads deadlineMillis.
-        TxnWaiter waiter = new TxnWaiter(
+        TxnWaiter waiter = TxnWaiter.acquire(
                 executionContext.getCairoEngine().getTimerShards(),
                 executionContext.getCairoEngine().getConfiguration().getQueryContinuationWakeIntervalMillis(),
                 seqTxn

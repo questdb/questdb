@@ -44,6 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
@@ -118,6 +119,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private SqlExecutionContextImpl httpSqlExecutionContext;
     private boolean isProtocolSwitched = false;  // WebSocket protocol switch flag
     private int nCompletedRequests;
+    private HttpConnectionFiberTask fiberTask;
     private boolean pendingRetry = false;
     private String processorName;
     private int receivedBytes;
@@ -374,6 +376,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public long getTotalReceived() {
         return totalReceived;
+    }
+
+    /**
+     * Lazily creates the per-connection fiber task. The task follows this context's
+     * pooled lifecycle: recycled together, reopened by the dispatch job when a new
+     * connection incarnation finds its gate terminal.
+     */
+    public HttpConnectionFiberTask getFiberTask(
+            IODispatcher<HttpConnectionContext> dispatcher,
+            HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
+            WaitProcessor rescheduleContext
+    ) {
+        if (fiberTask == null) {
+            fiberTask = new HttpConnectionFiberTask(this, dispatcher, selectorFactory, rescheduleContext);
+        }
+        return fiberTask;
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)

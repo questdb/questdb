@@ -91,6 +91,19 @@ public interface PGConfiguration extends IODispatcherConfiguration, WorkerPoolCo
 
     boolean isInsertCacheEnabled();
 
+    /**
+     * When enabled (the default), connection operations (message parsing, query
+     * execution, result streaming) run as QueryTasks on pooled, non-completing
+     * fibers instead of inline in the network worker's job: a wait function inside
+     * a query (wait_wal_table / sleep) then freezes the pooled fiber, which is
+     * reused across parks, instead of freezing the worker's loop continuation,
+     * which is discarded per park. Ignored (direct dispatch) when the server's
+     * worker pool is legacy, which cannot host continuations.
+     */
+    default boolean isQueryFiberEnabled() {
+        return true;
+    }
+
     boolean isReadOnlyUserEnabled();
 
     boolean isSelectCacheEnabled();

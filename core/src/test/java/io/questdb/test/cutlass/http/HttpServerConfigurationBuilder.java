@@ -61,6 +61,7 @@ public class HttpServerConfigurationBuilder {
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private boolean pessimisticHealthCheck = false;
     private int port = -1;
+    private boolean queryFiberEnabled = true;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private int receiveBufferSize = 1024 * 1024;
     private int sendBufferSize = 1024 * 1024;
@@ -146,6 +147,11 @@ public class HttpServerConfigurationBuilder {
             @Override
             public int getBindPort() {
                 return port != -1 ? port : super.getBindPort();
+            }
+
+            @Override
+            public boolean isQueryFiberEnabled() {
+                return queryFiberEnabled;
             }
 
             @Override
@@ -297,6 +303,11 @@ public class HttpServerConfigurationBuilder {
 
     public HttpServerConfigurationBuilder withConfiguredMaxQueryResponseRowLimit(long configuredMaxQueryResponseRowLimit) {
         this.configuredMaxQueryResponseRowLimit = configuredMaxQueryResponseRowLimit;
+        return this;
+    }
+
+    public HttpServerConfigurationBuilder withQueryFiberEnabled(boolean queryFiberEnabled) {
+        this.queryFiberEnabled = queryFiberEnabled;
         return this;
     }
 

@@ -47,8 +47,12 @@ import java.util.concurrent.TimeUnit;
  *   // check t.isShuttingDown() before continuing
  * </pre>
  *
- * <p>One-shot: each {@link #scheduleAfter} call allocates a fresh instance with its own
- * CAS lifecycle. No pool is provided; pooling is the caller's job if needed.
+ * <p>On a {@link QueryFiber}, {@link #scheduleAfter} reuses the fiber's embedded
+ * instance across arms -- zero allocation per timer wait. This is safe because a fiber
+ * runs one timer wait at a time, each wake leaves the instance terminal (FIRED or
+ * CANCELLED) so stale heap entries no-op, and within an armed window any fire a stale
+ * entry wins is a benign early wake for a body that re-checks its remaining time.
+ * Off-fiber callers get a fresh instance per call.
  *
  * <p>Loop discipline: callers that re-park inside a loop must check
  * {@link #isShuttingDown()} between iterations and exit instead of re-arming, so the
@@ -59,16 +63,16 @@ public final class TimerCont implements DelayedFireable {
     private static final int STATE_FIRED = 1;
     private static final long STATE_OFFSET = Unsafe.getFieldOffset(TimerCont.class, "state");
     private static final int STATE_PENDING = 0;
-    private final MillisecondClock clock;
     private final WorkerContinuation cont;
-    private final long deadlineMillis;
+    private MillisecondClock clock;
+    // volatile: read by the timer shard thread in getDelay during heap operations,
+    // and the value changes across per-fiber re-arms
+    private volatile long deadlineMillis;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int state = STATE_PENDING;
 
-    private TimerCont(WorkerContinuation cont, MillisecondClock clock, long deadlineMillis) {
+    TimerCont(WorkerContinuation cont) {
         this.cont = cont;
-        this.clock = clock;
-        this.deadlineMillis = deadlineMillis;
     }
 
     /**
@@ -88,7 +92,8 @@ public final class TimerCont implements DelayedFireable {
         if (cont == null || !WorkerContinuation.isMounted()) {
             throw new IllegalStateException("TimerCont.scheduleAfter requires a mounted WorkerContinuation");
         }
-        TimerCont t = new TimerCont(cont, clock, clock.getTicks() + afterMillis);
+        final TimerCont t = cont instanceof QueryFiber fiber ? fiber.getTimerCont() : new TimerCont(cont);
+        t.of(clock, clock.getTicks() + afterMillis);
         shards.register(t);
         return t;
     }
@@ -152,5 +157,17 @@ public final class TimerCont implements DelayedFireable {
         if (Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED)) {
             cont.scheduleResume();
         }
+    }
+
+    /**
+     * Arms this instance for a new deadline, beginning a new lifecycle after the
+     * previous arm ended in a terminal state. The PENDING write deliberately opens
+     * the fire window; stale heap entries from a previous arm CAS from PENDING
+     * only, and any fire they win is a benign early wake.
+     */
+    void of(MillisecondClock clock, long deadlineMillis) {
+        this.clock = clock;
+        this.deadlineMillis = deadlineMillis;
+        state = STATE_PENDING;
     }
 }

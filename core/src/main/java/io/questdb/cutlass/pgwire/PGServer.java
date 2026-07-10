@@ -35,6 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.continuation.QueryFiberPool;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
@@ -64,6 +65,7 @@ public class PGServer implements Closeable {
     private final PGConnectionContextFactory contextFactory;
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
+    private final QueryFiberPool queryFiberPool;
     private final PGCircuitBreakerRegistry registry;
     private final WorkerPool sharedPoolNetwork;
     private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
@@ -92,6 +94,7 @@ public class PGServer implements Closeable {
         AssociativeCache<TypesAndSelect> typesAndSelectCacheLocal = null;
         PGConnectionContextFactory contextFactoryLocal = null;
         IODispatcher<PGConnectionContext> dispatcherLocal = null;
+        QueryFiberPool queryFiberPoolLocal = null;
         try {
             this.acceptOpen = acceptOpen;
             this.metrics = engine.getMetrics();
@@ -113,6 +116,15 @@ public class PGServer implements Closeable {
             this.dispatcher = dispatcherLocal;
             this.sharedPoolNetwork = sharedPoolNetwork;
             this.registry = registry;
+            if (configuration.isQueryFiberEnabled() && !sharedPoolNetwork.isLegacy()) {
+                // Fibers resume on the same network pool that runs the dispatch job,
+                // so registerChannel/disconnect keep their existing threading.
+                queryFiberPoolLocal = new QueryFiberPool(
+                        Math.max(4, 2 * sharedPoolNetwork.getWorkerCount()),
+                        sharedPoolNetwork.getContinuationSink()
+                );
+            }
+            this.queryFiberPool = queryFiberPoolLocal;
 
             // Gate the IO dispatcher so the pool polls it only once accept opens.
             sharedPoolNetwork.assign(new AcceptGatedJob(dispatcher, acceptOpen));
@@ -121,37 +133,58 @@ public class PGServer implements Closeable {
             // pure dispatch over a shared IODispatcher, so a single shared instance
             // is safe across all workers. assign(Job) routes the same singleton
             // to every worker via the default Job.cloneInstance() (returns this).
-            final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
-                try {
+            final IORequestProcessor<PGConnectionContext> processor;
+            if (queryFiberPoolLocal != null) {
+                final QueryFiberPool fiberPool = queryFiberPoolLocal;
+                processor = (operation, context, dispatcher) -> {
                     if (operation == IOOperation.HEARTBEAT) {
                         dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
                         return false;
                     }
-                    context.handleClientOperation(operation);
-                    dispatcher.registerChannel(context, IOOperation.READ);
+                    // the fd is armed for nothing while a step runs, so at every event
+                    // the gate is IDLE, or terminal after a disconnect
+                    final PGConnectionFiberTask task = context.getFiberTask(dispatcher, metrics);
+                    if (task.isDone() || task.isCancelled()) {
+                        task.reopen();
+                    }
+                    task.prepare(operation);
+                    final boolean launched = fiberPool.launch(task);
+                    assert launched : "fiber launch refused: task gate not idle";
                     return true;
-                } catch (PeerIsSlowToWriteException e) {
-                    dispatcher.registerChannel(context, IOOperation.READ);
-                } catch (PeerIsSlowToReadException e) {
-                    dispatcher.registerChannel(context, IOOperation.WRITE);
-                } catch (PeerDisconnectedException e) {
-                    dispatcher.disconnect(
-                            context,
-                            operation == IOOperation.READ
-                                    ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
-                                    : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
-                    );
-                } catch (PGMessageProcessingException e) {
-                    LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
-                    dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                } catch (Throwable e) { // must remain last in catch list!
-                    LOG.critical().$("internal error [ex=").$(e).$(']').$();
-                    // This is a critical error, so we treat it as an unhandled one.
-                    metrics.healthMetrics().incrementUnhandledErrors();
-                    dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
-                }
-                return false;
-            };
+                };
+            } else {
+                processor = (operation, context, dispatcher) -> {
+                    try {
+                        if (operation == IOOperation.HEARTBEAT) {
+                            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+                            return false;
+                        }
+                        context.handleClientOperation(operation);
+                        dispatcher.registerChannel(context, IOOperation.READ);
+                        return true;
+                    } catch (PeerIsSlowToWriteException e) {
+                        dispatcher.registerChannel(context, IOOperation.READ);
+                    } catch (PeerIsSlowToReadException e) {
+                        dispatcher.registerChannel(context, IOOperation.WRITE);
+                    } catch (PeerDisconnectedException e) {
+                        dispatcher.disconnect(
+                                context,
+                                operation == IOOperation.READ
+                                        ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
+                                        : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
+                        );
+                    } catch (PGMessageProcessingException e) {
+                        LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
+                        dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+                    } catch (Throwable e) { // must remain last in catch list!
+                        LOG.critical().$("internal error [ex=").$(e).$(']').$();
+                        // This is a critical error, so we treat it as an unhandled one.
+                        metrics.healthMetrics().incrementUnhandledErrors();
+                        dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
+                    }
+                    return false;
+                };
+            }
             // Gate the shared connection-context Job too: until accept opens it must not poll
             // the IO queue. AcceptGatedJob wraps the singleton dispatch Job; cloneInstance()
             // defaults to returning this, so every worker shares the same gated singleton.
@@ -168,6 +201,11 @@ public class PGServer implements Closeable {
             // close() never runs. Match the LineTcpReceiver close-and-rethrow shape.
             try {
                 Misc.free(dispatcherLocal);
+            } catch (Throwable s) {
+                t.addSuppressed(s);
+            }
+            try {
+                Misc.free(queryFiberPoolLocal);
             } catch (Throwable s) {
                 t.addSuppressed(s);
             }
@@ -196,6 +234,7 @@ public class PGServer implements Closeable {
     @Override
     public void close() {
         Misc.free(dispatcher);
+        Misc.free(queryFiberPool);
         Misc.free(registry);
         Misc.free(contextFactory);
         Misc.free(typesAndSelectCache);

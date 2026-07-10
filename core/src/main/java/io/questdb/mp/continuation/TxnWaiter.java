@@ -36,10 +36,17 @@ import java.util.concurrent.TimeUnit;
  * A single SQL evaluation parked inside a {@link SeqTxnTracker}, waiting for the tracker's
  * {@code writerTxn} to reach {@link #targetWriterTxn}.
  *
- * <p>Allocated once per {@code wait_wal_table} call and reused across the wake/sleep loop:
- * a fresh instance binds the carrier's {@link WorkerContinuation} via {@link #tryBindCurrent},
- * then each iteration {@link #reset()}s {@link #state} from FIRED back to PENDING and publishes
- * a new target before re-registering. Not pooled across calls -- one allocation per active wait.
+ * <p>Obtained via {@link #acquire(TimerShards, long, long)} once per {@code wait_wal_table}
+ * call and reused across the wake/sleep loop: the instance binds the carrier's
+ * {@link WorkerContinuation} via {@link #tryBindCurrent}, then each iteration
+ * {@link #reset()}s {@link #state} from FIRED back to PENDING and publishes a new target
+ * before re-registering. On a {@link QueryFiber}, acquire() reuses the fiber's embedded
+ * instance across wait calls -- zero allocation per wait. This is safe because a fiber
+ * runs one wait at a time, {@link #cancel()} leaves the instance terminal between waits
+ * (all stale tracker holders and timer entries no-op on a terminal state), and within a
+ * wait any fire a stale reference wins is a benign early wake for a body that re-checks
+ * its condition. Off-fiber callers (legacy polling paths, tests) fall back to one
+ * allocation per wait.
  *
  * <p>{@link #state} is a 3-way marker (PENDING / FIRED / CANCELLED). Each concurrent path leaves
  * PENDING with a single CAS, so at most one wins per cycle and {@code cont.scheduleResume()} runs
@@ -67,13 +74,19 @@ public final class TxnWaiter implements DelayedFireable {
     public static final int STATE_FIRED = 1;
     public static final int STATE_PENDING = 0;
     private static final long STATE_OFFSET = Unsafe.getFieldOffset(TxnWaiter.class, "state");
-    private final long targetWriterTxn;
-    private final TimerShards timerShards;
-    private final long waitIntervalMillis;
     private WorkerContinuation cont;
     private volatile long registeredAtMillis;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile int state = STATE_PENDING;
+    // volatile: read by SeqTxnTracker.fireWaiters on other threads, and the value
+    // changes across per-fiber reuses; a plain long could tear on a racy read
+    // from a stale tracker holder
+    private volatile long targetWriterTxn;
+    private TimerShards timerShards;
+    private long waitIntervalMillis;
+
+    TxnWaiter() {
+    }
 
     public TxnWaiter(@Nullable TimerShards timerShards, long waitIntervalMillis, long targetWriterTxn) {
         this.timerShards = timerShards;
@@ -86,6 +99,18 @@ public final class TxnWaiter implements DelayedFireable {
         this.waitIntervalMillis = NO_DELAY;
         this.targetWriterTxn = targetWriterTxn;
         this.cont = cont;
+    }
+
+    /**
+     * Returns a waiter for one wait call: the mounted {@link QueryFiber}'s embedded
+     * instance re-armed for the new target, or a fresh allocation when not running
+     * on a fiber.
+     */
+    public static TxnWaiter acquire(@Nullable TimerShards timerShards, long waitIntervalMillis, long targetWriterTxn) {
+        if (WorkerContinuation.current() instanceof QueryFiber fiber && WorkerContinuation.isMounted()) {
+            return fiber.getTxnWaiter().of(timerShards, waitIntervalMillis, targetWriterTxn);
+        }
+        return new TxnWaiter(timerShards, waitIntervalMillis, targetWriterTxn);
     }
 
     public void abortContinuation() {
@@ -250,5 +275,21 @@ public final class TxnWaiter implements DelayedFireable {
             cont.scheduleResume();
         }
         // cancelled waiters were already enqueued by the canceller; drop on the floor
+    }
+
+    /**
+     * Re-arms this instance for a new wait, beginning a new lifecycle after the
+     * previous wait's terminal {@link #cancel()}. The PENDING write deliberately
+     * opens the fire window: stale tracker holders and timer entries from the
+     * previous wait CAS from PENDING only, and any fire they win is a benign early
+     * wake -- the condition check in {@code fireWaiters} reads the (volatile) new
+     * target, and the body re-checks its own condition on every wake.
+     */
+    TxnWaiter of(@Nullable TimerShards timerShards, long waitIntervalMillis, long targetWriterTxn) {
+        this.timerShards = timerShards;
+        this.waitIntervalMillis = waitIntervalMillis;
+        this.targetWriterTxn = targetWriterTxn;
+        state = STATE_PENDING;
+        return this;
     }
 }

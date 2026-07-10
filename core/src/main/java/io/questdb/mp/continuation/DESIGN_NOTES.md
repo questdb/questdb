@@ -101,7 +101,55 @@ The only remount path runs through `scheduleResume`
 `mountForeignCont` (`Worker.java:509`). A remounted cont always thaws at its
 deep-park site inside `Job.run()` (`Worker.java:367`), never at the handoff
 suspend (`Worker.java:399`). Both diagrams therefore reach the same conclusion:
-no execution makes `suspend()` at `Worker.java:399` return `true`.
+no execution makes `suspend()` at `Worker.java:399` return `true` -- when the
+handoff target is a worker-loop cont.
+
+### Sequence 3 -- query-fiber handoff (cont is resumed, not spent)
+
+The query-fiber tier adds a third shape: loopBody dequeues a `QueryFiber` (a
+pooled, non-completing task-runner continuation) instead of a worker-loop cont.
+The handoff suspend is identical, but the outer driver treats the fiber as a
+GUEST rather than a replacement loop: it mounts the fiber, reclaims it to its
+pool on a free-yield (`QueryFiber.reclaimIfIdle`) or leaves it to its waiter on
+a wait-freeze, and then RESUMES the handoff-suspended loopBody cont --
+`suspend()` at the handoff site returns `true` and the loop continues on the
+SAME generation. No fresh continuation is minted per fiber mount.
+
+This is safe because a handoff-suspended cont was never registered with any
+waiter and was never `scheduleResume`d: the outer driver's local reference is
+the only one in existence, so nothing can race the remount. The
+fresh-per-iteration policy exists to avoid racing peers over conts captured by
+suspending functions; a handoff-suspended cont is not captured by anything.
+The adopt-and-abandon semantics above remain in force for worker-loop handoff
+targets, which resume their own loop on this carrier and make ours redundant.
+
+## Fiber-host worker mode (the end-state loop)
+
+`WorkerPoolConfiguration.isFiberHost()` selects a third worker mode alongside
+legacy and continuation mode: the worker runs `Worker.fiberHostLoopBody` -- a
+PLAIN loop, never wrapped in a `WorkerContinuation` -- and mounts parked
+`QueryFiber`s from the pool's `ContinuationQueue` directly, which is legal
+because a plain frame carries no continuation in the scope. There is no
+handoff, no generation minting, no `cloneInstance()`/`recycleInstance()` calls;
+the per-worker job instances live for the worker's lifetime, like on a legacy
+pool, and a fiber mount allocates nothing.
+
+Safety relies on two properties. (1) Jobs on a fiber-host pool must not
+suspend on the loop; all query suspension happens inside hosted fibers. A wait
+function reached inline anyway (a misconfigured pool, or the HTTP retry path)
+finds `WorkerContinuation.current()` null, `tryBindCurrent()` fails, and the
+function takes its legacy polling fallback -- graceful degradation, not a
+failure. (2) Only fibers can appear on the pool's queue: a worker-loop cont
+could only get there via a waiter, and nothing on the pool ever binds one.
+
+Continuation mode remains the default; fiber-host is opt-in per pool and is
+only correct when every query path using the pool runs on fibers (the
+`pg.query.fiber.enabled` / `http.query.fiber.enabled` flags). Once those flags
+are retired and continuation mode with them, the outer driver, the handoff
+mechanism and the job-rotation machinery become dead code and can be deleted;
+`TxnWaiter`/`TimerCont`/`TimerShards`, the queue, and
+`CarrierIdentity`/`CarrierLocal` stay -- fibers migrate carriers and park the
+same way conts do today.
 
 ## Continuation allocation per outer-driver iteration
 
