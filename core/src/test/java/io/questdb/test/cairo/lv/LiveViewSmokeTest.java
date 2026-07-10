@@ -9606,6 +9606,125 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMidDrainRefreshFailureRebuildsWindowState() throws Exception {
+        // Regression: a refresh cycle that feeds >= 1 row through the incremental
+        // window cursor - advancing the running-sum accumulator - but then throws
+        // BEFORE any durable LV commit must not leave the accumulator
+        // double-advanced. handleRefreshFailure observes windowStateDirty == true
+        // and calls rebuildWindowStateAfterMidDrainFailure ->
+        // rebuildActiveWindowStateFromAppliedBase, which recomputes the whole
+        // window from the applied base so the accumulators restart clean. Without
+        // that rebuild the retry re-drains the same base commits and feeds their
+        // rows a second time: with the fix reverted, the mid-drain row's running
+        // sum lands at 9 instead of 6 (fed twice), and this assertion catches it.
+        //
+        // The fault is a genuine mid-drain one, not a post-commit one. The lead
+        // drain stages rows in RAM and never touches the LV WAL, so a throw during
+        // the base-WAL read leaves nothing durable half-written (unlike the
+        // commit / apply faults the sibling persist-failure tests cover). Reaching
+        // it deterministically needs one drainBaseWal pass to span two base
+        // commits - feed the first, fail the second's segment read. The
+        // refresh-notification store coalesces per base table: a task queued at
+        // seqTxn 2 (kept undrained until this point) re-enqueues at the latest head
+        // once the worker finishes seqTxn 2, and that re-enqueued task drains
+        // seqTxn 3 AND 4 in a single pass. We fail the base WAL ts.d open of the
+        // seqTxn-4 commit once, after the seqTxn-3 row is already fed; the fault
+        // self-clears so the rebuild's applied-base recompute reads cleanly.
+        // assertMemoryLeak covers the base readers the throwing path closes.
+        final String[] baseDir = new String[1];
+        // -1 disarmed; >= 0 skip this many base WAL ts.d opens, then fail the next
+        // one and disarm. Armed with 2: skip the seqTxn-2 and seqTxn-3 commits,
+        // fail the seqTxn-4 commit's segment read (the seqTxn-3 row is already fed).
+        final AtomicInteger armBaseTsRead = new AtomicInteger(-1);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armBaseTsRead.get() >= 0
+                        && baseDir[0] != null
+                        && Utf8s.endsWithAscii(name, "ts.d")
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, "wal")) {
+                    if (armBaseTsRead.get() == 0) {
+                        armBaseTsRead.set(-1);
+                        return -1;
+                    }
+                    armBaseTsRead.decrementAndGet();
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Clean baseline (seqTxn 1). Draining it flips the notification
+                // watermark negative and marks checkpoint-restore attempted, so the
+                // faulting cycle is not the first-cycle applied-base rederive path
+                // and routes its failure through handleRefreshFailure. All rows sit
+                // within one day, so the daily-anchored running sum equals the plain
+                // PARTITION BY sym recompute the oracle uses.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("clean baseline leaves no retries", 0, instance.getFlushRetryCount());
+
+                // seqTxn 2 enqueues its own refresh task; seqTxn 3 and 4 coalesce
+                // into the notification watermark without a new task. When the worker
+                // finishes seqTxn 2 it re-enqueues at the latest head, so the
+                // follow-up task drains seqTxn 3 and 4 in one drainBaseWal.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:01.000000Z', 'a', 2)");
+                drainWalQueue();
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:02.000000Z', 'a', 3)");
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:03.000000Z', 'a', 4)");
+                drainWalQueue();
+
+                armBaseTsRead.set(2);
+                drainJob(job);
+                Assert.assertEquals("the mid-drain segment read must have been failed exactly once",
+                        -1, armBaseTsRead.get());
+                drainWalQueue();
+
+                // The rebuild recomputed the whole window from the applied base
+                // (all four commits) and recorded success, so recovery is
+                // transparent: the view stays valid with a clean tier, its
+                // watermark advances past every commit, and the budget is untouched.
+                Assert.assertFalse("mid-drain rebuild must keep the view valid", instance.isInvalid());
+                Assert.assertFalse("rebuild must leave the tier clean", instance.isTierStale());
+                Assert.assertEquals("mid-drain rebuild recovers without charging the retry budget",
+                        0, instance.getFlushRetryCount());
+                Assert.assertEquals("rebuild must advance the watermark past every commit",
+                        4, instance.getLastProcessedSeqTxn());
+                // The decisive check: the running sum equals a from-scratch
+                // recompute. A double-advanced mid-drain row inflates it (9 instead
+                // of 6 at the seqTxn-3 row when the fix is reverted).
+                assertRunningSumLvMatchesRecompute();
+
+                // Steady state resumes cleanly: the rebuild advanced the watermark
+                // past all four commits, so a later commit does not re-feed them.
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:04.000000Z', 'a', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertRunningSumLvMatchesRecompute();
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testMinDateOverPartitionRowsFrameSnapshotRoundTrip() throws Exception {
         // min(DATE) over a bounded ROWS frame - min reuses Max's classes.
         assertMaxMinTimestampDateFrameRoundTrip(
