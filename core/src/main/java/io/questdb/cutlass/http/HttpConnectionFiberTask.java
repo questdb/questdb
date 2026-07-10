@@ -69,6 +69,7 @@ public final class HttpConnectionFiberTask extends QueryTask {
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final WaitProcessor rescheduleContext;
     private final HttpServer.HttpRequestProcessorSelectorFactory selectorFactory;
+    private boolean isAbandoned;
     private boolean isDisconnectPending;
     private int nextAction = ACTION_NONE;
     private int operation = IOOperation.READ;
@@ -86,8 +87,17 @@ public final class HttpConnectionFiberTask extends QueryTask {
     }
 
     @Override
+    protected void onAbandoned() {
+        // shutdown raced the launch: the step never ran, so nothing else will
+        // return this checked-out context; disconnect it here
+        isAbandoned = true;
+    }
+
+    @Override
     protected void onDone() {
-        if (isDisconnectPending) {
+        if (isAbandoned) {
+            dispatcher.disconnect(context, IODispatcher.DISCONNECT_REASON_SERVER_SHUTDOWN);
+        } else if (isDisconnectPending) {
             dispatcher.disconnect(context, context.getDisconnectReason());
         }
     }
@@ -139,6 +149,7 @@ public final class HttpConnectionFiberTask extends QueryTask {
      */
     void prepare(int operation) {
         this.operation = operation;
+        this.isAbandoned = false;
         this.isDisconnectPending = false;
     }
 }

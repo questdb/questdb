@@ -187,6 +187,11 @@ public final class QueryFiber extends WorkerContinuation {
         final QueryTask task = self.assignedTask;
         if (task != null) {
             self.assignedTask = null;
+            try {
+                task.onAbandoned();
+            } catch (Throwable ignore) {
+                // the fiber must survive a misbehaving hook
+            }
             task.markDone();
             try {
                 task.onDone();

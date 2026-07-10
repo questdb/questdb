@@ -103,6 +103,17 @@ public abstract class QueryTask {
     }
 
     /**
+     * Invoked by the fiber instead of a step when it shuts down with this task
+     * staged but never run: the launch happened, but the fiber was marked for
+     * shutdown before its first mount. Adapters release what a normal step's
+     * terminal path would have released -- e.g. disconnect the checked-out
+     * connection context, which otherwise leaks with its socket. Runs before
+     * {@link #onDone()}. Must not throw.
+     */
+    protected void onAbandoned() {
+    }
+
+    /**
      * Invoked by the fiber after the gate reached DONE, on both the success and
      * the error path. This is the adapter's completion hook: release or recycle
      * per-task resources here rather than inside {@link #runStep()}, because the

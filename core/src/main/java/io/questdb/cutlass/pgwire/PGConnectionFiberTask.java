@@ -79,6 +79,13 @@ public final class PGConnectionFiberTask extends QueryTask {
     }
 
     @Override
+    protected void onAbandoned() {
+        // shutdown raced the launch: the step never ran, so nothing else will
+        // return this checked-out context; disconnect it here
+        disconnectReason = DISCONNECT_REASON_SERVER_SHUTDOWN;
+    }
+
+    @Override
     protected void onDone() {
         if (disconnectReason != NO_DISCONNECT) {
             dispatcher.disconnect(context, disconnectReason);

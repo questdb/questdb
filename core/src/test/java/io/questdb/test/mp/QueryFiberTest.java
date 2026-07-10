@@ -156,6 +156,7 @@ public class QueryFiberTest {
             Assert.assertEquals(1, drainFiberQueue(queue));
             Assert.assertFalse(task.hasRun);
             Assert.assertTrue(task.isDone());
+            Assert.assertTrue(task.hasBeenAbandoned);
             Assert.assertTrue(task.hasReleasedResources);
             Assert.assertEquals(1, pool.getRetiredCount());
         });
@@ -449,8 +450,14 @@ public class QueryFiberTest {
     }
 
     private static class ReleaseTrackingTask extends QueryTask {
+        boolean hasBeenAbandoned;
         boolean hasReleasedResources;
         boolean hasRun;
+
+        @Override
+        protected void onAbandoned() {
+            hasBeenAbandoned = true;
+        }
 
         @Override
         protected void onDone() {
