@@ -123,6 +123,11 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // writer sentinel just before publish.
     private final int[] newSymbolMaxIds;
     private final int timestampColumnIndex;
+    // Per var-size column, the (dataMem, auxMem) append-cursor snapshot captured by
+    // markSavepoint() so a partially applied append can be rolled back on failure.
+    // Two longs per column (dataMem offset, auxMem offset); fixed-width columns leave
+    // their slots unused (they overwrite in place at an absolute offset).
+    private final long[] varAppendSavepoint;
     // Write-path scratch sinks for the wide decimals, lazily allocated on the first
     // DECIMAL128 / DECIMAL256 row the writer copies (null for a buffer with no such
     // column). Only ever touched by the single refresh-worker writer in
@@ -160,6 +165,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         // entries stay null. Sized up front to avoid a grow on first bind.
         this.arrayBuffers = new ObjList<>(columnTypes.size());
         this.newSymbolMaxIds = new int[columnTypes.size()];
+        this.varAppendSavepoint = new long[columnTypes.size() * 2];
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
             int type = columnTypes.getQuick(i);
             this.columnTypes.add(type);
@@ -334,6 +340,32 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             decimal256 = new Decimal256();
         }
         return decimal256;
+    }
+
+    // Snapshots each var-size column's dataMem/auxMem append cursor into
+    // varAppendSavepoint so a partially applied append can be rolled back by
+    // rollbackToSavepoint(). Fixed-width columns are skipped: they overwrite in
+    // place at an absolute offset and their aux is the NullMemory stub.
+    private void markSavepoint() {
+        for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            if (ColumnType.isVarSize(columnTypes.getQuick(c))) {
+                varAppendSavepoint[c << 1] = dataMem.getQuick(c).getAppendOffset();
+                varAppendSavepoint[(c << 1) + 1] = auxMem.getQuick(c).getAppendOffset();
+            }
+        }
+    }
+
+    // Rewinds each var-size column's dataMem/auxMem append cursor to the offsets
+    // captured by the last markSavepoint(), discarding a partially applied append.
+    // rowCount is untouched (it advances only after a fully successful append), so
+    // the buffer reflects exactly its pre-append rows.
+    private void rollbackToSavepoint() {
+        for (int c = 0, n = columnTypes.size(); c < n; c++) {
+            if (ColumnType.isVarSize(columnTypes.getQuick(c))) {
+                dataMem.getQuick(c).jumpTo(varAppendSavepoint[c << 1]);
+                auxMem.getQuick(c).jumpTo(varAppendSavepoint[(c << 1) + 1]);
+            }
+        }
     }
 
     private static boolean isTierSupported(int type) {
@@ -642,6 +674,30 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Transactional variant of {@link #copyRowsFrom}: snapshots every var-size
+     * column's append cursor first, and on any failure mid-copy (e.g. a native OOM
+     * after some rows were appended) rewinds those cursors to the snapshot before
+     * rethrowing. A partial append on the fast path must not leave a var-size
+     * column's aux/data cursor advanced past {@code rowCount}: the next append
+     * would then trip the order assert under {@code -ea}, or read a torn /
+     * out-of-bounds var value with assertions disabled. Fixed-width columns need no
+     * rewind - they overwrite in place at an absolute {@code row * size} offset.
+     * <p>
+     * As with {@link #copyRowsFrom}, the caller advances {@link #setRowCount(long)}
+     * only after this returns normally, so a rolled-back append leaves the buffer
+     * exactly as it was before the call.
+     */
+    public void copyRowsFromWithRollback(LiveViewInMemoryBuffer src, long srcRowLo, long srcRowHi, long dstRow) {
+        markSavepoint();
+        try {
+            copyRowsFrom(src, srcRowLo, srcRowHi, dstRow);
+        } catch (Throwable t) {
+            rollbackToSavepoint();
+            throw t;
         }
     }
 

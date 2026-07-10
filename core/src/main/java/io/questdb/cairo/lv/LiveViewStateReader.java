@@ -29,9 +29,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -64,7 +64,6 @@ import org.jetbrains.annotations.Nullable;
  * </ul>
  */
 public class LiveViewStateReader implements Mutable {
-    private final StringSink invalidationReason = new StringSink();
     // Read lock-free by LiveViewsFunctionFactory (catalogue cursor) and by sibling refresh
     // worker code paths; written by the refresh worker. Volatile so lock-free readers see
     // a published value rather than a torn long.
@@ -72,10 +71,21 @@ public class LiveViewStateReader implements Mutable {
     // Defaults to BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL; a BACKFILL view sets
     // BACKFILL_STATE_BACKFILLING and the target seqTxn while its sweep runs. Both
     // fields are preallocated in CORE_STATE so BACKFILL needed no _lv.s schema bump.
-    private byte backfillState = LiveViewState.BACKFILL_STATE_ACTIVE;
-    private long backfillTargetSeqTxn = Numbers.LONG_NULL;
-    private boolean invalid;
-    private long invalidationTimestampUs = Numbers.LONG_NULL;
+    // Volatile: the catalogue cursor derives the lifecycle state (getLifecycleState ->
+    // BACKFILLING) and reads backfill_target_seqtxn lock-free while the refresh worker
+    // advances them under synchronized(instance).
+    private volatile byte backfillState = LiveViewState.BACKFILL_STATE_ACTIVE;
+    private volatile long backfillTargetSeqTxn = Numbers.LONG_NULL;
+    // invalid + invalidationReason + invalidationTimestampUs form the invalidation triple.
+    // The invalidation writer mutates them under synchronized(instance); the catalogue
+    // cursor reads invalid (via getLifecycleState) and invalidationReason lock-free.
+    // invalidationReason is an immutable String published through the volatile so a
+    // lock-free reader can never observe a torn or half-cleared value (a mutable
+    // StringSink read concurrently with clear()+put() could throw AIOOBE, failing the
+    // whole live_views() query). Null means "no reason".
+    private volatile boolean invalid;
+    private volatile String invalidationReason;
+    private volatile long invalidationTimestampUs = Numbers.LONG_NULL;
     // Same lock-free-read pattern as appliedWatermark. Refresh worker advances this after
     // committing the live view's WAL block; LiveViewsFunctionFactory exposes it.
     private volatile long lastProcessedSeqTxn = -1L;
@@ -87,7 +97,7 @@ public class LiveViewStateReader implements Mutable {
     @Override
     public void clear() {
         invalid = false;
-        invalidationReason.clear();
+        invalidationReason = null;
         invalidationTimestampUs = Numbers.LONG_NULL;
         subscribeFromSeqTxn = -1L;
         lastProcessedSeqTxn = -1L;
@@ -111,7 +121,9 @@ public class LiveViewStateReader implements Mutable {
 
     @Nullable
     public CharSequence getInvalidationReason() {
-        return invalidationReason.length() > 0 ? invalidationReason : null;
+        // Immutable snapshot published via the volatile: a lock-free catalogue read
+        // gets a stable String (or null), never a mid-clear()+put() torn value.
+        return invalidationReason;
     }
 
     public long getInvalidationTimestampUs() {
@@ -161,11 +173,8 @@ public class LiveViewStateReader implements Mutable {
                 offset += Integer.BYTES;
                 invalid = block.getBool(offset);
                 offset += Byte.BYTES;
-                invalidationReason.clear();
                 CharSequence reasonCs = block.getStr(offset);
-                if (reasonCs != null) {
-                    invalidationReason.put(reasonCs);
-                }
+                invalidationReason = (reasonCs == null || reasonCs.length() == 0) ? null : Chars.toString(reasonCs);
                 offset += Vm.getStorageLength(reasonCs);
                 invalidationTimestampUs = block.getLong(offset);
                 offset += Long.BYTES;
@@ -212,10 +221,9 @@ public class LiveViewStateReader implements Mutable {
     }
 
     public LiveViewStateReader setInvalidationReason(@Nullable CharSequence reason) {
-        invalidationReason.clear();
-        if (reason != null) {
-            invalidationReason.put(reason);
-        }
+        // Materialise an immutable copy: the caller may hand us a reusable sink or a
+        // block-file flyweight, and lock-free readers must see a stable value.
+        invalidationReason = (reason == null || reason.length() == 0) ? null : Chars.toString(reason);
         return this;
     }
 

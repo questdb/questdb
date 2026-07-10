@@ -4189,9 +4189,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // Fast-path append cannot leave the slot partially
                     // populated visibly to readers: rowCount only advances
                     // once at the end of appendStagingInPlace, after all
-                    // column writes have completed, and the writer sentinel
-                    // (rc = -1) keeps readers spinning until release. Drop
-                    // the sentinel and let the flush-retry budget tick.
+                    // column writes have completed, and appendStagingInPlace
+                    // rewinds any partially-advanced var-size append cursors on
+                    // failure, so the slot is byte-identical to its pre-append
+                    // state. The writer sentinel (rc = -1) keeps readers
+                    // spinning until release. Drop the sentinel and let the
+                    // flush-retry budget tick.
                     tier.releaseWriteWithoutPublish(publishedIdx);
                     throw t;
                 }
@@ -4348,10 +4351,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void appendStagingInPlace(LiveViewInMemoryBuffer slot, long stagingMinTs) {
         final long writeRow = slot.rowCount();
         final long rn = stagingBuffer.rowCount();
+        // Transactional append: a native OOM part-way through leaves the var-size
+        // append cursors advanced. copyRowsFromWithRollback rewinds them on failure,
+        // so the fast-path retry (and the next append's order assert) sees the slot
+        // exactly as it was. seamTs and rowCount advance only after the copy
+        // succeeds, so a failed append is a true no-op.
+        slot.copyRowsFromWithRollback(stagingBuffer, 0, rn, writeRow);
         if (writeRow == 0 && rn > 0) {
             slot.setSeamTs(stagingMinTs);
         }
-        slot.copyRowsFrom(stagingBuffer, 0, rn, writeRow);
         slot.setRowCount(writeRow + rn);
     }
 
