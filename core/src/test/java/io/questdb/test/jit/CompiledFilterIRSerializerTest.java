@@ -645,7 +645,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         bindVariableService.setLong(0, 2);
 
         serialize("anint IN (:anint, $1)");
-        assertIR("(i64 :0)(i32 anint)(=)(i32 :1)(i32 anint)(=)(||)(ret)");
+        // anint is INT; the $1 (LONG) key widens the column per element via sx_i64,
+        // while the :anint (INT) key needs no widening.
+        assertIR("(i64 :0)(i32 anint)(sx_i64)(=)(i32 :1)(i32 anint)(=)(||)(ret)");
 
         Assert.assertEquals(2, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(0).getType());

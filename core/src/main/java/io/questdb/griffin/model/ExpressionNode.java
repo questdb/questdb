@@ -84,7 +84,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     // moment a node is marked constant, so isReassociationSafe reads a subtree's fold
     // in O(1) instead of re-walking the accumulating constant chain at every level
     // (which is O(n^2) overall).
-    private long constFoldIntValue;   // INT-width fold, or NOT_INT_CONSTANT
+    private long constFoldIntValue = NOT_INT_CONSTANT;   // INT-width fold, or NOT_INT_CONSTANT
     private long constFoldLongValue;  // LONG-width fold, meaningful iff isConstFoldLongValid
     private boolean isConstFoldLongValid;
     private boolean isConstFoldWidening;
