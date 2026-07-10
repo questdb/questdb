@@ -2054,25 +2054,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
-        try {
-            applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
-        } catch (CairoException e) {
-            // The lead is committed (durable at advanceTo) but the inline apply failed.
-            // Reset the lead so the next flush does not re-materialise the same slot
-            // rows and the committed block's eventual apply (LV apply back-off) land
-            // them twice; mark the slot stale to rebuild it once that apply lands. The
-            // watermarks already sit AT advanceTo (not past it), so the next cycle
-            // resumes from advanceTo + 1. Rethrow to charge the flush-retry budget,
-            // matching the disk-subset path.
-            instance.setLeadRowCount(0);
-            instance.setTierStale(true);
-            persistState(instance);
-            LOG.critical().$("live view inline apply failed after flush, tier marked stale, apply deferred [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", advanceTo=").$(advanceTo)
-                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
-            throw e;
-        }
+        // applyWalDirect never propagates: ApplyWal2TableJob.applyWal suspends the table
+        // via handleWalApplyFailure and returns. A failed inline apply thus leaves the
+        // block committed-but-unapplied yet still runs the trailing setLeadRowCount(0),
+        // so the next flush cannot re-materialise the slot rows; the view serves disk-only
+        // behind the seqTxn fence until the suspended apply resumes and the block lands once.
+        // See LiveViewSmokeTest.testFlushLeadInlineApplyFailureRecoversWithoutDuplication.
+        applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
         // Read the applied LV-table seqTxn only AFTER applyWalDirect: restampSlotAfterFlush
         // below stamps the slot with it, and the getCursor staleness retry depends on the
         // slot's seqTxn never exceeding what an applied-base reader can observe. Reading it

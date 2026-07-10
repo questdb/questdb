@@ -6098,6 +6098,99 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFlushLeadInlineApplyFailureRecoversWithoutDuplication() throws Exception {
+        // A flush that commits the lead's LV-WAL block but fails the inline apply of
+        // that block must recover with every row landing exactly once. The apply does
+        // not surface the failure: ApplyWal2TableJob.applyWal suspends the table and
+        // returns, so flushLead still runs its trailing setLeadRowCount(0) and the
+        // committed-but-unapplied block cannot be re-materialised into a second block
+        // on the next flush (which would duplicate the lead). The view serves disk-only
+        // until the suspended apply resumes and the deferred block lands once.
+        //
+        // The fault targets the inline apply: the failing flush's derived row lands in
+        // a brand-new LV partition (a different day than the baseline row), so the apply
+        // must create it and openRW its x.d - an uncached open a same-partition append
+        // would skip. We fail that openRW once, after the commit made the block durable;
+        // the fault self-clears so the deferred apply reads cleanly.
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failNewPartitionApply = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failNewPartitionApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-02")
+                        && failNewPartitionApply.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            lvDir[0] = engine.verifyTableName("lv").getDirName();
+            final TableToken lvToken = engine.verifyTableName("lv");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Baseline clean flush of the first row (day 1): sets lastFlushTimeUs
+                // and the day-1 LV partition, no un-flushed lead, zeroed retry budget.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("clean baseline leaves no retries", 0, instance.getFlushRetryCount());
+
+                // Failing flush: the second row lands in a new day-2 partition. flushLead
+                // commits the lead, advances the watermarks, then the inline apply fails
+                // creating that partition and suspends the LV table. The block stays
+                // committed-but-unapplied, so reads see only the baseline row meanwhile.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                failNewPartitionApply.set(true);
+                drainJob(job);
+                Assert.assertFalse("the inline apply openRW must have been failed exactly once",
+                        failNewPartitionApply.get());
+                Assert.assertTrue("the failed inline apply must suspend the LV table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+                Assert.assertFalse("a suspended apply must not invalidate the view",
+                        instance.isInvalid());
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+
+                // Recovery: a third row (day 2) drives a clean flush with the fault
+                // cleared. Resuming the suspended apply lands the deferred block plus
+                // the new row. Every base row must land exactly once - row numbers stay
+                // 1..3 with no duplicate row 2 (a re-materialised lead gives count 4).
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-02T00:00:01.000000Z', 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertFalse("the LV table must resume after the fault clears",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(
+                        "ts\tx\trn\n" +
+                                "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                                "2026-04-02T00:00:00.000000Z\t2\t2\n" +
+                                "2026-04-02T00:00:01.000000Z\t3\t3\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testFlushRetryBudgetExhaustionInvalidatesView() throws Exception {
         // Persist failures retry up to cairo.live.view.flush.retry.max
         // (or .duration, whichever fires first). On budget exhaustion the view is
