@@ -1628,7 +1628,13 @@ public class ExpressionParser {
 
                         if (prevBranch != BRANCH_LITERAL && SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
-                            if (betweenCount > 0) {
+                            // A scalar subquery is a valid BETWEEN bound, e.g.
+                            // `ts BETWEEN (select ...) AND (select ...)`. It is always parenthesised,
+                            // so it lives at a deeper scope than the BETWEEN itself; only a bare
+                            // SELECT directly in the operand position (same scope) is rejected. The
+                            // AND separator is matched at betweenStartScopeDepth (see the 'a'/'A'
+                            // branch), so a subquery's own AND at a deeper scope is not miscounted.
+                            if (betweenCount > 0 && scopeStack.size() == betweenStartScopeDepth) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
                             argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);

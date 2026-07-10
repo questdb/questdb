@@ -27,6 +27,8 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -61,6 +63,8 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     private final short loBoundAdjustment;
     private final long loConst;
     private final TimestampDriver timestampDriver;
+    // captured in init(); needed to open a scalar-subquery (CURSOR) bound at evaluation time
+    private SqlExecutionContext executionContext;
 
     public TimestampMonotonicInverter(
             Function head,
@@ -101,7 +105,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
      * empty case relies on the enclosing {@code INTERSECT_INTERVALS} to reduce the
      * result to the empty set.
      */
-    public void evaluate(LongList out) {
+    public void evaluate(LongList out) throws SqlException {
         long lo;
         if (loBound != null) {
             lo = resolveBound(loBound);
@@ -154,6 +158,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        this.executionContext = executionContext;
         if (loBound != null) {
             loBound.init(symbolTableSource, executionContext);
         }
@@ -177,8 +182,20 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         sink.val("monotonic_ts_interval");
     }
 
-    private long resolveBound(Function f) {
+    private long resolveBound(Function f) throws SqlException {
         final int type = f.getType();
+        if (type == ColumnType.CURSOR) {
+            // scalar subquery bound, e.g. dateadd('h',1,ts) >= (select ...). Open it and
+            // read the single timestamp; an empty result is the no-rows sentinel.
+            final RecordCursorFactory factory = f.getRecordCursorFactory();
+            assert factory != null;
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                if (cursor.hasNext()) {
+                    return timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
+                }
+                return Numbers.LONG_NULL;
+            }
+        }
         if (ColumnType.isTimestamp(type)) {
             final long v = f.getTimestamp(null);
             return v == Numbers.LONG_NULL ? Numbers.LONG_NULL : timestampDriver.from(v, ColumnType.getTimestampType(type));

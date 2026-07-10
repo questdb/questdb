@@ -129,11 +129,37 @@ public final class WhereClauseParser implements Mutable {
     private CharSequence preferredKeyColumn;
     private long resolvedBoundConst;
     private Function resolvedBoundFunc;
+    // Depth of nested extract() invocations. extract() re-enters itself when a
+    // predicate embeds a subquery (e.g. a designated-timestamp bound
+    // `ts >= (select ... )`): analysing that predicate compiles the subquery,
+    // which routes back through SqlCodeGenerator.generate() into this same
+    // (shared) parser. Without isolation the nested call clobbers the outer
+    // invocation's per-traversal state (timestamp, key accumulators, traversal
+    // stack), producing a missed index optimisation or an outright wrong/empty
+    // key-value scan. We snapshot and restore that state around nested calls.
+    private final ObjList<SavedState> savedStates = new ObjList<>();
+    private int reentryDepth;
     private CharSequence timestamp;
 
     @Override
     public void clear() {
         models.clear();
+        csPool.clear();
+        clearTransientState();
+        // extract() balances reentryDepth via try/finally, but reset defensively
+        // and release the pooled snapshots so we don't retain nodes/functions
+        // from a previous compilation.
+        reentryDepth = 0;
+        for (int i = 0, n = savedStates.size(); i < n; i++) {
+            savedStates.getQuick(i).clear();
+        }
+    }
+
+    // Resets the per-invocation state extract() accumulates. Excludes the object
+    // pools (models, csPool) whose entries the caller keeps referencing after
+    // extract() returns. Used by clear() and to give a nested extract() call a
+    // clean slate so it never reads or mutates the outer invocation's nodes.
+    private void clearTransientState() {
         stack.clear();
         keyNodes.clear();
         keyExclNodes.clear();
@@ -150,7 +176,6 @@ public final class WhereClauseParser implements Mutable {
         tmpFunctions.clear();
         clearKeys();
         clearExcludedKeys();
-        csPool.clear();
         timestamp = null;
         preferredKeyColumn = null;
         allKeyValuesAreKnown = true;
@@ -158,6 +183,47 @@ public final class WhereClauseParser implements Mutable {
     }
 
     public IntrinsicModel extract(
+            @NotNull AliasTranslator translator,
+            ExpressionNode node,
+            @NotNull RecordMetadata m,
+            CharSequence preferredKeyColumn,
+            int timestampIndex,
+            @NotNull FunctionParser functionParser,
+            @NotNull RecordMetadata metadata,
+            @NotNull SqlExecutionContext executionContext,
+            boolean latestByMultiColumn,
+            @NotNull TableReader reader,
+            boolean noIndex
+    ) throws SqlException {
+        // Isolate nested invocations (see reentryDepth): a subquery embedded in
+        // a predicate is compiled while the outer traversal is suspended, and
+        // that compilation re-enters this same shared parser. Snapshot the outer
+        // state before we overwrite it, and restore it on the way out. The whole
+        // body runs under the try so reentryDepth is balanced even if the snapshot
+        // itself throws.
+        final int depth = reentryDepth++;
+        SavedState saved = null;
+        try {
+            if (depth > 0) {
+                while (savedStates.size() < depth) {
+                    savedStates.add(new SavedState());
+                }
+                saved = savedStates.getQuick(depth - 1);
+                saveStateInto(saved);
+                // Start the nested traversal from a clean slate so it never reverts
+                // or reuses the outer invocation's key nodes / traversal stack.
+                clearTransientState();
+            }
+            return extract0(translator, node, m, preferredKeyColumn, timestampIndex, functionParser, metadata, executionContext, latestByMultiColumn, reader, noIndex);
+        } finally {
+            if (saved != null) {
+                restoreStateFrom(saved);
+            }
+            reentryDepth--;
+        }
+    }
+
+    private IntrinsicModel extract0(
             @NotNull AliasTranslator translator,
             ExpressionNode node,
             @NotNull RecordMetadata m,
@@ -304,6 +370,13 @@ public final class WhereClauseParser implements Mutable {
         return n.type == ExpressionNode.FUNCTION
                 || n.type == ExpressionNode.BIND_VARIABLE
                 || n.type == ExpressionNode.OPERATION;
+    }
+
+    // A bound that resolves to a (runtime) function rather than a compile-time constant: either an
+    // ordinary function/bind-variable expression or a scalar subquery (QUERY). Used to decide when a
+    // monotonic-chain inverter needs its own copy of the shared tempMonotonicChain.
+    private static boolean isRuntimeBound(ExpressionNode n) {
+        return n != null && (isFunc(n) || n.type == ExpressionNode.QUERY);
     }
 
     private static boolean isIntegerType(int type) {
@@ -1245,11 +1318,14 @@ public final class WhereClauseParser implements Mutable {
         if (head == null) {
             return false;
         }
-        // A function bound is compiled by resolveScalarBound below and can re-enter
-        // compileMonotonicChain for a nested subquery, overwriting tempMonotonicChain; a
-        // constant/null bound cannot, so the shared list is only snapshotted for a function bound.
-        final boolean boundIsFunc = (loBoundNode != null && isFunc(loBoundNode)) || (hiBoundNode != null && isFunc(hiBoundNode));
-        final ObjList<MonotonicTimestampFunction> chain = boundIsFunc ? new ObjList<>(tempMonotonicChain) : tempMonotonicChain;
+        // A runtime bound (a non-constant function, or a scalar subquery) produces an inverter
+        // that RETAINS the monotonic chain, so it must get its own copy: the shared
+        // tempMonotonicChain is cleared/overwritten by the next predicate's compileMonotonicChain
+        // (and a subquery bound additionally re-enters compileMonotonicChain while being compiled).
+        // A constant/null bound is folded immediately and retains nothing, so it can alias the
+        // shared list.
+        final boolean boundIsRuntime = isRuntimeBound(loBoundNode) || isRuntimeBound(hiBoundNode);
+        final ObjList<MonotonicTimestampFunction> chain = boundIsRuntime ? new ObjList<>(tempMonotonicChain) : tempMonotonicChain;
         Function loBound = null;
         Function hiBound = null;
         try {
@@ -2158,6 +2234,163 @@ public final class WhereClauseParser implements Mutable {
         allKeyValuesAreKnown = true;
     }
 
+    // Snapshots the mutable per-invocation state of this parser into {@code s}.
+    // Used to isolate a nested extract() (triggered by compiling a subquery
+    // embedded in a predicate) from the outer invocation whose traversal it
+    // interrupts. See {@link #reentryDepth}.
+    private void saveStateInto(SavedState s) {
+        s.timestamp = timestamp;
+        s.preferredKeyColumn = preferredKeyColumn;
+        s.noIndex = noIndex;
+        s.allKeyValuesAreKnown = allKeyValuesAreKnown;
+        s.allKeyExcludedValuesAreKnown = allKeyExcludedValuesAreKnown;
+        s.stack.clear();
+        s.stack.addAll(stack);
+        s.keyNodes.clear();
+        s.keyNodes.addAll(keyNodes);
+        s.keyExclNodes.clear();
+        s.keyExclNodes.addAll(keyExclNodes);
+        s.orIntrinsicNodes.clear();
+        s.orIntrinsicNodes.addAll(orIntrinsicNodes);
+        s.tempNodes.clear();
+        s.tempNodes.addAll(tempNodes);
+        s.tempMonotonicChain.clear();
+        s.tempMonotonicChain.addAll(tempMonotonicChain);
+        s.tmpFunctions.clear();
+        s.tmpFunctions.addAll(tmpFunctions);
+        s.tempInIntervals.clear();
+        s.tempInIntervals.addAll(tempInIntervals);
+        s.tempKeys.clear();
+        s.tempKeys.addAll(tempKeys);
+        s.tempK.clear();
+        s.tempK.addAll(tempK);
+        s.tempKeyValues.clear();
+        s.tempKeyValues.addAll(tempKeyValues);
+        s.tempKeyExcludedValues.clear();
+        s.tempKeyExcludedValues.addAll(tempKeyExcludedValues);
+        s.tempPos.clear();
+        s.tempPos.addAll(tempPos);
+        s.tempType.clear();
+        s.tempType.addAll(tempType);
+        s.tempP.clear();
+        s.tempP.addAll(tempP);
+        s.tempT.clear();
+        s.tempT.addAll(tempT);
+        s.tempKeyValuePos.clear();
+        s.tempKeyValuePos.addAll(tempKeyValuePos);
+        s.tempKeyValueType.clear();
+        s.tempKeyValueType.addAll(tempKeyValueType);
+        s.tempKeyExcludedValuePos.clear();
+        s.tempKeyExcludedValuePos.addAll(tempKeyExcludedValuePos);
+        s.tempKeyExcludedValueType.clear();
+        s.tempKeyExcludedValueType.addAll(tempKeyExcludedValueType);
+    }
+
+    // Restores state previously captured by {@link #saveStateInto(SavedState)}.
+    private void restoreStateFrom(SavedState s) {
+        timestamp = s.timestamp;
+        preferredKeyColumn = s.preferredKeyColumn;
+        noIndex = s.noIndex;
+        allKeyValuesAreKnown = s.allKeyValuesAreKnown;
+        allKeyExcludedValuesAreKnown = s.allKeyExcludedValuesAreKnown;
+        stack.clear();
+        stack.addAll(s.stack);
+        keyNodes.clear();
+        keyNodes.addAll(s.keyNodes);
+        keyExclNodes.clear();
+        keyExclNodes.addAll(s.keyExclNodes);
+        orIntrinsicNodes.clear();
+        orIntrinsicNodes.addAll(s.orIntrinsicNodes);
+        tempNodes.clear();
+        tempNodes.addAll(s.tempNodes);
+        tempMonotonicChain.clear();
+        tempMonotonicChain.addAll(s.tempMonotonicChain);
+        tmpFunctions.clear();
+        tmpFunctions.addAll(s.tmpFunctions);
+        tempInIntervals.clear();
+        tempInIntervals.addAll(s.tempInIntervals);
+        tempKeys.clear();
+        tempKeys.addAll(s.tempKeys);
+        tempK.clear();
+        tempK.addAll(s.tempK);
+        tempKeyValues.clear();
+        tempKeyValues.addAll(s.tempKeyValues);
+        tempKeyExcludedValues.clear();
+        tempKeyExcludedValues.addAll(s.tempKeyExcludedValues);
+        tempPos.clear();
+        tempPos.addAll(s.tempPos);
+        tempType.clear();
+        tempType.addAll(s.tempType);
+        tempP.clear();
+        tempP.addAll(s.tempP);
+        tempT.clear();
+        tempT.addAll(s.tempT);
+        tempKeyValuePos.clear();
+        tempKeyValuePos.addAll(s.tempKeyValuePos);
+        tempKeyValueType.clear();
+        tempKeyValueType.addAll(s.tempKeyValueType);
+        tempKeyExcludedValuePos.clear();
+        tempKeyExcludedValuePos.addAll(s.tempKeyExcludedValuePos);
+        tempKeyExcludedValueType.clear();
+        tempKeyExcludedValueType.addAll(s.tempKeyExcludedValueType);
+    }
+
+    // Reusable holder mirroring the parser's mutable per-invocation state.
+    // Pooled by nesting depth in {@link #savedStates} so nested extract() calls
+    // do not allocate on the hot compile path.
+    private static class SavedState {
+        final ObjList<ExpressionNode> keyExclNodes = new ObjList<>();
+        final ObjList<ExpressionNode> keyNodes = new ObjList<>();
+        final ObjList<ExpressionNode> orIntrinsicNodes = new ObjList<>();
+        final ArrayDeque<ExpressionNode> stack = new ArrayDeque<>();
+        final CharSequenceHashSet tempK = new CharSequenceHashSet();
+        final LongList tempInIntervals = new LongList();
+        final CharSequenceHashSet tempKeyExcludedValues = new CharSequenceHashSet();
+        final IntList tempKeyExcludedValuePos = new IntList();
+        final IntList tempKeyExcludedValueType = new IntList();
+        final CharSequenceHashSet tempKeyValues = new CharSequenceHashSet();
+        final IntList tempKeyValuePos = new IntList();
+        final IntList tempKeyValueType = new IntList();
+        final CharSequenceHashSet tempKeys = new CharSequenceHashSet();
+        final ObjList<MonotonicTimestampFunction> tempMonotonicChain = new ObjList<>();
+        final ObjList<ExpressionNode> tempNodes = new ObjList<>();
+        final IntList tempP = new IntList();
+        final IntList tempPos = new IntList();
+        final IntList tempT = new IntList();
+        final IntList tempType = new IntList();
+        final ObjList<Function> tmpFunctions = new ObjList<>();
+        boolean allKeyExcludedValuesAreKnown;
+        boolean allKeyValuesAreKnown;
+        boolean noIndex;
+        CharSequence preferredKeyColumn;
+        CharSequence timestamp;
+
+        void clear() {
+            keyExclNodes.clear();
+            keyNodes.clear();
+            orIntrinsicNodes.clear();
+            stack.clear();
+            tempK.clear();
+            tempInIntervals.clear();
+            tempKeyExcludedValues.clear();
+            tempKeyExcludedValuePos.clear();
+            tempKeyExcludedValueType.clear();
+            tempKeyValues.clear();
+            tempKeyValuePos.clear();
+            tempKeyValueType.clear();
+            tempKeys.clear();
+            tempMonotonicChain.clear();
+            tempNodes.clear();
+            tempP.clear();
+            tempPos.clear();
+            tempT.clear();
+            tempType.clear();
+            tmpFunctions.clear();
+            preferredKeyColumn = null;
+            timestamp = null;
+        }
+    }
+
     // removes nodes extracted into special symbol/key or timestamp filters from given node
     private ExpressionNode collapseIntrinsicNodes(ExpressionNode node) {
         if (node == null || node.intrinsicValue == IntrinsicModel.TRUE) {
@@ -2435,6 +2668,17 @@ public final class WhereClauseParser implements Mutable {
             } else {
                 valueNode = node.lhs;
             }
+            // NOTE: a scalar-subquery bound (ExpressionNode.QUERY) is deliberately NOT accepted here
+            // (isFunc excludes QUERY), so `ts = (select ...) OR ts = (select ...)` stays a residual
+            // full scan rather than an interval union. The union model anchors the first disjunct
+            // with an INTERSECT (see intersectRuntimeTimestamp) that collapses the whole set to
+            // empty when its bound evaluates to NULL; an empty scalar subquery is a normal runtime
+            // state, so extracting the union would silently drop the other disjuncts' rows. Making
+            // this sound needs a dedicated "union anchor" runtime interval op that contributes the
+            // empty set (like UNION) instead of collapsing (like INTERSECT) on NULL. The single-
+            // bound (ts >= (sub)), monotonic (dateadd(ts) >= (sub)) and BETWEEN (sub) AND (sub)
+            // subquery cases are safe because they intersect a genuine interval (empty bound ->
+            // correctly empty result), so only this OR-union case is excluded.
             if (isFunc(valueNode)) {
                 if (cannotAccumulateTimestampFunction(model, valueNode, leftFirst, functionParser, metadata, executionContext)) {
                     return false;
@@ -2967,6 +3211,28 @@ public final class WhereClauseParser implements Mutable {
             }
             return BOUND_CONST;
         }
+        if (boundNode.type == ExpressionNode.QUERY) {
+            // scalar subquery bound, e.g. dateadd('h',1,ts) >= (select ...). Only a
+            // single-timestamp-column cursor qualifies; it is evaluated at scan open,
+            // exactly like a runtime-constant (bind variable) bound.
+            if (!isTimestamp) {
+                return BOUND_FAIL;
+            }
+            final Function bound = functionParser.parseFunction(boundNode, metadata, executionContext);
+            boolean isRetained = false;
+            try {
+                if (checkCursorFunctionReturnsSingleTimestamp(bound)) {
+                    resolvedBoundFunc = bound;
+                    isRetained = true;
+                    return BOUND_FUNC;
+                }
+                return BOUND_FAIL;
+            } finally {
+                if (!isRetained) {
+                    Misc.free(bound);
+                }
+            }
+        }
         if (isFunc(boundNode)) {
             if (referencesTimestamp(boundNode)) {
                 return BOUND_FAIL;
@@ -3021,6 +3287,24 @@ public final class WhereClauseParser implements Mutable {
         if (node.type == ExpressionNode.CONSTANT) {
             model.setBetweenBoundary(parseTokenAsTimestamp(timestampDriver, node));
             return true;
+        } else if (node.type == ExpressionNode.QUERY) {
+            // scalar subquery bound, e.g. ts BETWEEN (select ...) AND (select ...). Only a
+            // single-timestamp-column cursor qualifies; it is evaluated at scan open, exactly
+            // like a runtime-constant (bind variable) bound.
+            final Function func = functionParser.parseFunction(node, metadata, executionContext);
+            boolean isRetained = false;
+            try {
+                if (checkCursorFunctionReturnsSingleTimestamp(func)) {
+                    model.setBetweenBoundary(func);
+                    isRetained = true;
+                    return true;
+                }
+            } finally {
+                if (!isRetained) {
+                    Misc.free(func);
+                }
+            }
+            return false;
         } else if (isFunc(node)) {
             final Function func = functionParser.parseFunction(node, metadata, executionContext);
             try {

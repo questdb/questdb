@@ -101,9 +101,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      */
     public void freeAndClear() {
         isOwnershipTransferred = false;
-        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
-            betweenBoundaryFunc.close();
-        }
+        // A transferred between-boundary function lives in dynamicRangeList and is freed here;
+        // a still-pending one (betweenBoundarySet) is freed by clearBetweenParsing below.
         Misc.freeObjListAndClear(dynamicRangeList);
         staticIntervals.clear();
         intervalApplied = false;
@@ -111,6 +110,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void clearBetweenParsing() {
+        // A boundary that was set but never paired (e.g. the other BETWEEN bound failed to
+        // translate) was never transferred into dynamicRangeList, so its compiled function is
+        // still owned here and must be freed to avoid leaking the cursor factory on the rollback
+        // path. A completed pair leaves betweenBoundarySet=false with its functions owned by
+        // dynamicRangeList, so this never double-frees a transferred function.
+        if (betweenBoundarySet) {
+            Misc.free(betweenBoundaryFunc);
+        }
         betweenBoundarySet = false;
         betweenBoundaryFunc = null;
         betweenBoundary = Numbers.LONG_NULL;
