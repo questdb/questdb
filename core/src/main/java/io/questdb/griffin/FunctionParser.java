@@ -1415,21 +1415,21 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     int intConst = function.getInt(null);
                     long longConst = function.getLong(null);
-                    // Key the null fold off longConst, not intConst: a genuine null
-                    // widens to LONG_NULL via getLong(), but an INT arithmetic that
-                    // merely wraps ONTO the -2^31 sentinel (e.g. 2147483647 + 1, whose
-                    // getLong() holds the real 2147483648) does not. Testing
-                    // intConst == INT_NULL cannot tell the two apart and would fold the
-                    // wrap-to-sentinel case to NULL, diverging from the column/bind path.
-                    if (longConst == Numbers.LONG_NULL || intConst == longConst) {
+                    // Only a genuine null widens to LONG_NULL via getLong(); fold that to
+                    // the shared NULL constant. An INT arithmetic that lands on -2^31 is
+                    // not null: getInt() shows null but getLong()/getTimestamp() must widen
+                    // like the column/bind path. That happens two ways, both left unfolded:
+                    // overflow wrap (2147483647 + 1: intConst != longConst) and genuine
+                    // -2^31 (~2147483647, -1073741824 * 2: intConst == longConst == INT_NULL).
+                    // Folding either to IntConstant.NULL would read LONG_NULL under a wider cast.
+                    if (longConst == Numbers.LONG_NULL) {
+                        return IntConstant.NULL;
+                    } else if (intConst == longConst && intConst != Numbers.INT_NULL) {
+                        // Clean in-range value: both getters agree and it is not the sentinel.
                         return IntConstant.newInstance(intConst);
                     } else {
-                        // INT arithmetic overflowed: getInt() wrapped mod 2^32, getLong()
-                        // holds the full-width product. Folding to LONG would change the
-                        // static type INT->LONG and diverge from the column/bind path,
-                        // which keeps INT and wraps. Leave it unfolded so getInt() wraps
-                        // like the runtime path while getLong()/getTimestamp() still widen
-                        // for the wider numeric/temporal casts that read them.
+                        // Overflow wrap OR genuine -2^31: leave unfolded so getInt() wraps like
+                        // the runtime path while getLong()/getTimestamp() widen for wider casts.
                         return function;
                     }
                 }
