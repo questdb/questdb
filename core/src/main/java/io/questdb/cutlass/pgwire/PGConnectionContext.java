@@ -105,6 +105,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public static final String TAG_CREATE_ROLE = "CREATE ROLE";
     // create as select tag
     public static final String TAG_DEALLOCATE = "DEALLOCATE";
+    public static final String TAG_DELETE = "DELETE";
     public static final String TAG_EXPLAIN = "EXPLAIN";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_INSERT_AS_SELECT = "TAG_INSERT_AS_SELECT";

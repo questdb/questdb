@@ -53,6 +53,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -313,6 +314,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             operation = Misc.free(operation);
             if (compiledQuery != null) {
                 Misc.free(compiledQuery.getUpdateOperation());
+                Misc.free(compiledQuery.getDeleteOperation());
             }
         } else {
             // if we are a copy, we do not own operations -> we cannot close them
@@ -717,6 +719,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.UPDATE:
                     msgExecuteUpdate(sqlExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
                     break;
+                case CompiledQuery.DELETE:
+                    msgExecuteDelete(sqlExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
+                    break;
                 case CompiledQuery.ALTER:
                     msgExecuteDDL(sqlExecutionContext, transactionState, tempSequence, taiPool);
                     break;
@@ -902,6 +907,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                     break;
                                 }
                                 case CompiledQuery.UPDATE:
+                                case CompiledQuery.DELETE:
                                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
                                     outCommandComplete(utf8Sink, sqlAffectedRowCount);
                                     stateSync = SYNC_DONE;
@@ -1753,6 +1759,80 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         break;
                     } catch (TableReferenceOutOfDateException e) {
                         Misc.free(compiledQuery.getUpdateOperation());
+                        if (attempt == maxRecompileAttempts) {
+                            throw e;
+                        }
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
+                    }
+                }
+            } finally {
+                engine.getMetrics().pgWireMetrics().markComplete();
+            }
+        }
+    }
+
+    // Mirrors msgExecuteUpdate(): DELETE reports an affected-row count and parks/applies against an
+    // already-open writer the same way UPDATE does. Kept as its own method (rather than reusing
+    // msgExecuteUpdate) because it operates on compiledQuery.getDeleteOperation()/DeleteOperation, a
+    // distinct cached operation from UPDATE's.
+    private void msgExecuteDelete(
+            SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
+            SCSequence tempSequence,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws SqlException, PGMessageProcessingException {
+        if (transactionState != ERROR_TRANSACTION) {
+            engine.getMetrics().pgWireMetrics().markStart();
+            // execute against writer from the engine, synchronously (null sequence)
+            ensureCompiledQuery();
+            try {
+                for (int attempt = 1; ; attempt++) {
+                    try {
+                        DeleteOperation deleteOperation = compiledQuery.getDeleteOperation();
+                        TableToken tableToken = deleteOperation.getTableToken();
+                        final int index = pendingWriters.keyIndex(tableToken);
+                        if (index < 0) {
+                            deleteOperation.withContext(sqlExecutionContext);
+                            // cached writers to remain in the list until transaction end
+                            @SuppressWarnings("resource")
+                            TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
+                            // Demote write-fence for the parked-writer DELETE, mirroring the sibling
+                            // commit(pendingWriters) fence. The DELETE implicitly commits the parked
+                            // writer mid-transaction (commit() + apply() below) -- so the explicit COMMIT
+                            // fence never sees these writes. Acquire the writer was done while PRIMARY; a
+                            // demote landing before commit()/apply() would externalize an unreplicated
+                            // change the drain never waited on. Hold the role-switch READ lock across an
+                            // authoritative in-lock re-check and the commit()/apply(): either the flip ran
+                            // first (we see read-only and refuse, rolling back the parked writers) or this
+                            // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
+                            if (engine.isReadOnlyMode()) {
+                                rollback(pendingWriters);
+                                throw CairoException.readOnlyAccess();
+                            }
+                            final Lock lock = engine.getRoleSwitchReadLock();
+                            lock.lock();
+                            try {
+                                if (engine.isReadOnlyMode()) {
+                                    rollback(pendingWriters);
+                                    throw CairoException.readOnlyAccess();
+                                }
+                                // Delete implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+                                fireParkedUpdateMintObserver();
+                                tableWriterAPI.commit();
+                                sqlAffectedRowCount = tableWriterAPI.apply(deleteOperation);
+                            } finally {
+                                lock.unlock();
+                            }
+                        } else {
+                            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                                fut.await();
+                                sqlAffectedRowCount = fut.getAffectedRowsCount();
+                            }
+                        }
+                        break;
+                    } catch (TableReferenceOutOfDateException e) {
+                        Misc.free(compiledQuery.getDeleteOperation());
                         if (attempt == maxRecompileAttempts) {
                             throw e;
                         }
@@ -3511,6 +3591,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 compiledQuery.withSqlText(sqlText);
                 sqlTag = TAG_UPDATE;
                 break;
+            case CompiledQuery.DELETE: {
+                // copy contents of the mutable CompiledQuery into our cache
+                String deleteSqlText = cq.getSqlText();
+                DeleteOperation deleteOperation = cq.getDeleteOperation();
+                deleteOperation.withSqlStatement(deleteSqlText);
+                ensureCompiledQuery();
+                compiledQuery.ofDelete(deleteOperation);
+                compiledQuery.withSqlText(deleteSqlText);
+                sqlTag = TAG_DELETE;
+                break;
+            }
             case CompiledQuery.SET:
                 sqlTag = TAG_SET;
                 break;
@@ -3828,7 +3919,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         switch (sqlType) {
             // these query types use binding variables at the EXEC time
             case CompiledQuery.EXPLAIN, CompiledQuery.SELECT, CompiledQuery.PSEUDO_SELECT, CompiledQuery.INSERT,
-                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.ALTER ->
+                 CompiledQuery.INSERT_AS_SELECT, CompiledQuery.UPDATE, CompiledQuery.DELETE, CompiledQuery.ALTER ->
                     copyParameterValuesToBindVariableService(
                             sqlExecutionContext,
                             bindVariableCharacterStore,
