@@ -38,6 +38,7 @@ import io.questdb.std.str.Path;
 public class IndexFwdNullReader implements IndexReader {
     private final ObjList<NullCursor> freeCursors = new ObjList<>();
     private long columnTxn;
+    private long operatingThreadId = -1L;
     private long partitionTxn;
 
     public IndexFwdNullReader(long columnTxn, long partitionTxn) {
@@ -62,12 +63,13 @@ public class IndexFwdNullReader implements IndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue) {
+        stampOperatingThread();
         NullCursor c;
         if (freeCursors.size() > 0) {
             c = freeCursors.popLast();
             c.isPooled = false;
         } else {
-            c = new NullCursor(this.freeCursors);
+            c = new NullCursor();
         }
         c.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
         c.value = 0;
@@ -132,21 +134,26 @@ public class IndexFwdNullReader implements IndexReader {
         // no-op
     }
 
+    // See AbstractBitmapIndexReader.isOperatingThread(): re-pool the NullCursor
+    // only on the reader's operating thread so the plain freeCursors ObjList
+    // mutation stays serialized with getCursor(). Fail-safe on mismatch.
+    private boolean isOperatingThread() {
+        return operatingThreadId == Thread.currentThread().threadId();
+    }
 
-    private static class NullCursor implements RowCursor {
-        private final ObjList<NullCursor> pool;
+    private void stampOperatingThread() {
+        operatingThreadId = Thread.currentThread().threadId();
+    }
+
+    private class NullCursor implements RowCursor {
         private boolean isPooled;
         private long maxValue;
         private long value;
 
-        NullCursor(ObjList<NullCursor> freeCursors) {
-            this.pool = freeCursors;
-        }
-
         @Override
         public void close() {
-            if (!isPooled && pool.size() < MAX_CACHED_FREE_CURSORS) {
-                pool.add(this);
+            if (!isPooled && isOperatingThread() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+                freeCursors.add(this);
                 isPooled = true;
             }
         }

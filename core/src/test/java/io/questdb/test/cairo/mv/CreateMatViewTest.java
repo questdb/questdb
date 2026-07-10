@@ -569,6 +569,21 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewGroupByPlainTimestampNoSamplingInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // ts is the designated timestamp and is present in the select list, but there is
+            // neither a SAMPLE BY nor a GROUP BY timestamp_floor(...), so no sampling interval
+            // can be inferred. The error must not claim the timestamp column is missing.
+            assertQuery("create materialized view test as (select ts, avg(v) from " + TABLE1 +
+                    ") timestamp(ts) partition by day")
+                    .noLeakCheck()
+                    .fails(34, "materialized view query requires a sampling interval, use SAMPLE BY or GROUP BY timestamp_floor() [name=ts]");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewGroupByTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

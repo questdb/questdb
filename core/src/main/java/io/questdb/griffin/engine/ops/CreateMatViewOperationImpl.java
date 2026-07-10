@@ -463,6 +463,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (intervalExpr == null) {
             if (isPassthrough(functionFactoryCache, queryModel)) {
                 passthrough = true;
+            } else if (timestamp != null) {
+                // The designated timestamp column was already confirmed present in the select
+                // list above, but the query is not a passthrough view and has neither a SAMPLE BY
+                // nor a GROUP BY timestamp_floor(...), so no sampling interval could be inferred.
+                // Point the user at the two supported forms instead of claiming the column is missing.
+                throw SqlException.position(selectTextPosition)
+                        .put("materialized view query requires a sampling interval, use SAMPLE BY or GROUP BY timestamp_floor() [name=")
+                        .put(timestamp).put(']');
             } else {
                 throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
             }
