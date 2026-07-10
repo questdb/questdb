@@ -329,6 +329,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
     }
 
     /**
+     * Test-only view of the installed pre-join cancel hook; see {@link #setPreJoinCancelHook(Runnable)}.
+     */
+    @TestOnly
+    public Runnable getPreJoinCancelHookForTest() {
+        return preJoinCancelHook;
+    }
+
+    /**
      * Installs a hook that {@link #close()} runs after the executor drain and BEFORE the bounded
      * boot-thread join, mirroring {@link #setPreStopHook(Runnable)}. The enterprise overlay
      * installs a restore-cancel signaller so a SIGTERM landing during a long PITR restore spends
@@ -337,11 +345,6 @@ public class LifecycleOrchestrator implements QuietCloseable {
      * close() rests on the hook being a pure atomic signal. It must not free resources either
      * (that belongs in the component's stop()).
      */
-    @TestOnly
-    public Runnable getPreJoinCancelHookForTest() {
-        return preJoinCancelHook;
-    }
-
     public void setPreJoinCancelHook(@Nullable Runnable hook) {
         this.preJoinCancelHook = hook;
     }
