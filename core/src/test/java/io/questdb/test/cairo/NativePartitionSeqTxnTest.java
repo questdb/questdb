@@ -104,11 +104,9 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
 
     @Test
     public void testChangeColumnTypeOnRemoteParquetPartitionClearsRemote() throws Exception {
-        // A parquet-format partition with REMOTE set is converted back to native by the
-        // changeColumnType pre-pass and then rewritten under the new column type. The rewrite is a
-        // data change: REMOTE and parquet_generated must clear and the ALTER's seqTxn must stamp
-        // a fresh version, so the partition's remote copy is invalidated instead of the stale remote parquet serving
-        // the old column layout.
+        // A local parquet-format partition with REMOTE set remains parquet and lazy under the
+        // replacingIndex model. ALTER only invalidates the stale remote copy: REMOTE clears while
+        // parquet_generated, the format bit, and the local parquet file-size word are preserved.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
@@ -121,11 +119,14 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Stage day1 with a remote copy (REMOTE set) on the physical writer.
+            final long preAlterParquetSize;
             try (TableWriter writer = getWriter("t")) {
                 TxWriter tx = writer.getTxWriter();
                 Assert.assertTrue("day1 must be parquet before the ALTER", tx.isPartitionParquet(0));
-                Assert.assertTrue("the slot holds the parquet file size before the ALTER",
-                        tx.getPartitionParquetFileSize(0) > 0);
+                Assert.assertTrue("day1 must have a local parquet source before the ALTER",
+                        tx.isPartitionParquetGenerated(0));
+                preAlterParquetSize = tx.getPartitionParquetFileSize(0);
+                Assert.assertTrue("the slot holds the parquet file size before the ALTER", preAlterParquetSize > 0);
                 tx.setPartitionRemote(0, true);
                 Assert.assertTrue(tx.isPartitionRemote(0));
                 writer.bumpPartitionTableVersion();
@@ -137,17 +138,17 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
 
             try (TableReader reader = getReader("t")) {
                 TxReader tx = reader.getTxFile();
-                Assert.assertFalse("ALTER COLUMN TYPE converts the parquet partition back to native",
+                Assert.assertTrue("ALTER COLUMN TYPE must keep the local partition parquet-format",
                         tx.isPartitionParquet(0));
-                Assert.assertFalse("the column rewrite is a data change, the stale remote parquet no longer matches",
+                Assert.assertFalse("ALTER COLUMN TYPE must clear REMOTE for the stale remote parquet",
                         tx.isPartitionRemote(0));
-                Assert.assertFalse("the rewrite invalidates the staged parquet flag",
+                Assert.assertTrue("metadata-only remote invalidation preserves the local parquet source",
                         tx.isPartitionParquetGenerated(0));
-                Assert.assertTrue("the ALTER's seqTxn is stamped as a real version, not the -1 sentinel",
-                        tx.getNativePartitionSeqTxn(0) > 0);
+                Assert.assertEquals("metadata-only remote invalidation preserves offset-3 parquet file size",
+                        preAlterParquetSize, tx.getPartitionParquetFileSize(0));
             }
 
-            // The rewritten column reads back its values (cast to LONG), not NULL.
+            // The lazy parquet read path converts values to LONG, not NULL.
             assertQuery("SELECT * FROM t ORDER BY ts")
                     .noLeakCheck().timestamp("ts").expectSize()
                     .returns("ts\tx\n" +

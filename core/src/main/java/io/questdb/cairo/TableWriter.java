@@ -2590,6 +2590,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
+    public SymbolTableProvider getSymbolTableProvider() {
+        return symbolTableProvider;
+    }
+
     @Override
     public @NotNull TableToken getTableToken() {
         return tableToken;
@@ -2726,6 +2730,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void markDistressed() {
         this.distressed = true;
+    }
+
+    public void normalizeColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount) {
+        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, true);
+        if (columnVersionWriter.hasChanges()) {
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        }
+    }
+
+    public void markParquetPartitionRemoteStale(int partitionIndex) {
+        if (partitionIndex < 0 || partitionIndex >= txWriter.getPartitionCount()) {
+            throw CairoException.nonCritical().put("bad partition index ").put(partitionIndex);
+        }
+        if (!txWriter.isPartitionParquet(partitionIndex)) {
+            throw CairoException.nonCritical()
+                    .put("cannot invalidate remote parquet copy, partition is not parquet-format [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(timestampType, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                    .put(']');
+        }
+        if (txWriter.isPartitionReadOnly(partitionIndex)) {
+            throw CairoException.nonCritical()
+                    .put("cannot invalidate remote parquet copy, partition is read-only [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(timestampType, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                    .put(']');
+        }
+        if (!txWriter.isPartitionRemote(partitionIndex)) {
+            return;
+        }
+        if (!txWriter.isPartitionParquetGenerated(partitionIndex)) {
+            throw CairoException.nonCritical()
+                    .put("cannot invalidate remotely-served parquet partition [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(timestampType, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                    .put(']');
+        }
+
+        txWriter.setPartitionRemote(partitionIndex, false);
+        txWriter.bumpPartitionTableVersion();
     }
 
     public void markPartitionDataChanged(int partitionIndex) {
@@ -11178,29 +11220,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final CharSequence columnName = this.metadata.getColumnName(i);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, i);
 
-                // Decide what type to ask Rust to decode into:
-                //   var->fixed : decode as source var (VARCHAR_SLICE for VARCHAR), then Java batch-converts to fixed.
-                //   symbol->var: decode as target var (VARCHAR or STRING), not VARCHAR_SLICE, so we get on-disk layout.
-                //   symbol->fixed: decode as VARCHAR_SLICE, then Java batch-converts to fixed.
-                //   otherwise  : decode as target type, Rust post_convert handles it.
                 final int parquetColumnType = parquetMetadata.getColumnType(parquetIdx);
-                final int srcTag = ColumnType.tagOf(parquetColumnType);
-                final int dstTag = ColumnType.tagOf(tableColumnType);
-                int decodeType;
-                if (ColumnType.isVarSize(srcTag) && !ColumnType.isVarSize(dstTag) && !ColumnType.isSymbol(dstTag)) {
-                    decodeType = (srcTag == ColumnType.VARCHAR) ? ColumnType.VARCHAR_SLICE : parquetColumnType;
-                } else if (ColumnType.isSymbol(srcTag) && !ColumnType.isSymbol(dstTag)) {
-                    if (ColumnType.isVarSize(dstTag)) {
-                        decodeType = tableColumnType;
-                    } else {
-                        decodeType = ColumnType.VARCHAR_SLICE;
-                    }
-                } else {
-                    decodeType = tableColumnType;
-                }
-
                 parquetColumnIdsAndTypes.add(parquetIdx);
-                parquetColumnIdsAndTypes.add(decodeType);
+                parquetColumnIdsAndTypes.add(ParquetColumnTypeConverter.chooseDecodeType(parquetColumnType, tableColumnType));
                 parquetDecodedTableColumnIdx.setQuick(decodedColumnCount, i);
 
                 // Open destination files based on TABLE type (not parquet type).
@@ -11272,18 +11294,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 final long dataBufCap;
                                 final long dataBuf;
                                 if (ColumnType.isVarchar(tableColumnType)) {
-                                    dataBufCap = O3PartitionJob.estimateVarcharDataSize(parquetColumnType, (int) rowGroupRowCount);
+                                    dataBufCap = ParquetColumnTypeConverter.estimateVarcharDataSize(parquetColumnType, (int) rowGroupRowCount);
                                     dataBuf = dataBufCap > 0 ? Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_DEFAULT) : 0;
                                 } else {
-                                    dataBufCap = O3PartitionJob.estimateStringDataSize(parquetColumnType, (int) rowGroupRowCount);
+                                    dataBufCap = ParquetColumnTypeConverter.estimateStringDataSize(parquetColumnType, (int) rowGroupRowCount);
                                     dataBuf = Unsafe.malloc(dataBufCap, MemoryTag.NATIVE_DEFAULT);
                                 }
                                 try {
                                     final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
                                     if (ColumnType.isVarchar(tableColumnType)) {
-                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                                        ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
                                     } else {
-                                        O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                                        ParquetColumnTypeConverter.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
                                     }
 
                                     // Compute actual bytes from the aux vector *before* shifting,
@@ -11351,7 +11373,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long fixSize = rowGroupRowCount * ColumnType.sizeOf(tableColumnType);
                             final long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_DEFAULT);
                             try {
-                                O3PartitionJob.convertVarColumnToFixed(
+                                ParquetColumnTypeConverter.convertVarColumnToFixed(
                                         effectiveSrcType, tableColumnType,
                                         srcDataPtr, srcAuxPtr,
                                         (int) rowGroupRowCount, fixBuf,
