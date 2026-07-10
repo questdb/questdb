@@ -40,6 +40,7 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
@@ -247,6 +248,95 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
             } finally {
                 capture.stop();
             }
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testCheckpointMidBackfillReSweepsAfterRestore() throws Exception {
+        // A checkpoint taken mid-BACKFILL, then a restore, must not trust a rolling .bcp that got
+        // AHEAD of the checkpoint. After CHECKPOINT CREATE returns, the (unfrozen) sweep keeps
+        // advancing: its LV table and its rolling <off>.bcp both move past the checkpoint. Restore
+        // rolls the LV's _txn / partitions / _lv.s back to the checkpoint (R_cp rows on disk) but never
+        // restores _checkpoints/, so the live-ahead .bcp (lvRowsTotal = R_bcp > R_cp) survives and
+        // sweepBackfillCheckpoints re-selects it as the resume source. Resuming from it would jump the
+        // data cursor past the base rows that produced R_cp..R_bcp while lvRowsTotal starts at R_bcp - a
+        // permanent silent gap over [R_cp, R_bcp). The resume must instead reject the ahead .bcp and
+        // re-sweep from 0, converging to the recompute over the restored base. CHECKPOINT_ROWS=1 forces
+        // a .bcp every swept row so the ahead window is hit deterministically after a single turn.
+        //
+        // Pre-fix the resume trusts the ahead .bcp and the view converges to fewer than 6 rows with the
+        // window state gapped; the recompute oracle and the row-count assertion both fail. Post-fix it
+        // converges to the full 6 rows.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final String viewSql = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
+                "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                    "('2026-01-01T00:00:02.000000Z', 'b', 2.0), " +
+                    "('2026-01-01T00:00:03.000000Z', 'a', 3.0), " +
+                    "('2026-01-01T00:00:04.000000Z', 'b', 4.0), " +
+                    "('2026-01-01T00:00:05.000000Z', 'a', 5.0), " +
+                    "('2026-01-01T00:00:06.000000Z', 'b', 6.0)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " + viewSql);
+
+            final long bcpKeyAtCheckpoint;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // One backfill turn: exactly one row lands on disk (R_cp = 1) and a rolling .bcp is
+                // written. The view stays BACKFILLING.
+                job.run();
+                drainWalQueue();
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(
+                        "view must still be BACKFILLING at checkpoint time",
+                        LiveViewState.BACKFILL_STATE_BACKFILLING,
+                        instance.getStateReader().getBackfillState()
+                );
+                bcpKeyAtCheckpoint = instance.getHeadBackfillCpKey();
+                Assert.assertNotEquals("a .bcp must have been written before the checkpoint",
+                        Numbers.LONG_NULL, bcpKeyAtCheckpoint);
+
+                execute("CHECKPOINT CREATE");
+
+                // The view is unfrozen now: advance the sweep past the checkpoint so the LV table and
+                // the rolling .bcp both move ahead (R_bcp > R_cp), while staying BACKFILLING (not every
+                // base row is swept yet, so completion does not retire the .bcp).
+                for (int i = 0; i < 3; i++) {
+                    job.run();
+                    drainWalQueue();
+                }
+                instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(
+                        "the sweep must still be BACKFILLING (the ahead .bcp must not be retired by completion)",
+                        LiveViewState.BACKFILL_STATE_BACKFILLING,
+                        instance.getStateReader().getBackfillState()
+                );
+                Assert.assertTrue(
+                        "the rolling .bcp must have advanced past the checkpoint",
+                        instance.getHeadBackfillCpKey() > bcpKeyAtCheckpoint
+                );
+            }
+
+            restoreFromCheckpoint();
+            drainWalQueue();
+
+            // Resume the sweep: the ahead .bcp is rejected, the sweep re-runs from offset 0, and the
+            // view converges to the full recompute over the restored base.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveBackfillToCompletion(job, "lv");
+            }
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+            );
+            assertLiveViewRowCount(6);
+            assertViewMatchesRecompute(viewSql);
 
             execute("CHECKPOINT RELEASE");
         });
@@ -910,6 +1000,21 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
 
     private void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    // Drives the named view's backfill sweep to completion across however many turns the configured
+    // budget needs, re-fetching the instance each pass so it survives the registry rebuild a restore
+    // performs, and applying the LV WAL at the end. Mirrors the helper in LiveViewSmokeTest.
+    private void driveBackfillToCompletion(LiveViewRefreshJob job, String viewName) {
+        for (int i = 0; i < 500; i++) {
+            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
+            if (inst == null
+                    || inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
+                break;
+            }
+            drainJob(job);
+        }
+        drainWalQueue();
     }
 
     // Pumps the refresh job until no further LV WAL work is produced, advancing the clock each pass

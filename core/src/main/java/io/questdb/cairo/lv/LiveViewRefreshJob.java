@@ -2947,17 +2947,46 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (bcpKey != Numbers.LONG_NULL
                     && restoreFromHead(instance, windowFactory, bcpKey, true, restoredHeadState)
                     && restoredHeadState.resumeDataOffset != Numbers.LONG_NULL) {
-                instance.setBackfillDataOffset(restoredHeadState.resumeDataOffset);
-                instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
-                if (restoredHeadState.maxTimestamp != Numbers.LONG_NULL) {
-                    instance.setLatestSeenTs(restoredHeadState.maxTimestamp);
+                // A surviving .bcp can be AHEAD of the on-disk LV output when a
+                // checkpoint was taken mid-backfill and later restored: restore
+                // rolls _txn/partitions/_lv.s back to the steady snapshot but
+                // never copies _checkpoints/ back (TableSnapshotRestore keeps the
+                // live _checkpoints/ dir), so the live-ahead .bcp (lvRowsTotal =
+                // R_bcp) outlives the rolled-back disk (onDiskLvRows = R_cp <
+                // R_bcp). Resuming from it would jump the data cursor past the
+                // base rows that produced R_cp..R_bcp while lvRowsTotal starts at
+                // R_bcp, so those LV output rows would be neither on disk nor
+                // re-swept - a permanent silent gap. Reject the ahead .bcp and
+                // fall through to the from-0 re-sweep below, where the skip-write
+                // floor keeps the R_cp on-disk prefix and re-emits everything
+                // above it.
+                if (restoredHeadState.lvRowsTotal <= onDiskLvRows) {
+                    instance.setBackfillDataOffset(restoredHeadState.resumeDataOffset);
+                    instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
+                    if (restoredHeadState.maxTimestamp != Numbers.LONG_NULL) {
+                        instance.setLatestSeenTs(restoredHeadState.maxTimestamp);
+                    }
+                    restored = true;
+                } else {
+                    // restoreFromHead already wrote the ahead window state into
+                    // the functions; wipe it back to identity for the from-0
+                    // re-sweep, and unlink the ahead .bcp so a later restart's
+                    // highest-key sweepBackfillCheckpoints does not re-select it
+                    // (its data-offset key is larger than the re-sweep's fresh
+                    // .bcp keys). unlinkBackfillCheckpoint also clears the
+                    // in-memory head key.
+                    clearWindowState(windowFactory, anchorWindow);
+                    unlinkBackfillCheckpoint(instance);
+                    LOG.info().$("live view discarding backfill checkpoint ahead of restored on-disk output [view=")
+                            .$(viewName).$(", bcpLvRows=").$(restoredHeadState.lvRowsTotal)
+                            .$(", onDiskLvRows=").$(onDiskLvRows).I$();
                 }
-                restored = true;
             }
             if (!restored) {
-                // Fresh CREATE, no .bcp, or corrupt .bcp: re-sweep from offset 0
-                // with empty state. The on-disk prefix (if any) is a
-                // deterministic match, kept via skip-write below.
+                // Fresh CREATE, no .bcp, corrupt .bcp, or a .bcp rejected as
+                // ahead of the restored disk: re-sweep from offset 0 with empty
+                // state. The on-disk prefix (if any) is a deterministic match,
+                // kept via skip-write below.
                 instance.setBackfillDataOffset(0);
                 instance.setLvRowsTotal(0);
                 instance.setHeadBackfillCpKey(Numbers.LONG_NULL);
