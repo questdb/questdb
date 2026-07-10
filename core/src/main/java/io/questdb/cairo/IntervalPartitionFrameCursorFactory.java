@@ -94,6 +94,11 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     }
 
     @Override
+    public boolean isIntervalScan() {
+        return true;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         int order = sink.getOrder();
         if (order == ORDER_ANY || order < 0) {

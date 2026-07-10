@@ -3569,12 +3569,20 @@ public class CairoEngine implements Closeable, WriterSource {
             throw SqlException.$(position, "live view select must be a simple scan of a single WAL base table; " +
                     "joins, subqueries, GROUP BY, ORDER BY and LIMIT are not supported yet");
         }
-        if (pfrcf.hasFilter()) {
+        if (pfrcf.hasFilter() || pfrcf.usesIndex()) {
             // Defensive: WhereClauseParser is supposed to have suppressed indexed-symbol key
             // extraction for live view compiles, so the planner shouldn't produce an indexed
-            // row cursor factory here. If it ever does, the filter Function is invisible to
-            // the incremental refresh path and rows would slip through unfiltered.
+            // row cursor factory here. If it ever does, the intrinsic predicate lives in the
+            // row cursor, invisible to the incremental refresh path (which applies only the
+            // residual filter Function), and rows would slip through unfiltered.
             throw SqlException.$(position, "live view select produced an indexed row cursor factory unexpectedly");
+        }
+        if (pfrcf.isIntervalScan()) {
+            // A WHERE on the designated timestamp compiles into an interval scan whose
+            // predicate lives in the frame cursor rather than a residual filter Function.
+            // The incremental refresh path never sees it, so every base row would slip
+            // through. There is no residual-filter analogue to fall back on, so reject.
+            throw SqlException.$(position, "live view select cannot filter on the designated timestamp yet");
         }
         TableToken scannedToken = base.getTableToken();
         // unreachable in practice: the SELECT is compiled against the declared base

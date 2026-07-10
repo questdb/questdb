@@ -2223,7 +2223,7 @@ public final class WhereClauseParser implements Mutable {
         return !latestByMultiColumn &&
                 (
                         Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                                || (preferredKeyColumn == null && !noIndex && useIndexedSymbolFilters && m.isColumnIndexed(m.getColumnIndex(columnName)))
                 );
     }
 

@@ -521,6 +521,68 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshWithWhereClauseOnIndexedSymbol() throws Exception {
+        // C1 regression. An equality filter on an INDEXED symbol used to be pushed into a
+        // DeferredSingleSymbolFilterPageFrameRecordCursorFactory whose predicate lives in the
+        // row cursor, invisible to the incremental refresh path (which applies only the residual
+        // filter Function). Before the fix the view admitted every base row - including sym='b' -
+        // because the intended WhereClauseParser.useIndexedSymbolFilters guard was never read.
+        // Suppressing indexed-symbol key extraction during live view compilation now leaves the
+        // predicate as a residual filter the refresh applies, so only sym='a' rows survive and rn
+        // advances only for survivors (identical to the non-indexed WHERE val > 5 case above).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL INDEX, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym = 'a'");
+            // Interleave a/b rows so a leaked 'b' row would perturb both the row set and rn.
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('a', 1, '2026-01-01T00:00:00.000000Z'), " +
+                    "('b', 2, '2026-01-01T00:01:00.000000Z'), " +
+                    "('a', 3, '2026-01-01T00:02:00.000000Z'), " +
+                    "('b', 4, '2026-01-01T00:03:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("sym\tval\tts\trn\n" +
+                    "a\t1\t2026-01-01T00:00:00.000000Z\t1\n" +
+                    "a\t3\t2026-01-01T00:02:00.000000Z\t2\n");
+            // Explicit: not a single excluded row slipped through.
+            assertQuery("SELECT count() FROM lv WHERE sym <> 'a'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRejectWhereOnDesignatedTimestamp() throws Exception {
+        // C1 regression (interval half). A WHERE on the designated timestamp compiles into an
+        // interval scan whose predicate lives in the frame cursor, not a residual filter Function,
+        // so the incremental refresh path never sees it and every base row would slip through. There
+        // is no residual-filter analogue to suppress it (unlike the indexed-symbol case), so CREATE
+        // rejects it outright rather than silently building a view that ignores the filter.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT val, ts, row_number() OVER () AS rn FROM base WHERE ts > '2026-01-01T00:00:00.000000Z'");
+                // Should not reach here; drop defensively so a spurious success does not
+                // leave a view that trips a later assertion on the same name.
+                execute("DROP LIVE VIEW lv");
+                Assert.fail("expected reject for a WHERE on the designated timestamp");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "live view select cannot filter on the designated timestamp yet")
+                );
+            }
+            Assert.assertNull("no view should survive the designated-timestamp reject",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+        });
+    }
+
+    @Test
     public void testMultipleRefreshBatchesAccumulateState() throws Exception {
         assertMemoryLeak(() -> {
             // Pin a deterministic clock so the FLUSH EVERY rate-limit (1s) does
