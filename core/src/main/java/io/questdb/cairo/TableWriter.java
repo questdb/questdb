@@ -41,6 +41,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -71,6 +72,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
@@ -3056,6 +3058,96 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             commitRemovePartitionOperation();
         }
         return dropped;
+    }
+
+    /**
+     * Replaces every row in {@code [replaceRangeLoTs, replaceRangeHiExclTs)} with the survivor rows from
+     * {@code survivorCursor}, or - when {@code survivorCursor == null} - empties that range in place: rows
+     * outside the range within boundary partitions are kept, fully-covered partitions are dropped, and a
+     * range covering all data truncates the table. Returns the number of rows removed.
+     * <p>
+     * SPIKE DECISION (task 1.8): option (a) - DIRECT EXPOSURE. The empty-range path needs no row source, so
+     * option (b) (staging survivors into a throwaway WAL segment) would be pure overhead here - there is
+     * nothing to stage. We therefore drive the existing {@code WAL_DEDUP_MODE_REPLACE_RANGE} apply machinery
+     * directly on the writer: {@link #processWalCommitFinishApply} over an empty O3 batch with the replace
+     * range carried in the tx lag min/max, exactly as {@link #processWalCommitDedupReplace}'s
+     * {@code rowLo >= rowHi} (empty) branch does, bracketed by the standalone-commit pattern
+     * {@link #removePartition} uses (commit up front to flush pending rows; persist + housekeep afterward so
+     * a reader sees the change and dropped-partition dirs are reclaimed). All O3 surgery - partition
+     * drop/trim/split, symbol maps, index rebuild, first/last recompute, truncate-when-empty - is reused
+     * unchanged; no new O3 code is introduced.
+     * <p>
+     * The cursor-sourced path is task 1.9.
+     *
+     * @param replaceRangeLoTs     inclusive low timestamp of the range to replace
+     * @param replaceRangeHiExclTs exclusive high timestamp of the range to replace
+     * @param survivorCursor       survivor rows to write into the range, or {@code null} to empty it
+     * @param copier               copies a survivor record into a table row (cursor path only; task 1.9)
+     * @param timestampCursorIndex designated-timestamp column index in the cursor (cursor path only; task 1.9)
+     * @return number of rows removed from the range
+     */
+    public long replaceRange(
+            long replaceRangeLoTs,
+            long replaceRangeHiExclTs,
+            @Nullable RecordCursor survivorCursor,
+            @Nullable RecordToRowCopier copier,
+            int timestampCursorIndex
+    ) {
+        if (survivorCursor != null) {
+            throw new UnsupportedOperationException("replaceRange cursor path: task 1.9");
+        }
+
+        checkDistressed();
+
+        // Commit up front to flush any pending rows, so the replace-apply starts from a fully-committed
+        // state with an empty lag (mirrors removePartition).
+        commit();
+
+        if (replaceRangeLoTs >= replaceRangeHiExclTs) {
+            // Empty or inverted range - nothing to remove.
+            return 0;
+        }
+
+        final long rowsBefore = txWriter.getRowCount();
+
+        assert txWriter.getLagRowCount() == 0;
+        physicallyWrittenRowsSinceLastCommit.reset();
+        dedupRowsRemovedSinceLastCommit.reset();
+        txWriter.beginPartitionSizeUpdate();
+
+        // hi is exclusive on input; the replace apply carries an inclusive max in the tx lag range.
+        final long replaceRangeTsHi = replaceRangeHiExclTs - 1;
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+        if (isLastPartitionClosed() && isEmptyTable()) {
+            populateDenseIndexerList();
+        }
+        try {
+            dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+            try {
+                // Empty O3 batch: the replace range alone (carried in lag min/max) drives the partition
+                // drop/trim over [lo, hiExcl). This is processWalCommitDedupReplace's rowLo >= rowHi branch.
+                txWriter.setLagMinTimestamp(replaceRangeLoTs);
+                txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+                processWalCommitFinishApply(0, 0, 0, 0, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+            } finally {
+                finishO3Append(0);
+            }
+        } finally {
+            dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
+        }
+
+        final long rowsAfter = txWriter.getRowCount();
+
+        // Persist and make the change visible; housekeep reclaims fully-dropped partition directories via
+        // processPartitionRemoveCandidates (mirrors the WAL replace apply's post-commit sequence).
+        commit00();
+        housekeep(configuration.getMicrosecondClock().getTicks());
+        shrinkO3Mem();
+
+        return rowsBefore - rowsAfter;
     }
 
     @Override
