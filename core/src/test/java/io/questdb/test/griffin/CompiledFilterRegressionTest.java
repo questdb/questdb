@@ -562,6 +562,81 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantArithmeticWidthUnderBooleanEqualityWithFloat() throws Exception {
+        // The bare-constant analog of testColumnArithmeticWidthUnderBooleanEqualityWithFloat
+        // (which used a LONG column). A FLOAT anywhere in the predicate suppresses the
+        // predicate-global narrow-i64 widening, so markFloatI64WidenLeaves is the ONLY pass
+        // that can sign-extend a narrow-int arithmetic subtree read at long width. For
+        // ((a*b) = 4999999999) = (f32 > 0) it correctly widens the product's leaves (a, b) so
+        // the JIT computes a*b = 5e9 at 64 bits, but it returned at the bare CONSTANT leaf and
+        // left 4999999999 unwidened. The type observer sees only INT and FLOAT columns (both
+        // 4 bytes, so hasMixedSizes() is false), types the constant down to F4, and
+        // serializeNumber rounds it to the nearest float - 4999999999 -> 5.0e9f (floats near
+        // 2^32 are 512 apart) - so the JIT float-compared 5e9 == 5.0e9f and matched, while the
+        // Java filter reads MulInt#getLong vs the LONG literal (5e9 == 4999999999, no match).
+        // JIT returned every row, Java none. markI64Widen now widens a bare out-of-INT-range
+        // integer constant compared against a narrow-int arithmetic operand, so
+        // serializeConstant emits a full I8 IMM. The widened product forces scalar mode
+        // (SX_I64 has no AVX2 path); the query still JIT-compiles (usesCompiledFilter stays
+        // true).
+        assertMemoryLeak(() -> {
+            execute("create table p as (select cast(100000 as int) a, cast(50000 as int) b," +
+                    " cast(1.0 as float) f32, cast(1.0 as double) f64," +
+                    " x::short cs, x::byte cbyte," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(5)) timestamp(k)");
+            // Primary repro: a*b = 5e9 at long width but 4999999999 rounds to 5.0e9f. Absolute
+            // pin: the equality is false on the Java path (5e9 != 4999999999), so the boolean
+            // equality with (f32 > 0 = true) is false for every row - 0 rows. The pre-fix JIT
+            // returned all 5.
+            assertJitMatchesJava("select cs from p where ((a*b) = 4999999999) = (f32 > 0)", true, "cs\n");
+            // Every comparison operator diverges the same way (the constant rounds up to 5e9f):
+            // > flips true->false, <= flips false->true, <> flips true->false. Absolute pin the
+            // > case: (a*b) > 4999999999 is true, so the boolean equality is true for all rows.
+            assertJitMatchesJava("select cs from p where ((a*b) > 4999999999) = (f32 > 0)", true,
+                    "cs\n1\n2\n3\n4\n5\n");
+            assertJitMatchesJava("select cs from p where ((a*b) <= 4999999999) = (f32 > 0)", true, "cs\n");
+            assertJitMatchesJava("select cs from p where ((a*b) <> 4999999999) = (f32 > 0)", true,
+                    "cs\n1\n2\n3\n4\n5\n");
+            // Non-diverging operators (5e9 >= / < 5e9f agree with 5e9 >= / < 4999999999): the
+            // fix must keep them correct.
+            assertJitMatchesJava("p where ((a*b) >= 4999999999) = (f32 > 0)", true);
+            assertJitMatchesJava("p where ((a*b) < 4999999999) = (f32 > 0)", true);
+            // Operand order (constant on the left, and the two comparisons swapped).
+            assertJitMatchesJava("p where (4999999999 = (a*b)) = (f32 > 0)", true);
+            assertJitMatchesJava("p where (f32 > 0) = ((a*b) = 4999999999)", true);
+            // Through a NOT wrapper.
+            assertJitMatchesJava("p where not (((a*b) = 4999999999) = (f32 > 0))", true);
+
+            // SAFE boundaries - must keep passing, do not over-widen:
+            // Negated / folded constant is an OPERATION handled by the fold-root path, not by
+            // the bare-CONSTANT widen: (a*b) < -4999999999 is false, so the equality is false.
+            assertJitMatchesJava("p where ((a*b) < -4999999999) = (f32 > 0)", true);
+            // AND / OR siblings split into separate predicate contexts (no float suppression on
+            // the (a*b) = 4999999999 sub-predicate, so needsNarrowI64Widening handles it).
+            assertJitMatchesJava("p where (a*b) = 4999999999 and f32 > 0", true);
+            assertJitMatchesJava("p where (a*b) = 4999999999 or f32 > 0", true);
+            // A DOUBLE sibling makes hasMixedSizes() true (I4 vs F8), so serializeUntypedNumber
+            // already emits an exact I8 - the fix widens redundantly, result unchanged.
+            assertJitMatchesJava("p where ((a*b) = 4999999999) = (f64 > 0)", true);
+            // BYTE / SHORT products cannot reach 2^31 and their I1 / I2 size differs from F4, so
+            // the constant is already mixed-size (exact I8) and never hits the float gap.
+            assertJitMatchesJava("p where ((cbyte * cbyte) = 4999999999) = (f32 > 0)", true);
+            assertJitMatchesJava("p where ((cs * cs) = 4999999999) = (f32 > 0)", true);
+            // A constant-fold root (2500000000 + 2499999999 = 4999999999) is collapsed by
+            // descend() and widened by markI64WidenFoldRoots, not the bare-CONSTANT path.
+            assertJitMatchesJava("p where ((a*b) > (2500000000 + 2499999999)) = (f32 > 0)", true);
+            // An IN key takes its per-element width from serializeIn's inKeyWidthOverride.
+            assertJitMatchesJava("p where ((a*b) in (4999999999)) = (f32 > 0)", true);
+            // Over-widening guard: an IN-RANGE constant (705032704 = 5e9 wrapped mod 2^32) must
+            // still WRAP against the INT-width product - cmpType stays I4, the constant stays
+            // I4, and MulInt#getInt matches it on both paths. Absolute pin: all 5 rows survive.
+            assertJitMatchesJava("select cs from p where ((a*b) = 705032704) = (f32 > 0)", true,
+                    "cs\n1\n2\n3\n4\n5\n");
+        });
+    }
+
+    @Test
     public void testConstantColumnArithmetics() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +

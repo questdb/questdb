@@ -1334,6 +1334,40 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * Widens a bare out-of-INT-range integer constant that a comparison reads at
+     * long width against a narrow-int arithmetic operand (e.g. {@code (a*b) =
+     * 4999999999}). {@link #markI64Widen} already sign-extends the product's narrow
+     * leaves, matching the Java filter's long-width read (MulInt#getLong vs the LONG
+     * literal); but the type observer sees only INT and FLOAT columns (both 4 bytes,
+     * so {@link TypesObserver#hasMixedSizes()} is false) and types the constant down
+     * to a lossy F4. Left as F4, {@link #serializeNumber} rounds it to the nearest
+     * float (4999999999 -> 5.0e9f, floats near 2^32 are 512 apart) and the JIT
+     * float-compares, admitting rows the Java filter rejects. Adding it to
+     * {@code i64WidenLeaves} makes {@link #serializeConstant} emit a full I8 IMM.
+     * <p>
+     * A narrow-int LEAF compared against such a constant is already covered by
+     * {@link #markNarrowConstCmpWidenPair}; this covers the arithmetic-operand
+     * (product / sum) gap it misses, so {@code other} is restricted to an OPERATION.
+     * Only a bare {@link ExpressionNode#CONSTANT} widens - a negated / folded overflow
+     * constant is an OPERATION handled by the fold-root path ({@link
+     * #markI64WidenFoldRoots} + {@link #descend}). An in-range (I4) constant keeps its
+     * narrow width, so a sibling INT-width comparison is unaffected.
+     */
+    private void maybeWidenCmpConstOperand(ExpressionNode constNode, ExpressionNode other) {
+        if (constNode == null || constNode.type != ExpressionNode.CONSTANT
+                || !isIntegerConst(constNode) || arithExprType(constNode) != I8_TYPE) {
+            return;
+        }
+        if (other == null || other.type != ExpressionNode.OPERATION) {
+            return;
+        }
+        final int otherType = genuineArithType(other);
+        if (otherType == I1_TYPE || otherType == I2_TYPE || otherType == I4_TYPE) {
+            addI64WidenLeaf(constNode);
+        }
+    }
+
+    /**
      * Marks the narrow-int leaves that need i64 widening when a float source
      * suppresses the global widening. The Java filter computes a LONG-width
      * arithmetic subtree at 64 bits (operands flow through #getLong), so an
@@ -1378,6 +1412,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             cmpType = foldCmpType(cmpType, node.args.getQuick(i));
         }
         boolean cmpLong = cmpType == I8_TYPE;
+        // A bare out-of-INT-range integer constant compared at long width against a
+        // narrow-int arithmetic operand (e.g. (a*b) = 4999999999) widens to i64 like
+        // that operand's leaves do above: markI64Widen sign-extends a, b so the product
+        // is computed at 64 bits, so the constant must widen too. markNarrowConstCmp-
+        // WidenPair covers only the narrow-int LEAF form of this pairing (i32 = ...),
+        // not an arithmetic product / sum. See maybeWidenCmpConstOperand.
+        if (node.paramCount == 2 && isComparisonToken(node.token)) {
+            maybeWidenCmpConstOperand(node.lhs, node.rhs);
+            maybeWidenCmpConstOperand(node.rhs, node.lhs);
+        }
         markI64Widen(node.lhs, cmpLong);
         markI64Widen(node.rhs, cmpLong);
         for (int i = 0, n = node.args.size(); i < n; i++) {
