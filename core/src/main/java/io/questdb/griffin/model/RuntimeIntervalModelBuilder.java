@@ -75,26 +75,32 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private TimestampDriver timestampDriver;
 
     public RuntimeIntrinsicIntervalModel build() {
-        isOwnershipTransferred = true;
-        return new RuntimeIntervalModel(
+        // Construct the model before committing the ownership transfer: if any of the copy
+        // allocations or the constructor throws, the functions stay owned by this builder and
+        // the next clear() closes them instead of dropping the references.
+        final RuntimeIntervalModel model = new RuntimeIntervalModel(
                 timestampDriver,
                 partitionBy,
                 new LongList(staticIntervals),
                 new ObjList<>(dynamicRangeList),
                 new IntList(dynamicRangePositionList)
         );
+        isOwnershipTransferred = true;
+        return model;
     }
 
     @Override
     public void clear() {
         if (isOwnershipTransferred) {
-            // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them
+            // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them.
+            // Run clearBetweenParsing() while dynamicRangeList still holds the adopted functions,
+            // so it does not mistake an adopted boundary function for a pending one and close it.
             isOwnershipTransferred = false;
+            clearBetweenParsing();
             staticIntervals.clear();
             dynamicRangeList.clear();
             dynamicRangePositionList.clear();
             intervalApplied = false;
-            clearBetweenParsing();
         } else {
             // no build(): the accumulated functions are orphaned, free them here
             freeAndClear();
@@ -108,17 +114,27 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      */
     public void freeAndClear() {
         isOwnershipTransferred = false;
-        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
-            betweenBoundaryFunc.close();
-        }
+        // Run clearBetweenParsing() while dynamicRangeList still holds the adopted functions: it
+        // closes a pending boundary function exactly once and leaves adopted ones to the list free
+        // below.
+        clearBetweenParsing();
         Misc.freeObjListAndClear(dynamicRangeList);
         dynamicRangePositionList.clear();
         staticIntervals.clear();
         intervalApplied = false;
-        clearBetweenParsing();
     }
 
+    /**
+     * Rolls back an unfinished BETWEEN extraction. WhereClauseParser calls this after every
+     * BETWEEN analysis; when the second endpoint failed to become an intrinsic, the first dynamic
+     * endpoint is still pending in betweenBoundaryFunc, and this method owns closing it. An
+     * endpoint already adopted into dynamicRangeList stays open - the list (or the model built
+     * from it) owns it.
+     */
     public void clearBetweenParsing() {
+        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
+            betweenBoundaryFunc.close();
+        }
         betweenBoundarySet = false;
         betweenBoundaryFunc = null;
         betweenBoundaryFuncPosition = 0;
@@ -131,6 +147,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersect(long lo, Function hi, short adjustment, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(hi);
             return;
         }
 
@@ -141,6 +159,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersect(Function lo, long hi, short adjustment, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(lo);
             return;
         }
 
@@ -218,6 +238,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersectRuntimeIntervals(Function intervalFunction, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(intervalFunction);
             return;
         }
 
@@ -228,6 +250,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersectRuntimeTimestamp(Function function, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(function);
             return;
         }
 
@@ -351,7 +375,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     }
                 }
             } else {
-                intersectBetweenSemiDynamic(betweenBoundaryFunc, betweenBoundaryFuncPosition, timestamp);
+                // hand the pending function off; the callee adopts or frees it
+                final Function pendingFunc = betweenBoundaryFunc;
+                betweenBoundaryFunc = null;
+                intersectBetweenSemiDynamic(pendingFunc, betweenBoundaryFuncPosition, timestamp);
             }
             betweenBoundarySet = false;
         }
@@ -366,7 +393,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             if (betweenBoundaryFunc == null) {
                 intersectBetweenSemiDynamic(timestamp, functionPosition, betweenBoundary);
             } else {
-                intersectBetweenDynamic(timestamp, functionPosition, betweenBoundaryFunc, betweenBoundaryFuncPosition);
+                // hand the pending function off; the callee adopts or frees both endpoints
+                final Function pendingFunc = betweenBoundaryFunc;
+                betweenBoundaryFunc = null;
+                intersectBetweenDynamic(timestamp, functionPosition, pendingFunc, betweenBoundaryFuncPosition);
             }
             betweenBoundarySet = false;
         }
@@ -378,6 +408,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void subtractEquals(Function function, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(function);
             return;
         }
 
@@ -439,6 +471,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void subtractRuntimeIntervals(Function intervalFunction, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(intervalFunction);
             return;
         }
 
@@ -498,6 +532,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void unionRuntimeTimestamp(Function function, int functionPosition) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(function);
             return;
         }
 
@@ -551,6 +587,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void intersectBetweenDynamic(Function funcValue1, int funcPosition1, Function funcValue2, int funcPosition2) {
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns both incoming functions
+            Misc.free(funcValue1);
+            Misc.free(funcValue2);
             return;
         }
 
@@ -572,10 +611,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             // to be consistent with non-designated filtering
             // do no filtering
             // }
+            // either way the interval never encodes, so this builder owns the incoming function
+            Misc.free(funcValue);
             return;
         }
 
         if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(funcValue);
             return;
         }
 
