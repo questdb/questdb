@@ -66,6 +66,68 @@ import java.util.HashMap;
 
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
+    /**
+     * Connection-reuse resets in {@code onDisconnected()}. The state instance
+     * stays in the HttpConnectionContext's LocalValue slot across reconnects,
+     * so every close-echo-wait flag must be reset or the NEXT connection on
+     * this context inherits it:
+     * <ul>
+     *   <li>{@code hasLostCloseEchoSync} left set makes the reused
+     *       connection's resumeRecv gate discard every valid receive;</li>
+     *   <li>{@code roleChangeCloseInitiated} left set lets an unrelated
+     *       fatal CLOSE on the reused durable-ack connection arm an
+     *       erroneous close-echo wait (beginCloseEchoWaitIfEligible keys on
+     *       this mark);</li>
+     *   <li>{@code closeEchoDeadline} left set makes the reused connection
+     *       believe a close handshake is already in progress.</li>
+     * </ul>
+     */
+    @Test
+    public void testOnDisconnectedResetsCloseEchoWaitState() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                state.setDurableAckEnabled(true);
+
+                // Drive the connection into the terminal close-echo shape:
+                // role-change close initiated, echo wait armed, frame sync
+                // lost behind an unparseable jammed frame.
+                state.initiateRoleChangeClose();
+                state.beginCloseEchoWait();
+                state.onCloseEchoSyncLost();
+                Assert.assertTrue("test scaffolding", state.isRoleChangeCloseInitiated());
+                Assert.assertTrue("test scaffolding", state.isAwaitingCloseEcho());
+                Assert.assertTrue("test scaffolding", state.hasLostCloseEchoSync());
+
+                state.onDisconnected();
+
+                Assert.assertFalse(
+                        "hasLostCloseEchoSync must reset on disconnect: left set, the reused "
+                                + "connection's resumeRecv gate reads-and-discards every valid receive "
+                                + "and the next client on this context can never ingest anything",
+                        state.hasLostCloseEchoSync()
+                );
+                Assert.assertFalse(
+                        "roleChangeCloseInitiated must reset on disconnect: left set, an unrelated "
+                                + "fatal CLOSE on the reused durable-ack connection satisfies "
+                                + "beginCloseEchoWaitIfEligible and arms a close-echo wait for an echo "
+                                + "contract that connection never entered",
+                        state.isRoleChangeCloseInitiated()
+                );
+                Assert.assertFalse(
+                        "closeEchoDeadline must reset on disconnect",
+                        state.isAwaitingCloseEcho()
+                );
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
     @Test
     public void testAddDataIgnoresZeroLengthInput() throws Exception {
         assertMemoryLeak(() -> {

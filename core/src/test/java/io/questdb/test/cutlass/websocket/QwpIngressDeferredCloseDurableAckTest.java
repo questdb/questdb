@@ -2062,6 +2062,139 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Connection reuse across the LocalValue slot: the state instance
+     * survives disconnect, so onDisconnected() must reset the close-echo
+     * flags or the NEXT connection on this HttpConnectionContext inherits a
+     * terminal shape. Two independent regressions on the SAME reused
+     * context:
+     * <ul>
+     *   <li>with {@code hasLostCloseEchoSync} left set, the reused
+     *       connection's resumeRecv gate discards every valid receive -- the
+     *       new client's frames never reach the engine;</li>
+     *   <li>with {@code roleChangeCloseInitiated} left set, an unrelated
+     *       fatal CLOSE (here: a protocol-violating TEXT frame) on the
+     *       reused durable-ack connection arms a close-echo wait instead of
+     *       disconnecting -- a wait for an echo contract the new connection
+     *       never entered.</li>
+     * </ul>
+     */
+    @Test
+    public void testConnectionReuseAfterCloseEchoWaitStartsClean() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return RECV_BUFFER_SIZE;
+                }
+            };
+
+            execute("create table tabru (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                // Connection 1: arm the echo wait, then kill frame sync.
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabru", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabru", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabru", 300L, 3_000_000L));
+                byte[] oversizedHeader = {
+                        (byte) 0x82,          // FIN | BINARY
+                        (byte) (0x80 | 126),  // MASK | 16-bit extended length
+                        0x07, (byte) 0xD0,    // payload length 2000, big-endian
+                        0x12, 0x34, 0x56, 0x78 // mask key
+                };
+                // Connection 2: a valid data frame, then a protocol-violating
+                // TEXT frame that triggers an unrelated fatal CLOSE.
+                byte[] reuseFrame = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabru", 400L, 4_000_000L));
+                byte[] textFrame = createMaskedFrame(WebSocketOpcode.TEXT, new byte[]{'h', 'i'});
+                byte[] wire = concat(frame0, frame1, frame2, oversizedHeader, reuseFrame, textFrame);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Connection 1, phases A-D: commit, demote, coverage,
+                    // CLOSE + echo wait, then sync loss.
+                    drive(processor, context, nf, frame0.length);
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "test setup: connection must await the client's close echo",
+                            state.isAwaitingCloseEcho()
+                    );
+                    drive(processor, context, nf, oversizedHeader.length);
+                    Assert.assertTrue(
+                            "test setup: the too-big header must flip the connection into the sync-lost discard mode",
+                            state.hasLostCloseEchoSync()
+                    );
+
+                    // Transport teardown: the framework fires
+                    // onConnectionClosed, which resets per-connection state
+                    // but leaves the instance in the LocalValue slot for the
+                    // next connection on this context.
+                    processor.onConnectionClosed(context);
+
+                    // Connection 2 on the SAME context. The node is PRIMARY
+                    // again (the demote reverted) and the new client
+                    // negotiates durable acks like the previous one did.
+                    readOnly.set(false);
+                    state.of(-1, AllowAllSecurityContext.INSTANCE);
+                    state.setDurableAckEnabled(true);
+                    int framesBeforeReuse = rawSocket.sentFrames.size();
+
+                    // Reset #1 under test: a valid frame on the reused
+                    // connection must be ingested, not read-and-discarded by
+                    // a stale sync-lost gate.
+                    drive(processor, context, nf, reuseFrame.length);
+                    Assert.assertEquals(
+                            "STALE SYNC-LOST GATE: the reused connection discarded a valid frame "
+                                    + "instead of ingesting it -- hasLostCloseEchoSync was not reset on "
+                                    + "disconnect, so the new client can never ingest anything",
+                            0, state.getHighestProcessedSequence()
+                    );
+                    Assert.assertTrue(
+                            "the reused connection must ack the committed frame",
+                            rawSocket.sentFrames.size() > framesBeforeReuse
+                    );
+
+                    // Reset #2 under test: an unrelated fatal CLOSE on the
+                    // reused durable-ack connection (pending durable maps
+                    // empty -- the watermark covers everything) must
+                    // disconnect, NOT arm a close-echo wait off the previous
+                    // connection's stale role-change mark.
+                    nf.release(textFrame.length);
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("STALE ROLE-CHANGE MARK: the unrelated fatal CLOSE on the reused "
+                                + "connection did not disconnect -- roleChangeCloseInitiated was not "
+                                + "reset, so beginCloseEchoWaitIfEligible armed a close-echo wait for "
+                                + "an echo contract this connection never entered");
+                    } catch (ServerDisconnectException expected) {
+                    } catch (PeerIsSlowToWriteException e) {
+                        Assert.fail("STALE ROLE-CHANGE MARK: resumeRecv re-armed for read after the "
+                                + "fatal CLOSE instead of disconnecting -- an erroneous close-echo "
+                                + "wait holds the connection open");
+                    }
+                    Assert.assertFalse(
+                            "no close-echo wait may be armed by a non-role-change fatal CLOSE",
+                            state.isAwaitingCloseEcho()
+                    );
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * The structural "no ack after CLOSE" guarantee: while the close-echo
      * wait is armed, {@code flushPendingAck}'s awaiting-close-echo gate must
      * refuse to emit anything through BOTH recv-driven vectors -- the
