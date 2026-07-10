@@ -208,6 +208,16 @@ public class SqlKeywordsTest {
         Assert.assertTrue(isPrevKeyword("prev"));
     }
 
+    @Test
+    public void testIsDeleteKeyword() {
+        Assert.assertTrue(SqlKeywords.isDeleteKeyword("delete"));
+        Assert.assertTrue(SqlKeywords.isDeleteKeyword("DELETE"));
+        Assert.assertTrue(SqlKeywords.isDeleteKeyword("Delete"));
+        Assert.assertFalse(SqlKeywords.isDeleteKeyword("delet"));
+        Assert.assertFalse(SqlKeywords.isDeleteKeyword("deleted"));
+        Assert.assertFalse(SqlKeywords.isDeleteKeyword("update"));
+    }
+
     protected static void testIs(Method[] methods) throws Exception {
         Arrays.sort(methods, Comparator.comparing(Method::getName));
         for (Method method : methods) {

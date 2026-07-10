@@ -551,6 +551,16 @@ public class SqlKeywords {
                 && (tok.charAt(10) | 32) == 'e';
     }
 
+    public static boolean isDeleteKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 't'
+                && (tok.charAt(5) | 32) == 'e';
+    }
+
     public static boolean isDefaultTransactionReadOnly(CharSequence tok) {
         return tok.length() == 29
                 && (tok.charAt(0) | 32) == 'd'
