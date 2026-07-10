@@ -223,7 +223,9 @@ public final class ParquetRowGroupFilter {
                                     break;
                                 case ColumnType.FLOAT:
                                 case ColumnType.DOUBLE:
-                                    filterValues.putInt((int) f.getDouble(null));
+                                    if (!tryPutIntFromDouble(filterValues, f.getDouble(null))) {
+                                        supported = false;
+                                    }
                                     break;
                                 default:
                                     filterValues.putInt(f.getByte(null));
@@ -245,7 +247,9 @@ public final class ParquetRowGroupFilter {
                                     break;
                                 case ColumnType.FLOAT:
                                 case ColumnType.DOUBLE:
-                                    filterValues.putInt((int) f.getDouble(null));
+                                    if (!tryPutIntFromDouble(filterValues, f.getDouble(null))) {
+                                        supported = false;
+                                    }
                                     break;
                                 default:
                                     filterValues.putInt(f.getShort(null));
@@ -274,7 +278,10 @@ public final class ParquetRowGroupFilter {
                                 }
                                 filterValues.putInt(clampLongToInt(v));
                             } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
-                                filterValues.putInt((int) f.getDouble(null));
+                                if (!tryPutIntFromDouble(filterValues, f.getDouble(null))) {
+                                    supported = false;
+                                    break;
+                                }
                             } else {
                                 // INT (and narrower) compare at INT precision; getInt() wraps
                                 // overflowing INT arithmetic like the native scan.
@@ -318,7 +325,10 @@ public final class ParquetRowGroupFilter {
                         for (int j = 0; j < valueCount; j++) {
                             Function f = valueFunctions.getQuick(j);
                             if (f.getType() == ColumnType.FLOAT || f.getType() == ColumnType.DOUBLE) {
-                                filterValues.putLong((long) f.getDouble(null));
+                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null))) {
+                                    supported = false;
+                                    break;
+                                }
                             } else {
                                 filterValues.putLong(f.getLong(null));
                             }
@@ -499,5 +509,35 @@ public final class ParquetRowGroupFilter {
 
     private static long encodeColumnCountAndOp(int columnIndex, int count, int op) {
         return (columnIndex & 0xFFFFFFFFL) | ((long) (count & 0x00FFFFFF) << 32) | ((long) (op & 0xFF) << 56);
+    }
+
+    // Appends a FLOAT/DOUBLE bound into an INT stats slot (BYTE/SHORT/INT columns), or reports
+    // that the bound cannot be pushed down. Row group pruning runs before the row-level filter,
+    // so the pushed integer must equal the double exactly: (int) truncates a fractional bound
+    // toward zero and saturates an out-of-range one, and either would false-prune a group whose
+    // stats sit on the resulting boundary (all-1 vs "< 1.5", all-INT_MAX vs "< 5e9"). Only an
+    // in-range integral double round-trips back through (double); anything else declines pushdown
+    // and lets the row-level filter evaluate it -- a superset scan is always safe.
+    private static boolean tryPutIntFromDouble(MemoryCARWImpl filterValues, double d) {
+        int i = (int) d;
+        if (Numbers.isNull(d) || (double) i != d) {
+            return false;
+        }
+        filterValues.putInt(i);
+        return true;
+    }
+
+    // Appends a FLOAT/DOUBLE bound into a LONG stats slot, or reports that the bound cannot be
+    // pushed down. Same pruning-safety requirement as tryPutIntFromDouble: only an integral
+    // double whose (long) cast round-trips through (double) is safe. Long.MAX_VALUE is excluded
+    // because d == 2^63 saturates to Long.MAX_VALUE yet still round-trips ((double) Long.MAX_VALUE
+    // rounds up to 2^63), so the pushed bound would not equal the true value.
+    private static boolean tryPutLongFromDouble(MemoryCARWImpl filterValues, double d) {
+        long l = (long) d;
+        if (Numbers.isNull(d) || (double) l != d || l == Long.MAX_VALUE) {
+            return false;
+        }
+        filterValues.putLong(l);
+        return true;
     }
 }

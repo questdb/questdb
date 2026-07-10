@@ -4609,6 +4609,82 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleConstantFractionalPushdownNotFalsePruned() throws Exception {
+        // A fractional DOUBLE bound truncates toward zero in the INT stats slot. Truncation
+        // is not pruning-safe: "c6 < 1.5" becomes "c6 < 1", which prunes a group whose INT
+        // stat is exactly 1 even though that row satisfies 1 < 1.5. Pruning runs before the
+        // row filter, so a false-prune drops the parquet row and the partial-parquet table
+        // returns fewer rows than its all-native sibling.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(1, 100);
+
+            // Positive fractional bound: strict "<" false-prunes the group at 1 before the fix.
+            assertNativeMatchesPartialParquet("c6 < 1.5", "c6\n1\n");
+            assertNativeMatchesPartialParquet("c6 <= 1.5", "c6\n1\n");
+
+            // Integral DOUBLE bound stays pushdown-safe: the group at 1 is pruned correctly
+            // (row 1 fails 1 < 1.0) and the pushdown still fires -- the fix is surgical.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // Negative fractional bound truncates the other way: "c6 > -1.5" becomes "c6 > -1",
+            // which false-prunes a group at -1 even though -1 > -1.5.
+            createBoundarySaturatedPartialParquet(-1, -100);
+            assertNativeMatchesPartialParquet("c6 > -1.5", "c6\n-1\n");
+            assertNativeMatchesPartialParquet("c6 >= -1.5", "c6\n-1\n");
+        });
+    }
+
+    @Test
+    public void testDoubleConstantFractionalPushdownNotFalsePrunedLongColumn() throws Exception {
+        // The LONG stats slot truncates a fractional DOUBLE bound via (long) getDouble(),
+        // the 64-bit twin of the INT/narrow arms. "c6 < 1.5" -> "c6 < 1" false-prunes a
+        // group at 1 even though 1 < 1.5.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("LONG", "1", "100");
+
+            assertNativeMatchesPartialParquet("c6 < 1.5", "c6\n1\n");
+
+            // Integral DOUBLE bound stays pushdown-safe and still prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
+    public void testDoubleConstantOutsideIntRangePushdownNotFalsePruned() throws Exception {
+        // An out-of-INT-range DOUBLE bound saturates to INT_MAX in the 32-bit stats slot,
+        // the (int) getDouble() twin of the LONG-bound saturation. "c6 < 5e9" saturates to
+        // "c6 < INT_MAX" and false-prunes an all-INT_MAX group whose rows satisfy the filter.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquet(2147483647, 0);
+
+            assertNativeMatchesPartialParquet("c6 < 5000000000.0", "c6\n2147483647\n0\n");
+
+            // Control: no INT value exceeds the bound; empty result, group may prune.
+            assertNativeMatchesPartialParquet("c6 > 5000000000.0", "c6\n");
+        });
+    }
+
+    @Test
+    public void testFloatConstantFractionalPushdownNotFalsePruned() throws Exception {
+        // A fractional FLOAT bound truncates in the narrow (SHORT) stats slot via
+        // (int) getDouble(), the FLOAT twin of the DOUBLE arm. "c6 < 1.5" -> "c6 < 1"
+        // false-prunes a SHORT group at 1.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("SHORT", "1", "100");
+
+            assertNativeMatchesPartialParquet("c6 < 1.5::float", "c6\n1\n");
+            assertNativeMatchesPartialParquet("c6 <= 1.5::float", "c6\n1\n");
+        });
+    }
+
+    @Test
     public void testLongConstantBelowIntRangePushdownNotFalsePruned() throws Exception {
         // Parquet partition saturated at INT_MIN+1 (-2147483647). A below-INT-range
         // LONG bound saturates in the INT stats slot; c > -5e9 matches every row, so
@@ -4683,8 +4759,15 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     // min == max == parquetValue -- a group saturated at that exact value. The second row
     // (nativeValue) stays native so the pushdown actually scans the parquet partition.
     private void createBoundarySaturatedPartialParquet(int parquetValue, int nativeValue) throws Exception {
-        execute("CREATE TABLE tn (c6 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-        execute("CREATE TABLE tp (c6 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        createBoundarySaturatedPartialParquetTyped("INT", Integer.toString(parquetValue), Integer.toString(nativeValue));
+    }
+
+    // Typed variant of createBoundarySaturatedPartialParquet: the column type and the two row
+    // values are supplied as text so the same single-row-parquet-group setup can exercise the
+    // INT, narrow (BYTE/SHORT) and LONG stats slots.
+    private void createBoundarySaturatedPartialParquetTyped(String columnType, String parquetValue, String nativeValue) throws Exception {
+        execute("CREATE TABLE tn (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tp (c6 " + columnType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("INSERT INTO tn VALUES (" + parquetValue + ", '2024-01-01T00:00:00.000000Z'), (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
         execute("INSERT INTO tp VALUES (" + parquetValue + ", '2024-01-01T00:00:00.000000Z'), (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
         execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
