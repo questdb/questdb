@@ -49,6 +49,121 @@ final class ParquetColumnTypeConverter {
     private ParquetColumnTypeConverter() {
     }
 
+    private static void writeFixedNull(int targetType, long targetAddress, int rowIndex) {
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) 0);
+            case ColumnType.SHORT -> Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) 0);
+            case ColumnType.CHAR -> Unsafe.putChar(targetAddress + ((long) rowIndex << 1), (char) 0);
+            case ColumnType.INT -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Numbers.INT_NULL);
+            case ColumnType.IPv4 -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Numbers.IPv4_NULL);
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
+                    Unsafe.putLong(targetAddress + ((long) rowIndex << 3), Numbers.LONG_NULL);
+            case ColumnType.FLOAT -> Unsafe.putFloat(targetAddress + ((long) rowIndex << 2), Float.NaN);
+            case ColumnType.DOUBLE -> Unsafe.putDouble(targetAddress + ((long) rowIndex << 3), Double.NaN);
+            case ColumnType.UUID -> {
+                final long address = targetAddress + ((long) rowIndex << 4);
+                Unsafe.putLong(address, Numbers.LONG_NULL);
+                Unsafe.putLong(address + Long.BYTES, Numbers.LONG_NULL);
+            }
+            case ColumnType.DECIMAL8 -> Unsafe.putByte(targetAddress + rowIndex, Decimals.DECIMAL8_NULL);
+            case ColumnType.DECIMAL16 ->
+                    Unsafe.putShort(targetAddress + ((long) rowIndex << 1), Decimals.DECIMAL16_NULL);
+            case ColumnType.DECIMAL32 -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Decimals.DECIMAL32_NULL);
+            case ColumnType.DECIMAL64 ->
+                    Unsafe.putLong(targetAddress + ((long) rowIndex << 3), Decimals.DECIMAL64_NULL);
+            case ColumnType.DECIMAL128 -> {
+                final long address = targetAddress + ((long) rowIndex << 4);
+                Unsafe.putLong(address, Decimals.DECIMAL128_HI_NULL);
+                Unsafe.putLong(address + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+            }
+            case ColumnType.DECIMAL256 -> {
+                final long address = targetAddress + ((long) rowIndex << 5);
+                Unsafe.putLong(address, Decimals.DECIMAL256_HH_NULL);
+                Unsafe.putLong(address + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                Unsafe.putLong(address + 2L * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                Unsafe.putLong(address + 3L * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+            }
+        }
+    }
+
+    private static void writeFixedParsedValue(
+            int targetType,
+            long targetAddress,
+            int rowIndex,
+            CharSequence value,
+            Decimal64 decimal64,
+            Decimal128 decimal128,
+            Decimal256 decimal256
+    ) {
+        try {
+            switch (ColumnType.tagOf(targetType)) {
+                case ColumnType.BOOLEAN ->
+                        Unsafe.putByte(targetAddress + rowIndex, (byte) (SqlKeywords.isTrueKeyword(value) ? 1 : 0));
+                case ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) Numbers.parseInt(value));
+                case ColumnType.SHORT ->
+                        Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) Numbers.parseInt(value));
+                case ColumnType.CHAR ->
+                        Unsafe.putChar(targetAddress + ((long) rowIndex << 1), !value.isEmpty() ? value.charAt(0) : 0);
+                case ColumnType.INT -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Numbers.parseInt(value));
+                case ColumnType.LONG ->
+                        Unsafe.putLong(targetAddress + ((long) rowIndex << 3), Numbers.parseLong(value));
+                case ColumnType.FLOAT ->
+                        Unsafe.putFloat(targetAddress + ((long) rowIndex << 2), Numbers.parseFloat(value));
+                case ColumnType.DOUBLE ->
+                        Unsafe.putDouble(targetAddress + ((long) rowIndex << 3), Numbers.parseDouble(value));
+                case ColumnType.DATE -> Unsafe.putLong(
+                        targetAddress + ((long) rowIndex << 3),
+                        MillisTimestampDriver.INSTANCE.parseFloorLiteral(value)
+                );
+                case ColumnType.TIMESTAMP -> Unsafe.putLong(
+                        targetAddress + ((long) rowIndex << 3),
+                        ColumnType.getTimestampDriver(targetType).parseFloorLiteral(value)
+                );
+                case ColumnType.IPv4 ->
+                        Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
+                case ColumnType.UUID -> {
+                    Uuid.checkDashesAndLength(value);
+                    final long address = targetAddress + ((long) rowIndex << 4);
+                    Unsafe.putLong(address, Uuid.parseLo(value));
+                    Unsafe.putLong(address + Long.BYTES, Uuid.parseHi(value));
+                }
+                case ColumnType.DECIMAL8 -> {
+                    decimal64.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
+                    Unsafe.putByte(targetAddress + rowIndex, (byte) decimal64.getValue());
+                }
+                case ColumnType.DECIMAL16 -> {
+                    decimal64.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
+                    Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) decimal64.getValue());
+                }
+                case ColumnType.DECIMAL32 -> {
+                    decimal64.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
+                    Unsafe.putInt(targetAddress + ((long) rowIndex << 2), (int) decimal64.getValue());
+                }
+                case ColumnType.DECIMAL64 -> {
+                    decimal64.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
+                    Unsafe.putLong(targetAddress + ((long) rowIndex << 3), decimal64.getValue());
+                }
+                case ColumnType.DECIMAL128 -> {
+                    decimal128.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
+                    final long address = targetAddress + ((long) rowIndex << 4);
+                    Unsafe.putLong(address, decimal128.getHigh());
+                    Unsafe.putLong(address + Long.BYTES, decimal128.getLow());
+                }
+                case ColumnType.DECIMAL256 -> {
+                    decimal256.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
+                    final long address = targetAddress + ((long) rowIndex << 5);
+                    Unsafe.putLong(address, decimal256.getHh());
+                    Unsafe.putLong(address + Long.BYTES, decimal256.getHl());
+                    Unsafe.putLong(address + 2L * Long.BYTES, decimal256.getLh());
+                    Unsafe.putLong(address + 3L * Long.BYTES, decimal256.getLl());
+                }
+                default -> writeFixedNull(targetType, targetAddress, rowIndex);
+            }
+        } catch (NumericException e) {
+            writeFixedNull(targetType, targetAddress, rowIndex);
+        }
+    }
+
     /**
      * Chooses the representation Rust should decode before Java applies any
      * fixed/variable-width crossing conversion.
@@ -420,115 +535,6 @@ final class ParquetColumnTypeConverter {
             targetPointers.setQuick(slot + 1, (long) rowGroupSize * ColumnType.sizeOf(columnType));
             targetPointers.setQuick(slot + 2, 0);
             targetPointers.setQuick(slot + 3, 0);
-        }
-    }
-
-    private static void writeFixedNull(int targetType, long targetAddress, int rowIndex) {
-        switch (ColumnType.tagOf(targetType)) {
-            case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) 0);
-            case ColumnType.SHORT -> Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) 0);
-            case ColumnType.CHAR -> Unsafe.putChar(targetAddress + ((long) rowIndex << 1), (char) 0);
-            case ColumnType.INT -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Numbers.INT_NULL);
-            case ColumnType.IPv4 -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Numbers.IPv4_NULL);
-            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
-                    Unsafe.putLong(targetAddress + ((long) rowIndex << 3), Numbers.LONG_NULL);
-            case ColumnType.FLOAT -> Unsafe.putFloat(targetAddress + ((long) rowIndex << 2), Float.NaN);
-            case ColumnType.DOUBLE -> Unsafe.putDouble(targetAddress + ((long) rowIndex << 3), Double.NaN);
-            case ColumnType.UUID -> {
-                final long address = targetAddress + ((long) rowIndex << 4);
-                Unsafe.putLong(address, Numbers.LONG_NULL);
-                Unsafe.putLong(address + Long.BYTES, Numbers.LONG_NULL);
-            }
-            case ColumnType.DECIMAL8 -> Unsafe.putByte(targetAddress + rowIndex, Decimals.DECIMAL8_NULL);
-            case ColumnType.DECIMAL16 -> Unsafe.putShort(targetAddress + ((long) rowIndex << 1), Decimals.DECIMAL16_NULL);
-            case ColumnType.DECIMAL32 -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Decimals.DECIMAL32_NULL);
-            case ColumnType.DECIMAL64 -> Unsafe.putLong(targetAddress + ((long) rowIndex << 3), Decimals.DECIMAL64_NULL);
-            case ColumnType.DECIMAL128 -> {
-                final long address = targetAddress + ((long) rowIndex << 4);
-                Unsafe.putLong(address, Decimals.DECIMAL128_HI_NULL);
-                Unsafe.putLong(address + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
-            }
-            case ColumnType.DECIMAL256 -> {
-                final long address = targetAddress + ((long) rowIndex << 5);
-                Unsafe.putLong(address, Decimals.DECIMAL256_HH_NULL);
-                Unsafe.putLong(address + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
-                Unsafe.putLong(address + 2L * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
-                Unsafe.putLong(address + 3L * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
-            }
-        }
-    }
-
-    private static void writeFixedParsedValue(
-            int targetType,
-            long targetAddress,
-            int rowIndex,
-            CharSequence value,
-            Decimal64 decimal64,
-            Decimal128 decimal128,
-            Decimal256 decimal256
-    ) {
-        try {
-            switch (ColumnType.tagOf(targetType)) {
-                case ColumnType.BOOLEAN ->
-                        Unsafe.putByte(targetAddress + rowIndex, (byte) (SqlKeywords.isTrueKeyword(value) ? 1 : 0));
-                case ColumnType.BYTE -> Unsafe.putByte(targetAddress + rowIndex, (byte) Numbers.parseInt(value));
-                case ColumnType.SHORT ->
-                        Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) Numbers.parseInt(value));
-                case ColumnType.CHAR ->
-                        Unsafe.putChar(targetAddress + ((long) rowIndex << 1), !value.isEmpty() ? value.charAt(0) : 0);
-                case ColumnType.INT -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Numbers.parseInt(value));
-                case ColumnType.LONG -> Unsafe.putLong(targetAddress + ((long) rowIndex << 3), Numbers.parseLong(value));
-                case ColumnType.FLOAT -> Unsafe.putFloat(targetAddress + ((long) rowIndex << 2), Numbers.parseFloat(value));
-                case ColumnType.DOUBLE -> Unsafe.putDouble(targetAddress + ((long) rowIndex << 3), Numbers.parseDouble(value));
-                case ColumnType.DATE -> Unsafe.putLong(
-                        targetAddress + ((long) rowIndex << 3),
-                        MillisTimestampDriver.INSTANCE.parseFloorLiteral(value)
-                );
-                case ColumnType.TIMESTAMP -> Unsafe.putLong(
-                        targetAddress + ((long) rowIndex << 3),
-                        ColumnType.getTimestampDriver(targetType).parseFloorLiteral(value)
-                );
-                case ColumnType.IPv4 -> Unsafe.putInt(targetAddress + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
-                case ColumnType.UUID -> {
-                    Uuid.checkDashesAndLength(value);
-                    final long address = targetAddress + ((long) rowIndex << 4);
-                    Unsafe.putLong(address, Uuid.parseLo(value));
-                    Unsafe.putLong(address + Long.BYTES, Uuid.parseHi(value));
-                }
-                case ColumnType.DECIMAL8 -> {
-                    decimal64.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
-                    Unsafe.putByte(targetAddress + rowIndex, (byte) decimal64.getValue());
-                }
-                case ColumnType.DECIMAL16 -> {
-                    decimal64.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
-                    Unsafe.putShort(targetAddress + ((long) rowIndex << 1), (short) decimal64.getValue());
-                }
-                case ColumnType.DECIMAL32 -> {
-                    decimal64.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
-                    Unsafe.putInt(targetAddress + ((long) rowIndex << 2), (int) decimal64.getValue());
-                }
-                case ColumnType.DECIMAL64 -> {
-                    decimal64.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
-                    Unsafe.putLong(targetAddress + ((long) rowIndex << 3), decimal64.getValue());
-                }
-                case ColumnType.DECIMAL128 -> {
-                    decimal128.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
-                    final long address = targetAddress + ((long) rowIndex << 4);
-                    Unsafe.putLong(address, decimal128.getHigh());
-                    Unsafe.putLong(address + Long.BYTES, decimal128.getLow());
-                }
-                case ColumnType.DECIMAL256 -> {
-                    decimal256.ofString(value, ColumnType.getDecimalPrecision(targetType), ColumnType.getDecimalScale(targetType));
-                    final long address = targetAddress + ((long) rowIndex << 5);
-                    Unsafe.putLong(address, decimal256.getHh());
-                    Unsafe.putLong(address + Long.BYTES, decimal256.getHl());
-                    Unsafe.putLong(address + 2L * Long.BYTES, decimal256.getLh());
-                    Unsafe.putLong(address + 3L * Long.BYTES, decimal256.getLl());
-                }
-                default -> writeFixedNull(targetType, targetAddress, rowIndex);
-            }
-        } catch (NumericException e) {
-            writeFixedNull(targetType, targetAddress, rowIndex);
         }
     }
 }
