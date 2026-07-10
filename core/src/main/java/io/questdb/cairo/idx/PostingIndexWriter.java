@@ -3068,6 +3068,21 @@ public class PostingIndexWriter implements IndexWriter {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
         }
+        // A preceding commit/seal flush can fail to extend the .pv (for example an
+        // I/O fault during the valueMem mremap) and leave valueMem closed while its
+        // pending batch is still queued and valueMemSize still reflects the old
+        // mapped extent. A later flush -- reached from rollbackValues() or from the
+        // seal() on the writer's distressed-close path -- would then dereference the
+        // unmapped valueMem: assert under -ea, or wild-write at offset 0 in
+        // production. There is nothing to flush into, so surface a clean error and
+        // let the caller's rollback mark the writer distressed; the on-disk chain is
+        // recovered on the next open.
+        if (!valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot flush posting index into closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount)
+                    .put(", activeKeyCount=").put(activeKeyCount).put(']');
+        }
 
         // Sort active keys for the sparse format (requires ascending keyIds).
         // Skip sort if keys were added in order (common for sequential writes).
