@@ -36,7 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Chars;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Misc;
 
 public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -48,7 +48,7 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
         this.base = base;
         cursor = new RecordAsAFieldRecordCursor(base.recordCursorSupportsRandomAccess());
         GenericRecordMetadata metadata = (GenericRecordMetadata) getMetadata();
-        metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), ColumnType.RECORD, base.getMetadata()));
+        metadata.add(new TableColumnMetadata(SqlUtil.toColumnName(columnAlias), ColumnType.RECORD, base.getMetadata()));
     }
 
     @Override

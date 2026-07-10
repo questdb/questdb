@@ -179,9 +179,15 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
-        final long cursor = bullyUntilClosed(disconnectPubSeq);
+        // A negative cursor means the dispatcher is closed -- either up front, or close() flipped
+        // it during the bully loop (bullyUntilClosed only returns < 0 when closed). close() drains
+        // the disconnect queue once and never again, so enqueuing now would strand this checked-out
+        // context (e.g. a parked sleep() unwinding at shutdown), which no close() sweep can see.
+        // Free it directly instead.
+        final long cursor = closed ? -1 : bullyUntilClosed(disconnectPubSeq);
         if (cursor < 0) {
             assert closed;
+            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
             return;
         }
         disconnectQueue.get(cursor).context = context;
@@ -233,9 +239,14 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void registerChannel(C context, int operation) {
-        final long cursor = bullyUntilClosed(interestPubSeq);
+        // Same as disconnect(): a negative cursor means the dispatcher is closed (up front, or
+        // close() flipped it mid-bully). The interest queue was swept once by close(), so
+        // re-registering would strand this checked-out context (e.g. a parked sleep() re-arming
+        // at shutdown). Disconnect it directly instead of leaking its socket.
+        final long cursor = closed ? -1 : bullyUntilClosed(interestPubSeq);
         if (cursor < 0) {
             assert closed;
+            doDisconnect(context, DISCONNECT_SRC_SHUTDOWN);
             return;
         }
         IOEvent<C> evt = interestQueue.get(cursor);
@@ -278,6 +289,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     private void checkConnectionLimitAndRestartListener() {
+        if (closed) {
+            // Never re-create the listener socket during or after shutdown: doDisconnect()
+            // runs in here while freeing a context that reached disconnect()/registerChannel()
+            // after close(), and a drop below the limit would otherwise re-open serverFd.
+            return;
+        }
         final int activeConnectionLimit = configuration.getLimit();
         final int connCount = connectionCount.get();
         if (connCount < activeConnectionLimit) {
@@ -453,6 +470,13 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     protected void doDisconnect(C context, int src) {
         if (context == null || context.invalid()) {
+            return;
+        }
+        if (!context.tryDisconnect()) {
+            // A concurrent caller already claimed this context -- e.g. close()'s pendingHeartbeats
+            // sweep racing a worker's post-close disconnect()/registerChannel() of a context that is
+            // still tracked in pendingHeartbeats. The winner frees it once; a second free here would
+            // double-close the fd (fd-aliasing) and double-free the context's native buffers.
             return;
         }
 

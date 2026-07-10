@@ -4483,7 +4483,28 @@ public class SqlParser {
                 do {
                     CharSequence colNameTok = tok(lexer, "column name");
                     assertNameIsQuotedOrNotAKeyword(colNameTok, lexer.lastTokenPosition());
-                    CharSequence colName = GenericLexer.immutableOf(unquote(colNameTok));
+                    // A dotted name keeps its dots as content, not a table.column separator (matches
+                    // the SELECT-alias convention). Normalize to the protective DOUBLE-quote form
+                    // regardless of the user's quote style: only double quotes are recognized
+                    // downstream (Chars.indexOfLastUnquoted / SqlUtil.isQuoteProtectedAlias handle '"'
+                    // only), so a retained single quote or backtick would leave the dot to mis-split
+                    // into a spurious table.column reference and fail to resolve at compile time.
+                    final CharSequence unquotedColName = unquote(colNameTok);
+                    final CharSequence colName;
+                    if (Chars.indexOf(unquotedColName, '.') == -1) {
+                        colName = GenericLexer.immutableOf(unquotedColName);
+                    } else {
+                        // A dotted name is re-wrapped in double quotes to keep its dots as content; an
+                        // embedded double quote would break that quote parity (isQuoteProtectedAlias and
+                        // Chars.indexOfLastUnquoted toggle on '"'), leaking a malformed name or, for a JSON
+                        // COLUMNS key, silently matching nothing. Reject it cleanly instead.
+                        if (Chars.indexOf(unquotedColName, '"') != -1) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "dotted UNNEST column name cannot contain a double quote");
+                        }
+                        final CharacterStoreEntry colNameEntry = characterStore.newEntry();
+                        colNameEntry.put('"').put(unquotedColName).put('"');
+                        colName = colNameEntry.toImmutable();
+                    }
                     CharSequence typeName = tok(lexer, "column type");
                     int type = ColumnType.typeOf(typeName);
                     if (type == -1) {
@@ -4555,7 +4576,24 @@ public class SqlParser {
                 tok = tok(lexer, "column alias");
                 int aliasPos = lexer.lastTokenPosition();
                 assertNameIsQuotedOrNotAKeyword(tok, aliasPos);
-                unnestModel.getUnnestColumnAliases().add(GenericLexer.immutableOf(unquote(tok)));
+                // A dotted alias keeps its dots as content (see the COLUMNS field-name note above):
+                // normalize any quote style to the protective double-quote form so downstream lookups
+                // treat the dots as content instead of a table.column separator.
+                final CharSequence unquotedAlias = unquote(tok);
+                final CharSequence aliasName;
+                if (Chars.indexOf(unquotedAlias, '.') == -1) {
+                    aliasName = GenericLexer.immutableOf(unquotedAlias);
+                } else {
+                    // see the COLUMNS field-name note: an embedded double quote breaks the protective
+                    // re-wrap, so reject a dotted alias that carries one rather than leak a malformed name.
+                    if (Chars.indexOf(unquotedAlias, '"') != -1) {
+                        throw SqlException.$(aliasPos, "dotted UNNEST column alias cannot contain a double quote");
+                    }
+                    final CharacterStoreEntry aliasEntry = characterStore.newEntry();
+                    aliasEntry.put('"').put(unquotedAlias).put('"');
+                    aliasName = aliasEntry.toImmutable();
+                }
+                unnestModel.getUnnestColumnAliases().add(aliasName);
                 if (firstExcessAliasPos == -1
                         && unnestModel.getUnnestColumnAliases().size() > maxAliases) {
                     firstExcessAliasPos = aliasPos;
