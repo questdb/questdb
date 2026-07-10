@@ -24,8 +24,13 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 
 /**
  * Helpers shared by the cursor-comparison factories (for example {@code col > (select ...)}),
@@ -48,6 +53,98 @@ public final class ScalarSubQueryUtils {
     public static void assertNoMoreRows(RecordCursor cursor, int position) throws SqlException {
         if (cursor.hasNext()) {
             throw SqlException.$(position, "scalar sub-query returned more than one row");
+        }
+    }
+
+    /**
+     * Validates that a scalar sub-query factory provides exactly one column.
+     *
+     * @param factory  the sub-query cursor factory
+     * @param position the parse position of the sub-query, used for the error marker
+     * @return the factory metadata, for further column-type validation
+     * @throws SqlException if the sub-query selects more than one column
+     */
+    public static RecordMetadata assertSingleColumn(RecordCursorFactory factory, int position) throws SqlException {
+        final RecordMetadata metadata = factory.getMetadata();
+        if (metadata.getColumnCount() != 1) {
+            throw SqlException.$(position, "select must provide exactly one column");
+        }
+        return metadata;
+    }
+
+    /**
+     * Reads the single-column scalar of a sub-query record widened to {@code double}. Typed integer
+     * NULLs map to {@link Double#NaN} so the comparison follows SQL {@code null} semantics (matches
+     * no rows) instead of comparing against a sentinel value.
+     *
+     * @param record        the sub-query record positioned on the scalar row
+     * @param columnTypeTag the {@link ColumnType} tag of the cursor column
+     * @return the scalar as a double, or {@link Double#NaN} for null values
+     */
+    public static double readDoubleValue(Record record, int columnTypeTag) {
+        switch (columnTypeTag) {
+            case ColumnType.DOUBLE:
+                return record.getDouble(0);
+            case ColumnType.FLOAT:
+                return record.getFloat(0);
+            case ColumnType.LONG:
+                final long l = record.getLong(0);
+                return l == Numbers.LONG_NULL ? Double.NaN : l;
+            case ColumnType.INT:
+                final int i = record.getInt(0);
+                return i == Numbers.INT_NULL ? Double.NaN : i;
+            case ColumnType.SHORT:
+                return record.getShort(0);
+            case ColumnType.BYTE:
+                return record.getByte(0);
+            default:
+                return Double.NaN;
+        }
+    }
+
+    /**
+     * Reads the single-column scalar of a sub-query record as an {@code int}. Only narrow integer
+     * cursor columns are expected here; anything else (including the NULL type) yields
+     * {@link Numbers#INT_NULL}, which matches no rows.
+     *
+     * @param record        the sub-query record positioned on the scalar row
+     * @param columnTypeTag the {@link ColumnType} tag of the cursor column
+     * @return the scalar as an int, or {@link Numbers#INT_NULL} for null values
+     */
+    public static int readIntValue(Record record, int columnTypeTag) {
+        switch (columnTypeTag) {
+            case ColumnType.BYTE:
+                return record.getByte(0);
+            case ColumnType.SHORT:
+                return record.getShort(0);
+            case ColumnType.INT:
+                return record.getInt(0);
+            default:
+                return Numbers.INT_NULL;
+        }
+    }
+
+    /**
+     * Reads the single-column scalar of a sub-query record widened to {@code long}. An INT_NULL
+     * cursor scalar maps to {@link Numbers#LONG_NULL} (via {@link Numbers#intToLong}) so it matches
+     * no rows rather than behaving like {@code Integer.MIN_VALUE}.
+     *
+     * @param record        the sub-query record positioned on the scalar row
+     * @param columnTypeTag the {@link ColumnType} tag of the cursor column
+     * @return the scalar as a long, or {@link Numbers#LONG_NULL} for null values
+     */
+    public static long readLongValue(Record record, int columnTypeTag) {
+        switch (columnTypeTag) {
+            case ColumnType.BYTE:
+                return record.getByte(0);
+            case ColumnType.SHORT:
+                return record.getShort(0);
+            case ColumnType.INT:
+                return Numbers.intToLong(record.getInt(0));
+            case ColumnType.LONG:
+                return record.getLong(0);
+            default:
+                return Numbers.LONG_NULL;
         }
     }
 }
