@@ -3327,6 +3327,16 @@ public class PostingIndexWriter implements IndexWriter {
         if (!hasPendingData || pendingCountsAddr == 0 || activeKeyCount == 0) {
             return;
         }
+        // Mirror flushAllPending's guard: a failed .pv extend can leave valueMem
+        // closed with a pending batch queued, and this dense flush would then
+        // dereference it (getAppendOffset / putLong / addressOf). Keep the check
+        // below the hasPendingData early-return so a genuine no-op stays a no-op.
+        if (!valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot flush posting index into closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount)
+                    .put(", activeKeyCount=").put(activeKeyCount).put(']');
+        }
 
         boolean isSorted = true;
         for (int i = 1; i < activeKeyCount; i++) {
@@ -4517,6 +4527,17 @@ public class PostingIndexWriter implements IndexWriter {
      *                       any other value trims per-key values to those <= cutoff (rollback path)
      */
     private void reencodeAllGenerations(long newSealTxn, long maxValue, long maxValueCutoff) {
+        // The third deref site sharing flushAllPending's hazard: Phase 1 reads
+        // every generation out of valueMem (addressOf below). A failed .pv extend
+        // can leave it closed with genCount > 0 -- reached from sealFull() and
+        // rollbackToMaxValue() on the distressed-close path. genCount == 0 never
+        // touches valueMem here (empty gen loop routes to truncate()), so guard
+        // only when there is a generation to read.
+        if (genCount > 0 && !valueMem.isOpen()) {
+            throw CairoException.critical(0)
+                    .put("cannot reencode posting index generations over closed value memory [valueMemSize=")
+                    .put(valueMemSize).put(", genCount=").put(genCount).put(']');
+        }
 
         // Phase 1: Count total values per key across all generations
         long totalCountsSize = (long) keyCount * Integer.BYTES;
