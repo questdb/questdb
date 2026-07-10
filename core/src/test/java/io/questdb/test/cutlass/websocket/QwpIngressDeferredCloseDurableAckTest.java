@@ -1546,6 +1546,218 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
     }
 
     /**
+     * Slowloris during the echo wait: a peer trickling a LEGAL-size frame
+     * (declared payload within recv buffer capacity) byte-by-byte re-enters
+     * the frame loop on every recv without ever completing a frame. Both
+     * incomplete-frame exits (STATE_NEED_PAYLOAD within capacity,
+     * STATE_NEED_MORE) used to break out without polling the echo deadline,
+     * so the nominally five-second wait stayed alive indefinitely while the
+     * active socket also dodged the idle reaper. The expiry must be polled on
+     * every receive re-entry: the first re-entry past the deadline tears the
+     * connection down.
+     */
+    @Test
+    public void testCloseEchoWaitPartialFrameSlowlorisBoundedByEchoGrace() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final long[] nowMicros = {0L};
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabsl (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabsl", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabsl", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabsl", 300L, 3_000_000L));
+                // A LEGAL-size frame the peer never completes: declared
+                // payload (100 bytes; total 106) fits the recv buffer, so
+                // neither too-big branch fires and frame sync is NOT lost --
+                // the parser just keeps reporting an incomplete frame.
+                byte[] partialFrame = {
+                        (byte) 0x82,          // FIN | BINARY
+                        (byte) (0x80 | 100),  // MASK | payload length 100
+                        0x12, 0x34, 0x56, 0x78, // mask key
+                        0x01, 0x02, 0x03      // 3 of the 100 payload bytes; the rest never arrives
+                };
+                byte[] wire = concat(frame0, frame1, frame2, partialFrame);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupClockedState(httpConfig, context, demotableEngine, nowMicros);
+
+                    // Arm the echo wait: commit, demote, cover uploads, close.
+                    drive(processor, context, nf, frame0.length);
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "test setup: connection must await the client's close echo",
+                            state.isAwaitingCloseEcho()
+                    );
+                    int framesAtClose = rawSocket.sentFrames.size();
+
+                    // Trickle the partial frame: header first, then single
+                    // payload bytes. Every drive is a receive re-entry that
+                    // breaks out on an incomplete frame; the wait must
+                    // survive while the deadline has not passed.
+                    drive(processor, context, nf, 6);   // header + mask key
+                    drive(processor, context, nf, 1);   // payload byte 1
+                    drive(processor, context, nf, 1);   // payload byte 2
+                    Assert.assertTrue(
+                            "test setup: echo wait must survive pre-deadline partial-frame re-entries",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertFalse(
+                            "test setup: a legal-size partial frame must not trip the sync-lost mode",
+                            state.hasLostCloseEchoSync()
+                    );
+
+                    // The peer keeps trickling past the grace budget. The
+                    // next receive re-entry MUST poll the deadline and tear
+                    // down -- pre-fix, the incomplete-frame exit skipped the
+                    // poll and the wait (plus the connection, its buffers and
+                    // the worker's attention) lived for as long as the peer
+                    // cared to trickle.
+                    nowMicros[0] += QwpIngressProcessorState.CLOSE_ECHO_WAIT_GRACE_MICROS + 1;
+                    nf.release(1);       // payload byte 3
+                    try {
+                        processor.resumeRecv(context);
+                        Assert.fail("SLOWLORIS RETENTION: a partial-frame receive re-entry past the "
+                                + "close-echo deadline must tear the connection down; without the "
+                                + "per-re-entry expiry poll a trickling peer keeps the wait alive "
+                                + "forever and dodges the idle reaper");
+                    } catch (ServerDisconnectException expected) {
+                    } catch (PeerIsSlowToWriteException e) {
+                        Assert.fail("SLOWLORIS RETENTION: re-entry past the deadline re-armed for read "
+                                + "instead of disconnecting -- the expiry poll did not run");
+                    }
+                    Assert.assertEquals(
+                            "no frame may be emitted during the echo wait teardown",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * Discarded frames during the echo wait must not be unmasked: every
+     * inbound frame in that window is either dropped without its payload
+     * being read (the discard gate) or is the CLOSE echo whose payload
+     * handleClose ignores. The pre-fix code unmasked EVERY parsed frame
+     * before the gate ran -- an O(payload) XOR/write pass per frame, with
+     * payloads up to the receive-buffer size (2 MiB by default), repeatable
+     * for the lifetime of the wait: free CPU for a wedged-but-chatty peer.
+     * The masked bytes still sitting in the recv buffer after the frame is
+     * consumed are the observable: unmasking mutates them in place.
+     */
+    @Test
+    public void testCloseEchoWaitDiscardedFrameIsNotUnmasked() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean readOnly = new AtomicBoolean(false);
+            final AtomicLong durableWatermark = new AtomicLong(-1L);
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+
+            execute("create table tabum (v long, ts timestamp) timestamp(ts) partition by day wal");
+
+            try (CairoEngine demotableEngine = newEngineWithRegistry(readOnly, durableWatermark)) {
+                QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(demotableEngine, httpConfig);
+
+                byte[] frame0 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabum", 100L, 1_000_000L));
+                byte[] frame1 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabum", 200L, 2_000_000L));
+                byte[] frame2 = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("tabum", 300L, 3_000_000L));
+                // A complete masked BINARY frame with a 600-byte payload
+                // (16-bit extended length) -- large enough that an unmask
+                // pass is a real payload-sized write, small enough to fit
+                // the recv buffer and parse to completion.
+                int bigLen = 600;
+                byte[] bigMasked = new byte[8 + bigLen];
+                bigMasked[0] = (byte) 0x82;          // FIN | BINARY
+                bigMasked[1] = (byte) (0x80 | 126);  // MASK | 16-bit extended length
+                bigMasked[2] = (byte) (bigLen >> 8);
+                bigMasked[3] = (byte) (bigLen & 0xFF);
+                System.arraycopy(DEFAULT_MASK_KEY, 0, bigMasked, 4, 4);
+                for (int i = 0; i < bigLen; i++) {
+                    // masked bytes of a non-trivial plaintext pattern
+                    bigMasked[8 + i] = (byte) (((i * 31) & 0xFF) ^ DEFAULT_MASK_KEY[i % 4]);
+                }
+                byte[] closeEcho = closeEchoFrame();
+                byte[] wire = concat(frame0, frame1, frame2, bigMasked, closeEcho);
+
+                PhasedNetworkFacade nf = new PhasedNetworkFacade(wire);
+                long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                BlockingRecordingRawSocket rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                    QwpIngressProcessorState state = setupState(httpConfig, context, demotableEngine);
+
+                    // Arm the echo wait: commit, demote, cover uploads, close.
+                    drive(processor, context, nf, frame0.length);
+                    readOnly.set(true);
+                    drive(processor, context, nf, frame1.length);
+                    durableWatermark.set(Long.MAX_VALUE);
+                    drive(processor, context, nf, frame2.length);
+                    Assert.assertTrue(
+                            "test setup: connection must await the client's close echo",
+                            state.isAwaitingCloseEcho()
+                    );
+                    int framesAtClose = rawSocket.sentFrames.size();
+
+                    // The wedged-but-chatty peer sends a full masked data
+                    // frame. It lands at recv buffer offset 0 (everything
+                    // before it was consumed), is parsed, and is discarded by
+                    // the echo-wait gate without its payload being read.
+                    drive(processor, context, nf, bigMasked.length);
+                    Assert.assertTrue(
+                            "test setup: frame must be discarded, wait must survive",
+                            state.isAwaitingCloseEcho()
+                    );
+                    Assert.assertEquals(
+                            "test setup: the discarded frame must be fully consumed",
+                            0, state.getRecvBufferLen()
+                    );
+                    Assert.assertEquals(
+                            "the discard gate must not answer a discarded data frame",
+                            framesAtClose, rawSocket.sentFrames.size()
+                    );
+
+                    // Consuming the frame does not zero the buffer: the frame
+                    // bytes still sit at their original offsets. If the
+                    // discarded payload was unmasked, the in-place XOR pass
+                    // rewrote these bytes to plaintext.
+                    for (int i = 0; i < bigLen; i++) {
+                        if (Unsafe.getByte(recvBuf + 8 + i) != bigMasked[8 + i]) {
+                            Assert.fail("WASTED UNMASK PASS: discarded frame payload was unmasked in "
+                                    + "place during the close-echo wait (first divergence at payload "
+                                    + "offset " + i + "); no payload may be touched while waiting -- "
+                                    + "discarded frames are dropped unread and handleClose ignores the "
+                                    + "echo's payload");
+                        }
+                    }
+
+                    // Skipping the unmask must not break echo recognition:
+                    // the client's masked CLOSE echo still completes the
+                    // handshake.
+                    completeCloseEcho(processor, context, nf, closeEcho.length);
+                } finally {
+                    Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * The oversized-frame paths during the echo wait: a frame whose declared
      * payload exceeds the recv buffer can never be parsed, so the CLOSE echo
      * behind it is unreachable -- frame sync is lost for good. Two pre-fix

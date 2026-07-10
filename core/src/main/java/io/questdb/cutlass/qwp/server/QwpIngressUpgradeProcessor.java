@@ -1686,6 +1686,18 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         long pos = buffer;
 
         try {
+            // The close-echo wait's expiry must be polled on EVERY receive
+            // re-entry, not only on parsed-frame dispatch: a peer trickling a
+            // legal-size frame byte-by-byte (or a partial header) re-enters
+            // here on every recv without ever completing a frame. Without
+            // this poll, both break-out paths below (STATE_NEED_PAYLOAD
+            // within buffer capacity, STATE_NEED_MORE) bypass the deadline,
+            // so a slowloris peer keeps the nominally five-second wait alive
+            // indefinitely while the active socket also dodges the idle
+            // reaper -- pinning the connection and its buffers forever.
+            if (state.isAwaitingCloseEcho()) {
+                checkCloseEchoWaitExpiry(context, state);
+            }
             while (pos < bufferEnd) {
                 frameParser.reset();
                 int consumed = frameParser.parse(pos, bufferEnd);
@@ -1736,8 +1748,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 long payloadPtr = pos + frameParser.getHeaderSize();
                 int payloadLen = (int) frameParser.getPayloadLength();
 
-                // Unmask payload
-                if (frameParser.isMasked()) {
+                // Unmask payload -- except while awaiting the close echo:
+                // every inbound frame in that window is either discarded
+                // without its payload being read (handleWebSocketFrame's
+                // discard gate) or is the CLOSE echo itself, whose payload
+                // handleClose ignores in that state. Skipping the O(payload)
+                // XOR pass denies a wedged-but-chatty peer free CPU: payloads
+                // can approach the configured receive-buffer size (2 MiB by
+                // default) and repeat for the lifetime of the wait.
+                if (frameParser.isMasked() && !state.isAwaitingCloseEcho()) {
                     frameParser.unmaskPayload(payloadPtr, payloadLen);
                 }
 
