@@ -81,8 +81,12 @@ public class GtDoubleCursorFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "select must provide exactly one column");
         }
         final Function arg0 = args.getQuick(0);
-        if (ColumnType.tagOf(arg0.getType()) != ColumnType.DOUBLE) {
-            throw SqlException.$(argPositions.getQuick(0), "left operand must be a DOUBLE, found: ")
+        // Accept DOUBLE and FLOAT left operands. FLOAT widens to double losslessly via
+        // Function#getDouble, so the comparison stays exact; other numeric types route to their
+        // own (IC/LC) cursor factories and never reach this DOUBLE cursor factory.
+        final int arg0Tag = ColumnType.tagOf(arg0.getType());
+        if (arg0Tag != ColumnType.DOUBLE && arg0Tag != ColumnType.FLOAT) {
+            throw SqlException.$(argPositions.getQuick(0), "left operand must be a DOUBLE or FLOAT, found: ")
                     .put(ColumnType.nameOf(arg0.getType()));
         }
         final int metadataType = metadata.getColumnType(0);

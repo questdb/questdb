@@ -413,7 +413,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day");
 
             assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)")
-                    .fails(22, "left operand must be a DOUBLE, found: VARCHAR");
+                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: VARCHAR");
         });
     }
 

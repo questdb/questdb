@@ -108,6 +108,72 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatBindVariableLeftOperand() throws Exception {
+        // A FLOAT-typed function (here a bind variable) reaches the cursor-comparison factory as a
+        // raw FLOAT - unlike a FLOAT column, which the optimizer widens to DOUBLE before the factory
+        // ever sees it. This pins the FLOAT left-operand support in the factory guard: the value is
+        // widened to double losslessly via Function#getDouble.
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::double price from long_sequence(10))");
+            bindVariableService.clear();
+            // avg(price) = 5.5; :thr == avg -> strict comparisons select no rows on either side
+            bindVariableService.setFloat("thr", 5.5f);
+            assertQuery("select price from t where :thr > (select avg(price) from t)")
+                    .noLeakCheck()
+                    .returns("price\n");
+            assertQuery("select price from t where :thr < (select avg(price) from t)")
+                    .noLeakCheck()
+                    .returns("price\n");
+            // :thr > avg -> the constant predicate is true, so every row matches
+            bindVariableService.setFloat("thr", 9.5f);
+            assertQuery("select price from t where :thr > (select avg(price) from t)")
+                    .noLeakCheck()
+                    .returns("""
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            4.0
+                            5.0
+                            6.0
+                            7.0
+                            8.0
+                            9.0
+                            10.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloatColumnLeftOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::float price from long_sequence(10))");
+            // avg(price) = 5.5; a FLOAT column is widened to DOUBLE up front, comparison stays exact
+            assertQuery("select price from t where price > (select avg(price) from t)")
+                    .noLeakCheck()
+                    .returns("price\n6.0\n7.0\n8.0\n9.0\n10.0\n");
+            assertQuery("select price from t where price < (select avg(price) from t)")
+                    .noLeakCheck()
+                    .returns("price\n1.0\n2.0\n3.0\n4.0\n5.0\n");
+        });
+    }
+
+    @Test
+    public void testFloatCursorColumnAndBothSides() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::double price, x::float fprice from long_sequence(10))");
+            // FLOAT cursor scalar on the right (read via Record#getFloat): min(fprice) = 1.0
+            assertQuery("select price from t where price > (select min(fprice) from t)")
+                    .noLeakCheck()
+                    .returns("price\n2.0\n3.0\n4.0\n5.0\n6.0\n7.0\n8.0\n9.0\n10.0\n");
+            // FLOAT on both sides: FLOAT column left (widened) vs FLOAT cursor scalar right
+            assertQuery("select fprice from t where fprice < (select max(fprice) from t)")
+                    .noLeakCheck()
+                    .returns("fprice\n1.0\n2.0\n3.0\n4.0\n5.0\n6.0\n7.0\n8.0\n9.0\n");
+        });
+    }
+
+    @Test
     public void testGreaterThan() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select x::double price from long_sequence(10))");
