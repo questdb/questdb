@@ -34,17 +34,22 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -3383,6 +3388,67 @@ public class MatViewTest extends AbstractCairoTest {
                             UnixEpoch\tTime\tDeviceId\tRegister\tValue
                             1970-01-01T00:00:00.000000Z\t2025-08-08T12:57:07.388314Z\t1\thello\t123.0
                             """);
+        });
+    }
+
+    @Test
+    public void testHydrateNeverRefreshedImmediateMatViewSchedulesRefresh() throws Exception {
+        // A view created but never refreshed has no MAT_VIEW state event, so the hydrate's
+        // readMatViewState returns false. That branch used to return without scheduling anything,
+        // leaving a valid, empty, watermark -1 view that nothing ever kickstarts - it never
+        // converged to the base table (#310). An IMMEDIATE view must get the incremental kickstart
+        // here; a timer view is driven by the timer job and must not.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_immediate", "select ts, count() cnt from base sample by 1h");
+            execute(
+                    "create materialized view mv_timer refresh every 1h deferred start '2260-12-12T12:00:00.000000Z' as (" +
+                            "select ts, count() cnt from base sample by 1h" +
+                            ") partition by DAY"
+            );
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:01')");
+            // Drain the base WAL only. Running the mat-view queue would refresh the views and persist
+            // their state, sending the hydrate down the persisted-state branch instead.
+            drainWalQueue();
+
+            final TableToken immediateToken = engine.verifyTableName("mv_immediate");
+            final TableToken timerToken = engine.verifyTableName("mv_timer");
+
+            // Positive witness: both views must genuinely lack persisted state. Without this the
+            // hydrate could reach the persisted-state kickstart further down and the test would still
+            // pass with the fix reverted.
+            assertNoPersistedMatViewState(immediateToken);
+            assertNoPersistedMatViewState(timerToken);
+
+            // CREATE already enqueued tasks; empty the queue so only the hydrate's own tasks remain.
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(task)) {
+                // drain
+            }
+
+            // Simulate the role-promote hydrate.
+            engine.hydrateMatViewStateStore();
+
+            boolean immediateScheduled = false;
+            boolean timerScheduled = false;
+            while (store.tryDequeueRefreshTask(task)) {
+                if (task.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
+                    if (immediateToken.equals(task.matViewToken)) {
+                        immediateScheduled = true;
+                    } else if (timerToken.equals(task.matViewToken)) {
+                        timerScheduled = true;
+                    }
+                }
+            }
+            Assert.assertTrue(
+                    "a never-refreshed IMMEDIATE view must be scheduled for incremental refresh on hydrate",
+                    immediateScheduled
+            );
+            Assert.assertFalse(
+                    "a timer view is driven by the timer job and must not be kickstarted on hydrate",
+                    timerScheduled
+            );
         });
     }
 
@@ -9030,6 +9096,30 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.fail("Expected exception missing");
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("cannot modify materialized view"));
+        }
+    }
+
+    private static void assertNoPersistedMatViewState(TableToken viewToken) {
+        try (
+                Path path = new Path();
+                BlockFileReader blockFileReader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
+        ) {
+            path.of(configuration.getDbRoot()).concat(viewToken);
+            Assert.assertFalse(
+                    "view " + viewToken.getTableName() + " must have no persisted state, otherwise the hydrate " +
+                            "takes the persisted-state branch and this test cannot fail",
+                    WalUtils.readMatViewState(
+                            path,
+                            viewToken,
+                            configuration,
+                            txnMem,
+                            walEventReader,
+                            blockFileReader,
+                            new MatViewStateReader()
+                    )
+            );
         }
     }
 

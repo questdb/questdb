@@ -218,6 +218,50 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectOrderByDesignatedTimestampDesc() throws Exception {
+        // ORDER BY <designated ts> DESC produces no Sort factory - the planner elides it into a
+        // backward page frame scan, so the tree keeps the shape the generic "simple scan" reject
+        // looks for and CREATE used to accept it. Incremental refresh then drove rows in ascending
+        // WAL arrival order, computing order-sensitive windows in the opposite order to the one
+        // declared and persisting the result silently. Only the scan direction tells the two apart.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // A window that declares no ORDER BY of its own takes the base scan order, so it stays
+            // on the incremental fast path under a backward scan and reaches the new reject. This
+            // is the whole exploitable surface: a window WITH an inner ORDER BY ts needs a cached
+            // plan under a DESC scan and the incremental-refresh gate above already rejects it.
+            assertOrderByDescRejected("SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts DESC");
+            // Same through the residual-filter factory, which sits between window and page frame.
+            assertOrderByDescRejected("SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 1 ORDER BY ts DESC");
+
+            // The elision is what makes DESC dangerous. ORDER BY on a non-timestamp column, or on
+            // the timestamp under an alias, keeps its Sort factory and hits a generic shape reject.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY x DESC",
+                    "live view select must contain at least one window function"
+            );
+            assertLiveViewShapeRejected(
+                    "SELECT ts AS t, x, row_number() OVER () AS rn FROM base ORDER BY t DESC",
+                    "live view select must be a simple scan of a single WAL base table"
+            );
+
+            // Ascending ORDER BY on the designated timestamp elides into the forward scan the
+            // refresh path already drives, so it stays accepted - the reject must not widen to it.
+            execute("CREATE LIVE VIEW lv_asc FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts ASC");
+            execute("DROP LIVE VIEW lv_asc");
+            execute("CREATE LIVE VIEW lv_default FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts");
+            execute("DROP LIVE VIEW lv_default");
+            execute("CREATE LIVE VIEW lv_anchor FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, avg(x) OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts)) ORDER BY ts ASC");
+            execute("DROP LIVE VIEW lv_anchor");
+        });
+    }
+
+    @Test
     public void testRejectOutOfRangeDuration() throws Exception {
         // A duration whose micros overflow a long must be rejected up front
         // rather than silently narrowed. Before the fix toMicros cast the value
@@ -352,6 +396,39 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + createSql,
                     Chars.contains(e.getFlyweightMessage(), "invalid duration value")
+            );
+        }
+    }
+
+    private void assertLiveViewShapeRejected(String selectSql, String expectedMessage) throws Exception {
+        try {
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " + selectSql);
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected factory-shape reject for: " + selectSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
+                    Chars.contains(e.getFlyweightMessage(), expectedMessage)
+            );
+        }
+    }
+
+    private void assertOrderByDescRejected(String selectSql) throws Exception {
+        try {
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " + selectSql);
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected ORDER BY DESC reject for: " + selectSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
+                    Chars.contains(
+                            e.getFlyweightMessage(),
+                            "live view select cannot ORDER BY the designated timestamp in descending order"
+                    )
             );
         }
     }

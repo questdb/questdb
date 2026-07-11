@@ -3610,6 +3610,13 @@ public class CairoEngine implements Closeable, WriterSource {
             // through. There is no residual-filter analogue to fall back on, so reject.
             throw SqlException.$(position, "live view select cannot filter on the designated timestamp yet");
         }
+        if (pfrcf.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+            // ORDER BY <designated ts> DESC elides its Sort into a backward page frame scan, so
+            // the tree keeps the shape the generic ORDER BY reject above looks for. Incremental
+            // refresh drives rows in ascending WAL arrival order, so an order-sensitive window
+            // would compute in the opposite order and silently persist.
+            throw SqlException.$(position, "live view select cannot ORDER BY the designated timestamp in descending order");
+        }
         TableToken scannedToken = base.getTableToken();
         // unreachable in practice: the SELECT is compiled against the declared base
         // table, so the scanned token always matches it. Kept as a defensive backstop.
