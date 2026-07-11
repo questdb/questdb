@@ -350,10 +350,21 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.pinnedSlot = candidate.getSlot(pin);
                     this.symbolCache = candidate.getSymbolCache();
                     this.inMemEligible = isFullSchemaProjection(diskCursor, baseMetadata, pinnedSlot, timestampColumnIndex);
-                    if (!inMemEligible || !diskScanAscending) {
+                    // LONG_NULL means the disk cursor exposes no LV-table seqTxn to fence
+                    // against at all: it is not a plain forward table scan (an index scan,
+                    // an interval-filtered or pushdown-filtered page-frame cursor, a
+                    // non-table cursor). Distinct from a seqTxn that simply disagrees with
+                    // the slot's - see the release decision below.
+                    final long diskSeqTxn = inMemEligible && diskScanAscending
+                            ? diskReaderSeqTxn(diskCursor)
+                            : Numbers.LONG_NULL;
+                    if (!inMemEligible || !diskScanAscending || diskSeqTxn == Numbers.LONG_NULL) {
                         // Statically disk-only: the projection is pruned/reordered or
-                        // the disk cursor is non-table (inMemEligible false), or the
-                        // scan is not ascending (the seam split assumes ascending ts).
+                        // the disk cursor is non-table (inMemEligible false), the scan
+                        // is not ascending (the seam split assumes ascending ts), or the
+                        // cursor carries no seqTxn to fence against (diskSeqTxn
+                        // LONG_NULL - e.g. SELECT * FROM lv WHERE ts >= '...', whose
+                        // interval filter the optimiser pushes into the page-frame scan).
                         // The fence can never engage for this cursor regardless of the
                         // slot's version, and no serving path (hasNext / size /
                         // skipRows / getSymbolTable / newSymbolTable / recordAt) reads
@@ -364,12 +375,15 @@ public class LiveViewRecordCursor implements RecordCursor {
                         // BOTH slots, so publishToInMemoryTier fails and the refresh
                         // worker emergency-flushes the lead every cycle.
                         //
-                        // A version-fence miss (schema + direction OK, but the slot is
-                        // newer than the disk snapshot) is deliberately NOT released
-                        // here: getCursor's isSlotNewerThanDisk() staleness retry needs
-                        // the slot pinned to detect it and re-open against a fresh
-                        // snapshot, so that path keeps the pin (routingEligible stays
-                        // false and it serves disk-only for this attempt).
+                        // A version-fence miss (schema + direction OK and the disk cursor
+                        // DOES report a seqTxn, but the slot is newer than that snapshot)
+                        // is deliberately NOT released here: getCursor's
+                        // isSlotNewerThanDisk() staleness retry needs the slot pinned to
+                        // detect it and re-open against a fresh snapshot, so that path
+                        // keeps the pin (routingEligible stays false and it serves
+                        // disk-only for this attempt). A LONG_NULL disk seqTxn cannot
+                        // reach that retry - isSlotNewerThanDisk() reads it too - so
+                        // holding the pin there would buy nothing.
                         releaseSlot();
                         this.pinnedSlot = null;
                         this.symbolCache = null;
@@ -381,7 +395,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                         // retry noted above.
                         this.routingEligible = pinnedSlot.rowCount() > 0
                                 && pinnedSlot.lvSeqTxn() != Numbers.LONG_NULL
-                                && pinnedSlot.lvSeqTxn() == diskReaderSeqTxn(diskCursor);
+                                && pinnedSlot.lvSeqTxn() == diskSeqTxn;
                         // Snapshot the overlap/lead boundary. Rows [0, leadStart) are
                         // the overlap (also on disk, served via the seam split); rows
                         // [leadStart, rowCount) are the un-flushed lead, served only

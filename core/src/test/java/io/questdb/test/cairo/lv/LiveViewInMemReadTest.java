@@ -196,6 +196,47 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalFilteredReadReleasesTierPin() throws Exception {
+        // A designated-timestamp predicate (SELECT * FROM lv WHERE ts >= '...') is
+        // pushed into the page-frame scan as an interval filter. The projection is
+        // still full-schema and the scan still ascending, so the cursor took the
+        // fence branch - but an interval-filtered cursor exposes no LV-table seqTxn
+        // to fence against, so it can never route AND can never reach the
+        // isSlotNewerThanDisk() staleness retry either. It nonetheless held the slot
+        // pinned for its whole lifetime: two such reads straddling a tier swap pin
+        // BOTH slots, publishToInMemoryTier then fails, and the refresh worker
+        // emergency-flushes the lead every cycle. Such a structural fence miss must
+        // release the pin at open, like any other statically disk-only read.
+        assertMemoryLeak(() -> {
+            createIngestRefresh();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            Assert.assertNotNull(tier);
+            Assert.assertTrue("published slot must hold rows", tier.getSlot(tier.getPublishedIdx()).rowCount() > 0);
+
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM lv WHERE ts >= '2026-05-12T00:00:00.000000Z'");
+                    LiveViewRecordCursor cursor = openLvCursor(factory)
+            ) {
+                Assert.assertFalse("an interval-filtered read must be disk-only", cursor.isRoutingEligible());
+                Assert.assertFalse(
+                        "an interval-filtered read must not hold the slot pin",
+                        isPublishedSlotReaderPinned(tier)
+                );
+            }
+
+            // Disk-only does not mean wrong: the applied rows still come back.
+            assertQuery("SELECT ts, x, rn FROM lv WHERE ts >= '2026-05-12T00:00:00.000000Z'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\tx\trn\n" +
+                            "2026-05-12T00:00:00.000001Z\t4\t1\n" +
+                            "2026-05-12T00:00:00.000002Z\t9\t2\n");
+        });
+    }
+
+    @Test
     public void testVersionFenceMissKeepsTierPin() throws Exception {
         // M3 guard: a version-fence miss (full-schema projection + ascending scan,
         // but the slot is stamped NEWER than the disk snapshot) serves disk-only

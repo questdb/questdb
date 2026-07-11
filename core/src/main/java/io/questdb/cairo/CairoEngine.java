@@ -1367,7 +1367,22 @@ public class CairoEngine implements Closeable, WriterSource {
         // commits with seqTxn >= subscribeFromSeqTxn. BACKFILL views capture the
         // same head as backfillTargetSeqTxn (the upper bound the sweep covers)
         // and start incremental consumption at head + 1 once the sweep completes.
-        final long baseHeadSeqTxn = tableSequencerAPI.getTxnTracker(baseTableToken).getWriterTxn();
+        //
+        // The tracker's writerTxn is UNINITIALIZED (-1) until CheckWalTransactionsJob
+        // first sees the base table, and notifyWalTxnRepublisher resets it back to -1
+        // whenever the WAL notification queue overflows. A CREATE landing in either
+        // window would read -1 as the head: the view would subscribe from seqTxn 0 and
+        // re-consume the base's entire committed history (WAL segments that purge may
+        // already have deleted), and it would publish a -1 purge floor, which
+        // WalPurgeJob reads as "no floor at all" (lvConsumed > -1). Fall back to the
+        // base table's own applied seqTxn - the same value the tracker initialises
+        // from - so the head is a real coordinate either way.
+        long baseHeadSeqTxn = tableSequencerAPI.getTxnTracker(baseTableToken).getWriterTxn();
+        if (baseHeadSeqTxn == SeqTxnTracker.UNINITIALIZED_TXN) {
+            try (TableReader baseReader = getReader(baseTableToken)) {
+                baseHeadSeqTxn = baseReader.getSeqTxn();
+            }
+        }
         final long subscribeFromSeqTxn = baseHeadSeqTxn + 1;
         final boolean backfillRequested = op.isBackfillRequested();
         final byte backfillState = backfillRequested
@@ -1382,14 +1397,14 @@ public class CairoEngine implements Closeable, WriterSource {
         // one extra segment stays retained for the deferred ring drain after the
         // sweep. Non-BACKFILL views start at subscribeFromSeqTxn - 1 - everything
         // from subscribeFromSeqTxn forward is the view's responsibility.
-        // Clamp the BACKFILL floor at 0: an empty base has backfillTargetSeqTxn=0,
-        // and a raw -1 collides with the "no floor" sentinel WalPurgeJob tests
-        // (lvConsumed > -1), which would let purge delete base WAL 1..K before the
-        // first drain reads it. 0 pins the floor without retaining anything, matching
-        // the non-BACKFILL empty-base case (subscribeFromSeqTxn - 1 == 0).
-        final long initialLvConsumedSeqTxn = backfillRequested
-                ? Math.max(0, backfillTargetSeqTxn - 1)
-                : subscribeFromSeqTxn - 1;
+        // Clamp the floor at 0: an empty base has backfillTargetSeqTxn=0, and a raw
+        // -1 collides with the "no floor" sentinel WalPurgeJob tests (lvConsumed >
+        // -1), which would let purge delete base WAL 1..K before the first drain
+        // reads it. 0 pins the floor without retaining anything, matching the
+        // non-BACKFILL empty-base case (subscribeFromSeqTxn - 1 == 0).
+        final long initialLvConsumedSeqTxn = Math.max(0, backfillRequested
+                ? backfillTargetSeqTxn - 1
+                : subscribeFromSeqTxn - 1);
 
         // Build the definition up front so it can ride into the sequencer
         // directory as part of table creation (SequencerMetadata.create writes

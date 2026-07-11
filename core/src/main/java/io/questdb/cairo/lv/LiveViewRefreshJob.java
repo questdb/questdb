@@ -2468,7 +2468,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The head .cp is retired after the apply commit succeeds (its state
      * underwrites the replay we just wrote). The follow-up commit writes
      * a fresh post-replay head; until then the next refresh cycle's
-     * first-commit cadence trigger picks up the slack.
+     * first-commit cadence trigger picks up the slack. A replay that
+     * produces no row keeps its head - the commit truncates the LV back to
+     * exactly what that head covers.
      */
     private void o3HeadHitReplay(
             LiveViewInstance instance,
@@ -2583,9 +2585,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             appendedRows++;
                         }
                     }
-                    if (appendedRows > 0) {
-                        fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(advanceTo, replayLowTs, Long.MAX_VALUE));
-                    }
+                    // The REPLACE_RANGE is unconditional, including when the replay
+                    // produced no row at all. Zero rows means the base no longer has
+                    // anything above headMaxTs that survives the filter - a
+                    // REPLACE_RANGE delete or a dedup replacement erased it - while
+                    // the pre-O3 output for that range still sits on disk (head-hit
+                    // eligibility implies latestSeenTs > headMaxTs, so the view did
+                    // emit rows there). Skipping the commit would strand them as
+                    // ghosts: size() over-reports, reads return stale rows, and
+                    // rebuildInMemoryTier stages them back - all while the watermark
+                    // advances past the commit that removed their base rows. Emitting
+                    // the truncating range with no rows clears (headMaxTs, +inf) and
+                    // leaves the LV exactly at the head's snapshot moment, which the
+                    // restore above already reproduced in the window state. Mirrors
+                    // the pure-delete branch in o3HeadMissReplay.
+                    fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(advanceTo, replayLowTs, Long.MAX_VALUE));
                 }
             }
         } finally {
@@ -2596,9 +2610,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             reader.close();
         }
 
-        if (appendedRows > 0) {
-            applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
-        }
+        applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
         boolean lvConsumedPersisted = false;
@@ -2623,6 +2635,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // post-replay head. The retire-then-write ordering puts
             // maybeWriteHeadCheckpoint on its first-cp cadence path, which
             // unconditionally writes regardless of row/duration cadence.
+            //
+            // The zero-row replay keeps its head instead: the truncating commit
+            // above left the LV table holding exactly the rows the head covers,
+            // and the restore left the window state at the head's snapshot
+            // moment, so the head still describes the view. Retiring it would
+            // also leave nothing to write in its place (replayMaxTs is
+            // LONG_NULL), forcing the next O3 into a full head-miss rebuild.
             if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
                 invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
             }
@@ -2940,7 +2959,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * eventual result, so a re-feed past the last {@code .bcp} recomputes rows
      * already on disk to advance state but skips their WAL append
      * ({@code skipWriteUntil}). A crash before any {@code .bcp} re-sweeps from
-     * offset 0 and skip-writes the entire stale prefix.
+     * offset 0 and skip-writes the entire stale prefix. The resume applies any
+     * committed-but-unapplied block first, so that prefix - and the floor read
+     * off it - covers every block the sweep has already committed.
      */
     private void runBackfillSweep(LiveViewInstance instance) throws SqlException {
         final long backfillTargetSeqTxn = instance.getStateReader().getBackfillTargetSeqTxn();
@@ -2967,6 +2988,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // memory (the per-turn budget can split the skip-write catch-up across
         // turns, so the floor must persist - it is an instance field).
         if (!instance.isBackfillResumeAttempted()) {
+            // Apply any LV WAL block that committed but never applied before reading the
+            // row count below. A sweep turn commits its block and applies it as two steps,
+            // so a crash in between leaves the block committed-but-unapplied; the global
+            // apply path skips live-view tokens, and reconcileAppliedFloorAfterRestart
+            // covers ACTIVE views only, so nothing else lands it. The unapplied rows sit
+            // outside lvReader.size(), so the skip-write floor would fall below them: the
+            // resumed sweep re-emits those rows and the pending block then applies on top
+            // of them, duplicating (the backfill append carries no dedup to collapse it).
+            // Applying first folds the block into the count the floor derives from.
+            // Idempotent on a healthy restart - applyWalDirect finds nothing pending.
+            // Runs before the resume-attempted flag is stamped so a failure here re-enters
+            // this block on the next turn rather than resuming off an under-read floor.
+            applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
             instance.setBackfillResumeAttempted();
             long onDiskLvRows = 0;
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {

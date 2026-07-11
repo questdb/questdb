@@ -32,6 +32,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.mp.Job;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -117,6 +118,88 @@ public class LiveViewBaseReplaceRangeTest extends AbstractCairoTest {
                     .returns("ts\tx\trn\n" +
                             "2026-01-01T00:00:01.000000Z\t1\t1\n" +
                             "2026-01-01T00:00:04.000000Z\t4\t2\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testPureDeleteAboveHeadCheckpointRemovesGhostRows() throws Exception {
+        // The head-hit arm of the ghost-row shape. The view carries a head
+        // checkpoint at maxTs 00:03; a pure-delete replace over [00:04, 00:06)
+        // erases every base row ABOVE that head, so its range low (00:04) sits
+        // strictly above headMaxTs and the replay takes the head-hit branch:
+        // state rolls back to the head and the base is re-read from 00:04 up,
+        // which now yields nothing. The truncating REPLACE_RANGE must be emitted
+        // even with zero rows to replay - skipping it (the old "commit only when
+        // rows were appended" gate) strands the pre-delete output for 00:04 /
+        // 00:05 on disk as ghosts while the watermark advances past the commit
+        // that removed their base rows, so the view permanently over-reports.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Batch 1: the first commit always writes a head checkpoint, here at
+                // maxTs 00:03.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 1), " +
+                        "('2026-01-01T00:00:02.000000Z', 2), " +
+                        "('2026-01-01T00:00:03.000000Z', 3)");
+                drainWalQueue();
+                refreshCycle(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals("batch 1 must write a head checkpoint", Numbers.LONG_NULL, headLvSeqTxn);
+                Assert.assertEquals(ts("2026-01-01T00:00:03.000000Z"), instance.getHeadCheckpointMaxTs());
+
+                // Batch 2: a forward append above the head. The checkpoint cadence
+                // (1M rows / 5 min) does not fire, so the head stays at 00:03 while
+                // the frontier moves to 00:05 - the head-hit precondition.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-01-01T00:00:04.000000Z', 4), " +
+                        "('2026-01-01T00:00:05.000000Z', 5)");
+                drainWalQueue();
+                refreshCycle(job);
+                assertQuery("SELECT count() FROM lv")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n5\n");
+                Assert.assertEquals(
+                        "head must still point at batch 1 (cadence did not fire)",
+                        headLvSeqTxn,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+                Assert.assertEquals(ts("2026-01-01T00:00:05.000000Z"), instance.getLatestSeenTs());
+
+                // Pure delete of [00:04, 00:06): its range low is above headMaxTs
+                // (00:03), so the trigger is head-hit eligible and the replay window
+                // (00:03, +inf) recomputes to nothing.
+                final TableToken baseToken = engine.verifyTableName("base");
+                try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                    walWriter.commitWithParams(
+                            ts("2026-01-01T00:00:04.000000Z"),
+                            ts("2026-01-01T00:00:06.000000Z"),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertLiveViewValid();
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-01-01T00:00:01.000000Z\t1\t1\n" +
+                            "2026-01-01T00:00:02.000000Z\t2\t2\n" +
+                            "2026-01-01T00:00:03.000000Z\t3\t3\n");
 
             execute("DROP LIVE VIEW lv");
         });

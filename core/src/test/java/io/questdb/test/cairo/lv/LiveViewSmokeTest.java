@@ -2418,6 +2418,88 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBackfillRestartWithUnappliedBlockDoesNotDuplicate() throws Exception {
+        // A sweep turn commits its LV WAL block and inline-applies it as two separate
+        // steps, so a crash in between leaves the block committed-but-unapplied - and
+        // nothing else lands it: ApplyWal2TableJob skips live-view tokens, and the
+        // restart floor reconciliation covers ACTIVE views only. Holding the LV
+        // TableWriter across the first turn reproduces that state exactly: the commit
+        // goes through and the inline apply returns on EntryUnavailableException.
+        // The resumed sweep derives its skip-write floor from the LV table's row
+        // count, which excludes the unapplied block, so before the fix it re-emitted
+        // that block's rows and the pending block then applied on top of them -
+        // duplicating the sweep's first 10 rows (the backfill append carries no dedup
+        // to collapse them). The resume must apply the pending block first.
+        //
+        // The restart is driven through a base-commit notification, not the registry
+        // fallback scan: only the scan re-drives a pending apply of its own accord
+        // (scanForLaggingViews -> retryPendingLiveViewApply), and it runs solely when
+        // the notification queue is empty. A restart into a base that is still
+        // ingesting therefore reaches the sweep resume with the block still pending.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // One sweep turn (10 rows) whose inline apply cannot take the writer.
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    job.run();
+                }
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(
+                        LiveViewState.BACKFILL_STATE_BACKFILLING,
+                        instance.getStateReader().getBackfillState()
+                );
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                Assert.assertTrue(
+                        "the held writer must leave the sweep's first block committed but unapplied",
+                        tracker.getSeqTxn() > tracker.getWriterTxn()
+                );
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n0\n");
+
+                // Restart with the block still pending.
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+
+                // The base keeps ingesting across the restart: the commit queues a
+                // refresh notification, so the resumed sweep runs off that task rather
+                // than off the fallback scan.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:40.000000Z', 41)");
+                drainWalQueue();
+
+                driveBackfillToCompletion(job, "lv");
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+            );
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n41\n");
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "(SELECT ts, x, row_number() OVER () AS rn FROM base) ORDER BY 1",
+                    "(lv) ORDER BY 1",
+                    LOG,
+                    true
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testBackfillResumedSweepThenIncrementalDrain() throws Exception {
         // After a restart-resumed sweep flips to ACTIVE, post-CREATE inserts
         // drain incrementally and continue the row_number sequence.
@@ -2672,6 +2754,72 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     instance.getStateReader().getBackfillState()
             );
             assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n5\n");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateOverUninitialisedBaseTxnTrackerPinsPurgeFloor() throws Exception {
+        // CREATE reads the base head from the sequencer's SeqTxnTracker, whose
+        // writerTxn is UNINITIALIZED (-1) until CheckWalTransactionsJob first sees the
+        // table - and notifyWalTxnRepublisher resets it back to -1 on every WAL
+        // notification-queue overflow. A CREATE landing in either window read -1 as
+        // the head, which (a) subscribed the view from seqTxn 0, re-consuming the
+        // base's entire pre-CREATE history rather than starting empty, and (b)
+        // published a -1 purge floor - the exact value WalPurgeJob treats as "no
+        // floor", so the base WAL the first drain still needs could be purged out from
+        // under it. The head now falls back to the base table's own applied seqTxn.
+        assertMemoryLeak(() -> {
+            // Pin the CREATE wall clock below the (2026) rows: without it the view's
+            // lower bound would drop the pre-CREATE rows anyway and mask the subscribe
+            // point.
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+
+            final TableToken baseToken = engine.verifyTableName("base");
+            final long appliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            Assert.assertTrue("the base must carry applied commits", appliedSeqTxn > 0);
+
+            // Uninitialise the tracker exactly as a notification-queue overflow does.
+            engine.notifyWalTxnRepublisher(baseToken);
+            Assert.assertFalse(
+                    "the base tracker must be uninitialised at CREATE",
+                    engine.getTableSequencerAPI().isTxnTrackerInitialised(baseToken)
+            );
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(
+                    "the initial purge floor must be the base's applied seqTxn, not the -1 no-floor sentinel",
+                    appliedSeqTxn,
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+
+            // A non-BACKFILL view starts empty and materialises only what the base
+            // commits after CREATE. Subscribing from 0 would replay the two pre-CREATE
+            // rows into it as well.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            Assert.assertFalse(instance.isInvalid());
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-04-01T00:00:02.000000Z\t3\t1\n");
+
             execute("DROP LIVE VIEW lv");
         });
     }
