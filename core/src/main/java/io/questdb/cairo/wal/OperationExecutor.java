@@ -255,13 +255,15 @@ class OperationExecutor implements Closeable {
                         LOG.critical().$("could not rollback, table is distressed [table=")
                                 .$(tableToken).$(", error=").$(th2).I$();
                     }
-                    // rollback() above already restores the durably-committed seqTxn (S-1) - it reloads the
-                    // txn state from disk via txWriter.unsafeLoadAll() - so this explicit set is not "fixing"
-                    // a rollback no-op. It is defensive parity with the CairoException-non-tolerable branch
-                    // above, and it guards the case where the guarded rollback() itself failed (th2, logged
-                    // above): rollback() reaches that reload only partway through its own cleanup, so a
-                    // failure before it means seqTxn was never reloaded, and this line is what still marks
-                    // the txn as not applied so the apply job retries S.
+                    // This explicit set is LOAD-BEARING, not mere defensive parity. TableWriter.rollback()
+                    // reloads the durable seqTxn (S-1) from disk via txWriter.unsafeLoadAll() ONLY when
+                    // (o3InError || inTransaction()) is true (see TableWriter.rollback: the whole body, reload
+                    // included, is gated on that condition). A throw from survivorFactory.getCursor() -- or any
+                    // failure BEFORE the replace enters a transaction -- leaves both flags false, so rollback()
+                    // is a complete no-op that does NOT restore seqTxn. Without this line the writer would keep
+                    // the advanced in-memory seqTxn (S) and the apply job would never retry the delete. It also
+                    // backstops the case where the guarded rollback() above threw partway through its own
+                    // cleanup (th2, logged above) before reaching the reload.
                     tableWriter.setSeqTxn(seqTxn - 1);
                     throw th;
                 }

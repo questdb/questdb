@@ -1491,6 +1491,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * durable. Sub-failures must therefore propagate as ordinary errors, not as the
      * "data persisted, housekeeping failed" signal of {@link #handleHousekeepingException}:
      * no data has been persisted in the durable sense at this point.
+     * <p>
+     * <b>Caller-specific note (DELETE).</b> The "not durable at this point" reasoning above is
+     * specific to the <b>ALTER</b> caller, whose later {@link #commit00} supersedes this
+     * {@code _txn} and is where durability is established. The <b>DELETE</b> caller
+     * ({@code OperationExecutor.convertParquetPartitionsForDelete}) uses this method differently:
+     * here the {@code commitTxWriter} above <b>is</b> the durability point for the format change -
+     * it is commit&nbsp;#1 at seqTxn S-1, run before {@code setSeqTxn(S)}. So a housekeeping throw
+     * <i>after</i> that {@code commitTxWriter} leaves the parquet-&gt;native conversion durably applied;
+     * crash-recovery re-reads the now-native partitions and skips the convert when it re-applies the
+     * delete's own txn&nbsp;S - which is exactly why DELETE re-apply is idempotent and crash-safe. (The
+     * reconstructed native column <i>data</i> is still written without fsync; under SYNC commit mode
+     * that is a separate, documented power-loss residual - see the DELETE design spec &sect;14.)
      */
     public void commitPendingParquetToNativeConversions() {
         if (pendingParquetToNativeConversions.size() == 0) {
