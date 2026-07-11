@@ -1505,6 +1505,21 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testWalDeleteRowsPerStepDefault() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(1_000_000L, configuration.getCairoConfiguration().getWalDeleteRowsPerStep());
+    }
+
+    @Test
+    public void testWalDeleteRowsPerStepOverride() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.delete.rows.per.step", "250000");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(250_000L, configuration.getCairoConfiguration().getWalDeleteRowsPerStep());
+    }
+
+    @Test
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("invalid.key", "value");

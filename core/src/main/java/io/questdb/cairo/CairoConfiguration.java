@@ -378,6 +378,13 @@ public interface CairoConfiguration {
 
     long getMatViewRowsPerQueryEstimate();
 
+    /**
+     * Target number of rows staged per window of an arbitrary-predicate DELETE's survivor-replace. The
+     * apply path walks the deleted range in windows of roughly this many rows, bounding peak O3 memory to
+     * one window regardless of table size. Default 1,000,000.
+     */
+    long getWalDeleteRowsPerStep();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();

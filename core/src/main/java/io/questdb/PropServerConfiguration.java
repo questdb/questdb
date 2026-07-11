@@ -361,6 +361,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
     private final long matViewRowsPerQueryEstimate;
+    private final long walDeleteRowsPerStep;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -1656,6 +1657,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
             this.matViewRowsPerQueryEstimate = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000L);
+            this.walDeleteRowsPerStep = getLong(properties, env, PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, 1_000_000L);
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
             this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
             this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
@@ -4207,6 +4209,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMatViewRowsPerQueryEstimate() {
             return matViewRowsPerQueryEstimate;
+        }
+
+        @Override
+        public long getWalDeleteRowsPerStep() {
+            return walDeleteRowsPerStep;
         }
 
         @Override

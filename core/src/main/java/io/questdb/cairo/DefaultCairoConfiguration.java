@@ -587,6 +587,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWalDeleteRowsPerStep() {
+        return 1_000_000L;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
