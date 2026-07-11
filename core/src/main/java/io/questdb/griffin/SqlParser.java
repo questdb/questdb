@@ -1276,7 +1276,16 @@ public class SqlParser {
             if (!configuration.isLiveViewEnabled()) {
                 throw SqlException.$(0, "live views are disabled");
             }
-            return parseCreateLiveView(lexer, sqlParserCallback);
+            // The CREATE body is the one place ANCHOR is written by hand, and it
+            // parses with isLiveViewCompile() still false (only the later re-compile
+            // of the stored SELECT sets that). Restore the flag afterwards so a
+            // failed CREATE cannot leave ANCHOR enabled for the next expr() call.
+            expressionParser.setAnchorAllowed(true);
+            try {
+                return parseCreateLiveView(lexer, sqlParserCallback);
+            } finally {
+                expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
+            }
         }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
@@ -6240,6 +6249,12 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+        // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
+        // worker, the startup graph build, CREATE's own validating compile of the
+        // stored SELECT) parses the view's SELECT as a plain query with this flag
+        // set; parseCreateLiveView turns it on for the CREATE body itself, where
+        // the flag is still false. Every other statement rejects the clause.
+        expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {

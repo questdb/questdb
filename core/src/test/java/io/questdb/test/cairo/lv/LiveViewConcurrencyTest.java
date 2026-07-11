@@ -37,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateStore;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -272,9 +273,11 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
             // Swap in a store whose registerBaseTable (called right after registerView)
             // releases the worker to latch the instance, waits for it to hold the latch,
             // then throws - so the rollback teardown runs against a latched instance.
+            // The swap itself still needs reflection (there is no setter), but the
+            // read does not: the engine exposes the store.
             final Field storeField = CairoEngine.class.getDeclaredField("liveViewStateStore");
             storeField.setAccessible(true);
-            final LiveViewStateStore originalStore = (LiveViewStateStore) storeField.get(engine);
+            final LiveViewStateStore originalStore = engine.getLiveViewStateStore();
             storeField.set(engine, new ForwardingLiveViewStateStore(originalStore) {
                 @Override
                 public void registerBaseTable(CharSequence baseTableName) {
@@ -372,7 +375,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
             final Thread dropper = new Thread(() -> {
                 try {
                     dropStarted.countDown();
-                    engine.dropLiveView("lv");
+                    engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
                     dropReturned.set(true);
                 } catch (Throwable th) {
                     errors.add(th);

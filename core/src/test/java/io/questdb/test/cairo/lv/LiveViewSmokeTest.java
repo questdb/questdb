@@ -9771,6 +9771,136 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMidDrainRefreshFailureOnDedupBaseRecoversWindowState() throws Exception {
+        // Resilience test (it passes both before and after the windowStateDirty
+        // fix in drainAppliedBase - see below), covering a drain path that had no
+        // fault-injection coverage at all: the coupled applied-base drain.
+        // testMidDrainRefreshFailureRebuildsWindowState covers the sibling raw-WAL
+        // drain (drainBaseWal); this one faults drainAppliedBase, which feeds the
+        // SAME incremental window cursor and so advances the same accumulators.
+        //
+        // Routing: drainAppliedBase runs only when the base is DEDUP and the range
+        // is NOT provably clean (see isRangeProvablyClean). The seqTxn-3 commit
+        // carries an intra-commit duplicate of (02:00:01, 'a'), so apply records a
+        // dedup divergence above fromSeqTxn and the cycle takes the applied-reader
+        // path instead of the raw-WAL one.
+        //
+        // Fault: the base is PARTITION BY HOUR, so the forward scan walks one page
+        // frame per hour and opens each partition lazily. We fail the hour-02
+        // partition's x.d open once, after the hour-01 rows have already been fed
+        // to the window cursor - a true mid-drain fault, before any LV commit. The
+        // fault self-clears so the recompute that follows reads cleanly. Every row
+        // sits inside one day, so the daily-anchored running sum equals the plain
+        // PARTITION BY sym recompute the oracle uses.
+        //
+        // Two independent mechanisms now restore the accumulators, and the test
+        // pins the outcome rather than either mechanism:
+        //   1. drainAppliedBase raises windowStateDirty (this branch previously did
+        //      not), so handleRefreshFailure rebuilds from the applied base before
+        //      the retry - matching drainBaseWal.
+        //   2. Failing that, the retry's own overlap detection fires: the partial
+        //      feed left latestSeenTs at or above the pending range's min ts, so
+        //      the next drainAppliedBase takes the o3Replay branch and recomputes.
+        // Mechanism 2 is why this test cannot fail with the fix reverted. It relies
+        // on every LV being snapshot-capable, which holds only because
+        // CairoEngine.validateLiveViewWindowFunction rejects a non-capable window
+        // function at CREATE; a non-capable view would instead take o3Replay's
+        // invalidateHeadOnO3 fallback, which force-advances the watermarks and
+        // keeps the stale accumulators. The assertion below pins that precondition,
+        // so if it ever stops holding this test's coverage is not silently lost.
+        final String[] baseDir = new String[1];
+        final AtomicBoolean armHour02Read = new AtomicBoolean();
+        final AtomicBoolean hour02ReadFailed = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armHour02Read.get()
+                        && baseDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, baseDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-01T02")
+                        && !Utf8s.containsAscii(name, "wal")) {
+                    armHour02Read.set(false);
+                    hour02ReadFailed.set(true);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY HOUR WAL " +
+                    "DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            baseDir[0] = engine.verifyTableName("base").getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Clean baseline (seqTxn 1) so the faulting cycle is not the
+                // first-cycle applied-base rederive path and routes its failure
+                // through handleRefreshFailure.
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 'a', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals("clean baseline leaves no retries", 0, instance.getFlushRetryCount());
+                // Pins mechanism 2's precondition (see the header comment): the view
+                // is snapshot-capable, so the retry's o3Replay branch can recompute.
+                Assert.assertTrue(instance.isSnapshotCapabilityComputed());
+                Assert.assertTrue(instance.isSnapshotCapability());
+
+                // seqTxn 2 (hour 01) and seqTxn 3 (hour 02, with the deduped
+                // duplicate) both land before the LV refreshes, so one
+                // drainAppliedBase pass spans both hours. Applying them first keeps
+                // the base ahead of the LV, so ensureBaseApplied does not defer.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-04-01T01:00:00.000000Z', 'a', 2), " +
+                        "('2026-04-01T01:00:01.000000Z', 'a', 3)");
+                execute("INSERT INTO base VALUES " +
+                        "('2026-04-01T02:00:00.000000Z', 'a', 4), " +
+                        "('2026-04-01T02:00:01.000000Z', 'a', 9), " +
+                        "('2026-04-01T02:00:01.000000Z', 'a', 5)");
+                drainWalQueue();
+
+                armHour02Read.set(true);
+                drainJob(job);
+                Assert.assertTrue("the mid-drain partition read must have been failed exactly once",
+                        hour02ReadFailed.get());
+                Assert.assertFalse(armHour02Read.get());
+                drainWalQueue();
+
+                // Recovery is transparent: the window was recomputed from the applied
+                // base, so the view stays valid with a clean tier and its watermark
+                // advances past every commit.
+                Assert.assertFalse("mid-drain recovery must keep the view valid", instance.isInvalid());
+                Assert.assertFalse("recovery must leave the tier clean", instance.isTierStale());
+                Assert.assertEquals("recovery must advance the watermark past every commit",
+                        3, instance.getLastProcessedSeqTxn());
+                // The decisive check: no row fed before the fault is lost or
+                // double-counted, so the running sum equals a from-scratch recompute.
+                assertRunningSumLvMatchesRecompute();
+
+                // Steady state resumes cleanly: the recovery advanced the watermark
+                // past all three commits, so a later commit does not re-feed them.
+                setCurrentMicros(4_000_000L);
+                execute("INSERT INTO base VALUES ('2026-04-01T03:00:00.000000Z', 'a', 6)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertRunningSumLvMatchesRecompute();
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testMidDrainRefreshFailureRebuildsWindowState() throws Exception {
         // Regression: a refresh cycle that feeds >= 1 row through the incremental
         // window cursor - advancing the running-sum accumulator - but then throws
@@ -17879,6 +18009,50 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         Chars.contains(e.getFlyweightMessage(), "'expression' or 'daily' expected after 'anchor'")
                 );
             }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorOutsideLiveView() throws Exception {
+        // ANCHOR is a live-view-only clause: nothing outside the live-view code
+        // generator reads WindowExpression's anchor, so a normal query used to
+        // parse the clause and silently drop it - the window was computed as if
+        // no ANCHOR had been written. Reject it instead, at the 'anchor' token.
+        // Rejecting now also keeps the grammar open: accepting-and-ignoring would
+        // harden into a compatibility commitment the moment it ships.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+
+            // Named WINDOW.
+            try {
+                select("SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+                Assert.fail("expected SqlException rejecting ANCHOR outside a live view");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "ANCHOR is only supported in a live view query")
+                );
+            }
+
+            // Inline OVER (...), which reaches the same parser branch.
+            try {
+                select("SELECT ts, x, sum(x) OVER (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00') AS s FROM base");
+                Assert.fail("expected SqlException rejecting ANCHOR outside a live view");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), "ANCHOR is only supported in a live view query")
+                );
+            }
+
+            // The clause still works where it belongs, and a rejected query does not
+            // leave the parser's anchor gate stuck open or shut.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            execute("DROP LIVE VIEW lv");
         });
     }
 

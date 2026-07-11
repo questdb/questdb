@@ -1351,6 +1351,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
                             final Record outRecord = windowCursor.getRecord();
                             while (windowCursor.hasNext()) {
+                                // Accumulators advanced for this row; a failure before commit
+                                // triggers a window-state rebuild (see handleRefreshFailure).
+                                // The coupled forward scan feeds the same incremental cursor
+                                // as drainBaseWal, so it raises the same flag. Belt and
+                                // braces rather than a fix for a reachable bug: a partial
+                                // feed leaves latestSeenTs at or above the pending range's
+                                // min ts, so the retry's own overlap check already routes
+                                // into o3Replay and recomputes. That recovery holds only
+                                // while every LV is snapshot-capable (validateLiveViewWindowFunction
+                                // rejects the rest at CREATE) - a non-capable view would take
+                                // o3Replay's invalidateHeadOnO3 fallback, which force-advances
+                                // the watermarks over rows this drain fed but never committed.
+                                // Raising the flag keeps the invariant local to the drain that
+                                // breaks it instead of resting on that gate.
+                                windowStateDirty = true;
                                 final long ts = outRecord.getTimestamp(cursorTimestampIndex);
                                 if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
                                     batchMaxTs = ts;

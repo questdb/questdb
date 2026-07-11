@@ -89,6 +89,10 @@ public class ExpressionParser {
     private final SqlParser sqlParser;
     private final WindowExprTreeBuilder windowExprTreeBuilder = new WindowExprTreeBuilder();
     private final ObjectPool<WindowExpression> windowExpressionPool;
+    // Gates the live-view-only ANCHOR clause. Off by default so a normal query
+    // rejects ANCHOR instead of parsing and silently dropping it; SqlParser turns
+    // it on for a CREATE LIVE VIEW body and for a live-view re-compile.
+    private boolean anchorAllowed = false;
     private boolean stopOnTopINOperator = false;
 
     ExpressionParser(
@@ -144,6 +148,10 @@ public class ExpressionParser {
         // however, '/dd' does not exist, tok is just the potential geohash chars constant, with leading '#'
         final int len = tok.length();
         return len <= 1 || tok.charAt(1) != '#';
+    }
+
+    public void setAnchorAllowed(boolean anchorAllowed) {
+        this.anchorAllowed = anchorAllowed;
     }
 
     public void setStopOnTopINOperator(boolean stopOnTop) {
@@ -2403,6 +2411,12 @@ public class ExpressionParser {
         // not here — the parser only captures the syntax.
         if (tok != null && SqlKeywords.isAnchorKeyword(tok)) {
             int anchorPos = lexer.lastTokenPosition();
+            if (!anchorAllowed) {
+                // Only a live view acts on the clause: nothing outside the live-view
+                // code generator reads WindowExpression's anchor, so accepting it in a
+                // normal query would parse it and silently drop it.
+                throw SqlException.$(anchorPos, "ANCHOR is only supported in a live view query");
+            }
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "'expression' or 'daily' expected after 'anchor'");

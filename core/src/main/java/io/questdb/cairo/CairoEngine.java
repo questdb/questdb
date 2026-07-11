@@ -1681,7 +1681,7 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.detach(reader);
     }
 
-    public void dropLiveView(CharSequence name) {
+    public void dropLiveView(CharSequence name, SecurityContext securityContext) {
         // Stamp the durable _lv.drop sentinel before tearing anything down.
         // A crash between any of the steps below leaves a queryable-but-no-
         // longer-registered LV directory; the sentinel lets the startup loader
@@ -1691,6 +1691,10 @@ public class CairoEngine implements Closeable, WriterSource {
         // file mutates.
         final TableToken token = tableNameRegistry.getTableToken(name);
         if (token != null && token.isLiveView()) {
+            // Defense-in-depth authorize mirroring createLiveView: the compiler path
+            // already authorizes, but a future direct caller cannot bypass the ACL.
+            // Runs before the sentinel so a denied drop mutates nothing.
+            securityContext.authorizeLiveViewDrop(token);
             writeLiveViewDropSentinel(token);
         }
         LiveViewInstance instance = liveViewRegistry.removeView(name);

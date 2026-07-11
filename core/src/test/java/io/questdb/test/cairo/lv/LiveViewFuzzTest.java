@@ -3478,11 +3478,15 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
             }
 
             // Keep the race going until the view has consumed the full base;
-            // hard-bounded so a stalled refresh fails instead of hanging.
+            // hard-bounded so a stalled refresh fails instead of hanging. The loop
+            // exits as soon as the view catches up, so a generous bound costs
+            // nothing on the happy path: it only widens the margin before a loaded
+            // CI box (where the refresh worker competes with the reader threads for
+            // cores) is misreported as a stalled refresh. 120s, was 30s.
             final long lastBaseTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            for (int i = 0; i < 3000 && instance.getLastProcessedSeqTxn() < lastBaseTxn && errors.isEmpty(); i++) {
+            for (int i = 0; i < 12_000 && instance.getLastProcessedSeqTxn() < lastBaseTxn && errors.isEmpty(); i++) {
                 Os.sleep(10);
             }
 

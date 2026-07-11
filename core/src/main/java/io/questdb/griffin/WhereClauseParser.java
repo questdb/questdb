@@ -3052,50 +3052,6 @@ public final class WhereClauseParser implements Mutable {
     }
 
     /**
-     * Accumulates a timestamp function (like now()) into the OR interval model.
-     * For constant functions, evaluates immediately. For runtime constants, defers to runtime.
-     * Returns true on success, false if the function cannot be accumulated.
-     */
-    private boolean tryAccumulateTimestampFunction(
-            IntrinsicModel model,
-            ExpressionNode funcNode,
-            boolean isFirst,
-            FunctionParser functionParser,
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        Function func = functionParser.parseFunction(funcNode, metadata, executionContext);
-        try {
-            if (!ColumnType.isTimestamp(func.getType())) {
-                Misc.free(func);
-                return false;
-            }
-            if (func.isConstant()) {
-                long ts = func.getTimestamp(null);
-                Misc.free(func);
-                if (isFirst) {
-                    model.intersectIntervals(ts, ts);
-                } else {
-                    model.unionIntervals(ts, ts);
-                }
-            } else if (func.isRuntimeConstant()) {
-                if (isFirst) {
-                    model.intersectRuntimeTimestamp(func);
-                } else {
-                    model.unionRuntimeTimestamp(func);
-                }
-            } else {
-                Misc.free(func);
-                return false;
-            }
-            return true;
-        } catch (Throwable th) {
-            Misc.free(func);
-            throw th;
-        }
-    }
-
-    /**
      * Tries to extract timestamp intervals from an OR tree.
      * Only succeeds if:
      * - The node is an OR tree consisting entirely of timestamp IN/= predicates

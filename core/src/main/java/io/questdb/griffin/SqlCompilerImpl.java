@@ -4793,7 +4793,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // can transiently return null during a concurrent create/drop, and an
         // enterprise per-object ACL dereferences the token.
         executionContext.getSecurityContext().authorizeLiveViewDrop(instance.getLiveViewToken());
-        engine.dropLiveView(name);
+        engine.dropLiveView(name, executionContext.getSecurityContext());
         return true;
     }
 

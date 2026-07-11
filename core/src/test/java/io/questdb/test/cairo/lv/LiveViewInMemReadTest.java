@@ -363,6 +363,18 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
                             "need at least two in-mem rows for the aliasing check",
                             inMemIds.size() >= 2
                     );
+                    // Without distinct values the clobber assertions below pass even
+                    // when the flyweights DO alias, because recordB's read would
+                    // re-point them at an identical value. The SYMBOL siblings pin
+                    // this the same way.
+                    Assert.assertNotEquals(
+                            "need two in-mem rows with distinct STRINGs, or the aliasing check is vacuous",
+                            expectedStr.get(0), expectedStr.get(1)
+                    );
+                    Assert.assertNotEquals(
+                            "need two in-mem rows with distinct VARCHARs, or the aliasing check is vacuous",
+                            expectedVarchar.get(0), expectedVarchar.get(1)
+                    );
 
                     Record recordB = cursor.getRecordB();
 
@@ -1837,6 +1849,11 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             // 3 flushed rows, none of which have a2[2][2] = 20, so the result is
             // empty. Contrast with the Mode B read above (which returns lead row 4) -
             // that difference is exactly the row the override decoded out of RAM.
+            // The oracle's predicate is deliberately unsatisfiable (no row carries
+            // 99999.0), which is how it yields the empty expected result. The
+            // literal keeps no thousands separator on purpose: QuestDB parses
+            // underscores in integer literals but not in floating-point ones, so
+            // 99_999.0 is rejected as an invalid constant.
             assertDiskOnlyMatchesOracle(
                     "SELECT ts, a1, a2, rn FROM lv WHERE a2[2][2] = 20.0",
                     "SELECT * FROM (SELECT ts, a1, a2, row_number() OVER () AS rn FROM base) WHERE a2[2][2] = 99999.0");

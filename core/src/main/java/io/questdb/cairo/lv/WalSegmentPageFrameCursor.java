@@ -420,14 +420,23 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
 
         @Override
         public boolean containsNullValue() {
+            // Sentinel, like getSymbolCount below: this table cannot answer the
+            // question without walking the backing store. Both are safe only
+            // because the live view refresh path consumes the symbol table purely
+            // for key->value resolution - it never enumerates keys by count, and
+            // nothing on the path branches on containsNullValue. A future LV query
+            // shape that plans off either (a symbol filter that pre-checks for a
+            // null key, a cursor that iterates 0..getSymbolCount()) would read
+            // these answers as fact and be wrong: a WAL segment can carry nulls,
+            // and the real key count is finite. Compute them properly before
+            // widening what the LV path asks of this table.
             return false;
         }
 
         @Override
         public int getSymbolCount() {
-            // The WAL symbol map does not expose an exact count without walking
-            // the backing store; consumers of live view refresh only need
-            // key->value resolution, so an upper-bound sentinel is enough.
+            // Upper-bound sentinel - see containsNullValue for the contract this
+            // relies on.
             return Integer.MAX_VALUE;
         }
 
