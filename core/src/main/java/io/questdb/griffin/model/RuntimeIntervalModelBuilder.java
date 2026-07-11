@@ -722,10 +722,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      */
     boolean mergeWithAddMethod(RuntimeIntervalModelBuilder other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
         if (other == null || isEmptySet() || addMethod == null || !other.intervalApplied) {
-            // Nothing merged into this builder, but the caller consumes the and_offset predicate on a
-            // true return and only clears other on the residual path. Free any dynamic bound compiled
-            // into other here so it is not orphaned until the pool slot is reused (mirrors the residual
-            // clearIntervalFilters() fix in WhereClauseParser.analyzeAndOffset).
+            // A source predicate the analysis consumed without applying an interval constrains nothing,
+            // so the caller may consume the and_offset predicate too. The one shape that reaches here is
+            // a tautology (self-comparison in analyzeEquals0), which every row satisfies. A source
+            // contradiction also applies no interval, but it must NOT be consumed unconstrained - it is
+            // intercepted a level up, in IntrinsicModel.mergeIntervalModelWithAddMethod, which can see
+            // the FALSE intrinsicValue this builder cannot.
+            //
+            // Nothing merges into this builder, and the caller only clears other on the residual path.
+            // Free any dynamic bound compiled into other here so it is not orphaned until the pool slot
+            // is reused (mirrors the residual clearIntervalFilters() call in analyzeAndOffset).
             if (other != null) {
                 other.freeAndClear();
             }

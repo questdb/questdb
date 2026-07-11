@@ -58,6 +58,10 @@ public final class ParquetRowGroupFilter {
     public static final long FILTER_BUFFER_PAGE_SIZE = 128;
     public static final int LONGS_PER_FILTER = 3;
     private static final Log LOG = LogFactory.getLog(ParquetRowGroupFilter.class);
+    // 2^53. A double represents every integer below this exactly, and 2^53 + 1 is the first one it
+    // cannot; at or above it a 64-bit column no longer round-trips through the double width the
+    // row-level filter compares at.
+    private static final double MAX_EXACT_INTEGRAL_DOUBLE = 9007199254740992d;
     private static final AtomicInteger rowGroupsSkipped = new AtomicInteger();
 
     /**
@@ -315,6 +319,14 @@ public final class ParquetRowGroupFilter {
                                 } else {
                                     filterValues.putLong(driver.from(f.getTimestamp(null), ColumnType.getTimestampType(vType)));
                                 }
+                            } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
+                                // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
+                                // compares this column at double width, so the bound takes the same
+                                // guard as the LONG arm.
+                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null))) {
+                                    supported = false;
+                                    break;
+                                }
                             } else {
                                 filterValues.putLong(f.getLong(null));
                             }
@@ -340,6 +352,13 @@ public final class ParquetRowGroupFilter {
                             int vType = f.getType();
                             if (ColumnType.isTimestamp(vType)) {
                                 filterValues.putLong(f.getDate(null));
+                            } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
+                                // Same as the TIMESTAMP arm: getLong() throws on a FLOAT/DOUBLE
+                                // function, and the row-level filter compares at double width.
+                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null))) {
+                                    supported = false;
+                                    break;
+                                }
                             } else {
                                 filterValues.putLong(f.getLong(null));
                             }
@@ -527,14 +546,20 @@ public final class ParquetRowGroupFilter {
         return true;
     }
 
-    // Appends a FLOAT/DOUBLE bound into a LONG stats slot, or reports that the bound cannot be
-    // pushed down. Same pruning-safety requirement as tryPutIntFromDouble: only an integral
-    // double whose (long) cast round-trips through (double) is safe. Long.MAX_VALUE is excluded
-    // because d == 2^63 saturates to Long.MAX_VALUE yet still round-trips ((double) Long.MAX_VALUE
-    // rounds up to 2^63), so the pushed bound would not equal the true value.
+    // Appends a FLOAT/DOUBLE bound into a 64-bit stats slot (LONG/TIMESTAMP/DATE columns), or reports
+    // that the bound cannot be pushed down. Stricter than tryPutIntFromDouble, because the two sides
+    // compare at different widths: there is no (LONG, DOUBLE) comparison, so the row-level filter
+    // widens the column to DOUBLE, while pruning compares the stats against the pushed bound at long
+    // width. Both agree only below 2^53, where a double still represents every integer exactly. Above
+    // it the pruner is the finer of the two and skips groups whose rows the filter keeps:
+    // (double) 10000000000000001L is exactly 1e16, so "c6 <= 1e16" keeps that row while the pushed
+    // bound (long) 1e16 == 10000000000000000 excludes its group. Decline instead -- a superset scan is
+    // always safe. The 2^53 ceiling also subsumes the Long.MIN_VALUE bound (which would push the
+    // LONG_NULL sentinel as a real value) and the Long.MAX_VALUE one (where (long) 2^63 saturates yet
+    // still round-trips).
     private static boolean tryPutLongFromDouble(MemoryCARWImpl filterValues, double d) {
         long l = (long) d;
-        if (Numbers.isNull(d) || (double) l != d || l == Long.MAX_VALUE) {
+        if (Numbers.isNull(d) || Math.abs(d) >= MAX_EXACT_INTEGRAL_DOUBLE || (double) l != d) {
             return false;
         }
         filterValues.putLong(l);

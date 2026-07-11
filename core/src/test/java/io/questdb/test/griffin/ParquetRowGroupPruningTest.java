@@ -4657,6 +4657,28 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleConstantAbove2Pow53PushdownNotFalsePrunedLongColumn() throws Exception {
+        // There is no (LONG, DOUBLE) comparison: the row-level filter widens the column to DOUBLE and
+        // compares at double width, while row group pruning compares the stats at long width. The two
+        // agree only below 2^53, where a double still represents every integer exactly. Above it the
+        // pruner is the finer of the two and skips a group whose rows the filter keeps:
+        // (double) 10000000000000001 is exactly 1e16, so "c6 <= 1e16" and "c6 = 1e16" both keep that
+        // row, while the pushed bound (long) 1e16 == 10000000000000000 excludes the group.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("LONG", "10000000000000001", "0");
+
+            assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n10000000000000001\n0\n");
+            assertNativeMatchesPartialParquet("c6 = 1e16", "c6\n10000000000000001\n");
+            assertNativeMatchesPartialParquet("c6 = 1e16::float", "c6\n10000000000000001\n");
+
+            // A bound below 2^53 stays exact at double width, so it still pushes down and prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1000.0", "c6\n0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testDoubleConstantOutsideIntRangePushdownNotFalsePruned() throws Exception {
         // An out-of-INT-range DOUBLE bound saturates to INT_MAX in the 32-bit stats slot,
         // the (int) getDouble() twin of the LONG-bound saturation. "c6 < 5e9" saturates to
@@ -4668,6 +4690,44 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
             // Control: no INT value exceeds the bound; empty result, group may prune.
             assertNativeMatchesPartialParquet("c6 > 5000000000.0", "c6\n");
+        });
+    }
+
+    @Test
+    public void testDoubleConstantPushdownTimestampAndDateColumns() throws Exception {
+        // getLong() throws UnsupportedOperationException on a FLOAT/DOUBLE function, so a double bound
+        // against a TIMESTAMP or DATE column threw inside the filter builder. The catch-all swallowed
+        // it, logged an error and dropped row group pruning for every condition in the query. Both arms
+        // now take the same double guard as the LONG arm: an exact in-range bound prunes, and a bound
+        // the column cannot round-trip through DOUBLE declines instead of false-pruning.
+        assertMemoryLeak(() -> {
+            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "1704067200000000", "0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.7e15", "c6\n1970-01-01T00:00:00.000000Z\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            // A FLOAT bound reaches the same arm through getDouble().
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.7e15::float", "c6\n1970-01-01T00:00:00.000000Z\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // Above 2^53 the row-level filter compares at double width and keeps the row, so the
+            // pushdown must decline rather than prune the group at long width.
+            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "10000000000000001", "0");
+            assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n2286-11-20T17:46:40.000001Z\n1970-01-01T00:00:00.000000Z\n");
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            createBoundarySaturatedPartialParquetTyped("DATE", "1704067200000", "0");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.7e12", "c6\n1970-01-01T00:00:00.000Z\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            createBoundarySaturatedPartialParquetTyped("DATE", "10000000000000001", "0");
+            assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n318857-05-20T17:46:40.001Z\n1970-01-01T00:00:00.000Z\n");
         });
     }
 

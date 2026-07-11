@@ -40,19 +40,21 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testNullBoundOffsetPushdownReturnsEmpty() throws Exception {
         // A NULL timestamp bound makes the inner predicate unsatisfiable, so the temp interval model
-        // becomes an empty set. mergeWithAddMethod must intersect this model to empty rather than consume
+        // becomes an empty set. The merge must intersect this model to empty rather than consume
         // the predicate with no constraint; otherwise the offset pushdown returns every row instead of
-        // none (the mirror of the multi-interval bug fixed in testMultiIntervalOffsetPushdown).
+        // none (the mirror of the multi-interval bug fixed in testMultiIntervalOffsetPushdown, and of
+        // the self-comparison one in testSelfComparisonOffsetPushdownContradictionReturnsEmpty).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z'), " +
                     "(150, '2022-01-02T12:00:00.000000Z'), (200, '2023-01-01T12:00:00.000000Z');");
 
             final String greater = "SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts > null::timestamp";
-            // The consumed predicate leaves an empty interval scan, matching the no-offset baseline (0 rows).
+            // The unsatisfiable model reaches the code generator as intrinsicValue = FALSE, so the scan
+            // is skipped outright instead of opening an interval scan over an empty interval list.
             assertQuery(greater)
                     .timestamp("ts")
-                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanContaining("Empty table")
                     .returns("ts\tprice\n");
             assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts < null::timestamp")
                     .timestamp("ts")
@@ -1228,6 +1230,74 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .returns("""
                             ts\tprice
                             2022-01-01T00:00:00.000000Z\t100.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSelfComparisonOffsetPushdownContradictionReturnsEmpty() throws Exception {
+        // "ts != ts" is a contradiction that analyzeNotEquals0 folds by setting intrinsicValue = FALSE
+        // alone - it never touches the interval builder. mergeIntervalModelWithAddMethod must carry that
+        // FALSE across to this model and intersect it to empty; otherwise the builder sees no intervals,
+        // reports the predicate as fully represented, and the caller consumes it with no constraint at
+        // all - the offset pushdown then returns every row instead of none. Same shape as the NULL bound
+        // fixed in testNullBoundOffsetPushdownReturnsEmpty, reached through a different analyze method.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z'), " +
+                    "(150, '2022-01-02T12:00:00.000000Z'), (200, '2023-01-01T12:00:00.000000Z');");
+
+            // CONTROL: without the offset the contradiction already folds to an empty scan.
+            assertQuery("SELECT timestamp, price FROM trades WHERE timestamp != timestamp")
+                    .timestamp("timestamp")
+                    .returns("timestamp\tprice\n");
+
+            assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts != ts")
+                    .timestamp("ts")
+                    .withPlanContaining("Empty table")
+                    .returns("ts\tprice\n");
+            // The <> spelling parses to the same node.
+            assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts <> ts")
+                    .timestamp("ts")
+                    .returns("ts\tprice\n");
+            // The contradiction must also win when the conjunction contributes a real interval first:
+            // the FALSE check has to run before the interval merge, not after it.
+            assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) " +
+                    "WHERE ts > '2022-01-01' AND ts != ts")
+                    .timestamp("ts")
+                    .returns("ts\tprice\n");
+            // The contradiction empties the model, so it must stay confined to the AND spine: an OR
+            // branch alongside it still matches every row.
+            assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) " +
+                    "WHERE ts != ts OR price > 0")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            2021-12-31T12:00:00.000000Z\t100.0
+                            2022-01-01T12:00:00.000000Z\t150.0
+                            2022-12-31T12:00:00.000000Z\t200.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSelfComparisonOffsetPushdownTautologyReturnsAllRows() throws Exception {
+        // The twin of the contradiction above: "ts = ts" is a tautology that analyzeEquals0 consumes
+        // without applying an interval. That is the one shape left that legitimately reaches
+        // mergeWithAddMethod with no interval applied, so it pins the "consume the predicate" arm -
+        // the offset scan must return every row, not none.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z'), " +
+                    "(150, '2022-01-02T12:00:00.000000Z');");
+
+            assertQuery("SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts = ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tprice
+                            2021-12-31T12:00:00.000000Z\t100.0
+                            2022-01-01T12:00:00.000000Z\t150.0
                             """);
         });
     }
