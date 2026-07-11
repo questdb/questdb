@@ -572,6 +572,50 @@ public class DeleteTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Defense-in-depth: pins the fallback for the DYNAMIC-bound cases {@code classifyDeleteTimeRange}'s own
+     * comment calls out by name but that were not previously asserted by a test - {@code SqlCompilerImpl}:
+     * "Compile-time-constant intervals only ... Runtime intervals (now(), bind vars) ... fall back - correct,
+     * just unoptimized" - plus a subquery-typed timestamp bound, which hits the same
+     * {@code RuntimeIntervalModel.isStatic()} guard via a different {@code WhereClauseParser} path
+     * ({@code compareWithNode.type == ExpressionNode.QUERY} in {@code analyzeTimestampLess}). A future edit
+     * to that gate that mistakenly treated a dynamic bound as static would silently route these onto the
+     * pure-interval empty-replace path and delete the wrong rows depending on when/what the bound evaluates
+     * to - the same false-positive hazard as {@link #testMixedOrArbitraryDeleteNotClassifiedAsPureInterval},
+     * just for a DYNAMIC rather than a MIXED-filter predicate. Same white-box mechanism
+     * ({@link #assertNotPureTimeRange}).
+     * <p>
+     * {@code ts IN (SELECT ts FROM t WHERE x = 1)} is deliberately NOT included: IN-with-subquery is only
+     * wired for SYMBOL columns ({@code InSymbolCursorFunctionFactory}, signature {@code in(KC)}) - there is
+     * no {@code in(TIMESTAMP, CURSOR)} overload, so that form does not compile as a DELETE at all. The
+     * scalar comparison below ({@code ts < (subquery)}, signature {@code <(NC)} via
+     * {@code LtTimestampCursorFunctionFactory}) is the closest ts-subquery predicate that both compiles and
+     * demonstrably falls back.
+     */
+    @Test
+    public void testRuntimeOrSubqueryBoundDeleteNotClassifiedAsPureInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int, s symbol) timestamp(ts) partition by DAY WAL");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // now() is a runtime constant (evaluated once per execution), not a compile-time constant:
+                // WhereClauseParser.analyzeTimestampLess routes it through intersectIntervals(lo, Function,
+                // adj), which makes RuntimeIntervalModel.isStatic() false.
+                assertNotPureTimeRange(compiler, "DELETE FROM t WHERE ts < now()");
+
+                // Bind variable: WhereClauseParser.isFunc() treats BIND_VARIABLE like FUNCTION, and
+                // IndexedParameterLinkFunction.isRuntimeConstant() is unconditionally true, so $1 takes the
+                // exact same dynamic-bound path as now() above.
+                sqlExecutionContext.getBindVariableService().setTimestamp(0, 172800000000L);
+                assertNotPureTimeRange(compiler, "DELETE FROM t WHERE ts < $1");
+
+                // Subquery bound: ts compared against a scalar (single-row, single-TIMESTAMP-column)
+                // subquery hits WhereClauseParser's dedicated ExpressionNode.QUERY case, which is also
+                // folded into the interval as a dynamic Function bound.
+                assertNotPureTimeRange(compiler, "DELETE FROM t WHERE ts < (SELECT max(ts) FROM t WHERE x = 1)");
+            }
+        });
+    }
+
     @Test
     public void testDeleteOpenEndedTimeRangeDropsOldPartitions() throws Exception {
         assertMemoryLeak(() -> {
@@ -678,6 +722,30 @@ public class DeleteTest extends AbstractCairoTest {
                     "select * from t_ref where not (ts < '1970-01-03T00:00:00.000000Z' and s = 'a')",
                     "select * from t"
             );
+        });
+    }
+
+    /**
+     * Functional companion to {@link #testRuntimeOrSubqueryBoundDeleteNotClassifiedAsPureInterval}: proves
+     * the fallback (whole-range survivor-replace) triggered by a runtime-bound predicate still produces the
+     * CORRECT result, not just the correct routing decision. One row is far in the past and one is far in
+     * the future relative to the real wall-clock {@code now()}, so this is a non-trivial split (not a
+     * degenerate "delete everything") - a wrong-rows-survive bug can't hide behind an all-or-nothing result.
+     */
+    @Test
+    public void testDeleteRuntimeBoundTimeRangeDeletesOnlyPastRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+            execute("insert into t(ts, x) values " +
+                    "('2000-01-01T00:00:00.000000Z',1)," +
+                    "('2999-01-01T00:00:00.000000Z',2)");
+            drainWalQueue();
+            execute("DELETE FROM t WHERE ts < now()");
+            drainWalQueue();
+            assertQuery("select x from t").expectSize().returns("""
+                    x
+                    2
+                    """);
         });
     }
 
