@@ -4914,6 +4914,65 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinKeyedIndexReuseAcrossMasterRows() throws Exception {
+        // The single-threaded keyed (fast) factory prefetches slave rows past the window so that
+        // the following master rows reuse the per-symbol index instead of rebuilding it. It sized
+        // that prefetch margin from windowHi alone, so a window ending at or before the current row
+        // (windowHi <= 0) got no margin at all and rebuilt the index for every master row - correct,
+        // but O(master rows x window rows). The margin now comes from the window's span, so these
+        // shapes finally reuse the index; that reuse path was previously unreachable for them.
+        // Master rows are dense relative to the window, so the index is reused many times per
+        // rebuild. Cross-check against a plain LEFT JOIN oracle (EXCLUDE PREVAILING semantics),
+        // for native and parquet slaves, on the single-threaded and parallel paths.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices_pq (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Master rows every 5 min, slave rows every minute: a 4 h window holds ~240 slave rows,
+            // and the index survives ~48 master rows per rebuild. Integer x keeps sum() exact.
+            execute("INSERT INTO trades SELECT rnd_symbol('a','b','c'), " +
+                    "timestamp_sequence('2024-01-01T08:00:00.000000Z', 5 * 60 * 1_000_000L) FROM long_sequence(400)");
+            execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(2_000)");
+            execute("INSERT INTO prices_pq SELECT * FROM prices");
+            execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // windowHi < 0 (past-only) and windowHi == 0 (ends at the current row) - the two shapes
+            // that used to rebuild the index per master row.
+            final String[][] windows = {
+                    {"RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING", "p.ts <= dateadd('h', -2, t.ts)"},
+                    {"RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW", "p.ts <= t.ts"},
+            };
+            for (String[] window : windows) {
+                sink.clear();
+                printSql("SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                        "FROM trades t LEFT JOIN prices p " +
+                        "ON t.sym = p.sym AND p.ts >= dateadd('h', -4, t.ts) AND " + window[1] + " " +
+                        "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
+                final String expected = sink.toString();
+
+                for (boolean parallel : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                    for (String slave : new String[]{"prices", "prices_pq"}) {
+                        sink.clear();
+                        printSql("SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                                "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
+                                window[0] + " EXCLUDE PREVAILING " +
+                                "ORDER BY t.sym, t.ts", sink);
+                        TestUtils.assertEquals(
+                                window[0] + " parallel=" + parallel + " slave=" + slave,
+                                expected,
+                                sink
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinMasterTimestampMultiIntervalWhere() throws Exception {
         // A master designated-timestamp predicate that extracts to MULTIPLE disjoint intervals
         // (t.ts != literal, NOT BETWEEN, OR of ranges) must not collapse the slave page-frame scan

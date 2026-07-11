@@ -325,15 +325,34 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
     /**
      * Upper timestamp bound for building the per-symbol slave index.
-     * {@link #INDEX_LOOKAHEAD} prefetches rows past the window so later master rows
-     * can reuse the index, but must not fall below the window's own upper bound
-     * ({@code masterTimestamp + windowHi}). A negative {@code windowHi} - a
-     * past-only window, e.g. {@code 4 HOURS PRECEDING AND 2 HOURS PRECEDING} -
-     * would do exactly that and drop the window's most recent rows, so clamp to
-     * {@code windowHi}.
+     * <p>
+     * The index reaches {@code INDEX_LOOKAHEAD - 1} extra margins past the window's own upper
+     * bound ({@code masterTimestamp + windowHi}) so that the following master rows reuse it
+     * instead of rebuilding it. It must never reach below that bound - doing so would drop the
+     * window's most recent rows.
+     * <p>
+     * A future window ({@code windowHi > 0}) takes {@code windowHi} as its margin. A window that
+     * ends at or before the current row ({@code windowHi <= 0}) - {@code 4 HOURS PRECEDING AND
+     * CURRENT ROW}, or a past-only {@code 4 HOURS PRECEDING AND 2 HOURS PRECEDING} - has no
+     * forward reach to borrow from: scaling {@code windowHi} leaves the horizon at (or below) the
+     * window bound, so the rebuild gate fires for every master row and the index degrades to a
+     * per-row rebuild. Derive the margin from the window's span instead, which amortizes the
+     * rebuild over the rows the index already holds.
+     * <p>
+     * The SQL code generator rejects a frame whose hi is below its lo, so the span is
+     * non-negative here; it only goes non-positive on a zero-width window (nothing to amortize
+     * over) or if the sum overflows. Fall back to the bare window bound in both cases.
      */
-    private static long indexLookaheadHi(long masterTimestamp, long windowHi) {
-        return masterTimestamp + Math.max(windowHi * INDEX_LOOKAHEAD, windowHi);
+    private static long indexLookaheadHi(long masterTimestamp, long windowLo, long windowHi) {
+        final long windowTimestampHi = masterTimestamp + windowHi;
+        final long span = windowLo + windowHi;
+        final long margin = (windowHi > 0 ? windowHi : span) * (INDEX_LOOKAHEAD - 1);
+        if (margin <= 0) {
+            return windowTimestampHi;
+        }
+        final long lookaheadHi = windowTimestampHi + margin;
+        // Saturate rather than wrap: the horizon must stay at or above the window's upper bound.
+        return lookaheadHi < windowTimestampHi ? Long.MAX_VALUE : lookaheadHi;
     }
 
     private abstract class AbstractWindowJoinFastRecordCursor implements NoRandomAccessRecordCursor {
@@ -521,7 +540,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowHi), masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowLo, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
@@ -804,7 +823,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowHi), masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowLo, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
@@ -1049,7 +1068,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowHi), masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowLo, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
@@ -1284,7 +1303,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowHi), masterTimestampScale);
+            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowLo, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
