@@ -17,7 +17,6 @@
 [submodule "java-questdb-client"]
 	path = java-questdb-client
 	url = https://github.com/questdb/java-questdb-client.git
-	branch = fix/qwp-worker-quiescence
 [submodule "core/src/main/c/share/fsst"]
 	path = core/src/main/c/share/fsst
 	url = https://github.com/cwida/fsst.git
