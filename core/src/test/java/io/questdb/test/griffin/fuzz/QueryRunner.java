@@ -144,6 +144,10 @@ import java.util.regex.Pattern;
  * </ul>
  */
 public final class QueryRunner {
+    // FP-column mask of an Outcome that never produced a projection (it threw).
+    // reconcilePair only consults the masks when both sides succeeded, so this
+    // is never read; it keeps the record's accessor total.
+    private static final boolean[] EMPTY_FP_MASK = new boolean[0];
     // Empty metadata for parseFunction calls in hasIntOverflowingConstantArithmetic.
     // The detector compiles candidate subexpressions to check for INT-to-LONG
     // overflow promotion; column references in a candidate force parseFunction
@@ -191,13 +195,6 @@ public final class QueryRunner {
     private int faultsFired;
     // Per-type count of faults that actually fired, indexed by FaultType.ordinal().
     private final int[] faultsFiredByType = new int[FaultType.values().length];
-    // Per-output-column FLOAT/DOUBLE mask of the most recent runOnce projection.
-    // Gates the floating-point reduction-order tolerance to FP-typed columns so a
-    // genuine integer COUNT/SUM divergence is never absorbed as FP drift. Refreshed
-    // on every runOnce; all compared variants of one query share a projection, so a
-    // single mask serves both sides of a reconcile. Empty until the first runOnce,
-    // which leaves the tolerance disabled (every differing cell compared exactly).
-    private boolean[] fpColumnMask = new boolean[0];
     // Reused per parseFunction call. Stateful (metadataStack, function stacks)
     // but parseFunction is contractually re-entrant: it pushes/pops its own
     // state in try/finally, so a single instance is safe across the runner's
@@ -521,6 +518,31 @@ public final class QueryRunner {
             }
         }
         return -1;
+    }
+
+    /**
+     * Per-column AND of the two compared projections' FP masks. A cell only earns
+     * the floating-point reduction-order tolerance when BOTH sides type its column
+     * as FLOAT/DOUBLE.
+     * <p>
+     * The two sides usually share a projection, but the bind axis does not
+     * guarantee it: bind values are bound as STRINGs, so the bind form's overload
+     * resolution can type a projection column differently from the literal form's
+     * -- that asymmetry is the whole premise of the axis. Taking the mask from one
+     * side would then let an integer column inherit the FP tolerance, which at
+     * magnitude 2^17 and above is wide enough to swallow a one-unit divergence: the
+     * exact class of bug the bind axis exists to surface.
+     * <p>
+     * Where the two masks disagree the intersection compares the cell exactly, so
+     * the type divergence itself surfaces as a divergence rather than a skip.
+     */
+    static boolean[] intersectFpColumnMasks(boolean[] a, boolean[] b) {
+        int n = Math.min(a.length, b.length);
+        boolean[] mask = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            mask[i] = a[i] && b[i];
+        }
+        return mask;
     }
 
     private static boolean isAcceptedSkip(Throwable t) {
@@ -1427,8 +1449,11 @@ public final class QueryRunner {
             // the order of summation, which legitimately differs across
             // index/parquet access paths and across JIT modes. The
             // tolerance is tight enough to flag a real arithmetic
-            // divergence while absorbing reduction-order noise.
-            if (a.rowsRead == b.rowsRead && rowsetEqualsWithFpTolerance(rowsA, rowsB, fpColumnMask)) {
+            // divergence while absorbing reduction-order noise. The mask is
+            // the intersection of the two projections' FP masks, so a column
+            // either side types as an integer is compared exactly.
+            if (a.rowsRead == b.rowsRead
+                    && rowsetEqualsWithFpTolerance(rowsA, rowsB, intersectFpColumnMasks(a.fpColumnMask, b.fpColumnMask))) {
                 return Result.skipped("rowset matches with floating-point tolerance");
             }
             // Literal-vs-bind diff where every differing cell is the INT
@@ -1630,13 +1655,17 @@ public final class QueryRunner {
         rows.clear();
         try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
             int rowsRead;
+            boolean[] fpColumnMask;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
-                // Refresh the FP-column mask for this projection so the reconcile
-                // tolerance only fires on FLOAT/DOUBLE cells. Both compared
-                // variants of a query share a projection, so the mask the last
-                // runOnce leaves is correct for the pending reconcile.
+                // The FP-column mask belongs to THIS projection, so it travels on this
+                // Outcome. reconcilePair intersects the two sides' masks: on the bind
+                // axis the literal and the bind form can legitimately resolve a
+                // projection column to different types (bind values arrive as STRINGs),
+                // and a mask read from only one side would then apply the FP tolerance
+                // to a column the other side typed as an integer -- silently absorbing
+                // a genuine one-unit integer divergence.
                 fpColumnMask = buildFpColumnMask(metadata, columnCount);
                 rowsRead = materialize(cursor, metadata, columnCount, rows);
                 // toTop() must rewind without re-executing, and size() /
@@ -1653,7 +1682,7 @@ public final class QueryRunner {
             // hasPushedLimit / hasEarlyExitGroupBy only feed the fault oracle's
             // swallow check (runFault), which runs runRaw / runRawMallocFault, not
             // this differential path.
-            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, false, false, usesParquet);
+            return Outcome.ok(rowsRead, planUsesIndex(planSink.getSink()), false, false, false, usesParquet, fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1830,6 +1859,13 @@ public final class QueryRunner {
         }
     }
 
+    /**
+     * One execution attempt. {@code fpColumnMask} is the per-output-column
+     * FLOAT/DOUBLE mask of the projection THIS run produced (empty when the run
+     * threw, and for the fault-oracle runs, which never reconcile). It rides on
+     * the outcome rather than on the runner so a reconcile always intersects the
+     * masks of the two runs it is actually comparing.
+     */
     private record Outcome(
             int rowsRead,
             boolean hasIndex,
@@ -1837,17 +1873,22 @@ public final class QueryRunner {
             boolean hasEarlyExitGroupBy,
             boolean hasBlockingAggregation,
             boolean usesParquet,
+            boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
             String exceptionMessage
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, false, false, usesParquet, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, false, usesParquet, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
         static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, null, null, null);
+            return ok(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, EMPTY_FP_MASK);
+        }
+
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet, boolean[] fpColumnMask) {
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, fpColumnMask, null, null, null);
         }
     }
 

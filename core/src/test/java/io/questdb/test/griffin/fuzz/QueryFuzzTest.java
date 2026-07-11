@@ -304,6 +304,23 @@ public class QueryFuzzTest extends AbstractCairoTest {
             // gate keys on column type rather than magnitude.
             Assert.assertTrue("FP-column reduction drift at scale stays tolerated",
                     QueryRunner.rowEqualsWithFpTolerance("1000000", "1000001", fpMask));
+
+            // The mask a reconcile uses must be the AND of the two projections it compares,
+            // not whichever side ran last. On the bind axis the two projections are not
+            // guaranteed identical - bind values are bound as STRINGs, so the bind form's
+            // overload resolution can type a projection column DOUBLE where the literal form
+            // types it INT. Reading the mask from the bind side alone would hand that integer
+            // column the FP tolerance and silently absorb the one-unit divergence asserted
+            // above, on the very axis that surfaced the INT-overflow family.
+            final boolean[] literalMask = {false, true};
+            final boolean[] bindMask = {true, true};
+            final boolean[] reconcileMask = QueryRunner.intersectFpColumnMasks(literalMask, bindMask);
+            Assert.assertFalse("a column either side types as an integer must compare exactly", reconcileMask[0]);
+            Assert.assertTrue("a column both sides type as FP keeps the tolerance", reconcileMask[1]);
+            Assert.assertFalse("an integer column must not inherit the other side's FP tolerance",
+                    QueryRunner.rowEqualsWithFpTolerance("1000000\t1.0", "1000001\t1.0", reconcileMask));
+            Assert.assertTrue("the same drift on the shared FP column stays tolerated",
+                    QueryRunner.rowEqualsWithFpTolerance("5\t1000000", "5\t1000001", reconcileMask));
         });
     }
 

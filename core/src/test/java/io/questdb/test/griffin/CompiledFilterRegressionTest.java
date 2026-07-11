@@ -1036,22 +1036,67 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // subtree instead of recomputing genuineArithType at every level. Exercise a deep arithmetic
         // spine so the pruned/short-circuited walk is taken, and confirm the JIT still matches the Java
         // filter under INT- and LONG-width comparisons and with an overflowing constant fold at the leaf.
+        //
+        // a and b are sized so the spine genuinely overflows int32: (a + b) * b = 101_000_000 still
+        // fits, the next multiply by b does not. So the wrapped and the widened chain differ on every
+        // row, and each assertion below discriminates the two. The chain wraps to a distinct negative
+        // int32 per row (-449_931_736 .. -445_927_736) and widens to 101_000_001_001_000 + 1_001_000*rid.
+        // Every assertion carries an absolute pin: JIT-vs-Java parity alone is not an oracle here,
+        // because this PR moves the Java filter and the JIT toward the same width model - a shared
+        // wrong decision would agree on both paths and pass.
         assertMemoryLeak(() -> {
-            execute("create table dc as (select cast(1000000 as int) a, cast(3 as int) b," +
-                    " cast(x as long) nl, x::short cs, x::byte cbyte, timestamp_sequence(0, 1000000) k" +
+            execute("create table dc as (select" +
+                    " x rid," +
+                    " cast(100000 as int) a," +
+                    " cast(1000 as int) b," +
+                    " x::short cs," +
+                    " x::byte cbyte," +
+                    // nl carries the true long-width chain for rows 1 and 4, and the int32-WRAPPED
+                    // image of the chain for rows 2 and 5. A JIT (or Java) path that wrongly wraps
+                    // under a LONG comparison matches {2, 5} instead of {1, 4}.
+                    " cast(case x when 1 then 101_000_001_001_000 when 2 then -448_930_736 when 3 then 0" +
+                    " when 4 then 101_000_004_004_000 else -445_927_736 end as long) nl," +
+                    // ni carries the int32-wrapped image of the chain for rows 1 and 3. A path that
+                    // wrongly widens under an INT comparison matches nothing.
+                    " cast(case x when 1 then -449_931_736 when 2 then 0 when 3 then -447_929_736" +
+                    " when 4 then 1 else 0 end as int) ni," +
+                    " timestamp_sequence(0, 1000000) k" +
                     " from long_sequence(5)) timestamp(k)");
             // Deep all-narrow-int spine read at INT width: every node is narrow, so the marker walk
-            // prunes at the root; the JIT must still wrap (getInt) exactly like the Java filter.
-            assertJitMatchesJava("dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) > 0", true);
-            assertJitMatchesJava("dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) = 0", true);
+            // prunes at the root; the JIT must still wrap (getInt) exactly like the Java filter. The
+            // wrapped chain is negative on every row, so < 0 keeps all five and > 0 keeps none; a path
+            // that widened instead would invert both.
+            assertJitMatchesJava("select rid from dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) < 0", true,
+                    "rid\n1\n2\n3\n4\n5\n");
+            assertJitMatchesJava("select rid from dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) > 0", true,
+                    "rid\n");
+            // Same spine against an INT column holding the wrapped image: pins the exact wrapped value.
+            assertJitMatchesJava("select rid from dc where ni = ((((((a + b) * b) + cs) * b) + cbyte) * b)", true,
+                    "rid\n1\n3\n");
             // Same spine compared against a LONG column: the comparison promotes to long width, so the
-            // spine widens (getLong) on both paths - the narrow prune does not fire (under long).
-            assertJitMatchesJava("dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) > nl", true);
-            assertJitMatchesJava("dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) >= -432577000000L", true);
+            // spine widens (getLong) on both paths - the narrow prune does not fire (under long). Pins
+            // the exact widened value: rows 2 and 5 hold the wrapped image and must NOT match.
+            assertJitMatchesJava("select rid from dc where nl = ((((((a + b) * b) + cs) * b) + cbyte) * b)", true,
+                    "rid\n1\n4\n");
+            assertJitMatchesJava("select rid from dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) > nl", true,
+                    "rid\n2\n3\n5\n");
+            assertJitMatchesJava("select rid from dc where ((((((a + b) * b) + cs) * b) + cbyte) * b) >= 101_000_000_000_000L", true,
+                    "rid\n1\n2\n3\n4\n5\n");
             // Deep spine with an overflowing pure-constant fold at the leaf: narrow (wraps) vs long
-            // (widens) contexts must each still agree.
-            assertJitMatchesJava("dc where (a + ((((1000000 * 1000000) + 1) + 2) + 3)) > 0", true);
-            assertJitMatchesJava("dc where (nl + ((((1000000 * 1000000) + 1) + 2) + 3)) > 0", true);
+            // (widens) contexts must each still agree. 1000000 * 1000000 folds to an INT-typed node
+            // whose getInt() wraps to -727_379_968 and whose getLong() widens to 10^12, so + 1 + 2 + 3
+            // yields -727_379_962 against the INT column a and 1_000_000_000_006 against the LONG
+            // column nl. Both pins name the value directly, so a fold at the wrong width fails here
+            // rather than agreeing on both paths.
+            assertJitMatchesJava("select rid from dc where (a + ((((1000000 * 1000000) + 1) + 2) + 3)) = -727_279_962", true,
+                    "rid\n1\n2\n3\n4\n5\n");
+            assertJitMatchesJava("select rid from dc where (a + ((((1000000 * 1000000) + 1) + 2) + 3)) > 0", true,
+                    "rid\n");
+            // nl is 0 on row 3, so the widened fold is the only value that can match there.
+            assertJitMatchesJava("select rid from dc where (nl + ((((1000000 * 1000000) + 1) + 2) + 3)) = 1_000_000_000_006L", true,
+                    "rid\n3\n");
+            assertJitMatchesJava("select rid from dc where (nl + ((((1000000 * 1000000) + 1) + 2) + 3)) > 0", true,
+                    "rid\n1\n2\n3\n4\n5\n");
         });
     }
 
@@ -1334,21 +1379,27 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // inKeyFoldWidthOverride, exactly as the elements are folded. The table carries the widened
         // value (10^12) and its wrapped INT image (-727379968) so a wrong key width matches the
         // wrong row instead of the right one.
+        // Every assertion carries an absolute pin. Parity alone is not an oracle: this PR moves the
+        // Java IN path and the JIT toward the same width model, so a shared wrong key width matches
+        // the wrong row on both paths and passes.
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(v as long) i64, cast(v as timestamp) tsc " +
                     "from (select 1000000000000 v union all select -727379968 v))");
+            final String header = "i64\ttsc\n";
+            final String widened = "1000000000000\t1970-01-12T13:46:40.000000Z\n";
+            final String wrapped = "-727379968\t1969-12-31T23:47:52.620032Z\n";
             // LONG element: the key must widen to 10^12 and match the widened row, not the wrapped one.
-            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, 5)", true);
-            assertJitMatchesJava("x where (1000000 * 1000000) in (5, i64)", true);        // order independent
-            assertJitMatchesJava("x where (1000000 * 1000000) in (5, 6, i64)", true);     // multi value
-            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, i64)", true);      // all long
-            assertJitMatchesJava("x where (1000000 * 1000000) not in (i64, 5)", true);    // inverse
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, 5)", true, header + widened);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (5, i64)", true, header + widened);        // order independent
+            assertJitMatchesJava("x where (1000000 * 1000000) in (5, 6, i64)", true, header + widened);     // multi value
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, i64)", true, header + widened);      // all long
+            assertJitMatchesJava("x where (1000000 * 1000000) not in (i64, 5)", true, header + wrapped);    // inverse
             // TIMESTAMP element widens the key the same way.
-            assertJitMatchesJava("x where (1000000 * 1000000) in (tsc, 5)", true);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (tsc, 5)", true, header + widened);
             // Controls: '=' and single-value IN already widened; an INT element still wraps the key.
-            assertJitMatchesJava("x where (1000000 * 1000000) = i64", true);
-            assertJitMatchesJava("x where (1000000 * 1000000) in (i64)", true);
-            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, -727379968)", true);
+            assertJitMatchesJava("x where (1000000 * 1000000) = i64", true, header + widened);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64)", true, header + widened);
+            assertJitMatchesJava("x where (1000000 * 1000000) in (i64, -727379968)", true, header + widened + wrapped);
         });
     }
 
@@ -1362,14 +1413,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // OPERATION) for the single-value form, and could not derive the comparison width
         // for the multi-value form (the operands live in args with lhs/rhs null), so it
         // emitted a wrapped I4 IMM and diverged from the Java filter.
+        // Every assertion carries an absolute pin: a fold at the wrong width matches the wrapped row
+        // on BOTH paths (this PR moves the Java filter and the JIT together), so parity alone passes.
         assertMemoryLeak(() -> {
             execute("create table x as (select cast(v as long) i64 " +
                     "from (select 1000000000000 v union all select -727379968 v))");
-            assertJitMatchesJava("x where i64 in (1000000 * 1000000)", true);          // single value
-            assertJitMatchesJava("x where i64 in (1, 1000000 * 1000000)", true);       // two values
-            assertJitMatchesJava("x where i64 in (1, 2, 1000000 * 1000000)", true);    // multi value
-            assertJitMatchesJava("x where i64 not in (1, 1000000 * 1000000)", true);   // inverse
-            assertJitMatchesJava("x where i64 = 1000000 * 1000000", true);             // control: plain '='
+            final String widened = "i64\n1000000000000\n";
+            final String wrapped = "i64\n-727379968\n";
+            assertJitMatchesJava("x where i64 in (1000000 * 1000000)", true, widened);          // single value
+            assertJitMatchesJava("x where i64 in (1, 1000000 * 1000000)", true, widened);       // two values
+            assertJitMatchesJava("x where i64 in (1, 2, 1000000 * 1000000)", true, widened);    // multi value
+            assertJitMatchesJava("x where i64 not in (1, 1000000 * 1000000)", true, wrapped);   // inverse
+            assertJitMatchesJava("x where i64 = 1000000 * 1000000", true, widened);             // control: plain '='
         });
     }
 
@@ -2124,33 +2179,46 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "(127, 32767, 2147483647, 9223372036854775806, 0)," +
                     "(126, 32766, 2147483646, 9223372036854775805, 1000000)," +
                     "(null, null, null, null, 2000000)");
-            // All-narrow path (only i32 observed): the constant would fall back to float.
-            assertJitMatchesJava("t where i32 = 2147483648", true);
-            assertJitMatchesJava("t where i32 >= 2147483648", true);
-            assertJitMatchesJava("t where i32 > 2147483648", true);
-            assertJitMatchesJava("t where i32 <= 2147483648", true);
-            assertJitMatchesJava("t where i32 < 2147483648", true);
-            assertJitMatchesJava("t where i32 <> 2147483648", true);
-            assertJitMatchesJava("t where i32 = 5000000000", true);
+            // Absolute pins on the repro shapes. Parity alone is not an oracle here: the two INT rows
+            // that the pre-fix JIT collapsed onto one float differ by 1, so a shared wrong width keeps
+            // or drops both together and JIT-vs-Java parity still holds. maxRow and nextRow name them
+            // individually, so a collapse fails the pin.
+            final String header = "i8\ti16\ti32\ti64\tts\n";
+            final String maxRow = "127\t32767\t2147483647\t9223372036854775806\t1970-01-01T00:00:00.000000Z\n";
+            final String nextRow = "126\t32766\t2147483646\t9223372036854775805\t1970-01-01T00:00:01.000000Z\n";
+            final String nullRow = "0\t0\tnull\tnull\t1970-01-01T00:00:02.000000Z\n";
+            // All-narrow path (only i32 observed): the constant would fall back to float. No INT value
+            // equals 2^31, so the equality keeps nothing - that is exactly the spurious match the
+            // pre-fix JIT produced.
+            assertJitMatchesJava("t where i32 = 2147483648", true, header);
+            assertJitMatchesJava("t where i32 >= 2147483648", true, header);
+            assertJitMatchesJava("t where i32 > 2147483648", true, header);
+            assertJitMatchesJava("t where i32 <= 2147483648", true, header + maxRow + nextRow);
+            assertJitMatchesJava("t where i32 < 2147483648", true, header + maxRow + nextRow);
+            assertJitMatchesJava("t where i32 <> 2147483648", true, header + maxRow + nextRow + nullRow);
+            assertJitMatchesJava("t where i32 = 5000000000", true, header);
             // Negative out-of-range constant (unary minus of an overflowing literal).
-            assertJitMatchesJava("t where i32 = -3000000000", true);
-            assertJitMatchesJava("t where i32 > -3000000000", true);
+            assertJitMatchesJava("t where i32 = -3000000000", true, header);
+            assertJitMatchesJava("t where i32 > -3000000000", true, header + maxRow + nextRow);
             // Mixed-size path (i32 + i64 observed): the column must sign-extend too.
-            assertJitMatchesJava("t where i32 = 2147483648 and i64 > 0", true);
-            assertJitMatchesJava("t where i32 = 5 and i64 > 0", true);
+            assertJitMatchesJava("t where i32 = 2147483648 and i64 > 0", true, header);
+            assertJitMatchesJava("t where i32 = 5 and i64 > 0", true, header);
             // Single- and multi-value IN, including mixed in-range / out-of-range elements.
-            assertJitMatchesJava("t where i32 in (2147483648)", true);
-            assertJitMatchesJava("t where i32 in (2147483648, 5)", true);
-            assertJitMatchesJava("t where i32 in (5, 2147483648)", true);
-            assertJitMatchesJava("t where i32 not in (2147483648, 5)", true);
-            // OR chain: the same column appears at two widths in one predicate.
-            assertJitMatchesJava("t where i32 = 2147483648 or i32 = 2147483647", true);
+            assertJitMatchesJava("t where i32 in (2147483648)", true, header);
+            assertJitMatchesJava("t where i32 in (2147483648, 5)", true, header);
+            assertJitMatchesJava("t where i32 in (5, 2147483648)", true, header);
+            // NULL is a comparable sentinel here, not SQL unknown, so the null row survives the
+            // negated forms - the same way it survives i32 <> 2147483648 above.
+            assertJitMatchesJava("t where i32 not in (2147483648, 5)", true, header + maxRow + nextRow + nullRow);
+            // OR chain: the same column appears at two widths in one predicate. The in-range arm must
+            // still tell 2147483647 apart from 2147483646 - the float collapse matched both.
+            assertJitMatchesJava("t where i32 = 2147483648 or i32 = 2147483647", true, header + maxRow);
             // BYTE / SHORT column vs an out-of-INT-range constant: previously declined
             // JIT (serializeNumber threw on the int-parse overflow); now stays on JIT.
-            assertJitMatchesJava("t where i8 = 2147483648", true);
-            assertJitMatchesJava("t where i16 = 3000000000", true);
+            assertJitMatchesJava("t where i8 = 2147483648", true, header);
+            assertJitMatchesJava("t where i16 = 3000000000", true, header);
             // Control: a pure LONG column already computes at long width.
-            assertJitMatchesJava("t where i64 = 2147483648", true);
+            assertJitMatchesJava("t where i64 = 2147483648", true, header);
         });
     }
 
@@ -2248,6 +2316,18 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     "rnd_int(-1000000, 1000000, 8), rnd_float(8), " +
                     "timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1800000000L) " +
                     "FROM long_sequence(122)");
+
+            // The rows come from rnd_*, so there is no expected-rows string to pin. Pin the Java
+            // filter's row count instead: it is the independent oracle here (the fix is entirely in
+            // the serializer, so the Java path never moved), and it also proves each predicate is
+            // non-vacuous. Parity over an all-empty or an all-122 result would prove nothing.
+            Assert.assertEquals(54, runQuery("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776782))"));
+            Assert.assertEquals(52, runQuery("SELECT * FROM t WHERE c9 <= (c0 * (c8 * -776782))"));
+            Assert.assertEquals(54, runQuery("SELECT * FROM t WHERE c9 <= (c0 + (c8 * -776782))"));
+            Assert.assertEquals(60, runQuery("SELECT * FROM t WHERE c9 <= (c0 * (c8 + 2000000000))"));
+            Assert.assertEquals(66, runQuery("SELECT * FROM t WHERE c9 <= (c8 * -776782)"));
+            Assert.assertEquals(54, runQuery("SELECT * FROM t WHERE c9 <= (c0 * c8)"));
+            Assert.assertEquals(67, runQuery("SELECT * FROM t WHERE (c8 * -776782) > 0"));
 
             // Previously diverging shapes: still JIT-compiled, now correct.
             assertJitMatchesJava("SELECT * FROM t WHERE c9 <= ((c0 - c2) * (c8 * -776782))", true);
@@ -2774,6 +2854,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * JIT-enabled run is expected to compile a filter (true) or fall back to the
      * Java filter (false), guarding against both the divergence and over-eager
      * fallback.
+     * <p>
+     * Parity is only an oracle for a bug that moves ONE of the two paths. A test
+     * covering a width decision the Java filter and the JIT now share must also
+     * pin the absolute result - via the {@code expected} overload, or a
+     * {@link #runQuery} row-count assertion when the rows come from {@code rnd_*}
+     * and no expected string can be written. Otherwise a wrong shared decision
+     * agrees on both paths and the assertion passes.
      */
     private void assertJitMatchesJava(CharSequence query, boolean expectJit) throws SqlException {
         assertJitMatchesJava(query, expectJit, null);
