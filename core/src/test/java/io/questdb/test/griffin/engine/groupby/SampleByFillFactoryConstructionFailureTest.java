@@ -411,6 +411,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
             if (recordFunctionsAdopted) {
                 Assert.assertEquals("record functions must close exactly once", 1, fixture.recordFunc.closeCount);
             }
+            Assert.assertEquals("adopted base factory must be closed", 1, fixture.baseFactory.closeCount);
             Assert.assertEquals("timezone function must close exactly once", 1, fixture.timezoneNameFunc.closeCount);
             Assert.assertEquals("offset function must close exactly once", 1, fixture.offsetFunc.closeCount);
             Assert.assertEquals("FROM function must close exactly once", 1, fixture.sampleFromFunc.closeCount);
@@ -421,6 +422,24 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     @FunctionalInterface
     private interface FactoryConstructor {
         void construct(Fixture fixture) throws Exception;
+    }
+
+    /**
+     * The idempotent close() of AbstractRecordCursorFactory runs _close() at most once, so a
+     * count of 1 means the constructor freed the adopted base and 0 means it leaked.
+     */
+    private static class CloseCountingBaseFactory extends EmptyTableRecordCursorFactory {
+        int closeCount;
+
+        CloseCountingBaseFactory(GenericRecordMetadata metadata) {
+            super(metadata);
+        }
+
+        @Override
+        protected void _close() {
+            closeCount++;
+            super._close();
+        }
     }
 
     private static class CloseCountingFunction extends LongFunction {
@@ -439,6 +458,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
 
     private static class Fixture {
         final GenericRecordMetadata baseMetadata = new GenericRecordMetadata();
+        CloseCountingBaseFactory baseFactory;
         final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
         final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         final ListColumnFilter listColumnFilter = new ListColumnFilter();
@@ -464,8 +484,9 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
             recordFunctionPositions.add(0);
         }
 
-        EmptyTableRecordCursorFactory base() {
-            return new EmptyTableRecordCursorFactory(baseMetadata);
+        CloseCountingBaseFactory base() {
+            baseFactory = new CloseCountingBaseFactory(baseMetadata);
+            return baseFactory;
         }
 
         SimpleTimestampSampler sampler() {

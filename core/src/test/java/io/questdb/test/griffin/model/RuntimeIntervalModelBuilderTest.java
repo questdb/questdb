@@ -195,6 +195,59 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
+    public void testBuildCopyFailureLeavesFunctionsOwnedByBuilder() {
+        // build() constructs the model - defensive list copies included - before committing the
+        // ownership transfer. When that construction throws, the adopted functions must stay
+        // owned by the builder, so the next clear() closes them exactly once instead of
+        // dropping the references.
+        BuildFailingBuilder builder = newBuildFailingBuilder();
+        CloseCountingFunction lo = new CloseCountingFunction();
+        CloseCountingFunction hi = new CloseCountingFunction();
+        builder.setBetweenBoundary(lo, 0);
+        builder.setBetweenBoundary(hi, 0);
+        builder.failNextBuild = true;
+        try {
+            builder.build();
+            Assert.fail("injected failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertEquals("injected model copy failure", e.getMessage());
+        }
+        Assert.assertEquals("failed build must not close adopted functions", 0, lo.closeCount);
+        Assert.assertEquals("failed build must not close adopted functions", 0, hi.closeCount);
+
+        // the transfer never committed: the builder still owns the functions
+        builder.clear();
+        Assert.assertEquals("clear after failed build must close adopted functions exactly once", 1, lo.closeCount);
+        Assert.assertEquals("clear after failed build must close adopted functions exactly once", 1, hi.closeCount);
+    }
+
+    @Test
+    public void testBuildRetryAfterCopyFailureTransfersOwnership() {
+        // a failed build() leaves the builder fully consistent: a retry must transfer the same
+        // functions to the model, which then closes them exactly once
+        BuildFailingBuilder builder = newBuildFailingBuilder();
+        CloseCountingFunction lo = new CloseCountingFunction();
+        CloseCountingFunction hi = new CloseCountingFunction();
+        builder.setBetweenBoundary(lo, 0);
+        builder.setBetweenBoundary(hi, 0);
+        builder.failNextBuild = true;
+        try {
+            builder.build();
+            Assert.fail("injected failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertEquals("injected model copy failure", e.getMessage());
+        }
+
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Assert.assertEquals("clear after successful retry must not close transferred functions", 0, lo.closeCount);
+        Assert.assertEquals("clear after successful retry must not close transferred functions", 0, hi.closeCount);
+        Misc.free(model);
+        Assert.assertEquals("model must close transferred functions exactly once", 1, lo.closeCount);
+        Assert.assertEquals("model must close transferred functions exactly once", 1, hi.closeCount);
+    }
+
+    @Test
     public void testClearAfterBuildLeavesTransferredFunctionsToModel() {
         // clear() after build() with no intermediate clearBetweenParsing(): the transferred
         // functions belong to the model; clear() must not close them (and the model closes them
@@ -343,6 +396,12 @@ public class RuntimeIntervalModelBuilderTest {
         Assert.assertEquals(1, lo.closeCount);
     }
 
+    private static BuildFailingBuilder newBuildFailingBuilder() {
+        BuildFailingBuilder builder = new BuildFailingBuilder();
+        builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
+        return builder;
+    }
+
     private static RuntimeIntervalModelBuilder newBuilder() {
         RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
@@ -353,6 +412,23 @@ public class RuntimeIntervalModelBuilderTest {
         ReservationFailingBuilder builder = new ReservationFailingBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
         return builder;
+    }
+
+    /**
+     * Simulates an allocation failure inside build(): the model construction (defensive list
+     * copies included) throws before the ownership transfer commits.
+     */
+    private static class BuildFailingBuilder extends RuntimeIntervalModelBuilder {
+        boolean failNextBuild;
+
+        @Override
+        protected RuntimeIntrinsicIntervalModel newModel() {
+            if (failNextBuild) {
+                failNextBuild = false;
+                throw new RuntimeException("injected model copy failure");
+            }
+            return super.newModel();
+        }
     }
 
     private static class CloseCountingFunction extends TimestampFunction {

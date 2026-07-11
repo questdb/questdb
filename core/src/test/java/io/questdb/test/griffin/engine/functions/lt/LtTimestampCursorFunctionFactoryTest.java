@@ -100,6 +100,39 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrictBoundAtTypeMinimumMatchesNothing() throws Exception {
+        // The MIN-side mirror of the `ts > Long.MAX_VALUE` wrap: `ts < Long.MIN_VALUE` would
+        // wrap the interval high bound to Long.MAX_VALUE and select every row - if it were
+        // expressible. It is not: Long.MIN_VALUE doubles as the timestamp NULL sentinel, so the
+        // exact MIN epoch literal is rejected at parse time and every functional route hits the
+        // NULL check before the adjustment. These are reachability sentinels: if literal
+        // parsing ever starts accepting the MIN epoch value, analyzeTimestampLess needs the
+        // same wrap guard as analyzeTimestampGreater, and this test will flag it.
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "select timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+            execute("create table y as (" +
+                    "select timestamp_sequence(0, 2500000)::timestamp_ns ts from long_sequence(2)" +
+                    ") timestamp(ts) partition by day");
+
+            // a strict bound one past the domain minimum: the high bound adjusts down to
+            // Long.MIN_VALUE without wrapping and matches nothing
+            assertQuery("select count() c from x where ts < -9223372036854775807")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+            assertQuery("select count() c from y where ts < -9223372036854775807")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\n0\n");
+
+            // the exact MIN epoch literal does not parse as a timestamp - the wrap is unreachable
+            assertException("select count() c from x where ts < -9223372036854775808", 35, "Invalid date");
+        });
+    }
+
+    @Test
     public void testCompareTimestampWithString() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +

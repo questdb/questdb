@@ -83,13 +83,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Construct the model before committing the ownership transfer: if any of the copy
         // allocations or the constructor throws, the functions stay owned by this builder and
         // the next clear() closes them instead of dropping the references.
-        final RuntimeIntervalModel model = new RuntimeIntervalModel(
-                timestampDriver,
-                partitionBy,
-                new LongList(staticIntervals),
-                new ObjList<>(dynamicRangeList),
-                new IntList(dynamicRangePositionList)
-        );
+        final RuntimeIntrinsicIntervalModel model = newModel();
         isOwnershipTransferred = true;
         return model;
     }
@@ -554,6 +548,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.UNION, staticIntervals);
         addDynamicFunction(function, functionPosition);
         intervalApplied = true;
+    }
+
+    /**
+     * Copies the accumulated state into a new model instance. Everything fallible in build() -
+     * the defensive list copies and the model constructor - lives here, so that ownership of the
+     * dynamic functions transfers to the model only after this method returns. Overridable so
+     * tests can inject an allocation failure at the single fallible point of the transfer.
+     */
+    protected RuntimeIntrinsicIntervalModel newModel() {
+        return new RuntimeIntervalModel(
+                timestampDriver,
+                partitionBy,
+                new LongList(staticIntervals),
+                new ObjList<>(dynamicRangeList),
+                new IntList(dynamicRangePositionList)
+        );
     }
 
     /**
