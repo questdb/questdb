@@ -1520,6 +1520,21 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testWalDeleteDiskBoundedDefault() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getCairoConfiguration().getWalDeleteDiskBounded());
+    }
+
+    @Test
+    public void testWalDeleteDiskBoundedOverride() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.delete.disk.bounded", "true");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertTrue(configuration.getCairoConfiguration().getWalDeleteDiskBounded());
+    }
+
+    @Test
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("invalid.key", "value");

@@ -225,6 +225,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT("cairo.mat.view.refresh.oom.retry.timeout"),
     CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
+    CAIRO_WAL_DELETE_DISK_BOUNDED("cairo.wal.delete.disk.bounded"),
     CAIRO_WAL_DELETE_ROWS_PER_STEP("cairo.wal.delete.rows.per.step"),
     CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED("cairo.mat.view.parallel.sql.enabled"),
     CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED("cairo.mat.view.covering.index.enabled"),

@@ -1444,6 +1444,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getWalDeleteDiskBounded() {
+        return false;
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return false;
     }

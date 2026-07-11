@@ -1459,6 +1459,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getWalDeleteDiskBounded() {
+        return getDelegate().getWalDeleteDiskBounded();
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return getDelegate().getWalEnabledDefault();
     }
