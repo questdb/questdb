@@ -39,7 +39,13 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
     // instance from more than one owner on error paths (a failing factory constructor closes
     // its adopted base factory, and the generator catch then frees its own reference to it),
     // and _close() implementations free adopted functions and native resources that must not
-    // be freed twice. Sorted after the final field per the final-then-mutable field grouping.
+    // be freed twice. close() deliberately sets the flag before _close() runs: were it set
+    // after, a throwing _close() would let a second owner re-enter and double-free whatever
+    // the first attempt did release. The flip side is that _close() runs at most once, so
+    // implementations owning several resources must keep their cleanup best-effort (attempt
+    // every close, rethrow the first failure with later ones suppressed) rather than stop at
+    // the first throwing close. Sorted after the final field per the final-then-mutable field
+    // grouping.
     private boolean closed;
 
     /**

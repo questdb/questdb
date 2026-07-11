@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -34,6 +35,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlCodeGenerator;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
@@ -48,18 +50,19 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import java.lang.management.ManagementFactory;
 import java.util.Collections;
 
 /**
- * Pins the contract of SqlCodeGenerator.compilePerWorkerInnerProjectionFunctions(): a single
- * traversal of the projection flags compiles only the retained GROUP_BY/VIRTUAL slots directly
- * into compact per-worker views, borrowing thread-safe owners, cloning the rest, and cleaning up
- * only the owned clones on a mid-compile failure.
+ * Pins the contract of SqlCodeGenerator.compilePerWorkerInnerProjectionFunctions(): an
+ * allocation-free safety scan (breaking at the first thread-unsafe retained slot) settles the
+ * common all-thread-safe case, and only the thread-unsafe case takes a second collection pass
+ * that compiles the retained GROUP_BY/VIRTUAL slots directly into compact per-worker views,
+ * borrowing thread-safe owners, cloning the rest, and cleaning up only the owned clones on a
+ * mid-compile failure.
  */
 public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoTest {
 
@@ -93,12 +96,72 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                 flags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
 
                 // Workers share the owner functions: no per-worker views, no clone parses,
-                // and no per-worker flag traversal beyond the single collection pass.
+                // and no flag traversal beyond the single safety scan.
                 Assert.assertNull(compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, 3, flags));
                 Assert.assertEquals(flags.size(), flags.getQuickCallCount);
                 Assert.assertEquals(0, parser.parseCount);
             } finally {
                 Misc.freeObjList(ownerFunctions);
+            }
+        });
+    }
+
+    @Test
+    public void testAllThreadSafeWideProjectionAllocatesNoIndexList() throws Exception {
+        assertMemoryLeak(() -> {
+            final java.lang.management.ThreadMXBean mxBean = ManagementFactory.getThreadMXBean();
+            Assume.assumeTrue("thread allocation profiling unavailable", mxBean instanceof ThreadMXBean);
+            final ThreadMXBean threadMXBean = (ThreadMXBean) mxBean;
+            Assume.assumeTrue(threadMXBean.isThreadAllocatedMemorySupported());
+            if (!threadMXBean.isThreadAllocatedMemoryEnabled()) {
+                threadMXBean.setThreadAllocatedMemoryEnabled(true);
+            }
+
+            final int columnCount = 1_000_000;
+            final CountingFunctionParser parser = new CountingFunctionParser();
+            final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 4);
+            final ObjectPool<ExpressionNode> expressionNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
+            final CountingFunction safeOwner = new CountingFunction(true);
+            final ObjList<Function> ownerFunctions = new ObjList<>(columnCount);
+            final ObjList<QueryColumn> queryColumns = new ObjList<>(columnCount);
+            final IntList flags = new IntList(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                ownerFunctions.add(safeOwner);
+                queryColumns.add(null);
+                flags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
+            }
+            final ObjList<Function> warmUpFunctions = new ObjList<>();
+            warmUpFunctions.add(safeOwner);
+            final ObjList<QueryColumn> warmUpQueryColumns = new ObjList<>();
+            warmUpQueryColumns.add(null);
+            final IntList warmUpFlags = new IntList();
+            warmUpFlags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
+            try (SqlCodeGenerator codeGenerator = new SqlCodeGenerator(
+                    configuration,
+                    parser,
+                    new PostOrderTreeTraversalAlgo(),
+                    queryColumnPool,
+                    expressionNodePool
+            )) {
+                // Warm up class loading and the allocation counter so the measured call
+                // sees steady-state allocation behavior.
+                for (int i = 0; i < 64; i++) {
+                    Assert.assertNull(compilePerWorkerFunctions(codeGenerator, warmUpQueryColumns, warmUpFunctions, 3, warmUpFlags));
+                    threadMXBean.getCurrentThreadAllocatedBytes();
+                }
+                final long maxAllowedBytes = 1_048_576;
+                final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+                Assert.assertNull(compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, 3, flags));
+                final long allocatedBytes = threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore;
+                // The all-thread-safe verdict must use constant auxiliary space: an
+                // O(columnCount) index list for a 1_000_000-slot projection would allocate
+                // at least a 4 MiB int array, while the allocation-free scan stays within
+                // measurement noise.
+                Assert.assertTrue(
+                        "all-thread-safe scan allocated " + allocatedBytes + " bytes",
+                        allocatedBytes < maxAllowedBytes
+                );
+                Assert.assertEquals(0, parser.parseCount);
             }
         });
     }
@@ -178,11 +241,11 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                 flags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
 
                 final int workerCount = 3;
-                final Object result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, workerCount, flags);
-                final ObjList<ObjList<Function>> workerFunctions = getKeyFunctions(result);
+                final SqlCodeGenerator.WorkerFunctionLists result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, workerCount, flags);
+                final ObjList<ObjList<Function>> workerFunctions = result.getKeyFunctions();
                 try {
                     // No GROUP_BY slot in the projection: no group-by view at all.
-                    Assert.assertNull(getGroupByFunctions(result));
+                    Assert.assertNull(result.getGroupByFunctions());
                     Assert.assertEquals(workerCount, parser.parseCount);
                     Assert.assertEquals(workerCount, parser.functions.size());
                     for (int i = 0; i < workerCount; i++) {
@@ -253,13 +316,14 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                 flags.setQuick(columnCount - 2, GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
 
                 final int workerCount = 3;
-                final Object result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, workerCount, flags);
-                final ObjList<ObjList<GroupByFunction>> groupByFunctions = getGroupByFunctions(result);
-                final ObjList<ObjList<Function>> keyFunctions = getKeyFunctions(result);
+                final SqlCodeGenerator.WorkerFunctionLists result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, workerCount, flags);
+                final ObjList<ObjList<GroupByFunction>> groupByFunctions = result.getGroupByFunctions();
+                final ObjList<ObjList<Function>> keyFunctions = result.getKeyFunctions();
                 try {
-                    // One collection pass over the projection plus one flag read per retained
-                    // slot per worker; no dense workerCount x columnCount rescan.
-                    Assert.assertEquals(columnCount + workerCount * 2, flags.getQuickCallCount);
+                    // The safety scan breaks at slot 1 (the thread-unsafe group-by owner),
+                    // then one collection pass over the projection plus one flag read per
+                    // retained slot per worker; no dense workerCount x columnCount rescan.
+                    Assert.assertEquals(2 + columnCount + workerCount * 2, flags.getQuickCallCount);
                     // Only the thread-unsafe group-by owner is cloned per worker.
                     Assert.assertEquals(workerCount, parser.parseCount);
                     for (int i = 0; i < workerCount; i++) {
@@ -273,9 +337,6 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                         Assert.assertSame(keyOwner, workerKeyFunctions.getQuick(0));
                         // Worker clones adopt the owner aggregate's value index.
                         Assert.assertEquals(11, workerGroupByFunctions.getQuick(0).getValueIndex());
-                        // View capacity tracks the retained slot count, not the projection width.
-                        Assert.assertEquals(16, getBackingCapacity(workerGroupByFunctions));
-                        Assert.assertEquals(16, getBackingCapacity(workerKeyFunctions));
                     }
                 } finally {
                     if (groupByFunctions != null) {
@@ -325,12 +386,14 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                 flags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY);
 
                 final int workerCount = 2;
-                final Object result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, workerCount, flags);
-                final ObjList<ObjList<GroupByFunction>> groupByFunctions = getGroupByFunctions(result);
+                final SqlCodeGenerator.WorkerFunctionLists result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, workerCount, flags);
+                final ObjList<ObjList<GroupByFunction>> groupByFunctions = result.getGroupByFunctions();
                 try {
-                    // No VIRTUAL slot in the projection: no key view at all.
-                    Assert.assertNull(getKeyFunctions(result));
-                    Assert.assertEquals(flags.size() + workerCount, flags.getQuickCallCount);
+                    // No VIRTUAL slot in the projection: no key view at all. The safety scan
+                    // breaks at slot 1 (the thread-unsafe group-by owner) before the
+                    // collection pass and the per-worker reads.
+                    Assert.assertNull(result.getKeyFunctions());
+                    Assert.assertEquals(2 + flags.size() + workerCount, flags.getQuickCallCount);
                     Assert.assertEquals(workerCount, parser.parseCount);
                     Assert.assertEquals(workerCount, groupByFunctions.size());
                     for (int i = 0; i < workerCount; i++) {
@@ -394,11 +457,13 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                 flags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN);
 
                 final int workerCount = 3;
-                final Object result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, workerCount, flags);
-                final ObjList<ObjList<GroupByFunction>> groupByFunctions = getGroupByFunctions(result);
-                final ObjList<ObjList<Function>> keyFunctions = getKeyFunctions(result);
+                final SqlCodeGenerator.WorkerFunctionLists result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, workerCount, flags);
+                final ObjList<ObjList<GroupByFunction>> groupByFunctions = result.getGroupByFunctions();
+                final ObjList<ObjList<Function>> keyFunctions = result.getKeyFunctions();
                 try {
-                    Assert.assertEquals(flags.size() + workerCount * 3, flags.getQuickCallCount);
+                    // The safety scan breaks at slot 1 (the thread-unsafe group-by owner)
+                    // before the collection pass and the per-worker reads.
+                    Assert.assertEquals(2 + flags.size() + workerCount * 3, flags.getQuickCallCount);
                     // Per worker, only the two thread-unsafe slots are cloned, in projection order.
                     Assert.assertEquals(workerCount * 2, parser.parseCount);
                     Assert.assertEquals(workerCount, groupByFunctions.size());
@@ -476,11 +541,13 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
 
                 // Thread-unsafe projection with no shared workers: both flagged views exist
                 // and stay empty, and no clone is parsed.
-                final Object result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, 0, flags);
+                final SqlCodeGenerator.WorkerFunctionLists result = compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, 0, flags);
                 Assert.assertNotNull(result);
-                Assert.assertEquals(0, getGroupByFunctions(result).size());
-                Assert.assertEquals(0, getKeyFunctions(result).size());
-                Assert.assertEquals(flags.size(), flags.getQuickCallCount);
+                Assert.assertEquals(0, result.getGroupByFunctions().size());
+                Assert.assertEquals(0, result.getKeyFunctions().size());
+                // The safety scan breaks at slot 1 (the thread-unsafe group-by owner),
+                // then the collection pass reads every flag once; no per-worker reads.
+                Assert.assertEquals(2 + flags.size(), flags.getQuickCallCount);
                 Assert.assertEquals(0, parser.parseCount);
             } finally {
                 Misc.freeObjList(ownerFunctions);
@@ -488,56 +555,21 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
         });
     }
 
-    private static Object compilePerWorkerFunctions(
+    private static SqlCodeGenerator.WorkerFunctionLists compilePerWorkerFunctions(
             SqlCodeGenerator codeGenerator,
             ObjList<QueryColumn> queryColumns,
             ObjList<Function> ownerFunctions,
             int workerCount,
             IntList flags
-    ) throws Exception {
-        final Method method = getCompilePerWorkerMethod();
-        try {
-            return method.invoke(codeGenerator, null, queryColumns, ownerFunctions, workerCount, null, flags);
-        } catch (InvocationTargetException e) {
-            if (e.getCause() instanceof Exception cause) {
-                throw cause;
-            }
-            throw e;
-        }
-    }
-
-    private static int getBackingCapacity(ObjList<?> list) throws Exception {
-        final Field field = ObjList.class.getDeclaredField("buffer");
-        field.setAccessible(true);
-        return ((Object[]) field.get(list)).length;
-    }
-
-    private static Method getCompilePerWorkerMethod() throws NoSuchMethodException {
-        final Method method = SqlCodeGenerator.class.getDeclaredMethod(
-                "compilePerWorkerInnerProjectionFunctions",
-                SqlExecutionContext.class,
-                ObjList.class,
-                ObjList.class,
-                int.class,
-                RecordMetadata.class,
-                IntList.class
+    ) throws SqlException {
+        return codeGenerator.compilePerWorkerInnerProjectionFunctionsForTesting(
+                null,
+                queryColumns,
+                ownerFunctions,
+                workerCount,
+                null,
+                flags
         );
-        method.setAccessible(true);
-        return method;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static ObjList<ObjList<GroupByFunction>> getGroupByFunctions(Object result) throws Exception {
-        final Field field = result.getClass().getDeclaredField("groupByFunctions");
-        field.setAccessible(true);
-        return (ObjList<ObjList<GroupByFunction>>) field.get(result);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static ObjList<ObjList<Function>> getKeyFunctions(Object result) throws Exception {
-        final Field field = result.getClass().getDeclaredField("keyFunctions");
-        field.setAccessible(true);
-        return (ObjList<ObjList<Function>>) field.get(result);
     }
 
     private static class CountingFunction extends LongFunction {

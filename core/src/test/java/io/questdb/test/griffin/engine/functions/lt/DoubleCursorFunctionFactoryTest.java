@@ -1232,43 +1232,9 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
 
     @Test
     public void testWorkerStateSharedExecutesCursorOnceAndRefreshes() throws Exception {
-        // Proves the worker-state contract of the async filter path with a non-thread-safe left
-        // operand: (1) the scalar sub-query executes exactly once per query execution even with 4
-        // workers; (2) every worker clone observes the owner's scalar (rows across the threshold are
-        // classified correctly); (3) re-executing the same compiled factory refreshes the cached state.
-        // test_timestamp_counter() increments once per row the sub-query cursor reads, so the counter
-        // equals the number of RHS executions.
-        runWithPool((compiler, ctx) -> {
-            execute(compiler, "create table src (ts timestamp)", ctx);
-            execute(compiler, "insert into src values (5000)", ctx);
-            execute(
-                    compiler,
-                    "create table t as (" +
-                            "  select x::double price, timestamp_sequence(0, 1000000) ts" +
-                            "  from long_sequence(10000)" +
-                            ") timestamp(ts) partition by day",
-                    ctx
-            );
-
-            TestTimestampCounterFactory.COUNTER.set(0);
-            try (RecordCursorFactory factory = compiler.compile(
-                    "select count() c from t where price::string::double > (select test_timestamp_counter(ts)::long from src)",
-                    ctx
-            ).getRecordCursorFactory()) {
-                // threshold = 5000 -> 5001..10000 -> 5000 rows
-                try (RecordCursor cursor = factory.getCursor(ctx)) {
-                    TestUtils.assertCursor("c\n5000\n", cursor, factory.getMetadata(), true, sink);
-                }
-                Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
-
-                // change the RHS and re-execute the same compiled factory: the cached scalar must refresh
-                execute(compiler, "update src set ts = 9000", ctx);
-                try (RecordCursor cursor = factory.getCursor(ctx)) {
-                    TestUtils.assertCursor("c\n1000\n", cursor, factory.getMetadata(), true, sink);
-                }
-                Assert.assertEquals(2, TestTimestampCounterFactory.COUNTER.get());
-            }
-        });
+        // a LONG cursor scalar against a DOUBLE left operand -> the double comparison mode of the
+        // worker-state contract
+        assertWorkerStateSharedBehavior("double", "price", "long");
     }
 
     @Test

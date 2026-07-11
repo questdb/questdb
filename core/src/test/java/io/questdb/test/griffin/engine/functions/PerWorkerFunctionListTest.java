@@ -73,6 +73,39 @@ public class PerWorkerFunctionListTest {
     }
 
     @Test
+    public void testCloseSurvivesThrowingOwnedFunction() {
+        // close() must attempt every owned slot even when an earlier owned function throws:
+        // the first failure propagates as the primary, later failures attach as suppressed,
+        // and every owned slot is nulled so a repeated close cannot double-free
+        final PerWorkerFunctionList<Function> list = new PerWorkerFunctionList<>(4);
+        final ThrowingCloseFunction throwingFirst = new ThrowingCloseFunction("close failure 0");
+        final TrackingFunction borrowed = new TrackingFunction();
+        final ThrowingCloseFunction throwingSecond = new ThrowingCloseFunction("close failure 1");
+        final TrackingFunction owned = new TrackingFunction();
+        list.add(throwingFirst, true);
+        list.add(borrowed, false);
+        list.add(throwingSecond, true);
+        list.add(owned, true);
+
+        final RuntimeException e = Assert.assertThrows(RuntimeException.class, () -> PerWorkerFunctionList.close(list));
+        Assert.assertEquals("close failure 0", e.getMessage());
+        Assert.assertEquals(1, e.getSuppressed().length);
+        Assert.assertEquals("close failure 1", e.getSuppressed()[0].getMessage());
+        Assert.assertEquals("later owned functions must close despite the earlier failure", 1, owned.closeCount);
+        Assert.assertEquals(0, borrowed.closeCount);
+        Assert.assertNull("the throwing slot must be nulled before the close attempt", list.getQuick(0));
+        Assert.assertSame(borrowed, list.getQuick(1));
+        Assert.assertNull(list.getQuick(2));
+        Assert.assertNull(list.getQuick(3));
+
+        // second close must not re-close or re-throw: every owned slot is already null
+        PerWorkerFunctionList.close(list);
+        Assert.assertEquals(1, owned.closeCount);
+        Assert.assertEquals(1, throwingFirst.closeAttempts);
+        Assert.assertEquals(1, throwingSecond.closeAttempts);
+    }
+
+    @Test
     public void testInheritedStructuralMutatorsAreRejected() {
         final PerWorkerFunctionList<Function> list = new PerWorkerFunctionList<>(4);
         final TrackingFunction function = new TrackingFunction();
@@ -117,11 +150,15 @@ public class PerWorkerFunctionListTest {
         Assert.assertTrue(PerWorkerFunctionList.isOwned(list, 1));
 
         final ObjList<Function> ownerFunctions = new ObjList<>();
+        final TrackingFunction ownerOfOwned = new TrackingFunction();
         ownerFunctions.add(borrowed);
-        ownerFunctions.add(new TrackingFunction());
+        ownerFunctions.add(ownerOfOwned);
         PerWorkerFunctionList.init(list, ownerFunctions, null, null);
         Assert.assertEquals(0, borrowed.initCount);
         Assert.assertEquals(1, owned.initCount);
+        Assert.assertEquals("only the owner aligned with the owned slot donates state", 1, ownerOfOwned.offerStateCount);
+        Assert.assertSame(owned, ownerOfOwned.lastOfferStateTarget);
+        Assert.assertEquals("the owner aligned with the borrowed slot must not donate to itself", 0, borrowed.offerStateCount);
 
         PerWorkerFunctionList.clear(list);
         Assert.assertEquals(0, borrowed.clearCount);
@@ -132,10 +169,142 @@ public class PerWorkerFunctionListTest {
         Assert.assertEquals(1, owned.toTopCount);
     }
 
+    @Test
+    public void testNextOwnedIteratesOwnedSlotsOnly() {
+        final PerWorkerFunctionList<Function> list = new PerWorkerFunctionList<>(4);
+        Assert.assertEquals(-1, list.nextOwned(0));
+        list.add(new TrackingFunction(), false);
+        list.add(new TrackingFunction(), true);
+        list.add(new TrackingFunction(), false);
+        list.add(new TrackingFunction(), true);
+        Assert.assertEquals(1, list.nextOwned(0));
+        Assert.assertEquals(1, list.nextOwned(1));
+        Assert.assertEquals(3, list.nextOwned(2));
+        Assert.assertEquals(3, list.nextOwned(3));
+        Assert.assertEquals(-1, list.nextOwned(4));
+        list.clear();
+        Assert.assertEquals(-1, list.nextOwned(0));
+    }
+
+    @Test
+    public void testPlainListClearClearsEveryFunction() {
+        // fallback contract: a plain ObjList owns all of its functions, so clear() must
+        // reset every one of them, not just marked slots
+        final ObjList<Function> list = new ObjList<>();
+        final TrackingFunction first = new TrackingFunction();
+        final TrackingFunction second = new TrackingFunction();
+        list.add(first);
+        list.add(second);
+        PerWorkerFunctionList.clear(list);
+        Assert.assertEquals(1, first.clearCount);
+        Assert.assertEquals(1, second.clearCount);
+        Assert.assertSame("clear() must not drop the elements", first, list.getQuick(0));
+        Assert.assertSame(second, list.getQuick(1));
+    }
+
+    @Test
+    public void testPlainListCloseFreesEveryFunctionAndNullsSlots() {
+        // fallback contract: a plain ObjList owns all of its functions, so close() must free
+        // every one of them and null the slots so a repeated close cannot double-free
+        final ObjList<Function> list = new ObjList<>();
+        final TrackingFunction first = new TrackingFunction();
+        final TrackingFunction second = new TrackingFunction();
+        list.add(first);
+        list.add(second);
+        PerWorkerFunctionList.close(list);
+        Assert.assertEquals(1, first.closeCount);
+        Assert.assertEquals(1, second.closeCount);
+        Assert.assertNull(list.getQuick(0));
+        Assert.assertNull(list.getQuick(1));
+        // second close must not double-free
+        PerWorkerFunctionList.close(list);
+        Assert.assertEquals(1, first.closeCount);
+        Assert.assertEquals(1, second.closeCount);
+    }
+
+    @Test
+    public void testPlainListInitDonatesOwnerStateAndInitsEveryFunction() throws Exception {
+        // fallback contract: every slot of a plain ObjList is a worker-local clone, so init()
+        // must donate state from the aligned owner to every clone and initialize every clone
+        final ObjList<Function> list = new ObjList<>();
+        final TrackingFunction firstClone = new TrackingFunction();
+        final TrackingFunction secondClone = new TrackingFunction();
+        list.add(firstClone);
+        list.add(secondClone);
+
+        final ObjList<Function> ownerFunctions = new ObjList<>();
+        final TrackingFunction firstOwner = new TrackingFunction();
+        final TrackingFunction secondOwner = new TrackingFunction();
+        ownerFunctions.add(firstOwner);
+        ownerFunctions.add(secondOwner);
+
+        PerWorkerFunctionList.init(list, ownerFunctions, null, null);
+        Assert.assertEquals(1, firstOwner.offerStateCount);
+        Assert.assertSame("each owner donates to the clone aligned with it", firstClone, firstOwner.lastOfferStateTarget);
+        Assert.assertEquals(1, secondOwner.offerStateCount);
+        Assert.assertSame(secondClone, secondOwner.lastOfferStateTarget);
+        Assert.assertEquals(1, firstClone.initCount);
+        Assert.assertEquals(1, secondClone.initCount);
+        Assert.assertEquals("owners are initialized by their own factory, not by the worker list", 0, firstOwner.initCount);
+        Assert.assertEquals(0, secondOwner.initCount);
+
+        // without owner functions there is no donation, but every clone still initializes
+        PerWorkerFunctionList.init(list, null, null, null);
+        Assert.assertEquals(1, firstOwner.offerStateCount);
+        Assert.assertEquals(1, secondOwner.offerStateCount);
+        Assert.assertEquals(2, firstClone.initCount);
+        Assert.assertEquals(2, secondClone.initCount);
+    }
+
+    @Test
+    public void testPlainListIsOwnedReportsEverySlotOwned() {
+        final ObjList<Function> list = new ObjList<>();
+        list.add(new TrackingFunction());
+        list.add(new TrackingFunction());
+        Assert.assertTrue(PerWorkerFunctionList.isOwned(list, 0));
+        Assert.assertTrue(PerWorkerFunctionList.isOwned(list, 1));
+    }
+
+    @Test
+    public void testPlainListToTopRewindsEveryFunction() {
+        // fallback contract: a plain ObjList owns all of its functions, so toTop() must
+        // rewind every one of them
+        final ObjList<Function> list = new ObjList<>();
+        final TrackingFunction first = new TrackingFunction();
+        final TrackingFunction second = new TrackingFunction();
+        list.add(first);
+        list.add(second);
+        PerWorkerFunctionList.toTop(list);
+        Assert.assertEquals(1, first.toTopCount);
+        Assert.assertEquals(1, second.toTopCount);
+    }
+
+    private static class ThrowingCloseFunction extends LongFunction {
+        private final String message;
+        private int closeAttempts;
+
+        private ThrowingCloseFunction(String message) {
+            this.message = message;
+        }
+
+        @Override
+        public void close() {
+            closeAttempts++;
+            throw new RuntimeException(message);
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return 0;
+        }
+    }
+
     private static class TrackingFunction extends LongFunction {
         private int clearCount;
         private int closeCount;
         private int initCount;
+        private Function lastOfferStateTarget;
+        private int offerStateCount;
         private int toTopCount;
 
         @Override
@@ -156,6 +325,12 @@ public class PerWorkerFunctionListTest {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             initCount++;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            offerStateCount++;
+            lastOfferStateTarget = that;
         }
 
         @Override

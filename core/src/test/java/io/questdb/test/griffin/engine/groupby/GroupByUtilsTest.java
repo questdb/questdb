@@ -24,13 +24,22 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Field;
+import java.util.BitSet;
 
 /**
  * Exact-close-count tests for {@link GroupByUtils#freeAssembledProjectionFunctions}, which walks
@@ -39,6 +48,14 @@ import org.junit.Test;
  * replaces the outer entry while the parsed original stays in the paired inner slot, and a
  * mid-assembly failure can leave the last non-null outer entry without an inner counterpart.
  * Every function must be closed exactly once in every configuration.
+ * <p>
+ * Also covers {@link GroupByUtils#setAllocator}: for an ownership-aware
+ * {@link PerWorkerFunctionList} the traversal must probe the owned bits O(owned) times per call
+ * instead of scanning all retained functions, while a plain list keeps receiving the allocator
+ * on every function. Beyond call counts, the mixed borrowed/owned test asserts allocator
+ * identity: a shared owner function borrowed into several worker slots must never receive any
+ * worker allocator, while each owned clone must receive exactly its own slot's allocator
+ * instance.
  */
 public class GroupByUtilsTest {
 
@@ -114,6 +131,31 @@ public class GroupByUtilsTest {
     }
 
     @Test
+    public void testFreeSurvivesThrowingClose() {
+        // a throwing close() must not stop the walk: every other function still closes exactly
+        // once, both lists end up cleared, and the first failure propagates with later
+        // failures attached as suppressed
+        ThrowingCloseFunction aliasedThrower = new ThrowingCloseFunction("close failure 0");
+        ThrowingCloseFunction replacementThrower = new ThrowingCloseFunction("close failure 1");
+        CloseCountingFunction original = new CloseCountingFunction();
+        ObjList<Function> outer = list(aliasedThrower, replacementThrower);
+        ObjList<Function> inner = list(aliasedThrower, original);
+
+        RuntimeException e = Assert.assertThrows(
+                RuntimeException.class,
+                () -> GroupByUtils.freeAssembledProjectionFunctions(outer, inner)
+        );
+        Assert.assertEquals("close failure 0", e.getMessage());
+        Assert.assertEquals(1, e.getSuppressed().length);
+        Assert.assertEquals("close failure 1", e.getSuppressed()[0].getMessage());
+        Assert.assertEquals("the replaced slot's original must close despite the earlier failures", 1, original.closeCount);
+        Assert.assertEquals(1, aliasedThrower.closeAttempts);
+        Assert.assertEquals(1, replacementThrower.closeAttempts);
+        Assert.assertEquals(0, outer.size());
+        Assert.assertEquals(0, inner.size());
+    }
+
+    @Test
     public void testFreeTimestampNullSlotKeepsAlignment() {
         // the timestamp column appends null to outer and nothing to inner; the pairs after it
         // must stay aligned: aliased entries close once, a replaced entry's original closes once
@@ -131,6 +173,102 @@ public class GroupByUtilsTest {
         Assert.assertEquals(1, replacement.closeCount);
     }
 
+    @Test
+    public void testSetAllocatorForwardsExactWorkerAllocatorToOwnedClonesOnly() {
+        // mixed borrowed/owned per-worker lists: the shared owner functions are borrowed into
+        // both worker slots and must never receive any worker allocator, while each owned
+        // clone must receive exactly one call carrying its own slot's allocator instance
+        final AllocatorCountingGroupByFunction sharedOwner0 = new AllocatorCountingGroupByFunction();
+        final AllocatorCountingGroupByFunction sharedOwner1 = new AllocatorCountingGroupByFunction();
+        final AllocatorCountingGroupByFunction ownedClone0 = new AllocatorCountingGroupByFunction();
+        final AllocatorCountingGroupByFunction ownedClone1 = new AllocatorCountingGroupByFunction();
+        final GroupByAllocator workerAllocator0 = new NoopGroupByAllocator();
+        final GroupByAllocator workerAllocator1 = new NoopGroupByAllocator();
+
+        final PerWorkerFunctionList<GroupByFunction> workerSlot0 = new PerWorkerFunctionList<>(3);
+        workerSlot0.add(sharedOwner0, false);
+        workerSlot0.add(ownedClone0, true);
+        workerSlot0.add(sharedOwner1, false);
+
+        final PerWorkerFunctionList<GroupByFunction> workerSlot1 = new PerWorkerFunctionList<>(3);
+        workerSlot1.add(sharedOwner0, false);
+        workerSlot1.add(ownedClone1, true);
+        workerSlot1.add(sharedOwner1, false);
+
+        GroupByUtils.setAllocator(workerSlot0, workerAllocator0);
+        GroupByUtils.setAllocator(workerSlot1, workerAllocator1);
+
+        Assert.assertEquals("borrowed shared owner function must not receive a worker allocator", 0, sharedOwner0.setAllocatorCount);
+        Assert.assertEquals("borrowed shared owner function must not receive a worker allocator", 0, sharedOwner1.setAllocatorCount);
+        Assert.assertNull(sharedOwner0.lastAllocator);
+        Assert.assertNull(sharedOwner1.lastAllocator);
+        Assert.assertEquals(1, ownedClone0.setAllocatorCount);
+        Assert.assertSame("owned clone must receive its own worker slot's allocator instance", workerAllocator0, ownedClone0.lastAllocator);
+        Assert.assertEquals(1, ownedClone1.setAllocatorCount);
+        Assert.assertSame("owned clone must receive its own worker slot's allocator instance", workerAllocator1, ownedClone1.lastAllocator);
+    }
+
+    @Test
+    public void testSetAllocatorProbesOwnershipBitsOncePerOwnedSlot() throws Exception {
+        // sparse ownership: the traversal must probe the owned bits once per owned slot (plus
+        // the terminating probe), not once per retained function, and only the owned worker
+        // clones may receive the allocator
+        final int functionCount = 100;
+        final PerWorkerFunctionList<GroupByFunction> list = new PerWorkerFunctionList<>(functionCount);
+        for (int i = 0; i < functionCount; i++) {
+            list.add(new AllocatorCountingGroupByFunction(), i == 10 || i == 90);
+        }
+        final CountingBitSet ownedBits = swapOwnedBits(list);
+        GroupByUtils.setAllocator(list, null);
+        for (int i = 0; i < functionCount; i++) {
+            final int expectedCalls = (i == 10 || i == 90) ? 1 : 0;
+            Assert.assertEquals(
+                    "function at index " + i,
+                    expectedCalls,
+                    ((AllocatorCountingGroupByFunction) list.getQuick(i)).setAllocatorCount
+            );
+        }
+        Assert.assertTrue(
+                "setAllocator must probe the ownership bits O(owned) times, not O(size), but probed "
+                        + ownedBits.probeCount + " times",
+                ownedBits.probeCount <= 3
+        );
+    }
+
+    @Test
+    public void testSetAllocatorSetsEveryFunctionOnPlainList() {
+        // non-ownership-aware fallback: every function of a plain list receives the allocator
+        final ObjList<GroupByFunction> functions = new ObjList<>();
+        functions.add(new AllocatorCountingGroupByFunction());
+        functions.add(new AllocatorCountingGroupByFunction());
+        GroupByUtils.setAllocator(functions, null);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Assert.assertEquals(1, ((AllocatorCountingGroupByFunction) functions.getQuick(i)).setAllocatorCount);
+        }
+    }
+
+    @Test
+    public void testSetAllocatorSkipsFullyBorrowedListWithoutScanningIt() throws Exception {
+        // the common per-worker case: every function is thread-safe and borrowed from the
+        // owner, so setAllocator must cost a single ownership probe per worker instead of one
+        // probe per retained function, and no function may receive the worker allocator
+        final int functionCount = 100;
+        final PerWorkerFunctionList<GroupByFunction> list = new PerWorkerFunctionList<>(functionCount);
+        for (int i = 0; i < functionCount; i++) {
+            list.add(new AllocatorCountingGroupByFunction(), false);
+        }
+        final CountingBitSet ownedBits = swapOwnedBits(list);
+        GroupByUtils.setAllocator(list, null);
+        for (int i = 0; i < functionCount; i++) {
+            Assert.assertEquals(0, ((AllocatorCountingGroupByFunction) list.getQuick(i)).setAllocatorCount);
+        }
+        Assert.assertTrue(
+                "setAllocator on a fully borrowed list must be O(1), but probed the ownership bits "
+                        + ownedBits.probeCount + " times",
+                ownedBits.probeCount <= 1
+        );
+    }
+
     private static ObjList<Function> list(Function... functions) {
         ObjList<Function> result = new ObjList<>();
         for (Function f : functions) {
@@ -139,12 +277,136 @@ public class GroupByUtilsTest {
         return result;
     }
 
+    private static CountingBitSet swapOwnedBits(PerWorkerFunctionList<?> list) throws Exception {
+        final Field field = PerWorkerFunctionList.class.getDeclaredField("ownedFunctions");
+        field.setAccessible(true);
+        final CountingBitSet countingBits = new CountingBitSet();
+        countingBits.or((BitSet) field.get(list));
+        field.set(list, countingBits);
+        return countingBits;
+    }
+
+    private static class AllocatorCountingGroupByFunction extends LongFunction implements GroupByFunction {
+        private GroupByAllocator lastAllocator;
+        private int setAllocatorCount;
+
+        @Override
+        public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        }
+
+        @Override
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public int getValueIndex() {
+            return 0;
+        }
+
+        @Override
+        public void initValueIndex(int valueIndex) {
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes) {
+        }
+
+        @Override
+        public void setAllocator(GroupByAllocator allocator) {
+            lastAllocator = allocator;
+            setAllocatorCount++;
+        }
+
+        @Override
+        public void setNull(MapValue mapValue) {
+        }
+    }
+
     private static class CloseCountingFunction extends LongFunction {
         int closeCount;
 
         @Override
         public void close() {
             closeCount++;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return 0;
+        }
+    }
+
+    private static class CountingBitSet extends BitSet {
+        private int probeCount;
+
+        @Override
+        public boolean get(int bitIndex) {
+            probeCount++;
+            return super.get(bitIndex);
+        }
+
+        @Override
+        public int nextSetBit(int fromIndex) {
+            probeCount++;
+            return super.nextSetBit(fromIndex);
+        }
+    }
+
+    private static class NoopGroupByAllocator implements GroupByAllocator {
+
+        @Override
+        public long allocated() {
+            return 0;
+        }
+
+        @Override
+        public void clear() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public void free(long ptr, long size) {
+        }
+
+        @Override
+        public long malloc(long size) {
+            return 0;
+        }
+
+        @Override
+        public long realloc(long ptr, long oldSize, long newSize) {
+            return 0;
+        }
+
+        @Override
+        public void reopen() {
+        }
+
+        @Override
+        public void setMemoryTracker(MemoryTracker tracker) {
+        }
+    }
+
+    private static class ThrowingCloseFunction extends LongFunction {
+        private final String message;
+        private int closeAttempts;
+
+        private ThrowingCloseFunction(String message) {
+            this.message = message;
+        }
+
+        @Override
+        public void close() {
+            closeAttempts++;
+            throw new RuntimeException(message);
         }
 
         @Override

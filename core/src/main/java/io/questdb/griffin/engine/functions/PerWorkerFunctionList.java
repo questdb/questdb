@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.BitSet;
@@ -107,6 +108,16 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
         throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
     }
 
+    /**
+     * Returns the index of the first owned slot at or after {@code fromIndex}, or -1 when no
+     * owned slot remains. Callers iterate the owned slots directly with
+     * {@code for (int i = list.nextOwned(0); i > -1; i = list.nextOwned(i + 1))} and skip
+     * borrowed slots without scanning them, so a fully borrowed list costs a single probe.
+     */
+    public int nextOwned(int fromIndex) {
+        return ownedFunctions.nextSetBit(fromIndex);
+    }
+
     @Override
     public T popLast() {
         throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
@@ -180,6 +191,21 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
         }
     }
 
+    /**
+     * Variant of {@link #close(ObjList)} for cleanup paths that already hold a primary
+     * exception: it attaches any failure from the close to the primary as suppressed instead
+     * of letting the failure propagate and mask it.
+     */
+    public static void close(ObjList<? extends Function> functions, @NotNull Throwable primary) {
+        try {
+            close(functions);
+        } catch (Throwable th) {
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+        }
+    }
+
     public static void init(
             ObjList<? extends Function> functions,
             @Nullable ObjList<? extends Function> ownerFunctions,
@@ -221,9 +247,16 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
     }
 
     private void closeOwned() {
+        // Best-effort cleanup: null every owned slot before its close attempt and keep going
+        // when a close() throws, so a failing worker clone can neither leak the clones after
+        // it nor leave its own slot closeable twice. The first failure propagates once every
+        // owned slot has seen a close attempt, with later failures attached as suppressed.
+        Throwable failure = null;
         for (int i = ownedFunctions.nextSetBit(0); i > -1; i = ownedFunctions.nextSetBit(i + 1)) {
-            Misc.free(getQuick(i));
+            final T function = getQuick(i);
             super.setQuick(i, null);
+            failure = Misc.freeBestEffort(failure, function);
         }
+        Misc.rethrowCleanupFailure(failure);
     }
 }

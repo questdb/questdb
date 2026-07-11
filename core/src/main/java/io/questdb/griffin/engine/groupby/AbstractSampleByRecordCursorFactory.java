@@ -83,16 +83,21 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
 
     @Override
     protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        Misc.free(base);
+        // Best-effort cleanup: attempt every close even when an earlier one throws, because
+        // the closed-flag in AbstractRecordCursorFactory makes this the only close attempt
+        // each owned resource will ever see. The first failure rethrows after the last
+        // attempt, with later failures attached as suppressed.
+        Throwable failure = Misc.freeObjListBestEffort(null, recordFunctions);
+        failure = Misc.freeBestEffort(failure, base);
         // The factory is the lifetime owner of the temporal parameter functions (timezone,
         // offset, FROM, TO); the cursors only borrow them across the executions of this cached
         // factory. The generator accepts runtime-constant expressions here, which may own child
         // functions, so they must be closed exactly once.
-        Misc.free(timezoneNameFunc);
-        Misc.free(offsetFunc);
-        Misc.free(sampleFromFunc);
-        Misc.free(sampleToFunc);
+        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
+        failure = Misc.freeBestEffort(failure, offsetFunc);
+        failure = Misc.freeBestEffort(failure, sampleFromFunc);
+        failure = Misc.freeBestEffort(failure, sampleToFunc);
+        Misc.rethrowCleanupFailure(failure);
     }
 
     protected abstract AbstractNoRecordSampleByCursor getRawCursor();

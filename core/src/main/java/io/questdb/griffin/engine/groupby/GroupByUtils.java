@@ -383,7 +383,9 @@ public class GroupByUtils {
             }
             validateGroupByColumns(sqlNodeStack, model, inferredKeyColumnCount);
         } catch (Throwable th) {
-            freeAssembledProjectionFunctions(outerProjectionFunctions, innerProjectionFunctions);
+            // Best-effort cleanup: attach close() failures to the primary assembly exception
+            // as suppressed instead of letting them mask it or skip the cleanup below.
+            freeAssembledProjectionFunctions(outerProjectionFunctions, innerProjectionFunctions, th);
             // Every group-by function was also added to outerProjectionFunctions (same
             // instance) and freed by the call above. Clear the list so callers that free
             // it on their own error path (the JOIN callsites call
@@ -391,7 +393,11 @@ public class GroupByUtils {
             outGroupByFunctions.clear();
             if (extraOuterProjectionFunctions != null) {
                 for (int i = 0, n = extraOuterProjectionFunctions.size(); i < n; i++) {
-                    Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(i));
+                    final ObjList<Function> extra = extraOuterProjectionFunctions.getQuick(i);
+                    if (extra != null) {
+                        Misc.freeObjListBestEffort(th, extra);
+                        extra.clear();
+                    }
                 }
                 extraOuterProjectionFunctions.clear();
             }
@@ -561,6 +567,11 @@ public class GroupByUtils {
      * same reference. Closing the same Function twice would underflow allocator counters, so
      * callers must not additionally free the group-by function list - its entries are aliased in
      * the outer list and are already closed by this call.
+     * <p>
+     * The walk is best-effort: a throwing close() does not stop it. Every function still sees
+     * exactly one close attempt, both lists end up cleared, and the first failure rethrows once
+     * the walk completes, with later failures attached to it as suppressed. Callers already
+     * holding a primary exception must catch the rethrown failure and suppress it themselves.
      */
     public static void freeAssembledProjectionFunctions(
             @Nullable ObjList<Function> outerProjectionFunctions,
@@ -568,11 +579,14 @@ public class GroupByUtils {
     ) {
         if (outerProjectionFunctions == null) {
             if (innerProjectionFunctions != null) {
-                Misc.freeObjListAndClear(innerProjectionFunctions);
+                final Throwable failure = Misc.freeObjListBestEffort(null, innerProjectionFunctions);
+                innerProjectionFunctions.clear();
+                Misc.rethrowCleanupFailure(failure);
             }
             return;
         }
         final int innerSize = innerProjectionFunctions != null ? innerProjectionFunctions.size() : 0;
+        Throwable failure = null;
         int j = 0;
         for (int i = 0, n = outerProjectionFunctions.size(); i < n; i++) {
             final Function outerFunc = outerProjectionFunctions.getQuick(i);
@@ -580,13 +594,13 @@ public class GroupByUtils {
                 // timestamp placeholder: assembly added no inner counterpart
                 continue;
             }
-            Misc.free(outerFunc);
+            failure = Misc.freeBestEffort(failure, outerFunc);
             if (j < innerSize) {
                 final Function innerFunc = innerProjectionFunctions.getQuick(j);
                 if (innerFunc != outerFunc) {
                     // the key rewrite replaced the outer entry; the parsed original is
                     // reachable only through this inner slot
-                    Misc.free(innerFunc);
+                    failure = Misc.freeBestEffort(failure, innerFunc);
                 }
                 j++;
             }
@@ -598,6 +612,26 @@ public class GroupByUtils {
             innerProjectionFunctions.clear();
         }
         outerProjectionFunctions.clear();
+        Misc.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * Variant of {@link #freeAssembledProjectionFunctions(ObjList, ObjList)} for cleanup paths
+     * that already hold a primary exception: it attaches any failure from the best-effort walk
+     * to the primary as suppressed instead of letting the failure propagate and mask it.
+     */
+    public static void freeAssembledProjectionFunctions(
+            @Nullable ObjList<Function> outerProjectionFunctions,
+            @Nullable ObjList<Function> innerProjectionFunctions,
+            @NotNull Throwable primary
+    ) {
+        try {
+            freeAssembledProjectionFunctions(outerProjectionFunctions, innerProjectionFunctions);
+        } catch (Throwable th) {
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+        }
     }
 
     public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
@@ -662,8 +696,15 @@ public class GroupByUtils {
     }
 
     public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            if (PerWorkerFunctionList.isOwned(functions, i)) {
+        if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
+            // The list tracks worker-owned clones positionally, so iterate the owned bits
+            // directly instead of scanning every retained function: the common fully borrowed
+            // per-worker list costs a single probe instead of one probe per function.
+            for (int i = perWorkerFunctions.nextOwned(0); i > -1; i = perWorkerFunctions.nextOwned(i + 1)) {
+                functions.getQuick(i).setAllocator(allocator);
+            }
+        } else {
+            for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).setAllocator(allocator);
             }
         }

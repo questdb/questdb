@@ -551,8 +551,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    /**
+     * Returns null when no cursor function recorded a position: null is the "no cursor bounds"
+     * sentinel {@code RuntimeIntervalModel.getCursorFunctionPosition()} already handles, so the
+     * common no-cursor case skips allocating a dead empty IntList per built model.
+     */
     protected IntList copyCursorFunctionPositions() {
-        return new IntList(cursorFunctionPositions);
+        return cursorFunctionPositions.size() > 0 ? new IntList(cursorFunctionPositions) : null;
     }
 
     protected ObjList<Function> copyDynamicRangeList() {

@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -112,6 +113,30 @@ public final class Misc {
         }
     }
 
+    /**
+     * Closes the object while keeping multi-resource cleanup best-effort: a close() failure
+     * folds into the given failure chain instead of propagating, so later resources in the
+     * same cleanup sequence still see a close attempt. The first failure becomes the primary
+     * and later failures attach to it as suppressed. Callers thread the returned chain
+     * through the whole sequence and rethrow it at the end, either explicitly (when the
+     * primary is the exception that triggered the cleanup) or via
+     * {@link #rethrowCleanupFailure(Throwable)}.
+     */
+    public static <T extends Closeable> @Nullable Throwable freeBestEffort(@Nullable Throwable primary, @Nullable T object) {
+        try {
+            free(object);
+            return primary;
+        } catch (Throwable th) {
+            if (primary == null) {
+                return th;
+            }
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+            return primary;
+        }
+    }
+
     // same as free() but can be used when input object type is not guaranteed to be Closeable
     public static <T> T freeIfCloseable(T object) {
         if (object instanceof Closeable) {
@@ -145,6 +170,23 @@ public final class Misc {
                 free(list.getQuick(i));
             }
         }
+    }
+
+    /**
+     * Closes every list entry and nulls its slot even when earlier entries throw, folding
+     * close() failures into the given failure chain the same way
+     * {@link #freeBestEffort(Throwable, Closeable)} does. Do not pass list subclasses that
+     * reject setQuick().
+     */
+    public static <T extends Closeable> @Nullable Throwable freeObjListBestEffort(@Nullable Throwable primary, @Nullable ObjList<T> list) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                final T object = list.getQuick(i);
+                list.setQuick(i, null);
+                primary = freeBestEffort(primary, object);
+            }
+        }
+        return primary;
     }
 
     // same as freeObjList() but can be used when input object type is not guaranteed to be Closeable
@@ -191,6 +233,25 @@ public final class Misc {
 
     public static void releaseUtf8Sink() {
         tlUtf8SinkPool.get().release();
+    }
+
+    /**
+     * Rethrows a failure collected through {@link #freeBestEffort(Throwable, Closeable)} once
+     * a best-effort cleanup sequence has attempted every close. Close paths only surface
+     * unchecked throwables ({@link #free(Closeable)} wraps IOException into FatalError), so
+     * the wrapping branch is a defensive fallback.
+     */
+    public static void rethrowCleanupFailure(@Nullable Throwable failure) {
+        if (failure == null) {
+            return;
+        }
+        if (failure instanceof RuntimeException runtimeException) {
+            throw runtimeException;
+        }
+        if (failure instanceof Error error) {
+            throw error;
+        }
+        throw new RuntimeException(failure);
     }
 
     private static <T> void freeObjList0(ObjList<T> list) {

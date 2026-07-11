@@ -287,13 +287,30 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
+    public void testCursorFunctionsProducePositionsList() {
+        // The non-empty path stays intact: each cursor function records its parse position.
+        CursorPositionsExposingBuilder builder = newCursorPositionsExposingBuilder();
+        builder.intersectRuntimeTimestamp(new CloseCountingFunction(), 11);
+        builder.intersectRuntimeTimestamp(new CloseCountingCursorFunction(), 22);
+
+        IntList positions = builder.cursorFunctionPositionsCopy();
+        Assert.assertNotNull(positions);
+        Assert.assertEquals(1, positions.size());
+        Assert.assertEquals(22, positions.getQuick(0));
+        builder.freeAndClear();
+    }
+
+    @Test
     public void testDynamicIntervalsDoNotAllocateErrorPositions() {
+        // With no cursor functions the copy must be null, not an empty IntList: null is the
+        // "no cursor bounds" sentinel RuntimeIntervalModel.getCursorFunctionPosition() handles,
+        // and returning it avoids one dead object per interval-model compilation.
         CursorPositionsExposingBuilder builder = newCursorPositionsExposingBuilder();
         for (int i = 0; i < 32; i++) {
             builder.intersectRuntimeTimestamp(new CloseCountingFunction(), i);
         }
 
-        Assert.assertEquals(0, builder.cursorFunctionPositionsCopy().size());
+        Assert.assertNull(builder.cursorFunctionPositionsCopy());
         builder.freeAndClear();
     }
 

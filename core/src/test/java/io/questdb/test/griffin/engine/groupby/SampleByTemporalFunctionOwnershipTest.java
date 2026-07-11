@@ -67,6 +67,27 @@ public class SampleByTemporalFunctionOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillLinearFromToClosesTemporalFunctionsOnce() throws Exception {
+        // interpolation path with all four temporal parameters: the linear-fill guard in the
+        // optimiser keeps FROM/TO queries on SampleByInterpolateRecordCursorFactory, which owns
+        // sampleFromFunc and sampleToFunc independently of timezone and offset; a whole-day
+        // stride avoids the compile-time timezone normalization that would replace the counted
+        // FROM/TO functions with constants before the factory adopts them
+        assertMemoryLeak(() -> {
+            createPriceTable();
+            assertTemporalFunctionsClosedOnce(
+                    "select ts, sum(price) s from t sample by 1d " +
+                            "from test_close_counter('1970-01-01') to test_close_counter('1970-01-02') " +
+                            "fill(linear) " +
+                            "align to calendar time zone test_close_counter('UTC') " +
+                            "with offset test_close_counter('00:00')",
+                    "fill: linear",
+                    "ts\ts\n1970-01-01T00:00:00.000000Z\t6\n"
+            );
+        });
+    }
+
+    @Test
     public void testFirstLastClosesTemporalFunctionsOnce() throws Exception {
         // index-backed first/last fast path: SampleByFirstLastRecordCursorFactory
         assertMemoryLeak(() -> {

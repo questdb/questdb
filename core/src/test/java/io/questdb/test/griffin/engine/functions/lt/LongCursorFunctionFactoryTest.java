@@ -24,11 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.lt;
 
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -48,43 +43,8 @@ public class LongCursorFunctionFactoryTest extends AbstractCursorFunctionFactory
 
     @Test
     public void testWorkerStateSharedExecutesCursorOnceAndRefreshes() throws Exception {
-        // Proves the worker-state contract of the async filter path with a non-thread-safe left
-        // operand: (1) the scalar sub-query executes exactly once per query execution even with 4
-        // workers; (2) every worker clone observes the owner's scalar (rows across the threshold are
-        // classified correctly); (3) re-executing the same compiled factory refreshes the cached state.
-        // test_timestamp_counter() increments once per row the sub-query cursor reads, so the counter
-        // equals the number of RHS executions.
-        runWithPool((compiler, ctx) -> {
-            execute(compiler, "create table src (ts timestamp)", ctx);
-            execute(compiler, "insert into src values (5000)", ctx);
-            execute(
-                    compiler,
-                    "create table t as (" +
-                            "  select x::long l, timestamp_sequence(0, 1000000) ts" +
-                            "  from long_sequence(10000)" +
-                            ") timestamp(ts) partition by day",
-                    ctx
-            );
-
-            TestTimestampCounterFactory.COUNTER.set(0);
-            try (RecordCursorFactory factory = compiler.compile(
-                    "select count() c from t where l::string::long > (select test_timestamp_counter(ts)::long from src)",
-                    ctx
-            ).getRecordCursorFactory()) {
-                // threshold = 5000 -> 5001..10000 -> 5000 rows
-                try (RecordCursor cursor = factory.getCursor(ctx)) {
-                    TestUtils.assertCursor("c\n5000\n", cursor, factory.getMetadata(), true, sink);
-                }
-                Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
-
-                // change the RHS and re-execute the same compiled factory: the cached scalar must refresh
-                execute(compiler, "update src set ts = 9000", ctx);
-                try (RecordCursor cursor = factory.getCursor(ctx)) {
-                    TestUtils.assertCursor("c\n1000\n", cursor, factory.getMetadata(), true, sink);
-                }
-                Assert.assertEquals(2, TestTimestampCounterFactory.COUNTER.get());
-            }
-        });
+        // a LONG cursor scalar -> the long comparison mode of the worker-state contract
+        assertWorkerStateSharedBehavior("long", "l", "long");
     }
 
     @Test
@@ -315,168 +275,18 @@ public class LongCursorFunctionFactoryTest extends AbstractCursorFunctionFactory
 
     @Test
     public void testParallelGroupByWithLongCursorPredicate() throws Exception {
-        runWithPool((compiler, ctx) -> {
-            execute(
-                    compiler,
-                    "create table trades as (" +
-                            "  select (x % 10)::int grp, x::long qty, timestamp_sequence(0, 1000000) ts" +
-                            "  from long_sequence(100000)" +
-                            ") timestamp(ts) partition by day",
-                    ctx
-            );
-
-            assertQuery("select grp, count() c from trades where qty > (select max(qty) / 2 from trades) order by grp")
-                    .withContext(ctx)
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Encode sort light
-                              keys: [grp]
-                                Async Group By workers: 4
-                                  keys: [grp]
-                                  values: [count(*)]
-                                  filter: qty [thread-safe] > cursor\s
-                                    VirtualRecord
-                                      functions: [max/2]
-                                        Async Group By workers: 4
-                                          vectorized: true
-                                          values: [max(qty)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades
-                            """);
-
-            // qty in 50001..100000 -> 5000 rows per grp
-            assertQuery("select grp, count() c from trades where qty > (select max(qty) / 2 from trades) order by grp")
-                    .withContext(ctx)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            grp\tc
-                            0\t5000
-                            1\t5000
-                            2\t5000
-                            3\t5000
-                            4\t5000
-                            5\t5000
-                            6\t5000
-                            7\t5000
-                            8\t5000
-                            9\t5000
-                            """);
-        });
+        // max(qty)/2 = 50000 is a long cursor scalar -> long comparison mode
+        assertParallelGroupByWithCursorPredicateBehavior("long");
     }
 
     @Test
     public void testPlanAsyncFilterLongMode() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table t as (select x::long l from long_sequence(10))");
-            assertQuery("select l from t where l > (select max(l) from t)")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Async Filter workers: 1
-                              filter: l [thread-safe] > cursor\s
-                                Async Group By workers: 1
-                                  vectorized: true
-                                  values: [max(l)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: t
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t
-                            """);
-        });
+        assertPlanAsyncFilterLongModeBehavior("long", "l");
     }
 
     @Test
     public void testParallelAsyncFilterAndKeyedSumLessThan() throws Exception {
-        runWithPool((compiler, ctx) -> {
-            execute(
-                    compiler,
-                    "create table trades as (" +
-                            "  select (x % 10)::int grp, x::long qty, timestamp_sequence(0, 1000000) ts" +
-                            "  from long_sequence(100000)" +
-                            ") timestamp(ts) partition by day",
-                    ctx
-            );
-
-            // (1) a plain filter with the long/cursor predicate must run on the async filter concurrently
-            assertQuery("select ts, qty from trades where qty < (select max(qty) / 2 from trades)")
-                    .withContext(ctx)
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Async Filter workers: 4
-                              filter: qty [thread-safe] < cursor\s
-                                VirtualRecord
-                                  functions: [max/2]
-                                    Async Group By workers: 4
-                                      vectorized: true
-                                      values: [max(qty)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: trades
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: trades
-                            """);
-
-            // filter correctness: max(qty)/2 = 50000 -> qty in 1..49999 -> 49999 rows
-            assertQuery("select count() c from trades where qty < (select max(qty) / 2 from trades)")
-                    .withContext(ctx)
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("c\n49999\n");
-
-            // (2) a keyed aggregate (sum) over the same predicate must stay parallel (Async Group By workers: 4)
-            assertQuery("select grp, sum(qty) s from trades where qty < (select max(qty) / 2 from trades) order by grp")
-                    .withContext(ctx)
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Encode sort light
-                              keys: [grp]
-                                Async Group By workers: 4
-                                  keys: [grp]
-                                  values: [sum(qty)]
-                                  filter: qty [thread-safe] < cursor\s
-                                    VirtualRecord
-                                      functions: [max/2]
-                                        Async Group By workers: 4
-                                          vectorized: true
-                                          values: [max(qty)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: trades
-                            """);
-
-            assertQuery("select grp, sum(qty) s from trades where qty < (select max(qty) / 2 from trades) order by grp")
-                    .withContext(ctx)
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            grp	s
-                            0	124975000
-                            1	124980000
-                            2	124985000
-                            3	124990000
-                            4	124995000
-                            5	125000000
-                            6	125005000
-                            7	125010000
-                            8	125015000
-                            9	125020000
-                            """);
-        });
+        assertParallelAsyncFilterAndKeyedSumLessThanBehavior("long");
     }
 
 }
