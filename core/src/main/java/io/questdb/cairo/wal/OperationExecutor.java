@@ -30,6 +30,7 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -191,13 +192,29 @@ class OperationExecutor implements Closeable {
                 }
             }
             try (DeleteOperation deleteOp = compiledQuery.getDeleteOperation()) {
-                // Advance the sequencer txn exactly as TableWriter.apply(op, seqTxn) does. setSeqTxn before
-                // the mutation so the replace commit persists THIS seqTxn; if no data txn was written
-                // (empty table, or an identical-data no-op replace), force a seqTxn commit. Without this the
-                // writer's persisted seqTxn never reaches this txn and ApplyWal2TableJob re-runs the DELETE
-                // forever. On error, rollback and mirror apply()'s WAL-tolerable / retry handling.
-                tableWriter.setSeqTxn(seqTxn);
                 try {
+                    // Task 3.1 Parquet convert-to-native fallback. Any Parquet partition the replace below would
+                    // REWRITE (a boundary trim on the time-range route, or an arbitrary-condition rewrite) is
+                    // converted to native FIRST, because the replace path cannot rewrite Parquet in place. That
+                    // conversion is its own physical commit (convertPartitionParquetToNative's
+                    // bumpPartitionTableVersion + the self-committing commitPendingParquetToNativeConversions),
+                    // so convert-then-replace is inherently TWO commits. Crash-safety comes from a single seqTxn
+                    // advance: this pre-pass runs BEFORE setSeqTxn(seqTxn), so its commit (#1) persists the PRIOR
+                    // seqTxn S-1 plus the native-format change; the replace (commit #2) is the ONLY commit that
+                    // advances to S. A crash between the two leaves the table durably at S-1 with some partitions
+                    // converted (data fully intact); ApplyWal2TableJob re-runs txn S, the re-issued
+                    // convertPartitionParquetToNative(false) on a now-native partition is an idempotent no-op, and
+                    // the replace proceeds - no lost or partial delete. NEVER move setSeqTxn(seqTxn) before this
+                    // pre-pass: if commit #1 persisted S, a crash would silently LOSE the delete (S marked
+                    // applied, delete never performed, never retried).
+                    convertParquetPartitionsForDelete(tableWriter, deleteOp);
+
+                    // Advance the sequencer txn exactly as TableWriter.apply(op, seqTxn) does. setSeqTxn before
+                    // the mutation so the replace commit persists THIS seqTxn; if no data txn was written
+                    // (empty table, or an identical-data no-op replace), force a seqTxn commit. Without this the
+                    // writer's persisted seqTxn never reaches this txn and ApplyWal2TableJob re-runs the DELETE
+                    // forever. On error, rollback and mirror apply()'s WAL-tolerable / retry handling.
+                    tableWriter.setSeqTxn(seqTxn);
                     final long txnBefore = tableWriter.getTxn();
                     // Time-range fast path (Task 2.1): a pure single designated-timestamp interval delete is
                     // one empty replaceRange over the DELETED interval (O(deleted), no survivor staging).
@@ -223,12 +240,15 @@ class OperationExecutor implements Closeable {
                     tableWriter.setSeqTxn(seqTxn - 1);
                     throw ex;
                 } catch (Throwable th) {
-                    // Any other throwable (an Error such as OOM, or e.g. a SqlException thrown by
-                    // survivorFactory.getCursor() before any row was staged) must not escape without
-                    // rolling back and marking this txn as not applied, or the writer is left dirty
-                    // with an advanced in-memory seqTxn that the apply job will never retry. Guard the
-                    // rollback itself so a distressed-writer failure during cleanup doesn't mask the
-                    // original throwable (mirrors TableWriter.apply's broad Throwable branch).
+                    // Any other throwable (an Error such as OOM, a SqlException thrown by
+                    // survivorFactory.getCursor() before any row was staged, or a failure inside the Parquet
+                    // convert pre-pass) must not escape without rolling back and marking this txn as not
+                    // applied, or the writer is left dirty with an advanced in-memory seqTxn that the apply
+                    // job will never retry. A throw before the convert commit (#1) discards the uncommitted
+                    // conversion; a throw after it rolls back to the durable S-1 (partitions converted, data
+                    // intact) and retries txn S. Guard the rollback itself so a distressed-writer failure
+                    // during cleanup doesn't mask the original throwable (mirrors TableWriter.apply's broad
+                    // Throwable branch).
                     try {
                         tableWriter.rollback();
                     } catch (Throwable th2) {
@@ -243,6 +263,100 @@ class OperationExecutor implements Closeable {
         }
         // Do not catch SqlException from compile / mark the txn committed: like executeUpdate, a compile
         // failure here can be transient (e.g. table busy) and must be retried by the apply job.
+    }
+
+    /**
+     * Task 3.1 Parquet convert-to-native fallback. Converts to native - ahead of the delete's
+     * {@link TableWriter#replaceRange} - every Parquet partition the replace would REWRITE (the replace path
+     * cannot rewrite a Parquet partition in place). Which partitions those are depends on the delete's route
+     * (see {@link #executeDelete}):
+     * <ul>
+     *   <li><b>Time-range route</b> ({@link DeleteOperation#isPureTimeRange()}, an empty replace over the
+     *       clamped deleted interval {@code [dLo, dHiExcl)}): only the &le;2 <b>boundary</b> Parquet
+     *       partitions - those a delete endpoint splits, i.e. that OVERLAP the interval but are NOT fully
+     *       covered by it. Fully-covered interior Parquet partitions are dropped inline by the replace
+     *       (Task 2.2) with no data rewrite, so they are deliberately NOT converted. The coverage test mirrors
+     *       the replace path's own fully-covered check (exact data bounds at the table ends via
+     *       {@code getMinTimestamp()}/{@code getMaxTimestamp()}, partition floor / next-floor otherwise). For
+     *       contiguous or split partitions this is the exact set the replace would reject; under a CALENDAR
+     *       GAP it is a sound SUPERSET (may over-convert a gap-adjacent Parquet partition the delete does not
+     *       touch - safe, never under-converts). See the per-partition comment for the bound detail.</li>
+     *   <li><b>Arbitrary route</b> (whole-range survivor-replace over {@code [minTs, maxTs+1)}): EVERY Parquet
+     *       partition, because the whole-range replace rewrites every partition and there is no cheap
+     *       per-partition match test. <b>HEAVY v1 side-effect:</b> an arbitrary DELETE un-tiers ALL Parquet
+     *       partitions of the table (even a delete that matches no rows). This is correct but pessimistic; it
+     *       is bounded once a per-partition survivor fast-path lands that can skip partitions with no matched
+     *       rows.</li>
+     * </ul>
+     * <p>
+     * When at least one partition is converted, the single batched
+     * {@link TableWriter#commitPendingParquetToNativeConversions()} is <b>commit #1</b>: because this runs
+     * BEFORE {@code executeDelete}'s {@code setSeqTxn(seqTxn)} it persists the PRIOR seqTxn {@code S-1} together
+     * with the native-format change and its housekeeping; the delete's replace is commit #2 (advances to
+     * {@code S}). See {@code executeDelete} for the crash-safety argument (the re-issued convert on a
+     * now-native partition is an idempotent no-op on WAL re-apply). When no partition is Parquet the whole
+     * pre-pass is a no-op - identical single-commit behavior for all-native tables. A throw here propagates to
+     * {@code executeDelete}'s rollback scaffolding, which discards the uncommitted conversion.
+     */
+    private void convertParquetPartitionsForDelete(TableWriter tableWriter, DeleteOperation deleteOp) {
+        final int partitionCount = tableWriter.getPartitionCount();
+        if (partitionCount == 0) {
+            return; // empty table: nothing to convert
+        }
+        int converted = 0;
+        if (deleteOp.isPureTimeRange()) {
+            // Clamp the deleted interval to the populated range, exactly as deleteTimeRange does.
+            final long dLo = Math.max(deleteOp.getTimeRangeLo(), tableWriter.getMinTimestamp());
+            final long dHiExcl = Math.min(deleteOp.getTimeRangeHiExcl(), tableWriter.getMaxTimestamp() + 1);
+            if (dLo >= dHiExcl) {
+                return; // interval entirely outside the populated range: the replace is a no-op, convert nothing
+            }
+            final long minTs = tableWriter.getMinTimestamp();
+            final long maxTs = tableWriter.getMaxTimestamp();
+            for (int i = 0; i < partitionCount; i++) {
+                if (tableWriter.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                final long floor = tableWriter.getPartitionTimestamp(i);
+                // Sound data-extent bounds: exact at the table ends (getMin/getMaxTimestamp), else the partition
+                // floor (a true LOWER bound - every row is >= its floor) and next-partition-floor-minus-one (a
+                // true UPPER bound on this partition's max data ts). These reproduce the replace path's
+                // fully-covered test (Task 2.2, TableWriter.processO3Block) exactly for contiguous/split
+                // partitions. Under a CALENDAR GAP (missing partitions between two physical ones)
+                // next-floor-minus-one is looser than the replace path's calendar-aware
+                // getCurrentPartitionMaxTimestamp, so this set is a sound SUPERSET: it may over-convert a
+                // Parquet partition adjacent to a gap that the delete does not touch (safe - never
+                // under-converts, never data loss), but never leaves a to-be-rewritten Parquet partition
+                // unconverted. An exact match would need a public calendar-ceiling accessor on TableWriter.
+                final long dataMin = (i == 0) ? minTs : floor;
+                final long dataMax = (i == partitionCount - 1) ? maxTs : (tableWriter.getPartitionTimestamp(i + 1) - 1);
+                final boolean overlaps = dataMin < dHiExcl && dataMax >= dLo;
+                final boolean fullyCovered = dataMin >= dLo && dataMax < dHiExcl;
+                if (overlaps && !fullyCovered) {
+                    // Partially-covered Parquet boundary partition: the replace would trim it (a data rewrite
+                    // Parquet cannot do in place). Convert to native first; doCommit=false batches all
+                    // conversions into the single commit below.
+                    tableWriter.convertPartitionParquetToNative(floor, false);
+                    converted++;
+                }
+            }
+        } else {
+            // Arbitrary route: the whole-range survivor-replace rewrites EVERY partition, and there is no cheap
+            // per-partition match test, so EVERY Parquet partition must be converted. HEAVY v1 side-effect: an
+            // arbitrary DELETE un-tiers ALL Parquet partitions of the table (even a no-match delete). Correct
+            // but pessimistic; improved when a per-partition survivor fast-path can skip unmatched partitions.
+            for (int i = 0; i < partitionCount; i++) {
+                if (tableWriter.getPartitionFormat(i) == PartitionFormat.PARQUET) {
+                    tableWriter.convertPartitionParquetToNative(tableWriter.getPartitionTimestamp(i), false);
+                    converted++;
+                }
+            }
+        }
+        if (converted > 0) {
+            // Commit #1 at seqTxn S-1 (setSeqTxn(seqTxn) has NOT run yet): publishes the native-format change
+            // and its housekeeping. The delete's replace is commit #2, the only one that advances to S.
+            tableWriter.commitPendingParquetToNativeConversions();
+        }
     }
 
     /**

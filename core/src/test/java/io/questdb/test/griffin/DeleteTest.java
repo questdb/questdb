@@ -774,14 +774,15 @@ public class DeleteTest extends AbstractCairoTest {
     }
 
     /**
-     * A time-range delete that only PARTIALLY covers a Parquet partition (a boundary trim) needs a data
-     * rewrite, which is not yet supported for Parquet and is deferred to Phase 3 / Task 3.1 (convert-to-native
-     * fallback). Until then the replace-apply guard rejects it and the WAL apply suspends the table. This pins
-     * the Phase-2 boundary so a future change that silently trimmed a Parquet partition (data loss risk) fails
-     * loudly here.
+     * Task 3.1 (route a): a pure time-range delete that only PARTIALLY covers a Parquet partition (a boundary
+     * trim inside the partition's day) needs a data rewrite the replace path cannot do on Parquet. The
+     * convert-to-native pre-pass un-tiers the boundary partition first, then the replace trims it. Here
+     * {@code ts < '1970-01-01T12:00:00Z'} deletes the first half of the Parquet day 1970-01-01 (x=1..11);
+     * x=12..23 (and every later day) survive, and the partition ends up NATIVE. Pre-Task-3.1 this boundary
+     * trim was rejected and suspended the table (see git history: testDeleteParquetBoundaryTrimStillRejected).
      */
     @Test
-    public void testDeleteParquetBoundaryTrimStillRejected() throws Exception {
+    public void testDeleteTimeRangeBoundaryTrimOnParquetConverts() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(72)) " +
                     "timestamp(ts) partition by DAY WAL");
@@ -789,16 +790,26 @@ public class DeleteTest extends AbstractCairoTest {
             execute("alter table t convert partition to parquet list '1970-01-01'");
             drainWalQueue();
             // Deletes only the first half of the parquet partition 1970-01-01 (x=1..11); x=12..23 must survive.
-            // A boundary trim of a Parquet partition needs a data rewrite -> Task 3.1, not this task.
             execute("DELETE FROM t WHERE ts < '1970-01-01T12:00:00.000000Z'");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("t");
-            Assert.assertTrue(
-                    "a partial-coverage Parquet delete (boundary trim) must still be rejected until Task 3.1, " +
-                            "suspending the table",
+            Assert.assertFalse(
+                    "a boundary trim of a Parquet partition must convert-to-native and succeed, not suspend",
                     engine.getTableSequencerAPI().isSuspended(tt));
-            // The failed apply left the data unchanged - nothing was trimmed from the parquet partition.
-            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n72\n");
+            // 11 rows deleted from the boundary day; 61 survive.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n61\n");
+            // nothing below the boundary survives.
+            assertQuery("select count(*) from t where ts < '1970-01-01T12:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            // the surviving min is exactly the trim boundary.
+            assertQuery("select min(ts) from t").timestamp("min").expectSize()
+                    .returns("min\n1970-01-01T12:00:00.000000Z\n");
+            // the surviving half of day 1 is intact (x=12..23 = 12 rows).
+            assertQuery("select count(*) from t where ts < '1970-01-02T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n12\n");
+            // the boundary partition was un-tiered to native by the fallback.
+            assertQuery("select isParquet from table_partitions('t') where name = '1970-01-01'")
+                    .noRandomAccess().returns("isParquet\nfalse\n");
         });
     }
 
@@ -838,15 +849,18 @@ public class DeleteTest extends AbstractCairoTest {
     }
 
     /**
-     * A single replace-commit that would inline-drop a FULLY-covered Parquet partition (1970-01-01) and then
-     * hits a PARTIALLY-covered Parquet partition (1970-01-02, a boundary trim) must roll back ATOMICALLY: the
-     * throw sets success=false, so o3ConsumePartitionUpdateSink is skipped and the already-written size-0 drop
-     * record for day 1 is never applied. Negative control: all 72 rows (including day 1) must survive. This
-     * pins the one property that keeps a partial Parquet drop from persisting, and confirms the drop-then-throw
-     * path settles the O3 counters/latch without a hang.
+     * Task 3.1 (mixed drop + convert): a single time-range delete over two Parquet partitions where one is
+     * FULLY covered and the other only PARTIALLY covered. The fully-covered Parquet day 1970-01-01 is dropped
+     * INLINE by the replace (Task 2.2, no convert - its data extent is entirely inside the range), while the
+     * partially-covered Parquet day 1970-01-02 is CONVERTED to native and trimmed (Task 3.1). This exercises
+     * the interaction between the inline-drop path (fully-covered partitions are NOT converted) and the
+     * convert-fallback (only the boundary partition is). {@code ts < '1970-01-02T12:00:00Z'} removes all of
+     * day 1 (x=1..23) and the first half of day 2 (x=24..35) = 35 rows; 37 survive, min becomes the day-2 trim
+     * boundary, and the trimmed partition ends up NATIVE. Pre-Task-3.1 this was rejected and suspended the
+     * table (see git history: testDeleteParquetDropThenPartialTrimRejectedAtomically).
      */
     @Test
-    public void testDeleteParquetDropThenPartialTrimRejectedAtomically() throws Exception {
+    public void testDeleteParquetDropAndBoundaryTrimConverts() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(72)) " +
                     "timestamp(ts) partition by DAY WAL"); // day1(x1-23) day2(x24-47) day3(x48-71) day4(x72)
@@ -855,17 +869,99 @@ public class DeleteTest extends AbstractCairoTest {
             drainWalQueue();
             execute("alter table t convert partition to parquet list '1970-01-02'");
             drainWalQueue();
-            // Range fully covers parquet day1 (would inline-drop, processed first) AND partially covers parquet
-            // day2 (must throw). The whole commit must roll back -> day1 must NOT be dropped.
+            // Range fully covers parquet day1 (inline-dropped, NOT converted) AND partially covers parquet day2
+            // (converted to native + trimmed).
             execute("DELETE FROM t WHERE ts < '1970-01-02T12:00:00.000000Z'");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("t");
-            Assert.assertTrue(
-                    "drop-then-partial-trim in one commit must be rejected atomically (table suspended)",
+            Assert.assertFalse(
+                    "drop-fully-covered + convert-and-trim-boundary in one commit must succeed, not suspend",
                     engine.getTableSequencerAPI().isSuspended(tt));
-            // Negative control: the fully-covered day1 was NOT dropped by the rolled-back commit.
-            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n72\n");
-            assertQuery("select min(ts) from t").timestamp("min").expectSize().returns("min\n1970-01-01T01:00:00.000000Z\n");
+            // 23 (all day1) + 12 (day2 x24..35) = 35 deleted; 37 survive.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n37\n");
+            assertQuery("select count(*) from t where ts < '1970-01-02T12:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            // day1 fully removed, so the surviving min is the day-2 trim boundary.
+            assertQuery("select min(ts) from t").timestamp("min").expectSize()
+                    .returns("min\n1970-01-02T12:00:00.000000Z\n");
+            // day1 is gone (dropped inline); day2 was un-tiered to native by the fallback.
+            assertQuery("select count(*) from table_partitions('t') where name = '1970-01-01'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("select isParquet from table_partitions('t') where name = '1970-01-02'")
+                    .noRandomAccess().returns("isParquet\nfalse\n");
+        });
+    }
+
+    /**
+     * Task 3.1: an ARBITRARY-condition delete (a non-pure-time-range predicate, routed to the whole-range
+     * survivor-replace) that must rewrite a Parquet partition converts EVERY Parquet partition to native first,
+     * then rewrites. Here {@code x % 2 = 0 AND ts < '1970-01-02'} matches inside the Parquet day 1970-01-01, so
+     * the survivor-replace has to rewrite it - impossible on Parquet in place, so the convert-to-native pre-pass
+     * un-tiers it. day1 = x 1..23 (23 rows); the even x below day 2 are x=2,4,..,22 (11 rows) -> deleted; 48-11=37
+     * survive. The converted partition ends up NATIVE.
+     */
+    @Test
+    public void testDeleteArbitraryOnParquetPartitionConverts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(48)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("alter table t convert partition to parquet list '1970-01-01'");
+            drainWalQueue();
+            // Deletes some rows WITHIN the parquet partition (arbitrary predicate) -> requires a rewrite.
+            execute("DELETE FROM t WHERE x % 2 = 0 AND ts < '1970-01-02T00:00:00.000000Z'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "an arbitrary delete over a Parquet partition must convert-to-native and succeed, not suspend",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // 11 even rows in day 1 deleted; 37 survive.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n37\n");
+            // no matching row survives.
+            assertQuery("select count(*) from t where x % 2 = 0 and ts < '1970-01-02T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            // the survivors in day 1 are exactly the odd x (1,3,..,23) = 12 rows, intact.
+            assertQuery("select count(*) from t where ts < '1970-01-02T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n12\n");
+            // the Parquet partition was un-tiered to native by the fallback.
+            assertQuery("select isParquet from table_partitions('t') where name = '1970-01-01'")
+                    .noRandomAccess().returns("isParquet\nfalse\n");
+        });
+    }
+
+    /**
+     * Task 3.1 safety under a CALENDAR PARTITION GAP. Data lives on day 1970-01-01 (Parquet) and 1970-01-03
+     * (native), with 1970-01-02 EMPTY, so the two physical partitions are calendar-non-adjacent. The convert
+     * pre-pass bounds a partition's max data ts by the next PHYSICAL partition floor minus one, which under a
+     * gap is looser than the replace path's calendar-aware ceiling - so {@code ts >= '1970-01-02T12:00'} (which
+     * touches only day 3) makes the pre-pass eagerly convert the untouched Parquet day 1 to native as well
+     * (a sound SUPERSET - see convertParquetPartitionsForDelete). This is wasteful but must stay CORRECT: day 1
+     * is not in the delete range, so all 23 of its rows survive intact and only day 3 is removed. (This test
+     * asserts the RESULT, not day 1's tier, so it survives a future exact-bound refinement.)
+     */
+    @Test
+    public void testDeleteTimeRangeParquetWithCalendarGapStaysCorrect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            // day 1 = x 1..23 (01:00..23:00 on 1970-01-01); day 2 left EMPTY; day 3 = x 49..71 (01:00..23:00 on 1970-01-03).
+            execute("insert into t select (x*3600*1000000L)::timestamp, x from long_sequence(23)");
+            execute("insert into t select ((x+48)*3600*1000000L)::timestamp, x+48 from long_sequence(23)");
+            drainWalQueue();
+            execute("alter table t convert partition to parquet list '1970-01-01'");
+            drainWalQueue();
+            // Deletes only day 3 (all ts >= 1970-01-03T01:00). day 1 is entirely below 1970-01-02T12:00.
+            execute("DELETE FROM t WHERE ts >= '1970-01-02T12:00:00.000000Z'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "a time-range delete over a table with a partition gap must succeed, not suspend",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // day 1 (23 rows) survives intact; day 3 (23 rows) removed.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n23\n");
+            assertQuery("select count(*) from t where ts >= '1970-01-02T12:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("select min(ts), max(ts) from t").noRandomAccess().expectSize()
+                    .returns("min\tmax\n1970-01-01T01:00:00.000000Z\t1970-01-01T23:00:00.000000Z\n");
         });
     }
 
