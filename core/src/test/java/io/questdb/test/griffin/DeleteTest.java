@@ -810,6 +810,131 @@ public class DeleteTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * B1 (non-timestamp bind): a DELETE WHERE with an INT bind variable, executed end-to-end (not just
+     * classified). The bind value is captured into the WAL SQL txn on the submit thread and restored at
+     * apply-time recompile ({@code WalWriter.apply(DeleteOperation)} -> {@code applyNonStructural} ->
+     * {@code events.appendSql}; {@code ApplyWal2TableJob.processWalSql} -> {@code populateBindVariableService}).
+     * This is the missing functional proof for the exact first-compile->WAL->apply-time-recompile capture
+     * contract that has already produced one real bug in this branch. Mirrors
+     * {@code UpdateTest#testUpdateWithBindVarInWhere}.
+     */
+    @Test
+    public void testDeleteWithIntBindVarInWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            // WHERE x = $1 (survivor-replace path). $1 = 3 removes x=3; x=1,2,4,5 survive.
+            execute("create table t as (select (x*1000000L)::timestamp ts, cast(x as int) x from long_sequence(5)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            sqlExecutionContext.getBindVariableService().setInt(0, 3);
+            execute("DELETE FROM t WHERE x = $1");
+            drainWalQueue();
+            assertQuery("select ts, x from t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    1970-01-01T00:00:01.000000Z\t1
+                    1970-01-01T00:00:02.000000Z\t2
+                    1970-01-01T00:00:04.000000Z\t4
+                    1970-01-01T00:00:05.000000Z\t5
+                    """);
+        });
+    }
+
+    /**
+     * B1 (runtime-bound timestamp): a DELETE WHERE with a TIMESTAMP bind variable, executed end-to-end. The
+     * dynamic interval bound forces the survivor-replace path (never the static fast path), evaluating the
+     * predicate with the restored bound value at apply time (see the capture/restore contract on
+     * {@link #testDeleteWithIntBindVarInWhere}). {@code ts > $1} with $1 = 3s removes x=4,5; x=1,2,3 survive.
+     */
+    @Test
+    public void testDeleteWithTimestampBindVarInWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*1000000L)::timestamp ts, cast(x as int) x from long_sequence(5)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            sqlExecutionContext.getBindVariableService().setTimestamp(0, 3_000_000L);
+            execute("DELETE FROM t WHERE ts > $1");
+            drainWalQueue();
+            assertQuery("select ts, x from t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    1970-01-01T00:00:01.000000Z\t1
+                    1970-01-01T00:00:02.000000Z\t2
+                    1970-01-01T00:00:03.000000Z\t3
+                    """);
+        });
+    }
+
+    /**
+     * B2: a disjunctive (OR) predicate exercised through {@code negateDeleteWhereClause}'s {@code NOT(pred)}
+     * survivor negation + the optimiser's De Morgan distribution. Every other executed arbitrary-predicate
+     * DELETE test uses a conjunctive/single-comparison predicate; OR only appeared in a classification-only
+     * test. A bug in how {@code NOT(a OR b)} distributes for this specific negation call site would silently
+     * produce a wrong survivor set - the textbook wrong-rows-survive failure mode.
+     */
+    @Test
+    public void testDeleteOrPredicateThroughNegation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*1000000L)::timestamp ts, cast(x as int) x from long_sequence(6)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+            execute("DELETE FROM t WHERE x = 1 OR x = 2");
+            drainWalQueue();
+            // Independent oracle: survivors == reference minus rows matching the WHOLE disjunction.
+            assertSqlCursors("select * from t_ref where not (x = 1 or x = 2)", "select * from t");
+            // Exact survivor set: x in {3,4,5,6}.
+            assertQuery("select ts, x from t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    1970-01-01T00:00:03.000000Z\t3
+                    1970-01-01T00:00:04.000000Z\t4
+                    1970-01-01T00:00:05.000000Z\t5
+                    1970-01-01T00:00:06.000000Z\t6
+                    """);
+        });
+    }
+
+    /**
+     * B3: zero-match and empty-table PURE-TIME-RANGE deletes through the REAL classifier -> executor path
+     * (not the raw {@code replaceRange} primitive). Exercises {@code OperationExecutor.deleteTimeRange}'s
+     * clamp-to-populated-range math ({@code max(lo,minTs)}, {@code min(hiExcl,maxTs+1)},
+     * {@code if (dLo >= dHiExcl) return 0}) and the {@code partitionCount == 0} empty-table guard. A swapped
+     * bound / off-by-one in the clamp is a plausible over-deletion; here it must be a clean no-op that does
+     * not suspend the table.
+     */
+    @Test
+    public void testDeletePureTimeRangeZeroMatchAndEmptyTableAreNoOps() throws Exception {
+        assertMemoryLeak(() -> {
+            // (a) zero-match: 1970-dated rows, delete a far-future static interval -> matches nothing.
+            execute("create table t as (select (x*1000000L)::timestamp ts, cast(x as int) x from long_sequence(5)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            execute("DELETE FROM t WHERE ts >= '2999-01-01T00:00:00.000000Z'");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "a zero-match pure-time-range DELETE must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("select ts, x from t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    1970-01-01T00:00:01.000000Z\t1
+                    1970-01-01T00:00:02.000000Z\t2
+                    1970-01-01T00:00:03.000000Z\t3
+                    1970-01-01T00:00:04.000000Z\t4
+                    1970-01-01T00:00:05.000000Z\t5
+                    """);
+
+            // (b) empty table: never populated, pure-time-range DELETE must be a clean no-op.
+            execute("create table e (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            final TableToken te = engine.verifyTableName("e");
+            execute("DELETE FROM e WHERE ts >= '1970-01-01T00:00:00.000000Z'");
+            drainWalQueue();
+            Assert.assertFalse(
+                    "a pure-time-range DELETE on an empty table must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(te));
+            assertQuery("select count(*) from e").noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
     // ---- Parquet partitions (Task 2.2) ----
 
     /**
@@ -825,10 +950,21 @@ public class DeleteTest extends AbstractCairoTest {
             execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(72)) " +
                     "timestamp(ts) partition by DAY WAL"); // 3 days
             drainWalQueue();
+            execute("create table t_ref as (select * from t)");
             execute("alter table t convert partition to parquet list '1970-01-01'");
             drainWalQueue();
             execute("DELETE FROM t WHERE ts < '1970-01-02T00:00:00.000000Z'");
             drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "a whole-partition Parquet inline-drop must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // Exact survivor-set oracle (was: min(ts) only): every day-1 row gone, days 2..4 byte-exact.
+            assertSqlCursors(
+                    "select * from t_ref where not (ts < '1970-01-02T00:00:00.000000Z')",
+                    "select * from t"
+            );
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n49\n");
             assertQuery("select min(ts) from t").timestamp("min").expectSize().returns("min\n1970-01-02T00:00:00.000000Z\n");
         });
     }
@@ -874,6 +1010,53 @@ public class DeleteTest extends AbstractCairoTest {
     }
 
     /**
+     * B4 (Task 3.1, HIGH-side mirror of {@link #testDeleteTimeRangeBoundaryTrimOnParquetConverts}): the
+     * delete range's inclusive-LO edge lands INSIDE a Parquet partition, deleting that partition's HIGH rows
+     * and keeping its LOW rows. This exercises the convert pre-pass's {@code overlaps}/{@code dataMax >= dLo}
+     * bound math with {@code dLo} interior to the partition - the one direction of the asymmetric Task 3.1
+     * boundary code that had never executed under test (the existing test only trims the low end). Here
+     * {@code ts >= '1970-01-01T12:00' AND ts < '1970-01-02'} removes the high half of the Parquet day
+     * 1970-01-01 (x=12..23); x=1..11 (and every later day) survive, and the partition ends up NATIVE.
+     */
+    @Test
+    public void testDeleteHighSideBoundaryTrimOnParquetConverts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(72)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+            execute("alter table t convert partition to parquet list '1970-01-01'");
+            drainWalQueue();
+            // Deletes only the HIGH half of the parquet partition 1970-01-01 (x=12..23); x=1..11 must survive.
+            execute("DELETE FROM t WHERE ts >= '1970-01-01T12:00:00.000000Z' AND ts < '1970-01-02T00:00:00.000000Z'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "a high-side boundary trim of a Parquet partition must convert-to-native and succeed, not suspend",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // Exact survivor-set oracle: NOT(the deleted high-half interval).
+            assertSqlCursors(
+                    "select * from t_ref where not (ts >= '1970-01-01T12:00:00.000000Z' and ts < '1970-01-02T00:00:00.000000Z')",
+                    "select * from t"
+            );
+            // 12 rows deleted from the boundary day's high half; 60 survive.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n60\n");
+            // nothing in the deleted high-half band survives.
+            assertQuery("select count(*) from t where ts >= '1970-01-01T12:00:00.000000Z' and ts < '1970-01-02T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            // the surviving LOW half of day 1 is intact (x=1..11 = 11 rows); the highest surviving x is 11
+            // (the 11:00 row), proving the high half x=12..23 is gone and the low half kept.
+            assertQuery("select count(*) from t where ts < '1970-01-02T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n11\n");
+            assertQuery("select max(x) from t where ts < '1970-01-02T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("max\n11\n");
+            // the boundary partition was un-tiered to native by the fallback.
+            assertQuery("select isParquet from table_partitions('t') where name = '1970-01-01'")
+                    .noRandomAccess().returns("isParquet\nfalse\n");
+        });
+    }
+
+    /**
      * Drops TWO interior (non-first, non-last) Parquet partitions in a single replace-commit, mixed with
      * surviving native partitions on both sides. This exercises the coverage check's floor/ceiling bounds
      * (used for a partition that is neither the first nor the last, so neither getMinTimestamp() nor
@@ -905,6 +1088,48 @@ public class DeleteTest extends AbstractCairoTest {
                     .returns("min\tmax\n1970-01-01T01:00:00.000000Z\t1970-01-05T00:00:00.000000Z\n");
             assertQuery("select count(*) from t where ts >= '1970-01-02T00:00:00.000000Z' and ts < '1970-01-04T00:00:00.000000Z'")
                     .noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    /**
+     * B5 (review-4 L1): a time-range DELETE that FULLY covers the LAST partition when that partition is
+     * Parquet. The convert pre-pass does NOT convert a fully-covered partition at i==last (skipped), so this
+     * hits the replace-path guard's inline O(1) DROP with the partition still Parquet - a path the ledger
+     * mis-noted as "unreached via convert-based DELETE" but which is in fact reachable. Must drop the
+     * partition (not rewrite), keep the earlier data byte-exact, and not suspend. day2 (1970-01-02) is the
+     * last partition here; {@code ts >= '1970-01-02'} fully covers it.
+     */
+    @Test
+    public void testDeleteWholeParquetLastPartitionDropsInline() throws Exception {
+        assertMemoryLeak(() -> {
+            // 47 rows over 2 days: day1 = x1..23 (01:00..23:00), day2 = x24..47 (1970-01-02 00:00..23:00, LAST).
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(47)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+            execute("alter table t convert partition to parquet list '1970-01-02'");
+            drainWalQueue();
+            // Sanity: the last partition really is Parquet before the delete.
+            assertQuery("select isParquet from table_partitions('t') where name = '1970-01-02'")
+                    .noRandomAccess().returns("isParquet\ntrue\n");
+            execute("DELETE FROM t WHERE ts >= '1970-01-02T00:00:00.000000Z'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "an inline drop of a fully-covered LAST Parquet partition must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // The last (Parquet) partition is DROPPED, not merely emptied in place.
+            assertQuery("select count(*) from table_partitions('t') where name = '1970-01-02'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            // Exact survivor-set oracle: only day 1 remains, byte-exact.
+            assertSqlCursors(
+                    "select * from t_ref where not (ts >= '1970-01-02T00:00:00.000000Z')",
+                    "select * from t"
+            );
+            assertQuery("select min(ts), max(ts), count() from t").noRandomAccess().expectSize().returns("""
+                    min\tmax\tcount
+                    1970-01-01T01:00:00.000000Z\t1970-01-01T23:00:00.000000Z\t23
+                    """);
         });
     }
 
