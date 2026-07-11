@@ -205,9 +205,20 @@ public class OperationExecutor implements Closeable {
                     // apply. Still crash-safe: a crash mid-loop leaves durable S-1, the whole delete re-applies,
                     // finished windows re-apply as no-ops (survivors-of-survivors) and already-native partitions
                     // re-convert as no-ops.
-                    if (!deleteOp.isPureTimeRange()
+                    final boolean diskBounded = !deleteOp.isPureTimeRange()
                             && engine.getConfiguration().getWalDeleteDiskBounded()
-                            && tableWriterHasParquet(tableWriter)) {
+                            && tableWriterHasParquet(tableWriter);
+                    // Observability (M1): one line per DELETE apply naming the route taken. The strategy label
+                    // is derived from the SAME predicates used to pick the route below (isPureTimeRange() and
+                    // the just-computed diskBounded), never re-derived independently, so it cannot drift from
+                    // the actual routing decision.
+                    final String deleteStrategy = deleteOp.isPureTimeRange()
+                            ? "time-range"
+                            : (diskBounded ? "survivor-window-disk-bounded" : "survivor-window");
+                    LOG.info().$("DELETE apply [table=").$(tableToken)
+                            .$(", strategy=").$(deleteStrategy)
+                            .$(", seqTxn=").$(seqTxn).I$();
+                    if (diskBounded) {
                         return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
                     }
 
@@ -469,6 +480,7 @@ public class OperationExecutor implements Closeable {
 
         tableWriter.beginReplaceRange();
         boolean finished = false;
+        long windowCount = 0;
         try {
             long wLo = minTs;
             while (wLo <= maxTs) {
@@ -482,10 +494,15 @@ public class OperationExecutor implements Closeable {
                 try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
                     tableWriter.applyReplaceRangeWindow(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);
                 }
+                windowCount++;
                 wLo = wHiExcl;
             }
             final long removed = tableWriter.finishReplaceRange();
             finished = true;
+            LOG.info().$("DELETE windowed survivor-replace [table=").$(tableWriter.getTableToken())
+                    .$(", windows=").$(windowCount)
+                    .$(", rowsPerStep=").$(rowsPerStep)
+                    .$(", removed=").$(removed).I$();
             return removed;
         } finally {
             if (!finished) {
@@ -557,6 +574,7 @@ public class OperationExecutor implements Closeable {
         final int tsColType = tableWriter.getMetadata().getColumnType(timestampCursorIndex);
 
         long removed = 0;
+        long windowCount = 0;
         long wLo = minTs;
         while (wLo <= maxTs) {
             // hiExcl = min(wLo + step, maxTs + 1), overflow-safe: if step covers the rest, this is the last window.
@@ -571,9 +589,14 @@ public class OperationExecutor implements Closeable {
                 // Single-call replaceRange => this window is its own commit (still at durable seqTxn S-1).
                 removed += tableWriter.replaceRange(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);
             }
+            windowCount++;
             wLo = wHiExcl;
         }
         tableWriter.commitSeqTxn(seqTxn); // FINAL: advance durable seqTxn S-1 -> S (one small commit)
+        LOG.info().$("DELETE disk-bounded survivor-replace [table=").$(tableWriter.getTableToken())
+                .$(", windows=").$(windowCount)
+                .$(", rowsPerStep=").$(rowsPerStep)
+                .$(", removed=").$(removed).I$();
         return removed;
     }
 
@@ -668,7 +691,10 @@ public class OperationExecutor implements Closeable {
             return 0;
         }
         final int timestampIndex = tableWriter.getMetadata().getTimestampIndex();
-        return tableWriter.replaceRange(dLo, dHiExcl, null, null, timestampIndex, executionContext);
+        final long removed = tableWriter.replaceRange(dLo, dHiExcl, null, null, timestampIndex, executionContext);
+        LOG.info().$("DELETE time-range replace [table=").$(tableWriter.getTableToken())
+                .$(", removed=").$(removed).I$();
+        return removed;
     }
 
     public long executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {
