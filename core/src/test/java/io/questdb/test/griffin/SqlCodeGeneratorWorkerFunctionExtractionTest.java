@@ -130,8 +130,7 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
 
                 final Method method = getCompilePerWorkerMethod();
                 final int workerCount = 3;
-                @SuppressWarnings("unchecked")
-                final ObjList<ObjList<Function>> workerFunctions = (ObjList<ObjList<Function>>) method.invoke(
+                @SuppressWarnings("unchecked") final ObjList<ObjList<Function>> workerFunctions = (ObjList<ObjList<Function>>) method.invoke(
                         codeGenerator,
                         null,
                         queryColumns,
