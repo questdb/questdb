@@ -217,6 +217,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.innerPredicate = node.innerPredicate;
         copy.implemented = node.implemented;
         copy.windowExpression = node.windowExpression; // shallow copy - WindowColumn is pooled
+        copy.lateralDepth = node.lateralDepth;
         copy.constFoldIntValue = node.constFoldIntValue;
         copy.constFoldLongValue = node.constFoldLongValue;
         copy.isConstFoldLongValid = node.isConstFoldLongValid;
