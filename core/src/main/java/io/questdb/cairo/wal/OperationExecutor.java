@@ -394,13 +394,28 @@ public class OperationExecutor implements Closeable {
     }
 
     /**
-     * Whole-range survivor replace: overwrites the table's whole populated timestamp range
-     * {@code [minTimestamp, maxTimestamp+1)} with the survivor rows.
+     * Windowed survivor replace (Task 5 / C1): overwrites the table's whole populated timestamp range
+     * {@code [minTimestamp, maxTimestamp+1)} with the survivor rows, tiled into ~{@code rowsPerStep}-sized
+     * windows so peak O3 memory is bounded to one window regardless of table size - instead of staging every
+     * surviving row into O3 memory at once (the prior whole-range {@code replaceRange} call, which could OOM
+     * on a large table).
      * <p>
-     * <b>Memory note (deferred to Task 2.1):</b> a single whole-table survivor stage copies every surviving
-     * row into O3 memory at once, which can be heavy for a large table. The per-partition fast path that
-     * bounds the staged set to one partition is Task 2.1; this whole-range version is correct for all
-     * predicates and passes every case.
+     * Each window is applied via {@link TableWriter#applyReplaceRangeWindow} under a single
+     * {@link TableWriter#beginReplaceRange}/{@link TableWriter#finishReplaceRange} bracket, so the whole
+     * delete remains ONE commit (one seqTxn advance), exactly like the single-window path it replaces. Window
+     * bounds are tiled gaplessly: window K's exclusive high becomes window K+1's inclusive low, so deleted
+     * rows that fall in the gap between two adjacent windows' survivors are still covered by exactly one
+     * window.
+     * <p>
+     * Per window, the survivor cursor is re-obtained from {@code survivorFactory} after rebinding
+     * {@link DeleteOperation#WINDOW_LO_BIND}/{@link DeleteOperation#WINDOW_HI_BIND} (via
+     * {@link DeleteOperation#setWindowBound}, never a raw {@code bind.setTimestamp} - see the field comment
+     * on {@code tsColType} below) to the window's {@code [wLo, wHiExcl)}, so
+     * {@code SqlCompilerImpl.generateDelete}'s ANDed interval predicate restricts each pass to an interval
+     * scan of just that window rather than a full-table rescan. Every window reads the table's COMMITTED
+     * (pre-delete) state, because the loop does not commit until {@code finishReplaceRange} - the same
+     * read-the-table-being-overwritten pattern {@code executeUpdate} relies on - so each window's cursor sees
+     * its own untouched, disjoint slice with no snapshotting required.
      */
     private long replaceWithSurvivors(SqlCompiler compiler, TableWriter tableWriter, DeleteOperation deleteOp) throws SqlException {
         final RecordCursorFactory survivorFactory = deleteOp.getSurvivorFactory();
@@ -424,13 +439,41 @@ public class OperationExecutor implements Closeable {
                 engine.getConfiguration()
         );
 
-        // hi is EXCLUSIVE, so maxTimestamp+1 keeps the max-timestamp row inside the replaced range. Every
-        // survivor is a subset of the table's rows, so its timestamp is in [minTimestamp, maxTimestamp]
-        // and satisfies replaceRange's [lo, hiExcl) contract.
-        final long loInclusive = tableWriter.getMinTimestamp();
-        final long hiExclusive = tableWriter.getMaxTimestamp() + 1;
-        try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
-            return tableWriter.replaceRange(loInclusive, hiExclusive, survivorCursor, copier, timestampCursorIndex, executionContext);
+        final long minTs = tableWriter.getMinTimestamp();
+        final long maxTs = tableWriter.getMaxTimestamp();
+        final long rowsPerStep = engine.getConfiguration().getWalDeleteRowsPerStep();
+        final long step = deleteWindowStep(minTs, maxTs, tableWriter.size(), rowsPerStep);
+        final BindVariableService bind = executionContext.getBindVariableService();
+        // Designated-ts column type (TIMESTAMP_MICRO or TIMESTAMP_NANO). The window bounds MUST be set in
+        // this unit via DeleteOperation.setWindowBound: a raw bind.setTimestamp is micros-only and overflows
+        // in NanosTimestampDriver.from on a nanos table -> ImplicitCastException -> table SUSPENDED. Never
+        // call bind.setTimestamp on WINDOW_LO_BIND/WINDOW_HI_BIND directly.
+        final int tsColType = tableWriter.getMetadata().getColumnType(timestampCursorIndex);
+
+        tableWriter.beginReplaceRange();
+        boolean finished = false;
+        try {
+            long wLo = minTs;
+            while (wLo <= maxTs) {
+                // hiExcl = min(wLo + step, maxTs + 1), overflow-safe: if step covers the rest, this is the
+                // last window.
+                final long remaining = maxTs - wLo + 1; // >= 1
+                final long wHiExcl = (step >= remaining) ? (maxTs + 1) : (wLo + step);
+
+                DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_LO_BIND, tsColType, wLo);
+                DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_HI_BIND, tsColType, wHiExcl);
+                try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
+                    tableWriter.applyReplaceRangeWindow(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);
+                }
+                wLo = wHiExcl;
+            }
+            final long removed = tableWriter.finishReplaceRange();
+            finished = true;
+            return removed;
+        } finally {
+            if (!finished) {
+                tableWriter.abortReplaceRange(); // executeDelete's catch performs the txn rollback + setSeqTxn(S-1)
+            }
         }
     }
 

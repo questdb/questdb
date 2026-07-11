@@ -1408,6 +1408,43 @@ public class DeleteTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Task 5: forces a tiny {@code cairo.wal.delete.rows.per.step} so a 240-row table splits into many
+     * windows in {@link io.questdb.cairo.wal.OperationExecutor}'s windowed {@code replaceWithSurvivors}
+     * loop, for an ARBITRARY (non-time-range) predicate whose matches are scattered every 7th row - i.e.
+     * deleted rows fall in the gaps between adjacent windows' survivors, exercising cross-window
+     * accumulation and the K/K+1 tiling boundary ({@code wHiExcl} of window K must equal {@code wLo} of
+     * window K+1: no gap, no overlap). {@code t_ref} is a snapshot of the table's COMMITTED data taken
+     * BEFORE the delete, so the oracle does not depend on {@code rnd_symbol} reproducing identical values
+     * across two independently-planned statements (mirrors every other oracle in this file).
+     */
+    @Test
+    public void testArbitraryDeleteWindowedManyWindowsMatchesOracle() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long, s symbol) timestamp(ts) partition by DAY WAL");
+            execute("insert into t select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x, rnd_symbol('a','b','c') from long_sequence(240)");
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+
+            execute("delete from t where x % 7 = 0"); // arbitrary predicate, non-time-range
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "table must not be suspended by the windowed replace",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertQuery("select count(*) from t").noRandomAccess().expectSize()
+                    .returns("count\n" + (240 - 240 / 7) + "\n");
+            assertSqlCursors(
+                    "select * from t_ref where not (x % 7 = 0)",
+                    "select * from t"
+            );
+        });
+    }
+
     private void assertNotPureTimeRange(SqlCompiler compiler, String sql) throws SqlException {
         final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.DELETE, cc.getType());
