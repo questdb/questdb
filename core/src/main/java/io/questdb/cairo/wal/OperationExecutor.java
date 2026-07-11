@@ -277,10 +277,12 @@ class OperationExecutor implements Closeable {
      *       covered by it. Fully-covered interior Parquet partitions are dropped inline by the replace
      *       (Task 2.2) with no data rewrite, so they are deliberately NOT converted. The coverage test mirrors
      *       the replace path's own fully-covered check (exact data bounds at the table ends via
-     *       {@code getMinTimestamp()}/{@code getMaxTimestamp()}, partition floor / next-floor otherwise). For
-     *       contiguous or split partitions this is the exact set the replace would reject; under a CALENDAR
-     *       GAP it is a sound SUPERSET (may over-convert a gap-adjacent Parquet partition the delete does not
-     *       touch - safe, never under-converts). See the per-partition comment for the bound detail.</li>
+     *       {@code getMinTimestamp()}/{@code getMaxTimestamp()}, partition floor / next-floor otherwise). A
+     *       Parquet partition is always a whole logical (calendar-day) partition and is NEVER split (see the
+     *       per-partition comment), so for a CONTIGUOUS partition this is the exact set the replace would
+     *       reject; under a CALENDAR GAP it is a sound SUPERSET (may over-convert a gap-adjacent Parquet
+     *       partition the delete does not touch - safe, never under-converts). See the per-partition comment
+     *       for the bound detail.</li>
      *   <li><b>Arbitrary route</b> (whole-range survivor-replace over {@code [minTs, maxTs+1)}): EVERY Parquet
      *       partition, because the whole-range replace rewrites every partition and there is no cheap
      *       per-partition match test. <b>HEAVY v1 side-effect:</b> an arbitrary DELETE un-tiers ALL Parquet
@@ -320,14 +322,37 @@ class OperationExecutor implements Closeable {
                 final long floor = tableWriter.getPartitionTimestamp(i);
                 // Sound data-extent bounds: exact at the table ends (getMin/getMaxTimestamp), else the partition
                 // floor (a true LOWER bound - every row is >= its floor) and next-partition-floor-minus-one (a
-                // true UPPER bound on this partition's max data ts). These reproduce the replace path's
-                // fully-covered test (Task 2.2, TableWriter.processO3Block) exactly for contiguous/split
-                // partitions. Under a CALENDAR GAP (missing partitions between two physical ones)
-                // next-floor-minus-one is looser than the replace path's calendar-aware
-                // getCurrentPartitionMaxTimestamp, so this set is a sound SUPERSET: it may over-convert a
-                // Parquet partition adjacent to a gap that the delete does not touch (safe - never
-                // under-converts, never data loss), but never leaves a to-be-rewritten Parquet partition
-                // unconverted. An exact match would need a public calendar-ceiling accessor on TableWriter.
+                // true UPPER bound on this partition's max data ts).
+                //
+                // This uses the next PHYSICAL floor where the replace guard (TableWriter.processO3Block ~9954)
+                // uses the calendar-aware getCurrentPartitionMaxTimestamp (= getNextPartitionTimestamp(floor)-1).
+                // Those two bounds could in principle diverge for a SPLIT partition (physical-next-floor = the
+                // split boundary, tighter than the whole-day calendar ceiling), which would risk UNDER-convert.
+                // They cannot diverge that way here, because this branch only ever inspects PARQUET partitions
+                // and a Parquet partition is NEVER in a split state - it is always one whole logical (calendar-
+                // day) partition whose physical successor is never a same-day split sibling. Why split-Parquet
+                // is unreachable (a Parquet partition is immutable w.r.t. splitting):
+                //   - O3 into an existing Parquet partition REWRITES the whole partition file (it never carves a
+                //     split): O3PartitionJob.processParquetPartition hard-writes o3SplitPartitionSize=0 and the
+                //     SAME partitionTimestamp to the update sink; the native split path (processPartition's
+                //     "Split partition if the prefix is large enough") is dispatch-guarded by isParquet and is
+                //     unreachable for Parquet. A brand-new Parquet partition is written whole by
+                //     writeFreshParquetFromO3.
+                //   - convert-to-parquet SQUASHES first: TableWriter.convertPartitionNativeToParquet maps the
+                //     target to its logical floor then calls squashPartitionForce, so the converted partition is
+                //     one whole logical partition, never a split piece.
+                //   - there is no ALTER TABLE ... SPLIT PARTITION statement.
+                // Given that, next-physical-floor equals the guard's calendar ceiling for a CONTIGUOUS partition
+                // (the bound is EXACT - byte-identical decisions to the guard) and is only LARGER across a
+                // CALENDAR GAP (missing partitions between two physical ones). A larger dataMax makes
+                // fullyCovered STRICTER and overlaps LOOSER - both push toward MORE conversion - so this set is
+                // always a sound SUPERSET of the guard's reject set (convert here whenever the guard would
+                // reject): it can only over-convert a gap-adjacent Parquet partition the delete does not touch
+                // (a benign extra un-tier), NEVER under-convert. So it never skips a Parquet partition the guard
+                // would rewrite -> the replace can never hit "commit replace mode is not supported for Parquet
+                // partitions" -> a valid DELETE never spuriously suspends the table. Removing the (safe) gap
+                // over-conversion would need a public calendar-ceiling accessor on TableWriter
+                // (getCurrentPartitionMaxTimestamp lives on txWriter/TxReader only); deliberately not added.
                 final long dataMin = (i == 0) ? minTs : floor;
                 final long dataMax = (i == partitionCount - 1) ? maxTs : (tableWriter.getPartitionTimestamp(i + 1) - 1);
                 final boolean overlaps = dataMin < dHiExcl && dataMax >= dLo;
