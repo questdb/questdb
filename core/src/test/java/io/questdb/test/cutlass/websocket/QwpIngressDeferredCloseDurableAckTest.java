@@ -1785,6 +1785,95 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A single legal large frame during the echo wait must NOT be throttled
+     * to the count-derived minimum-frame cap (1024 x 6 = 6 KiB) per worker
+     * turn: once the first capped read buffers the frame header, the frame
+     * boundary is known and the next read must admit the frame's remainder
+     * up to the byte budget without crossing the boundary. Without the
+     * extension, a default-sized 2 MiB frame needs ~342 dispatcher turns
+     * instead of ~9, which can exhaust the five-second echo grace with the
+     * client's CLOSE echo queued behind the frame.
+     */
+    @Test
+    public void testCloseEchoWaitKnownFrameBoundaryExtendsReadBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            final int minFrameCap = 6 * 1024;
+            byte[] largeFrame = createMaskedLargeFrame(32 * 1024);
+            byte[] closeEcho = closeEchoFrame();
+            byte[] stream = concat(largeFrame, closeEcho);
+            // headroom above the frame size so the boundary cap (not buffer
+            // exhaustion) is what bounds the second read
+            final int recvBufferSize = largeFrame.length + 1024;
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return recvBufferSize;
+                }
+            };
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(stream);
+            long recvBuf = 0;
+            long sendBuf = 0;
+            final BlockingRecordingRawSocket rawSocket;
+            try {
+                recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+                sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                rawSocket = new BlockingRecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            } catch (Throwable t) {
+                if (recvBuf != 0) {
+                    Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+                }
+                if (sendBuf != 0) {
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+                throw t;
+            }
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, recvBufferSize)) {
+                QwpIngressProcessorState state = setupState(httpConfig, context, engine);
+                state.beginCloseEchoWait();
+                nf.release(stream.length);
+
+                // turn 1: buffer is empty, frame boundary unknown -- the
+                // count-derived cap applies and buffers the frame header
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("the first echo-wait receive must yield at the count-derived cap");
+                } catch (PeerIsSlowToWriteException expected) {
+                }
+                Assert.assertEquals(
+                        "the first turn must read exactly the count-derived cap",
+                        stream.length - minFrameCap,
+                        nf.pendingBytes()
+                );
+                Assert.assertEquals("the partial frame must remain buffered", minFrameCap, state.getRecvBufferLen());
+                Assert.assertTrue("the capped read must preserve the echo wait", state.isAwaitingCloseEcho());
+
+                // turn 2: the buffered header pins the frame boundary -- the
+                // read must extend to the frame's remainder in ONE turn,
+                // stopping at the boundary (the echo stays in the kernel)
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("the boundary-capped receive must yield with the echo still in the kernel");
+                } catch (PeerIsSlowToWriteException expected) {
+                }
+                Assert.assertEquals(
+                        "the second turn must admit the whole frame remainder without crossing the frame boundary",
+                        closeEcho.length,
+                        nf.pendingBytes()
+                );
+                Assert.assertEquals("the completed frame must be discarded, leaving no user-space suffix", 0, state.getRecvBufferLen());
+                Assert.assertTrue("the extended read must preserve the echo wait", state.isAwaitingCloseEcho());
+
+                // turn 3: the echo is reached and completes the handshake
+                completeCloseEcho(processor, context, nf, closeEcho.length);
+            } finally {
+                Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
     @Test
     public void testCloseEchoWaitParserValidFloodBoundedByFrameBudget() throws Exception {
         assertMemoryLeak(() -> {

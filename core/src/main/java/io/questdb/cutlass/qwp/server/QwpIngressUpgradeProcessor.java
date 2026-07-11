@@ -96,13 +96,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      */
     public static final int CLOSE_ECHO_DISCARD_BYTE_BUDGET = 256 * 1024;
     /**
-     * Maximum bytes read in one close-echo worker turn. The effective read
-     * cap also accounts for {@link #CLOSE_ECHO_FRAME_COUNT_BUDGET}, so a
-     * receive can never admit more minimum-size frames than the count budget.
+     * Maximum bytes read in one close-echo worker turn. Binding only while
+     * the recv buffer holds the header of one legal in-progress frame whose
+     * boundary is known: the read is then extended up to this budget without
+     * crossing that boundary. Otherwise the count-derived cap
+     * ({@link #CLOSE_ECHO_FRAME_COUNT_BUDGET} x 6, the minimum masked client
+     * frame size) applies, so a receive can never admit more minimum-size
+     * frames than the count budget.
      */
     public static final int CLOSE_ECHO_FRAME_BYTE_BUDGET = 256 * 1024;
     /**
      * Maximum complete client frames admitted in one close-echo worker turn.
+     * Enforced at recv time: reads are capped at count x 6 bytes unless the
+     * extension above admits the remainder of exactly one known legal frame.
      */
     public static final int CLOSE_ECHO_FRAME_COUNT_BUDGET = 1024;
     /**
@@ -585,10 +591,38 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // recv itself so all admitted complete frames can be consumed
                 // without parking a user-space suffix behind an empty kernel
                 // socket, which an edge-triggered READ re-arm would not wake.
-                readSize = Math.min(
-                        readSize,
-                        Math.min(CLOSE_ECHO_FRAME_BYTE_BUDGET, CLOSE_ECHO_FRAME_COUNT_BUDGET * 6)
-                );
+                // The count-derived term (COUNT_BUDGET * 6) bounds how many
+                // minimum-size frames one turn can admit, but alone it would
+                // throttle one legal large frame to ~6 KiB per dispatcher turn
+                // (~342 turns for a default 2 MiB frame), risking echo-grace
+                // expiry with the client's CLOSE echo queued behind it. When
+                // the buffer already holds the header of one legal in-progress
+                // frame (buffer start is always a frame boundary after
+                // processWebSocketFrames compaction), extend the cap up to the
+                // byte budget WITHOUT crossing that frame's boundary: the
+                // extended read can complete at most that one frame, so the
+                // frame-count bound is preserved. The peek is stateless -- the
+                // scratchpad parser is reset again inside
+                // processWebSocketFrames before any real parse.
+                int closeEchoCap = Math.min(CLOSE_ECHO_FRAME_BYTE_BUDGET, CLOSE_ECHO_FRAME_COUNT_BUDGET * 6);
+                if (recvBufferLen > 0) {
+                    frameParser.reset();
+                    frameParser.parse(recvBuffer, recvBuffer + recvBufferLen);
+                    if (frameParser.getState() == WebSocketFrameParser.STATE_NEED_PAYLOAD) {
+                        long totalFrameSize = frameParser.getHeaderSize() + frameParser.getPayloadLength();
+                        if (totalFrameSize <= recvBufferSize) {
+                            // Boundary known and the frame is legal: admit its
+                            // remainder up to the byte budget. Oversized frames
+                            // keep the small cap; processWebSocketFrames flags
+                            // them as sync-lost after the recv. Incomplete
+                            // headers, peek errors, and complete-frame leftovers
+                            // (ACK-backpressure unwind) also keep the small cap
+                            // and are handled by the post-recv parse.
+                            closeEchoCap = (int) Math.min(CLOSE_ECHO_FRAME_BYTE_BUDGET, totalFrameSize - recvBufferLen);
+                        }
+                    }
+                }
+                readSize = Math.min(readSize, closeEchoCap);
             }
             int read = socket.recv(recvBuffer + recvBufferLen, readSize);
             if (read < 0) {
@@ -1667,11 +1701,39 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             CharSequence reason
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         boolean isGraceExpired = state.isRoleChangeCloseGraceExpired();
-        // Expiry alone completes the deferral. Skip the initial registry scan
-        // in that case; the diagnostic path below performs one fresh check so
-        // concurrent catch-up can still suppress a false duplicate warning.
-        boolean isDurableWorkFullyUploaded = !state.isDurableAckEnabled()
-                || (!isGraceExpired && state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry()));
+        boolean isDurableWorkFullyUploaded;
+        if (!state.isDurableAckEnabled() || !state.hasPendingDurableWork()) {
+            // Nothing committed awaits a durable ack (or durable acks are
+            // disabled): trivially covered, no registry pass needed.
+            isDurableWorkFullyUploaded = true;
+        } else if (!isGraceExpired && state.isRoleChangeCloseDeferred() && state.isSendReady()) {
+            // Deferral re-entry with a clear send side: flush first, so ONE
+            // registry pass both pushes durable progress to the client and
+            // answers coverage -- onDurableAckSent prunes every table whose
+            // pending seqTxn the registry covers (residual tables always have
+            // lastSent < pending, so a covered table necessarily reports
+            // progress and gets pruned), leaving local pending state as the
+            // poll-fresh coverage result. Same fused pattern as handlePing.
+            // Flush-before-decide is safe ONLY here: the deferral is already
+            // armed, so a send parked mid-flush (PISR) leaves it in place for
+            // the next recv-driven poll instead of dropping the close. Grace
+            // expiry is excluded: the expired close is the availability-over-
+            // duplicate-guard promise and must not risk a one-poll delay from
+            // a throwing flush -- it takes the branch below, where the CLOSE
+            // chains behind any backpressure inside sendFatalClose
+            // (onFatalCloseBlocked) with no further inbound traffic needed.
+            flushPendingAck(context, state);
+            isDurableWorkFullyUploaded = !state.hasPendingDurableWork();
+        } else {
+            // First entry (the arming marks in the overload below must precede
+            // any throwing send, so no flush may run yet) or a pre-parked send
+            // (no flush possible): one standalone coverage scan. Expiry alone
+            // completes the deferral -- skip the scan in that case; the
+            // diagnostic path in the overload performs one fresh check so
+            // concurrent catch-up can still suppress a false duplicate warning.
+            isDurableWorkFullyUploaded = !isGraceExpired
+                    && state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+        }
         roleChangeCloseWithUploadGrace(
                 context,
                 state,
@@ -1708,11 +1770,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             if (firstDeferral) {
                 LOG.info().$("deferring role-change close until committed work is durably uploaded [fd=")
                         .$(context.getFd()).I$();
+                // Push whatever cumulative/durable progress exists right now;
+                // the final durable ack goes out with the close itself once
+                // coverage is confirmed. Only the FIRST deferral flushes here:
+                // every re-entry that can flush already did so in the 3-arg
+                // overload (its fused coverage poll), and repeating the
+                // registry pass on the same dispatch cannot observe progress
+                // that the next recv-driven poll (or the final pre-CLOSE
+                // flush) would not deliver.
+                flushPendingAck(context, state);
             }
-            // Push whatever cumulative/durable progress exists right now; the
-            // final durable ack goes out with the close itself once coverage
-            // is confirmed.
-            flushPendingAck(context, state);
             return;
         }
         if (isGraceExpired
