@@ -316,6 +316,10 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // replicate-or-refuse across a demote. FENCED. (This is the cell a reviewer's hand-built contract
         // list omitted -- pinned here explicitly.)
         http.put("UPDATE", FENCED);
+        // DELETE routes to executeDelete -> cq.execute() -> OperationDispatcher.execute, the same
+        // role-switch-read-lock + in-lock isReadOnlyMode() re-check fence as UPDATE (the WAL DELETE mints
+        // its sequencer txn under the dispatcher fence exactly like UPDATE). FENCED.
+        http.put("DELETE", FENCED);
         // ALTER routes to executeAlterTable -> the same OperationDispatcher.execute fence as UPDATE.
         http.put("ALTER", FENCED);
         // The parse-time WAL DDL types (TRUNCATE, RENAME_TABLE, ALTER_VIEW, ALTER_STORAGE_POLICY) mint a
@@ -488,6 +492,10 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
         // cells take). The parked-writer index < 0 branch of msgExecuteUpdate now holds the same fence
         // around its implicit commit() + apply(). FENCED.
         put(pg, "UPDATE", FENCED);
+        // DELETE -> msgExecuteDelete funnels through OperationDispatcher.execute under the same
+        // role-switch read lock + in-lock isReadOnlyMode() re-check as UPDATE; the parked-writer index < 0
+        // branch of msgExecuteDelete holds the identical inline fence around its commit() + apply(). FENCED.
+        put(pg, "DELETE", FENCED);
         put(pg, "ALTER", FENCED);
         // COMMIT flushes pending writers inside commit(), which holds the role-switch fence around the
         // writer commit (the pg-wire COMMIT fence). Classified ACQUIRE_GATED: it reaches the writer only
