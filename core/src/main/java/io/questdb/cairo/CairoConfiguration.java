@@ -382,6 +382,12 @@ public interface CairoConfiguration {
      * Target number of rows staged per window of an arbitrary-predicate DELETE's survivor-replace. The
      * apply path walks the deleted range in windows of roughly this many rows, bounding peak O3 memory to
      * one window regardless of table size. Default 1,000,000.
+     * <p>
+     * Set this well below a partition's row count only deliberately: when a single partition spans many
+     * windows it is rewritten once per window, so a very small value multiplies write amplification and
+     * transiently leaves one orphaned prior-version partition directory per multi-window partition (reclaimed
+     * asynchronously by the partition-purge job). At the default a partition of up to ~1M rows is a single
+     * window, so neither effect occurs.
      */
     long getWalDeleteRowsPerStep();
 

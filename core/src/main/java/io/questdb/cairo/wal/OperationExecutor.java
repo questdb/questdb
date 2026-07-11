@@ -165,8 +165,16 @@ public class OperationExecutor implements Closeable {
      * Task 2.1 fast path: when the compiler classifies the predicate as a pure single designated-timestamp
      * interval with no residual filter ({@link DeleteOperation#isPureTimeRange()}), the delete is instead
      * applied as one empty {@code replaceRange} over the DELETED interval ({@link #deleteTimeRange}) - O(rows
-     * deleted), no survivor staging. Both branches are a single table commit, so the seqTxn handling is
-     * identical.
+     * deleted), no survivor staging.
+     * <p>
+     * <b>Recovery semantics (operator-facing).</b> If a DELETE fails at apply the transaction is not
+     * committed and the table is suspended; the apply job retries it. If an operator force-resumes the table
+     * past the DELETE with {@code ALTER TABLE <t> RESUME WAL FROM TRANSACTION <n+1>}, the DELETE is
+     * <b>skipped</b> - its rows are NOT deleted - so it must be re-issued if the rows must still be removed.
+     * The default (atomic) route and the pure time-range route commit exactly once (all-or-nothing to
+     * readers); the opt-in {@code cairo.wal.delete.disk.bounded} route commits per window and is therefore
+     * non-atomic (a concurrent reader may observe a partially-applied delete during apply) but remains
+     * crash-safe - a crash re-applies the whole delete idempotently.
      *
      * @return number of rows removed
      */
