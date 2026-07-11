@@ -97,16 +97,19 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.CompileViewModel;
+import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -120,6 +123,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -186,6 +190,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final CharacterStore characterStore;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ViewCompilerExecutionContext compileViewContext;
+    // Identity alias translator for the DELETE time-range classifier. The DELETE inner model is always a bare
+    // "SELECT * FROM t" (no column aliases) and is not yet optimised when classifyDeleteTimeRange runs, so its
+    // aliasToColumnNameMap is empty and QueryModel.translateAlias would return null (NPE-ing WhereClauseParser
+    // paths that resolve a column, e.g. BETWEEN). Every identifier in the predicate is already a real column
+    // name, so identity translation is exactly what the optimised select-star map would yield.
+    private static final AliasTranslator DELETE_IDENTITY_ALIAS_TRANSLATOR = column -> column;
+    // Dedicated WhereClauseParser for the DELETE time-range fast-path classifier (Task 2.1). Kept separate
+    // from the code generator's shared parser so classification never re-enters or clobbers an in-flight
+    // codegen extraction; it runs to completion before the survivor factory is generated.
+    private final WhereClauseParser deleteWhereClauseParser = new WhereClauseParser();
     private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
@@ -208,6 +222,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private boolean closed = false;
+    // Result of classifying the current DELETE's predicate as a single designated-timestamp interval
+    // [deleteTimeRangeLo, deleteTimeRangeHiExcl) with no residual filter (Task 2.1). Written by
+    // classifyDeleteTimeRange in compileExecutionModel0's DELETE case, from the ORIGINAL (un-negated)
+    // predicate, and read straight after by generateDelete. Plain scratch fields: a compiler compiles one
+    // statement at a time and DELETE compiles never nest, so there is no re-entrancy.
+    private long deleteTimeRangeHiExcl;
+    private long deleteTimeRangeLo;
+    private boolean deleteTimeRangePure;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     //determines how compiler parses query text
@@ -3084,6 +3106,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final IQueryModel deleteQueryModel = (IQueryModel) model;
                 TableToken deleteTableToken = executionContext.getTableToken(deleteQueryModel.getTableName());
                 try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(deleteTableToken)) {
+                    // Classify the ORIGINAL (un-negated) predicate for the Task 2.1 time-range fast path BEFORE
+                    // it is negated below - the negated survivor predicate describes the COMPLEMENT, which is
+                    // not what we want to measure. Runs on both compiles (the predicate is identical: negation
+                    // is apply-only); generateDelete reads the result. Advisory only - never affects
+                    // correctness, only whether executeDelete can skip staging survivors.
+                    classifyDeleteTimeRange(deleteQueryModel, deleteTableToken, executionContext);
                     // At WAL apply time OperationExecutor.executeDelete needs the SURVIVOR rows
                     // (WHERE NOT(pred)) to feed TableWriter.replaceRange, not the matching rows. Negate the
                     // predicate on the freshly parsed model BEFORE optimisation so the optimiser processes
@@ -4892,6 +4920,110 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
     }
 
+    /**
+     * Classifies the DELETE's ORIGINAL (un-negated) predicate for the Task 2.1 time-range fast path: does the
+     * WHOLE predicate reduce to a SINGLE designated-timestamp interval with NO residual non-timestamp filter?
+     * If so, records the deleted interval in {@link #deleteTimeRangeLo}/{@link #deleteTimeRangeHiExcl}
+     * (inclusive lo, exclusive hi, in the table's timestamp units) and sets {@link #deleteTimeRangePure}, so
+     * {@code OperationExecutor.executeDelete} can apply it as one empty {@code replaceRange} over the deleted
+     * interval instead of staging survivors. Otherwise leaves {@code deleteTimeRangePure == false} and the
+     * executor falls back to the always-correct whole-range survivor-replace.
+     * <p>
+     * <b>Soundness (mandatory: no false positives).</b> This mirrors the exact conditions the code generator
+     * uses to build a pure interval scan with no row filter - {@code filter == null && keyColumn == null && no
+     * key sub-query/values && hasIntervalFilters()} - applied to the same {@link WhereClauseParser} extraction
+     * an interval scan uses, over the un-negated predicate, and additionally requires a single STATIC interval
+     * (exactly one {@code [lo, hi]} pair). Any residual non-timestamp filter (e.g. {@code ts < X AND s = 'a'}),
+     * indexed-symbol key, multiple intervals (e.g. {@code ts < a OR ts > b}), runtime interval, or any failure
+     * keeps the fast path off. Because {@code extract} structurally rewrites the tree it walks, it runs on a
+     * deep clone, leaving the real predicate (which the survivor factory later compiles) untouched.
+     */
+    private void classifyDeleteTimeRange(IQueryModel deleteQueryModel, TableToken tableToken, SqlExecutionContext executionContext) {
+        deleteTimeRangePure = false;
+        deleteTimeRangeLo = Long.MIN_VALUE;
+        deleteTimeRangeHiExcl = Long.MAX_VALUE;
+
+        final IQueryModel fromModel = deleteQueryModel.getNestedModel();
+        final IQueryModel innerModel = fromModel != null ? fromModel.getNestedModel() : null;
+        if (innerModel == null) {
+            return;
+        }
+        final ExpressionNode predicate = innerModel.getWhereClause();
+        if (predicate == null) {
+            return;
+        }
+
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            final RecordMetadata readerMetadata = reader.getMetadata();
+            final int timestampIndex = readerMetadata.getTimestampIndex();
+            if (timestampIndex < 0) {
+                return; // no designated timestamp -> no interval fast path
+            }
+            // extract() rewrites the tree it walks (sets intrinsicValue flags and relinks AND children), so
+            // clone first: the real predicate is negated + compiled into the survivor factory right after.
+            final ExpressionNode predicateClone = ExpressionNode.deepClone(sqlNodePool, predicate);
+
+            RuntimeIntrinsicIntervalModel intervalModel = null;
+            final IntrinsicModel intrinsicModel = deleteWhereClauseParser.extract(
+                    DELETE_IDENTITY_ALIAS_TRANSLATOR,
+                    predicateClone,
+                    readerMetadata,
+                    null,
+                    timestampIndex,
+                    functionParser,
+                    readerMetadata,
+                    executionContext,
+                    false,
+                    reader,
+                    false
+            );
+            try {
+                // Mirror SqlCodeGenerator's pure-interval-scan gate: the entire predicate must be absorbed
+                // into a timestamp interval, with nothing left as a row filter or an indexed-symbol key.
+                final boolean pureInterval = intrinsicModel.intrinsicValue != IntrinsicModel.FALSE
+                        && intrinsicModel.filter == null
+                        && intrinsicModel.keyColumn == null
+                        && intrinsicModel.keySubQuery == null
+                        && intrinsicModel.keyValueFuncs.size() == 0
+                        && intrinsicModel.keyExcludedValueFuncs.size() == 0
+                        && intrinsicModel.hasIntervalFilters();
+                if (pureInterval) {
+                    intervalModel = intrinsicModel.buildIntervalModel();
+                    // Compile-time-constant intervals only: a single static [lo, hi] pair. Runtime intervals
+                    // (now(), bind vars) or multiple disjoint intervals fall back - correct, just unoptimized.
+                    if (intervalModel.isStatic()) {
+                        final LongList intervals = intervalModel.calculateIntervals(executionContext);
+                        if (intervals.size() == 2) {
+                            final long loInclusive = intervals.getQuick(0);
+                            final long hiInclusive = intervals.getQuick(1);
+                            deleteTimeRangeLo = loInclusive;
+                            // Interval bounds are inclusive; convert to replaceRange's exclusive hi, guarding
+                            // an open upper bound (Long.MAX_VALUE) against +1 overflow.
+                            deleteTimeRangeHiExcl = hiInclusive == Long.MAX_VALUE ? Long.MAX_VALUE : hiInclusive + 1;
+                            deleteTimeRangePure = true;
+                        }
+                    }
+                }
+            } finally {
+                // Free everything extract may have allocated. On the pure path buildIntervalModel() took
+                // ownership of any dynamic interval functions (freed by closing intervalModel); on the
+                // fallback path intrinsicModel.clear() frees them via the builder's freeAndClear().
+                Misc.free(intervalModel);
+                Misc.freeObjList(intrinsicModel.keyValueFuncs);
+                Misc.freeObjList(intrinsicModel.keyExcludedValueFuncs);
+                intrinsicModel.clear();
+            }
+        } catch (Throwable th) {
+            // Classification is advisory - any failure just disables the fast path (sound: never a false
+            // positive). The real predicate validation/compile happens later in generateDelete.
+            deleteTimeRangePure = false;
+            deleteTimeRangeLo = Long.MIN_VALUE;
+            deleteTimeRangeHiExcl = Long.MAX_VALUE;
+        } finally {
+            deleteWhereClauseParser.clear();
+        }
+    }
+
     // Wraps the DELETE predicate in a logical NOT so that generating the (already SELECT-*) nested model
     // yields the survivor rows (WHERE NOT(pred)) rather than the matching rows. The parsed model shape
     // (SqlParser.parseDelete) is:
@@ -4938,7 +5070,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     metadata.getTableId(),
                     metadata.getMetadataVersion(),
                     model.getModelPosition(),
-                    survivorFactory
+                    survivorFactory,
+                    deleteTimeRangePure,
+                    deleteTimeRangeLo,
+                    deleteTimeRangeHiExcl
             );
         }
     }

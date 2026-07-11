@@ -159,6 +159,12 @@ class OperationExecutor implements Closeable {
      * survivor factory (see {@link io.questdb.griffin.SqlCompilerImpl#generateDelete}). The survivors
      * replace the whole populated timestamp range via {@link TableWriter#replaceRange}: matched rows drop,
      * unmatched rows are rewritten, and a fully-emptied table truncates.
+     * <p>
+     * Task 2.1 fast path: when the compiler classifies the predicate as a pure single designated-timestamp
+     * interval with no residual filter ({@link DeleteOperation#isPureTimeRange()}), the delete is instead
+     * applied as one empty {@code replaceRange} over the DELETED interval ({@link #deleteTimeRange}) - O(rows
+     * deleted), no survivor staging. Both branches are a single table commit, so the seqTxn handling is
+     * identical.
      *
      * @return number of rows removed
      */
@@ -193,7 +199,13 @@ class OperationExecutor implements Closeable {
                 tableWriter.setSeqTxn(seqTxn);
                 try {
                     final long txnBefore = tableWriter.getTxn();
-                    final long deleted = replaceWithSurvivors(compiler, tableWriter, deleteOp);
+                    // Time-range fast path (Task 2.1): a pure single designated-timestamp interval delete is
+                    // one empty replaceRange over the DELETED interval (O(deleted), no survivor staging).
+                    // Everything else keeps the always-correct whole-range survivor-replace. Both are a single
+                    // table commit, so the seqTxn / no-op-advance handling below is identical for either.
+                    final long deleted = deleteOp.isPureTimeRange()
+                            ? deleteTimeRange(tableWriter, deleteOp)
+                            : replaceWithSurvivors(compiler, tableWriter, deleteOp);
                     if (tableWriter.getTxn() == txnBefore) {
                         tableWriter.commitSeqTxn(seqTxn);
                     }
@@ -272,6 +284,37 @@ class OperationExecutor implements Closeable {
         try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
             return tableWriter.replaceRange(loInclusive, hiExclusive, survivorCursor, copier, timestampCursorIndex, executionContext);
         }
+    }
+
+    /**
+     * Time-range fast path (Task 2.1): the whole DELETE predicate reduces to a single designated-timestamp
+     * interval {@code [lo, hiExcl)} with no residual filter (classified in
+     * {@link io.questdb.griffin.SqlCompilerImpl}, exposed via {@link DeleteOperation#isPureTimeRange()}), so
+     * the delete is applied as ONE empty {@link TableWriter#replaceRange} over the DELETED interval - O(rows
+     * deleted), with no survivor staging: fully-covered partitions drop and the boundary partition is trimmed
+     * in a single commit, reusing the same empty-replace path a whole-range survivor-replace of zero survivors
+     * would reach.
+     * <p>
+     * The interval is clamped to the table's populated range ({@code [minTimestamp, maxTimestamp+1)}); if that
+     * leaves nothing to delete (interval entirely outside the data, or an empty table) it is a no-op returning
+     * 0, and the caller advances the seqTxn exactly as the empty-table survivor path does (no table commit was
+     * made, so {@code getTxn()} is unchanged).
+     */
+    private long deleteTimeRange(TableWriter tableWriter, DeleteOperation deleteOp) {
+        if (tableWriter.getPartitionCount() == 0) {
+            // Empty table: nothing to delete.
+            return 0;
+        }
+        // Clamp the deleted interval to the populated range. maxTimestamp is the last row's inclusive
+        // timestamp, so maxTimestamp+1 is the exclusive upper bound matching replaceRange's [lo, hiExcl).
+        final long dLo = Math.max(deleteOp.getTimeRangeLo(), tableWriter.getMinTimestamp());
+        final long dHiExcl = Math.min(deleteOp.getTimeRangeHiExcl(), tableWriter.getMaxTimestamp() + 1);
+        if (dLo >= dHiExcl) {
+            // Interval falls entirely outside the populated range: nothing to delete.
+            return 0;
+        }
+        final int timestampIndex = tableWriter.getMetadata().getTimestampIndex();
+        return tableWriter.replaceRange(dLo, dHiExcl, null, null, timestampIndex, executionContext);
     }
 
     public long executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {

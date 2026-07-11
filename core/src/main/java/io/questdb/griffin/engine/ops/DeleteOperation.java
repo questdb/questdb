@@ -39,6 +39,16 @@ import static io.questdb.tasks.TableWriterTask.CMD_DELETE_TABLE;
 
 public class DeleteOperation extends AbstractOperation {
     public static final String MAT_VIEW_INVALIDATION_REASON = "delete operation";
+    // Time-range fast-path classification (Task 2.1), computed by SqlCompilerImpl.generateDelete from the
+    // ORIGINAL (un-negated) predicate. When pureTimeRange is true, the whole DELETE predicate reduces to a
+    // SINGLE designated-timestamp interval [timeRangeLo, timeRangeHiExcl) with no residual non-timestamp
+    // filter, so OperationExecutor.executeDelete applies it as one empty replaceRange over that interval
+    // instead of staging survivors. When false, executeDelete falls back to the whole-range survivor-replace
+    // (always correct). Bounds are in the table's designated-timestamp units (micros or nanos); an open lower
+    // bound is Long.MIN_VALUE and an open upper bound saturates timeRangeHiExcl at Long.MAX_VALUE.
+    private final boolean pureTimeRange;
+    private final long timeRangeHiExcl;
+    private final long timeRangeLo;
     private RecordCursorFactory survivorFactory;
 
     public DeleteOperation(
@@ -46,10 +56,16 @@ public class DeleteOperation extends AbstractOperation {
             int tableId,
             long tableVersion,
             int tableNamePosition,
-            @Nullable RecordCursorFactory survivorFactory
+            @Nullable RecordCursorFactory survivorFactory,
+            boolean pureTimeRange,
+            long timeRangeLo,
+            long timeRangeHiExcl
     ) {
         init(CMD_DELETE_TABLE, TableWriterTask.getCommandName(CMD_DELETE_TABLE), tableToken, tableId, tableVersion, tableNamePosition);
         this.survivorFactory = survivorFactory;
+        this.pureTimeRange = pureTimeRange;
+        this.timeRangeLo = timeRangeLo;
+        this.timeRangeHiExcl = timeRangeHiExcl;
     }
 
     @Override
@@ -87,6 +103,31 @@ public class DeleteOperation extends AbstractOperation {
 
     public RecordCursorFactory getSurvivorFactory() {
         return survivorFactory;
+    }
+
+    /**
+     * Exclusive upper bound of the deleted designated-timestamp interval; only meaningful when
+     * {@link #isPureTimeRange()} is true. Saturates at {@code Long.MAX_VALUE} for an open upper bound.
+     */
+    public long getTimeRangeHiExcl() {
+        return timeRangeHiExcl;
+    }
+
+    /**
+     * Inclusive lower bound of the deleted designated-timestamp interval; only meaningful when
+     * {@link #isPureTimeRange()} is true. {@code Long.MIN_VALUE} for an open lower bound.
+     */
+    public long getTimeRangeLo() {
+        return timeRangeLo;
+    }
+
+    /**
+     * True when the whole DELETE predicate reduces to a single designated-timestamp interval
+     * {@code [getTimeRangeLo(), getTimeRangeHiExcl())} with no residual non-timestamp filter, so it can be
+     * applied as one empty {@code replaceRange} over the deleted interval (Task 2.1).
+     */
+    public boolean isPureTimeRange() {
+        return pureTimeRange;
     }
 
     @Override

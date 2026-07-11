@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -501,5 +502,200 @@ public class DeleteTest extends AbstractCairoTest {
                             t_1h\tt\tinvalid\tdelete operation
                             """);
         });
+    }
+
+    // ---- Task 2.1: time-range fast path (single empty-replace over the deleted interval) ----
+
+    /**
+     * White-box guard on the classifier that routes the fast path: only a predicate that reduces to a
+     * SINGLE designated-timestamp interval with NO residual non-timestamp filter is classified as a pure
+     * time range (and later applied as one empty {@code replaceRange} over the deleted interval, instead of
+     * staging survivors). This asserts the DECISION directly on the compiled {@link DeleteOperation} - a
+     * functional survivor-set check cannot distinguish the fast path from the fallback because both produce
+     * identical rows. The bounds are the DELETED interval {@code [lo, hiExcl)} in the table's timestamp
+     * units. {@code isWalApplication()} is not required: {@code SqlCompilerImpl} classifies on every DELETE
+     * compile from the ORIGINAL (un-negated) predicate, so a plain query-thread compile observes the same
+     * decision the WAL-apply pass makes.
+     */
+    @Test
+    public void testTimeRangeDeleteClassifiedAsPureInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int, s symbol) timestamp(ts) partition by DAY WAL");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // micros since epoch (the table's designated-timestamp unit): 1970-01-02 and 1970-01-03.
+                final long d2 = 86400 * 1_000_000L;
+                final long d3 = 172800 * 1_000_000L;
+                // open upper bound: ts < d3 -> delete [MIN, d3); clamped to the table at apply time.
+                assertPureTimeRange(compiler, "DELETE FROM t WHERE ts < '1970-01-03T00:00:00.000000Z'",
+                        Long.MIN_VALUE, d3);
+                // open lower bound: ts >= d3 -> delete [d3, MAX] (hiExcl saturates at Long.MAX_VALUE).
+                assertPureTimeRange(compiler, "DELETE FROM t WHERE ts >= '1970-01-03T00:00:00.000000Z'",
+                        d3, Long.MAX_VALUE);
+                // half-open band: [d2, d3).
+                assertPureTimeRange(compiler,
+                        "DELETE FROM t WHERE ts >= '1970-01-02T00:00:00.000000Z' AND ts < '1970-01-03T00:00:00.000000Z'",
+                        d2, d3);
+                // BETWEEN is inclusive on both ends: [d2, d3] -> hiExcl = d3 + 1.
+                assertPureTimeRange(compiler,
+                        "DELETE FROM t WHERE ts BETWEEN '1970-01-02T00:00:00.000000Z' AND '1970-01-03T00:00:00.000000Z'",
+                        d2, d3 + 1);
+            }
+        });
+    }
+
+    /**
+     * The soundness half of the classifier: anything that is NOT a single designated-timestamp interval with
+     * an empty residual filter must fall through to the whole-range survivor-replace. A false positive here
+     * is a CORRECTNESS bug - e.g. classifying {@code ts < X AND s='a'} as the interval {@code [MIN, X)} would
+     * empty-replace that whole range and wrongly delete {@code s='b'} rows too (see
+     * {@link #testDeleteMixedTimestampAndFilterDeletesOnlyMatchingRows}). Mirrors the code generator's own
+     * pure-interval-scan gate: {@code filter == null && keyColumn == null && hasIntervalFilters() && a single
+     * static interval}.
+     */
+    @Test
+    public void testMixedOrArbitraryDeleteNotClassifiedAsPureInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int, s symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table ti (ts timestamp, x int, s symbol index) timestamp(ts) partition by DAY WAL");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // timestamp bound AND a residual non-timestamp filter -> intrinsicModel.filter != null.
+                assertNotPureTimeRange(compiler, "DELETE FROM t WHERE ts < '1970-01-03T00:00:00.000000Z' AND s = 'a'");
+                // timestamp bound AND an indexed-symbol key -> intrinsicModel.keyColumn != null.
+                assertNotPureTimeRange(compiler, "DELETE FROM ti WHERE ts < '1970-01-03T00:00:00.000000Z' AND s = 'a'");
+                // no timestamp component at all.
+                assertNotPureTimeRange(compiler, "DELETE FROM t WHERE x % 2 = 0");
+                assertNotPureTimeRange(compiler, "DELETE FROM t WHERE s = 'b'");
+                // two disjoint timestamp intervals (OR) -> not a SINGLE contiguous interval.
+                assertNotPureTimeRange(compiler,
+                        "DELETE FROM t WHERE ts < '1970-01-02T00:00:00.000000Z' OR ts > '1970-01-05T00:00:00.000000Z'");
+            }
+        });
+    }
+
+    @Test
+    public void testDeleteOpenEndedTimeRangeDropsOldPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            // 4+ DAY partitions, one row per hour.
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x " +
+                    "from long_sequence(96)) timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("DELETE FROM t WHERE ts < '1970-01-03T00:00:00.000000Z'");
+            drainWalQueue();
+            // The two oldest whole partitions (days 1-2) are gone; day 3 onward survive intact.
+            assertQuery("select count(*) from t where ts < '1970-01-03T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("select min(ts), max(ts), count() from t").noRandomAccess().expectSize().returns("""
+                    min\tmax\tcount
+                    1970-01-03T00:00:00.000000Z\t1970-01-05T00:00:00.000000Z\t49
+                    """);
+        });
+    }
+
+    @Test
+    public void testDeleteBoundedTimeRangeTrimsAndDrops() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x " +
+                    "from long_sequence(96)) timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            // The interval [day2, day3) covers exactly the whole 1970-01-02 partition (x = 24..47).
+            execute("DELETE FROM t WHERE ts >= '1970-01-02T00:00:00.000000Z' AND ts < '1970-01-03T00:00:00.000000Z'");
+            drainWalQueue();
+            // Day 2 fully gone.
+            assertQuery("select count(*) from t where ts >= '1970-01-02T00:00:00.000000Z' and ts < '1970-01-03T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            // Neighbours untouched: day 1 (x = 1..23) and day 3+ (x = 48..96) both intact.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n72\n");
+            assertQuery("select min(x), max(x) from t where ts < '1970-01-02T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("min\tmax\n1\t23\n");
+            assertQuery("select min(x), max(x) from t where ts >= '1970-01-03T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("min\tmax\n48\t96\n");
+        });
+    }
+
+    @Test
+    public void testDeleteTimeRangeBoundarySplitsPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // A single DAY partition (x = 1..20 -> 01:00..20:00 on 1970-01-01).
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x " +
+                    "from long_sequence(20)) timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            // Independent oracle snapshot, never touched by the DELETE.
+            execute("create table t_ref as (select * from t)");
+
+            // Delete a sub-partition band in the MIDDLE (05:00..10:00 inclusive) - a boundary trim with
+            // survivors on both sides, no whole-partition drop.
+            execute("DELETE FROM t WHERE ts BETWEEN '1970-01-01T05:00:00.000000Z' AND '1970-01-01T10:00:00.000000Z'");
+            drainWalQueue();
+
+            // Exact survivors via a NOT BETWEEN reference: a boundary-conversion or off-by-one bug in the
+            // interval -> replaceRange mapping shows up here as a row difference.
+            assertSqlCursors(
+                    "select * from t_ref where ts not between '1970-01-01T05:00:00.000000Z' and '1970-01-01T10:00:00.000000Z'",
+                    "select * from t"
+            );
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n14\n");
+        });
+    }
+
+    /**
+     * The critical soundness guard: a predicate mixing a timestamp bound with a non-timestamp filter must
+     * delete ONLY the rows matching the WHOLE predicate. If {@code ts < X AND s='a'} were (wrongly) routed
+     * to an empty-replace over {@code [MIN, X)}, every {@code s='b'} row before X would be destroyed too.
+     * Pins that mixed predicates take the always-correct survivor-replace path, not the fast path.
+     */
+    @Test
+    public void testDeleteMixedTimestampAndFilterDeletesOnlyMatchingRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int, s symbol) timestamp(ts) partition by DAY WAL");
+            execute("insert into t(ts, x, s) values " +
+                    "('1970-01-01T00:00:00.000000Z',1,'a')," +
+                    "('1970-01-01T12:00:00.000000Z',2,'b')," +
+                    "('1970-01-02T00:00:00.000000Z',3,'a')," +
+                    "('1970-01-02T12:00:00.000000Z',4,'b')," +
+                    "('1970-01-03T00:00:00.000000Z',5,'a')," +
+                    "('1970-01-03T12:00:00.000000Z',6,'b')," +
+                    "('1970-01-04T00:00:00.000000Z',7,'a')," +
+                    "('1970-01-04T12:00:00.000000Z',8,'b')");
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+
+            execute("DELETE FROM t WHERE ts < '1970-01-03T00:00:00.000000Z' AND s = 'a'");
+            drainWalQueue();
+
+            // Only x=1 and x=3 (s='a' AND before day 3) may be removed. The s='b' rows before day 3 (x=2,4)
+            // MUST survive - proving the mixed predicate did NOT empty-replace the whole [MIN, day3) range.
+            assertQuery("select ts, x, s from t").timestamp("ts").expectSize().returns("""
+                    ts\tx\ts
+                    1970-01-01T12:00:00.000000Z\t2\tb
+                    1970-01-02T12:00:00.000000Z\t4\tb
+                    1970-01-03T00:00:00.000000Z\t5\ta
+                    1970-01-03T12:00:00.000000Z\t6\tb
+                    1970-01-04T00:00:00.000000Z\t7\ta
+                    1970-01-04T12:00:00.000000Z\t8\tb
+                    """);
+            // Independent oracle: survivors == the reference minus rows matching the WHOLE predicate.
+            assertSqlCursors(
+                    "select * from t_ref where not (ts < '1970-01-03T00:00:00.000000Z' and s = 'a')",
+                    "select * from t"
+            );
+        });
+    }
+
+    private void assertNotPureTimeRange(SqlCompiler compiler, String sql) throws SqlException {
+        final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
+        Assert.assertEquals(CompiledQuery.DELETE, cc.getType());
+        final DeleteOperation op = cc.getDeleteOperation();
+        Assert.assertNotNull(op);
+        Assert.assertFalse("must NOT be classified as a pure time range: " + sql, op.isPureTimeRange());
+    }
+
+    private void assertPureTimeRange(SqlCompiler compiler, String sql, long expectedLo, long expectedHiExcl) throws SqlException {
+        final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
+        Assert.assertEquals(CompiledQuery.DELETE, cc.getType());
+        final DeleteOperation op = cc.getDeleteOperation();
+        Assert.assertNotNull(op);
+        Assert.assertTrue("must be classified as a pure time range: " + sql, op.isPureTimeRange());
+        Assert.assertEquals("deleted-interval lo for: " + sql, expectedLo, op.getTimeRangeLo());
+        Assert.assertEquals("deleted-interval hiExcl for: " + sql, expectedHiExcl, op.getTimeRangeHiExcl());
     }
 }
