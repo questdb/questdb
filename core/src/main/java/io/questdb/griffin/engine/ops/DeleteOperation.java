@@ -39,6 +39,17 @@ import static io.questdb.tasks.TableWriterTask.CMD_DELETE_TABLE;
 
 public class DeleteOperation extends AbstractOperation {
     public static final String MAT_VIEW_INVALIDATION_REASON = "delete operation";
+    // Names of the two NAMED timestamp bind variables that SqlCompilerImpl.generateDelete ANDs onto the
+    // apply-time survivor scan (WHERE NOT(pred)) as "<designatedTs> >= :__del_win_lo AND <designatedTs> <
+    // :__del_win_hi" (lower bound inclusive, upper bound exclusive). They bound the survivor cursor to a
+    // per-window designated-timestamp interval [lo, hi) so OperationExecutor can re-drive the SAME survivor
+    // factory window by window (rebinding these two variables and re-running getCursor), each pass reading only
+    // the window's partitions via an interval scan instead of re-scanning the whole table. Compiled with
+    // (min-non-null, MAX) defaults, so an un-windowed caller gets the whole-range survivor set. Names are WITHOUT
+    // the leading ':' (the bind-variable service key form); the survivor model's AST carries the ':'-prefixed
+    // literal. Used by the WAL-apply executor (Task 5).
+    public static final String WINDOW_HI_BIND = "__del_win_hi";
+    public static final String WINDOW_LO_BIND = "__del_win_lo";
     // Time-range fast-path classification (Task 2.1), computed by SqlCompilerImpl.generateDelete from the
     // ORIGINAL (un-negated) predicate. When pureTimeRange is true, the whole DELETE predicate reduces to a
     // SINGLE designated-timestamp interval [timeRangeLo, timeRangeHiExcl) with no residual non-timestamp

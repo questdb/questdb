@@ -5059,9 +5059,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // (isWalApplication) the predicate has been negated in compileExecutionModel0, so this factory
             // is the SURVIVOR cursor (WHERE NOT(pred)) that OperationExecutor.executeDelete feeds to
             // TableWriter.replaceRange: keep it and hand ownership to the DeleteOperation.
-            RecordCursorFactory survivorFactory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
-            if (!executionContext.isWalApplication()) {
-                survivorFactory.close();
+            final RecordCursorFactory survivorFactory;
+            if (executionContext.isWalApplication()) {
+                // Bound the survivor scan to a per-window designated-timestamp interval via two NAMED bind
+                // variables (:__del_win_lo / :__del_win_hi), ANDed onto WHERE NOT(pred) as
+                // "<designatedTs> >= :__del_win_lo AND <designatedTs> < :__del_win_hi". This lets
+                // OperationExecutor re-drive this ONE factory window by window - rebinding the two variables and
+                // re-running getCursor - so each pass reads only the window's partitions (an interval scan)
+                // instead of re-scanning the whole table per window. The bind variables are runtime, so the
+                // code generator extracts the bound into a RuntimeIntervalModel designated-ts intrinsic (an
+                // interval forward scan) with NOT(pred) left as the residual filter.
+                andSurvivorWindowBounds(model.getNestedModel(), metadata);
+                // Default bounds leave the un-windowed factory identical to the whole-range survivor scan, so
+                // any non-windowed caller (including today's OperationExecutor, until Task 5 rebinds per window)
+                // sees exactly the same survivors. NOTE: the lower bound is Long.MIN_VALUE + 1, NOT
+                // Long.MIN_VALUE: a timestamp bind variable equal to Long.MIN_VALUE reads as the timestamp NULL
+                // sentinel (Numbers.LONG_NULL == Long.MIN_VALUE), which RuntimeIntervalModel collapses to an
+                // EMPTY set - that would make the survivor scan return nothing and the DELETE erase the whole
+                // table. Long.MIN_VALUE + 1 is the smallest non-null timestamp and sits below all real data, so
+                // the default interval [MIN+1, MAX) covers every row.
+                final BindVariableService bindVariableService = executionContext.getBindVariableService();
+                bindVariableService.setTimestamp(DeleteOperation.WINDOW_LO_BIND, Long.MIN_VALUE + 1);
+                bindVariableService.setTimestamp(DeleteOperation.WINDOW_HI_BIND, Long.MAX_VALUE);
+                survivorFactory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
+            } else {
+                final RecordCursorFactory validationFactory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
+                validationFactory.close();
                 survivorFactory = null;
             }
 
@@ -5076,6 +5099,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     deleteTimeRangeHiExcl
             );
         }
+    }
+
+    // ANDs "<designatedTs> >= :__del_win_lo AND <designatedTs> < :__del_win_hi" onto the base-table model's
+    // WHERE clause, so the survivor scan is bounded to the per-window interval carried by the two named
+    // timestamp bind variables (see DeleteOperation.WINDOW_LO_BIND / WINDOW_HI_BIND). The bound is added to the
+    // model that directly references the table because the code generator extracts designated-timestamp
+    // interval intrinsics from THAT model's WHERE (SqlCodeGenerator.generateTableQuery0) - adding it higher up
+    // would apply it as a post-filter and forfeit the interval scan. DELETE is single-table (no joins in v1),
+    // so exactly one such model exists in the (already optimised) nested chain.
+    private void andSurvivorWindowBounds(IQueryModel nested, TableRecordMetadata metadata) {
+        IQueryModel tableModel = nested;
+        while (tableModel.getTableNameExpr() == null && tableModel.getNestedModel() != null) {
+            tableModel = tableModel.getNestedModel();
+        }
+        final CharSequence tsColumn = metadata.getColumnName(metadata.getTimestampIndex());
+        ExpressionNode where = tableModel.getWhereClause();
+        where = andWindowBound(where, tsColumn, ">=", ":" + DeleteOperation.WINDOW_LO_BIND);
+        where = andWindowBound(where, tsColumn, "<", ":" + DeleteOperation.WINDOW_HI_BIND);
+        tableModel.setWhereClause(where);
+    }
+
+    // Builds "<tsColumn> <op> <bindVarToken>" (a LITERAL ts column compared to a ':'-prefixed bind variable,
+    // which ExpressionNode.of promotes to BIND_VARIABLE) and ANDs it onto an existing where clause, mirroring
+    // SqlOptimiser.concatFilters. Precedence is irrelevant on an already-built tree, so it is left at 0 as the
+    // compiler does elsewhere when synthesising nodes post-parse.
+    private ExpressionNode andWindowBound(ExpressionNode where, CharSequence tsColumn, CharSequence op, CharSequence bindVarToken) {
+        final ExpressionNode cmp = sqlNodePool.next().of(ExpressionNode.OPERATION, op, 0, 0);
+        cmp.paramCount = 2;
+        cmp.lhs = sqlNodePool.next().of(ExpressionNode.LITERAL, tsColumn, 0, 0);
+        cmp.rhs = sqlNodePool.next().of(ExpressionNode.LITERAL, bindVarToken, 0, 0);
+        if (where == null) {
+            return cmp;
+        }
+        final ExpressionNode and = sqlNodePool.next().of(ExpressionNode.OPERATION, "and", 0, 0);
+        and.paramCount = 2;
+        and.lhs = where;
+        and.rhs = cmp;
+        return and;
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
