@@ -575,13 +575,12 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 key.put(partitionByRecord, partitionBySink);
                 MapValue value = key.createValue();
 
-                if (!value.isNew() && value.getByte(1) == 1) {
+                if (!value.isNew()) {
                     if (comparator.compare(l, value.getLong(0))) {
                         value.putLong(0, l);
                     }
                 } else {
                     value.putLong(0, l);
-                    value.putByte(1, (byte) 1);
                 }
             }
         }
@@ -603,18 +602,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
 
-            long val = value != null && value.getByte(1) == 1 ? value.getLong(0) : Numbers.LONG_NULL;
+            long val = value != null ? value.getLong(0) : Numbers.LONG_NULL;
 
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), val);
-        }
-
-        @Override
-        public void resetPartition(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.createValue();
-            value.putByte(1, (byte) 0);
         }
     }
 
@@ -2407,9 +2397,14 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 if (value.isNew() && tombstoneValueIndex >= 0) {
                     value.putByte(tombstoneValueIndex, (byte) 0);
                 }
-                if (value.isNew() || value.getByte(1) == 0) {
+                // The "initialized" byte only exists in the live-view layout, where
+                // resetPartition clears it to re-arm a partition the anchor has retired.
+                // Outside a live view resetPartition never runs, so isNew() alone decides.
+                if (value.isNew() || (liveView && value.getByte(1) == 0)) {
                     value.putLong(0, l);
-                    value.putByte(1, (byte) 1);
+                    if (liveView) {
+                        value.putByte(1, (byte) 1);
+                    }
                     this.maxMin = l;
                 } else {
                     long max = value.getLong(0);
@@ -2421,7 +2416,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 }
             } else {
                 MapValue value = key.findValue();
-                this.maxMin = value != null && value.getByte(1) == 1 ? value.getLong(0) : Numbers.LONG_NULL;
+                this.maxMin = value != null && (!liveView || value.getByte(1) == 1)
+                        ? value.getLong(0)
+                        : Numbers.LONG_NULL;
             }
         }
 
@@ -2798,11 +2795,13 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
     static {
         MAX_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_COLUMN_TYPES.add(ColumnType.LONG); // max value
+
         // Live-view ANCHOR contract: explicit "initialized" byte signals "no value
         // yet for this partition" so resetPartition can re-arm the slot without
         // relying on MapValue.isNew() (which only fires on the very first access).
-        MAX_COLUMN_TYPES.add(ColumnType.BYTE); // initialized flag
-
+        // Only the live-view layout carries it: resetPartition never runs outside a
+        // live view, so adding the byte to MAX_COLUMN_TYPES would widen the map entry
+        // of every ordinary max()/min() query for a flag it can never read.
         MAX_COLUMN_TYPES_LV = new ArrayColumnTypes();
         MAX_COLUMN_TYPES_LV.add(ColumnType.LONG); // max value
         MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE); // initialized flag

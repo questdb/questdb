@@ -1506,7 +1506,7 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             // including the back-dated O3 row.
             setCurrentMicros(0L);
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
-                    "SELECT *, row_number() OVER () AS rn FROM base");
+                    "SELECT " + everyTierTypeColumns() + ", row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
@@ -3376,6 +3376,17 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     // sentinels in the data - a fixed-width NULL is just a byte pattern the tier's memcpy has to
     // carry through verbatim. Doubles as the empty-CTAS schema source (rowCount 0), so the
     // declared column types cannot drift from the values inserted into them.
+    // Every column everyTierTypeSelect projects, named explicitly and in table order. A live
+    // view cannot use a wildcard - it would re-expand against the base metadata on a recompile
+    // - so its CREATE has to name them. The oracle query keeps its "*", which expands to this
+    // same order.
+    private static String everyTierTypeColumns() {
+        return "a_boolean, a_byte, a_short, a_char, an_int, a_long, a_float, a_double," +
+                " a_symbol, an_ipv4, a_uuid, a_long256, a_geo_byte, a_geo_short, a_geo_int," +
+                " a_geo_long, a_decimal8, a_decimal16, a_decimal32, a_decimal64, a_decimal128," +
+                " a_decimal256, a_string, a_varchar, a_bin, an_array, a_date, ts";
+    }
+
     private static String everyTierTypeSelect(long startMicros, long rowCount) {
         return "SELECT" +
                 " rnd_boolean() a_boolean," +

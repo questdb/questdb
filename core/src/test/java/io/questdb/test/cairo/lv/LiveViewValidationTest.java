@@ -262,6 +262,44 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectWildcardProjection() throws Exception {
+        // A live view freezes its output schema at CREATE but persists the SELECT text verbatim and
+        // recompiles it whenever the base metadata drifts. Under a wildcard the recompiled
+        // projection re-expands against the NEW base metadata, so a base ADD COLUMN - documented as
+        // transparent, and deliberately not an invalidation trigger - silently widens the projection
+        // past the frozen on-disk schema. In-process the cached row copier survives the recompile
+        // (its cache key is the LV's own metadata version, which a base-side change never moves) and
+        // writes the added base column into the slot of the column after it: silent corruption.
+        // After a restart the copier is rebuilt against the wider source and the view instead dies
+        // as "flush retry budget exhausted". Mat views never reach this because SAMPLE BY already
+        // bans wildcards for exactly the same reason.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            assertLiveViewShapeRejected(
+                    "SELECT *, row_number() OVER () AS rn FROM base",
+                    "wildcard column select is not allowed in live view queries"
+            );
+            // A qualified wildcard expands identically, so it must be caught by the same gate.
+            assertLiveViewShapeRejected(
+                    "SELECT base.*, row_number() OVER () AS rn FROM base",
+                    "wildcard column select is not allowed in live view queries"
+            );
+
+            // The gate reads the top-level projection, which is the one that fixes the view's
+            // schema. Nothing else can smuggle a wildcard past it: a subquery in FROM is already
+            // rejected outright (LiveViewSmokeTest#testRejectSubqueryInFrom), so the model reaching
+            // the gate always projects straight off the single base table.
+            //
+            // An explicit column list naming exactly what "*" would have expanded to stays accepted
+            // - the reject is about the wildcard re-expanding on a recompile, not about the columns.
+            execute("CREATE LIVE VIEW lv_explicit FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("DROP LIVE VIEW lv_explicit");
+        });
+    }
+
+    @Test
     public void testRejectOutOfRangeDuration() throws Exception {
         // A duration whose micros overflow a long must be rejected up front
         // rather than silently narrowed. Before the fix toMicros cast the value

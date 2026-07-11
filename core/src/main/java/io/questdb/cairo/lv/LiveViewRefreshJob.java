@@ -3016,19 +3016,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (bcpKey != Numbers.LONG_NULL
                     && restoreFromHead(instance, windowFactory, bcpKey, true, restoredHeadState)
                     && restoredHeadState.resumeDataOffset != Numbers.LONG_NULL) {
-                // A surviving .bcp can be AHEAD of the on-disk LV output when a
-                // checkpoint was taken mid-backfill and later restored: restore
-                // rolls _txn/partitions/_lv.s back to the steady snapshot but
-                // never copies _checkpoints/ back (TableSnapshotRestore keeps the
-                // live _checkpoints/ dir), so the live-ahead .bcp (lvRowsTotal =
-                // R_bcp) outlives the rolled-back disk (onDiskLvRows = R_cp <
-                // R_bcp). Resuming from it would jump the data cursor past the
-                // base rows that produced R_cp..R_bcp while lvRowsTotal starts at
-                // R_bcp, so those LV output rows would be neither on disk nor
-                // re-swept - a permanent silent gap. Reject the ahead .bcp and
-                // fall through to the from-0 re-sweep below, where the skip-write
-                // floor keeps the R_cp on-disk prefix and re-emits everything
-                // above it.
+                // A surviving .bcp can be AHEAD of the on-disk LV output. A checkpoint
+                // restore no longer produces one - TableSnapshotRestore wipes the live
+                // _checkpoints/ dir and lays the snapshot's back down, so the restored
+                // .bcp matches the rolled-back _txn/partitions/_lv.s - but a backup that
+                // omits the dir, or a crash between the .bcp write and the LV commit,
+                // still can: the live-ahead .bcp (lvRowsTotal = R_bcp) outlives the disk
+                // it describes (onDiskLvRows = R_cp < R_bcp). Resuming from it would jump
+                // the data cursor past the base rows that produced R_cp..R_bcp while
+                // lvRowsTotal starts at R_bcp, so those LV output rows would be neither on
+                // disk nor re-swept - a permanent silent gap. Reject the ahead .bcp and
+                // fall through to the from-0 re-sweep below, where the skip-write floor
+                // keeps the R_cp on-disk prefix and re-emits everything above it.
                 if (restoredHeadState.lvRowsTotal <= onDiskLvRows) {
                     instance.setBackfillDataOffset(restoredHeadState.resumeDataOffset);
                     instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
@@ -5235,9 +5234,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             boolean attempted = false;
             // First cycle after restart with no head .cp to restore from. A normal
-            // restart that had a lead always left a .cp; the .cp is missing only on
-            // a fresh view (never flushed) or after an enterprise backup/restore
-            // (the backup excludes derived checkpoint artifacts). This is the
+            // restart that had a lead always left a .cp, and a checkpoint restore
+            // brings the snapshot's .cp back with it (TableSnapshotRestore), so the
+            // .cp is missing only on a fresh view (never flushed) or after a backup
+            // that omits the checkpoint artifacts. This is the
             // necessary half of the guard on the applied-base lead re-derive below;
             // the sufficient half is the drain actually failing to read the base
             // WAL (a live primary's WAL is present, so it never falls back).

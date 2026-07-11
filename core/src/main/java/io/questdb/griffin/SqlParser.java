@@ -1454,6 +1454,23 @@ public class SqlParser {
         if (hasParens) {
             expectTok(lexer, ")");
         }
+        // A live view freezes its output schema at CREATE, but persists the SELECT text
+        // verbatim and recompiles it whenever the base metadata drifts. A wildcard in the
+        // top-level projection would re-expand against the new base metadata, so a base
+        // ADD COLUMN - which the view otherwise treats as transparent - would widen the
+        // projection past the frozen on-disk schema and the row copier would write the new
+        // column into the slot of the one after it. Reject it at CREATE, mirroring the ban
+        // SAMPLE BY carries for exactly the same reason (see SqlOptimiser.rewriteSampleBy).
+        // The top-level projection is the only one to check: it alone fixes the view's schema,
+        // and a subquery in FROM - the one shape that could hide another projection - is
+        // already rejected below ("live view requires a single base table in FROM clause").
+        final ObjList<QueryColumn> projection = queryModel.getColumns();
+        for (int i = 0, n = projection.size(); i < n; i++) {
+            final ExpressionNode ast = projection.getQuick(i).getAst();
+            if (ast.isWildcard()) {
+                throw SqlException.$(ast.position, "wildcard column select is not allowed in live view queries");
+            }
+        }
         // Trim whitespace between the query and any wrapping parentheses so the
         // captured SELECT text round-trips cleanly. SHOW CREATE LIVE VIEW re-emits
         // the definition as "AS (\n<sql>\n)"; without trimming, re-parsing that

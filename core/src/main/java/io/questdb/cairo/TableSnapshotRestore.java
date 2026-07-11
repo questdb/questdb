@@ -28,6 +28,7 @@ import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -170,10 +171,10 @@ public class TableSnapshotRestore implements QuietCloseable {
             // Live views are WAL-backed tables that restore through this path (like mat views), with two
             // sidecars: _lv (definition) and _lv.s (durable refresh state). Both must be restored - the
             // engine refuses to load a live view whose _lv is present but _lv.s is missing. They are
-            // optional here only because non-live-view tables lack them. The _checkpoints/ in-memory
-            // window snapshots are derived (recovery rebuilds them), so they are not copied.
+            // optional here only because non-live-view tables lack them.
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME, true);
             copyFile(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), recoveredMetaFiles, LiveViewState.LIVE_VIEW_STATE_FILE_NAME, true);
+            restoreLiveViewCheckpointDir(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen));
         } finally {
             srcPath.trimTo(srcPathLen);
             dstPath.trimTo(dstPathLen);
@@ -1418,6 +1419,79 @@ public class TableSnapshotRestore implements QuietCloseable {
             } finally {
                 partitionCleanPath.trimTo(pathTableLen);
             }
+        }
+    }
+
+    /**
+     * Restores a live view's {@code _checkpoints/} dir - the window-function head snapshots
+     * ({@code .cp}) and the rolling backfill snapshots ({@code .bcp}) that
+     * {@code DatabaseCheckpointAgent.copyLiveViewCheckpointDir} put in the checkpoint.
+     * <p>
+     * The live dir is wiped before the snapshot's entries land, because recovery runs in place
+     * over a database that kept ingesting after CHECKPOINT CREATE: the refresh worker will have
+     * written a newer head and unlinked the checkpoint's, so the live dir holds heads that sit
+     * <em>above</em> the {@code _txn} / {@code _lv.s} the restore rolls back to. The startup
+     * sweep unlinks a {@code .cp} above the applied watermark, but the {@code .bcp} sweep has no
+     * such gate, so leaving the live dir in place would resume a backfill from a head describing
+     * rows the restore just rolled away.
+     * <p>
+     * Without this, a restored view has no head at all: it drains forward from the restored
+     * watermark with cold window accumulators and durably commits wrong cumulative results
+     * (running sums, {@code row_number()}, under-filled ROWS frames) with no error. Restoring the
+     * head lets the first refresh cycle rehydrate the accumulators and replay the
+     * {@code (head, applied]} gap from the base WAL the snapshot retains.
+     * <p>
+     * A missing source dir is normal (a non-live-view table, or a view that had not flushed a head
+     * when the checkpoint was taken) and still wipes the destination, so the restored view matches
+     * the checkpoint rather than the live database. Individual copy failures log and continue: the
+     * recovery sweep tolerates a missing or corrupt head (CRC-checked) by falling back to a replay.
+     */
+    private void restoreLiveViewCheckpointDir(Path srcPath, Path dstPath) {
+        final int srcPathLen = srcPath.size();
+        final int dstPathLen = dstPath.size();
+        try {
+            srcPath.concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
+            dstPath.concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
+
+            final boolean hasSrcDir = ff.exists(srcPath.$());
+            final boolean hasDstDir = ff.exists(dstPath.$());
+            if (!hasSrcDir && !hasDstDir) {
+                // Neither side has one: an ordinary table.
+                return;
+            }
+
+            // Drop every live head before restoring, so nothing above the checkpoint survives.
+            if (hasDstDir && !ff.rmdir(dstPath)) {
+                LOG.error().$("could not remove live view checkpoint dir, restored view may replay from a stale head [path=")
+                        .$(dstPath).$(", errno=").$(ff.errno()).I$();
+            }
+            if (!hasSrcDir) {
+                return;
+            }
+
+            dstPath.trimTo(dstPathLen).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash$();
+            if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
+                LOG.error().$("could not create live view checkpoint dir, view will rebuild its window [path=")
+                        .$(dstPath).$(", errno=").$(ff.errno()).I$();
+                return;
+            }
+
+            final int srcDirLen = srcPath.size();
+            final int dstDirLen = dstPath.size();
+            ff.iterateDir(srcPath.$(), (pUtf8NameZ, type) -> {
+                if (type != Files.DT_FILE) {
+                    return;
+                }
+                srcPath.trimTo(srcDirLen).concat(pUtf8NameZ).$();
+                dstPath.trimTo(dstDirLen).concat(pUtf8NameZ).$();
+                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                    LOG.error().$("could not restore live view checkpoint file [file=").$(srcPath)
+                            .$(", errno=").$(ff.errno()).I$();
+                }
+            });
+        } finally {
+            srcPath.trimTo(srcPathLen);
+            dstPath.trimTo(dstPathLen);
         }
     }
 

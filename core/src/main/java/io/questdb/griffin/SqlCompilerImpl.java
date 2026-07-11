@@ -4749,7 +4749,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else {
                         securityContext.authorizeTableDrop(tableToken);
                     }
-                    engine.dropTableOrViewOrMatView(path, tableToken);
+                    if (tableToken.isLiveView()) {
+                        // A live view carries state the generic drop does not know about:
+                        // the registry entry, the dependents graph edge and the durable
+                        // _lv.drop sentinel. It also has to fence the refresh worker before
+                        // the table teardown. dropLiveView does all of that and calls
+                        // dropTableOrViewOrMatView itself.
+                        engine.dropLiveView(tableName, securityContext);
+                    } else {
+                        engine.dropTableOrViewOrMatView(path, tableToken);
+                    }
                     hasDroppedAny = true;
                     op.onTableOrViewOrMatViewDropped(engine.getDdlListener(tableName), tableToken);
                 } catch (Exception e) {

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
@@ -39,6 +40,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -164,6 +166,80 @@ public class LiveViewTest extends AbstractCairoTest {
                 Assert.assertEquals("base", LiveViewDefinition.readBaseTableName(reader, p, p.size(), token));
             }
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testDropAllTablesDropsLiveViewThroughLiveViewPath() throws Exception {
+        // DROP ALL TABLES recognised the live view for authorization but then dropped it through
+        // the generic dropTableOrViewOrMatView, which knows nothing about the LV-specific state.
+        // Mat views get away with the generic call because their cleanup lives inside it; a live
+        // view's lives in the separate CairoEngine.dropLiveView wrapper, so DROP ALL skipped the
+        // registry removal, the dependents-graph edge, the durable _lv.drop sentinel and the
+        // refresh-worker fence. The table went away but the view stayed in the registry - a zombie
+        // that live_views() kept listing and that a re-CREATE under the same name would double-
+        // register into the base's grow-only dependents list.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:01.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+            Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+
+            execute("DROP ALL");
+            drainWalQueue();
+
+            Assert.assertNull(
+                    "DROP ALL must deregister the live view, not leave a registry zombie",
+                    engine.getLiveViewRegistry().getViewInstance("lv")
+            );
+            assertQuery("SELECT count() FROM live_views()")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+            assertQuery("SELECT count() FROM tables()")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("count\n0\n");
+
+            // Re-CREATE under the same name must land a single registration. Against a zombie the
+            // base's dependents list would hold both instances, so the refresh worker, the
+            // invalidation fan-out and the WAL purge floor would all walk a dead view.
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final ObjList<LiveViewInstance> dependents = new ObjList<>();
+            engine.getLiveViewRegistry().getViewsForBaseTable("base", dependents);
+            Assert.assertEquals(
+                    "re-CREATE after DROP ALL must not double-register [views=" + dependents.size() + ']',
+                    1,
+                    dependents.size()
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:02.000000Z', 7)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-01-01T00:00:02.000000Z\t7\t1\n");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
         });
     }
 

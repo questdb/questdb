@@ -976,6 +976,12 @@ public class LiveViewInstance implements QuietCloseable {
         compiledFactory = Misc.free(compiledFactory);
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
+        // Drop the cached row copier with the factory it was built for. Its cache key is
+        // the LV's own WAL metadata version, which a base-side schema change never moves,
+        // so it would otherwise survive the recompile and copy the new factory's records
+        // through the old factory's column layout.
+        recordToRowCopier = null;
+        recordRowCopierMetadataVersion = -1;
     }
 
     /**
