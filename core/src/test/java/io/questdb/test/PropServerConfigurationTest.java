@@ -782,6 +782,49 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testSecretFilePropertiesPassStrictValidation() throws Exception {
+        // The <secret>.file properties are read by getSecretFilePath() to support secret file mounts,
+        // but they have no PropertyKey of their own, so strict validation used to reject them as typos
+        // and the server refused to start.
+        File httpPassword = temp.newFile("http-password");
+        File pgPassword = temp.newFile("pg-password");
+        File pgRoPassword = temp.newFile("pg-readonly-password");
+        java.nio.file.Files.write(httpPassword.toPath(), "http-secret".getBytes());
+        java.nio.file.Files.write(pgPassword.toPath(), "pg-secret".getBytes());
+        java.nio.file.Files.write(pgRoPassword.toPath(), "pg-readonly-secret".getBytes());
+
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("http.user", "admin");
+        properties.setProperty("http.password.file", httpPassword.getAbsolutePath());
+        properties.setProperty("pg.password.file", pgPassword.getAbsolutePath());
+        properties.setProperty("pg.readonly.password.file", pgRoPassword.getAbsolutePath());
+
+        Assert.assertNull(validate(properties));
+
+        // Strict validation must not stop the server from starting, and the secrets must still be
+        // read from the files.
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals("http-secret", configuration.getHttpServerConfiguration().getPassword());
+    }
+
+    @Test
+    public void testSecretFileValidationRejectsUnknownAndNonSensitiveKeys() {
+        // The .file suffix is only accepted for sensitive settings, so a typo in the base key, or a
+        // .file variant of a setting that holds no secret, is still reported as invalid.
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("http.pasword.file", "/tmp/typo");
+        properties.setProperty("http.bind.to.file", "/tmp/not-a-secret");
+
+        PropServerConfiguration.ValidationResult result = validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.isError());
+        Assert.assertNotEquals(-1, result.message().indexOf("http.pasword.file"));
+        Assert.assertNotEquals(-1, result.message().indexOf("http.bind.to.file"));
+    }
+
+    @Test
     public void testDeprecatedValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("http.net.rcv.buf.size", "10000");

@@ -3570,7 +3570,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     String obsoleteMsg = obsoleteSettings.get(propName);
                     if (obsoleteMsg != null) {
                         obsolete.put(propName, obsoleteMsg);
-                    } else {
+                    } else if (!isSecretFileProperty(propName)) {
                         incorrect.add(propName);
                     }
                 }
@@ -3640,6 +3640,19 @@ public class PropServerConfiguration implements ServerConfiguration {
             } else {
                 map.put(old, "No longer used");
             }
+        }
+
+        /**
+         * Tests whether the property is the {@code .file} variant of a sensitive setting, such as
+         * {@code http.password.file}. These are read by {@link #getSecretFilePath} to support secret file
+         * mounts, but have no {@link PropertyKey} of their own, so they must not be reported as typos.
+         */
+        protected boolean isSecretFileProperty(String propName) {
+            if (!propName.endsWith(SECRET_FILE_PROPERTY_SUFFIX)) {
+                return false;
+            }
+            String keyName = propName.substring(0, propName.length() - SECRET_FILE_PROPERTY_SUFFIX.length());
+            return lookupConfigProperty(keyName).map(ConfigPropertyKey::isSensitive).orElse(false);
         }
 
         protected Optional<ConfigPropertyKey> lookupConfigProperty(String propName) {
