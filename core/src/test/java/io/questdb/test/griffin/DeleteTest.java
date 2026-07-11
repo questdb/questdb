@@ -276,4 +276,230 @@ public class DeleteTest extends AbstractCairoTest {
                     """);
         });
     }
+
+    // ---- correctness matrix: dedup, O3, symbol/index, concurrency, mat-view (Task 1.11) ----
+
+    @Test
+    public void testDeleteOnDedupTableKeepsKeysUnique() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, s symbol, v int) timestamp(ts) partition by DAY WAL " +
+                    "dedup upsert keys(ts, s)");
+            execute("insert into t(ts, s, v) values " +
+                    "('1970-01-01T00:01:00.000000Z','a',1)," +
+                    "('1970-01-01T00:02:00.000000Z','b',2)," +
+                    "('1970-01-01T00:03:00.000000Z','a',3)," +
+                    "('1970-01-01T00:04:00.000000Z','b',4)," +
+                    "('1970-01-01T00:05:00.000000Z','a',5)," +
+                    "('1970-01-01T00:06:00.000000Z','b',6)");
+            drainWalQueue();
+
+            execute("DELETE FROM t WHERE s = 'b'");
+            drainWalQueue();
+
+            // Survivors: the three 'a' rows, untouched.
+            assertQuery("select ts, s, v from t").timestamp("ts").expectSize().returns("""
+                    ts\ts\tv
+                    1970-01-01T00:01:00.000000Z\ta\t1
+                    1970-01-01T00:03:00.000000Z\ta\t3
+                    1970-01-01T00:05:00.000000Z\ta\t5
+                    """);
+
+            // The replace-range write that lands the survivors bypasses UPSERT-key dedup WITHIN the
+            // replaced range (the survivors are already authoritative, key-unique-by-construction
+            // rows straight from the pre-delete table) - but the table's dedup config itself must
+            // still be intact and enforced for FUTURE commits: upserting the same (ts, s) key as an
+            // existing survivor must update it in place, not create a duplicate row.
+            execute("insert into t(ts, s, v) values ('1970-01-01T00:01:00.000000Z','a',999)");
+            drainWalQueue();
+
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n3\n");
+            assertQuery("select ts, s, v from t").timestamp("ts").expectSize().returns("""
+                    ts\ts\tv
+                    1970-01-01T00:01:00.000000Z\ta\t999
+                    1970-01-01T00:03:00.000000Z\ta\t3
+                    1970-01-01T00:05:00.000000Z\ta\t5
+                    """);
+        });
+    }
+
+    @Test
+    public void testDeleteMiddleBandWithOutOfOrderSurvivors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+
+            // Seed genuinely out of order: statement order is day3, day1, day2 - crossing all three
+            // DAY partitions out of chronological order - and the day2 statement itself lists its six
+            // rows in scrambled order. Every row lands via real O3 commit machinery at drain time,
+            // unlike every prior DeleteTest case (each seeded via an ascending generator, or a single
+            // statement whose rows were already in ts order): the day2 partition this DELETE targets
+            // is genuinely built from out-of-order writes, not a single ordered one. (Note: by the
+            // time DELETE recompiles its survivor SELECT, the table has already settled into physical
+            // ts order - that's a storage invariant - so replaceRange's forced O3 restage-and-sort of
+            // the survivor batch is exercised as an already-sorted no-op here too, same as every other
+            // DELETE. What's new in this test is the O3-built partition shape and the middle-of-partition
+            // survivor gap below, plus an independent order/content check on the result.)
+            execute("insert into t(ts, x) values " +
+                    "('1970-01-03T00:00:00.000000Z',11)," +
+                    "('1970-01-03T06:00:00.000000Z',12)," +
+                    "('1970-01-03T12:00:00.000000Z',13)," +
+                    "('1970-01-03T18:00:00.000000Z',14)");
+            execute("insert into t(ts, x) values " +
+                    "('1970-01-01T00:00:00.000000Z',1)," +
+                    "('1970-01-01T06:00:00.000000Z',2)," +
+                    "('1970-01-01T12:00:00.000000Z',3)," +
+                    "('1970-01-01T18:00:00.000000Z',4)");
+            execute("insert into t(ts, x) values " +
+                    "('1970-01-02T12:00:00.000000Z',8)," +
+                    "('1970-01-02T00:00:00.000000Z',5)," +
+                    "('1970-01-02T20:00:00.000000Z',10)," +
+                    "('1970-01-02T04:00:00.000000Z',6)," +
+                    "('1970-01-02T16:00:00.000000Z',9)," +
+                    "('1970-01-02T08:00:00.000000Z',7)");
+            drainWalQueue();
+
+            // Snapshot every seeded row (now settled into physical ts order) as an independent oracle
+            // for the NOT-matching reference below - this table is never touched by the DELETE.
+            execute("create table t_ref as (select * from t)");
+
+            // Delete a MIDDLE band inside the day2 partition, leaving survivors on BOTH sides of the
+            // removed band within that same partition (x=5,6 before; x=9,10 after) - a genuine
+            // middle-of-partition hole, not just a one-sided trim.
+            execute("DELETE FROM t WHERE ts BETWEEN '1970-01-02T08:00:00.000000Z' AND '1970-01-02T12:00:00.000000Z'");
+            drainWalQueue();
+
+            assertQuery("select ts, x from t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    1970-01-01T00:00:00.000000Z\t1
+                    1970-01-01T06:00:00.000000Z\t2
+                    1970-01-01T12:00:00.000000Z\t3
+                    1970-01-01T18:00:00.000000Z\t4
+                    1970-01-02T00:00:00.000000Z\t5
+                    1970-01-02T04:00:00.000000Z\t6
+                    1970-01-02T16:00:00.000000Z\t9
+                    1970-01-02T20:00:00.000000Z\t10
+                    1970-01-03T00:00:00.000000Z\t11
+                    1970-01-03T06:00:00.000000Z\t12
+                    1970-01-03T12:00:00.000000Z\t13
+                    1970-01-03T18:00:00.000000Z\t14
+                    """);
+
+            // Independent dynamic oracle: every row of the untouched snapshot that does NOT fall in
+            // the deleted band, in cursor (i.e. physical/timestamp) order, must equal the post-delete
+            // table exactly - both content and order. assertSqlCursors does a lockstep cursor
+            // comparison (see TestUtils#assertEquals), so an order mismatch fails it too.
+            assertSqlCursors(
+                    "select * from t_ref where not (ts between '1970-01-02T08:00:00.000000Z' and '1970-01-02T12:00:00.000000Z')",
+                    "select * from t"
+            );
+        });
+    }
+
+    @Test
+    public void testDeleteBySymbolKeepsIndexConsistent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, s symbol index, x int) timestamp(ts) partition by DAY WAL");
+            execute("insert into t(ts, s, x) values " +
+                    "('1970-01-01T00:01:00.000000Z','a',1)," +
+                    "('1970-01-01T00:02:00.000000Z','b',2)," +
+                    "('1970-01-01T00:03:00.000000Z','a',3)," +
+                    "('1970-01-01T00:04:00.000000Z','b',4)," +
+                    "('1970-01-01T00:05:00.000000Z','a',5)," +
+                    "('1970-01-01T00:06:00.000000Z','b',6)");
+            drainWalQueue();
+
+            execute("DELETE FROM t WHERE s = 'b'");
+            drainWalQueue();
+
+            // The indexed-symbol survivor read must reflect the delete: 'a' rows remain exactly as
+            // they were (proves the symbol index isn't stale after the replace-range rewrite), and
+            // 'b' returns nothing (not a stale posting list, and not silently falling back to a full
+            // scan that happens to hide a stale index).
+            assertQuery("select x from t where s = 'a'").returns("""
+                    x
+                    1
+                    3
+                    5
+                    """);
+            assertQuery("select count(*) from t where s = 'b'").noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("select x from t").expectSize().returns("""
+                    x
+                    1
+                    3
+                    5
+                    """);
+        });
+    }
+
+    @Test
+    public void testDeleteThenInsertBeforeDrainAppliesInSeqTxnOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(10)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+
+            // Store the DELETE's WAL SQL txn WITHOUT draining: it is now queued but not yet applied -
+            // the table is untouched until the drainWalQueue() call below.
+            execute("DELETE FROM t WHERE ts BETWEEN '1970-01-01T03:00:00.000000Z' AND '1970-01-01T07:00:00.000000Z'");
+
+            // A later statement (higher seqTxn) inserts a row whose timestamp falls INSIDE the
+            // not-yet-applied delete band, still before any drain.
+            execute("INSERT INTO t(ts, x) VALUES ('1970-01-01T05:00:00.000000Z', 999)");
+
+            // Apply both queued WAL txns now, strictly in seqTxn order.
+            drainWalQueue();
+
+            // THE key deferred-apply guarantee: the DELETE recomputes its survivor set as of ITS OWN
+            // position in the WAL, seeing only rows already committed before it (x=1..10) - so
+            // x=3..7 (03:00..07:00) are removed. The INSERT, sequenced strictly after, is applied
+            // against the already-mutated table and is untouched by the (already-finished) DELETE:
+            // the new row (x=999 at 05:00, inside the deleted band) must survive.
+            assertQuery("select ts, x from t").timestamp("ts").expectSize().returns("""
+                    ts\tx
+                    1970-01-01T01:00:00.000000Z\t1
+                    1970-01-01T02:00:00.000000Z\t2
+                    1970-01-01T05:00:00.000000Z\t999
+                    1970-01-01T08:00:00.000000Z\t8
+                    1970-01-01T09:00:00.000000Z\t9
+                    1970-01-01T10:00:00.000000Z\t10
+                    """);
+        });
+    }
+
+    @Test
+    public void testDeleteInvalidatesMaterializedView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view t_1h as (select ts, sum(x) as x from t sample by 1h) partition by DAY");
+            execute("insert into t(ts, x) values " +
+                    "('1970-01-01T00:01:00.000000Z',1)," +
+                    "('1970-01-01T00:31:00.000000Z',2)," +
+                    "('1970-01-01T01:05:00.000000Z',3)");
+            drainWalAndMatViewQueues();
+            drainPurgeJob();
+
+            assertQuery("select view_name, base_table_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            t_1h\tt\tvalid
+                            """);
+
+            execute("DELETE FROM t WHERE x = 2");
+            drainWalAndMatViewQueues();
+            drainPurgeJob();
+
+            // DELETE invalidates a dependent mat view when it actually removes at least one row (see
+            // ApplyWal2TableJob#processWalSql's CMD_DELETE_TABLE case: invalidation is gated on
+            // deleted > 0) - it does NOT attempt an incremental refresh over the replaced range. Pin
+            // the actual, real invalidation reason string (DeleteOperation.MAT_VIEW_INVALIDATION_REASON).
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            t_1h\tt\tinvalid\tdelete operation
+                            """);
+        });
+    }
 }
