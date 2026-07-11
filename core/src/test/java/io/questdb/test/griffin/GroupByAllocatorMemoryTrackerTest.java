@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.std.BytecodeAssembler;
@@ -234,17 +235,16 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
         // In a lateral-join decorrelation the outer non-keyed GROUP BY becomes the primary
         // factory and the lateral subquery references it through a SharedRecordCursorFactory.
         // When that reference sits on the build (Hash) side of a hash join, getSharedCursor()
-        // runs before the primary getCursor() and opens cursor.baseCursor, so getCursor() takes
-        // the baseCursor != null branch. cursor.of() there reopens the GROUP BY allocator
-        // (charging the per-query tracker) and then calls Function.init(), which can throw. The
-        // branch must free the reopened allocator on the throw; otherwise the allocator lingers
-        // until factory close, by which point the per-query tracker may have been recycled to a
-        // different query and the deferred free corrupts that query's counter.
+        // runs before the primary getCursor(). It opens cursor.baseCursor and initializes the
+        // owner GROUP BY functions so they can donate state to their shared clones. Function.init()
+        // can throw after cursor.of() has reopened the GROUP BY allocator. getSharedCursor() must
+        // close the primary cursor on that failure; otherwise the allocator lingers until factory
+        // close, by which point the per-query tracker may have been recycled to a different query
+        // and the deferred free corrupts that query's counter.
         //
-        // This drives the factory directly: a benign function on the shared path lets
-        // getSharedCursor() open the base cursor, while the primary GROUP BY function throws from
-        // init() after allocator.reopen(). The native allocation must be balanced across the
-        // failed open.
+        // This drives the factory directly. The primary GROUP BY function allocates state and
+        // throws from init() after allocator.reopen(), and the native allocation must be balanced
+        // across the failed shared-cursor open.
         assertMemoryLeak(() -> {
             final GenericRecordMetadata baseMetadata = new GenericRecordMetadata();
             baseMetadata.add(new TableColumnMetadata("x", ColumnType.LONG));
@@ -268,20 +268,16 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
                     1,
                     sharedRecordFunctions
             )) {
-                // getSharedCursor opens cursor.baseCursor (no native memory; the empty base cursor
-                // is a shared singleton), priming the baseCursor != null branch in getCursor.
-                factory.getSharedCursor(sqlExecutionContext, 1);
-
                 final long memBefore = Unsafe.getMemUsed();
                 try {
-                    factory.getCursor(sqlExecutionContext);
+                    factory.getSharedCursor(sqlExecutionContext, 1);
                     Assert.fail("expected the primary group-by function init to throw");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "init boom");
                 }
                 final long memAfter = Unsafe.getMemUsed();
                 Assert.assertEquals(
-                        "group-by allocator leaked when the primary getCursor failed on the shared open path",
+                        "group-by allocator leaked when getSharedCursor failed",
                         memBefore,
                         memAfter
                 );
@@ -331,13 +327,21 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
         Assert.fail("expected " + factoryClass.getSimpleName() + " in base chain of " + factory.getClass().getSimpleName());
     }
 
-    // A GROUP BY function whose init() throws after the cursor has reopened its allocator,
-    // standing in for any Function.init failure (SqlException, circuit breaker, query
-    // cancellation) on the cursor open path. Everything else behaves like count(*).
+    // A GROUP BY function whose init() allocates state and then throws after the cursor has
+    // reopened its allocator, standing in for any Function.init failure on the cursor open path.
+    // Everything else behaves like count(*).
     private static class ThrowingInitCountGroupByFunction extends CountLongConstGroupByFunction {
+        private GroupByAllocator allocator;
+
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            allocator.malloc(Long.BYTES);
             throw SqlException.$(0, "init boom");
+        }
+
+        @Override
+        public void setAllocator(GroupByAllocator allocator) {
+            this.allocator = allocator;
         }
     }
 }
