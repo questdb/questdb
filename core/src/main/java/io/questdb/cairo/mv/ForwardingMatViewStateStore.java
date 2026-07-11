@@ -125,6 +125,16 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros) {
+        delegate.notifyRefreshRetry(matViewToken, retryAfterMicros);
+    }
+
+    @Override
+    public void reenqueueRefreshTask(MatViewRefreshTask task) {
+        delegate.reenqueueRefreshTask(task);
+    }
+
+    @Override
     public void removeViewState(TableToken matViewToken) {
         delegate.removeViewState(matViewToken);
     }

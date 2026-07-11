@@ -181,6 +181,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Consult the breaker at open, so a scan over an empty table still observes cancellation.
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         long rowsRemaining;
         int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         final int order;
@@ -327,8 +329,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             }
             record.init(frameMemory);
 
-            if (frameMemory.hasColumnTops()) {
-                // Use Java-based filter in case of a page frame with column tops.
+            if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
+                // Use Java-based filter in case of a page frame with column tops
+                // or type-cast columns (fixed→var conversion not supported in JIT).
                 final Function filter = atom.getFilter(filterId);
 
                 if (task.isCountOnly()) {

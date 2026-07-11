@@ -39,6 +39,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 import static io.questdb.TelemetryEvent.*;
 
@@ -72,6 +73,11 @@ public class MatViewState implements QuietCloseable {
     // single outlier (GC pause, O3 partition rewrite) from poisoning the EMA
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
+    // Enables an off-latch CAS on refreshRetryAfterMicros so MatViewTimerJob can clear only the
+    // exact deadline it observed due, without clobbering a fresh backoff a concurrent under-latch
+    // refresh may have just armed. See clearRefreshRetry(long).
+    private static final AtomicLongFieldUpdater<MatViewState> REFRESH_RETRY_AFTER_UPDATER =
+            AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Protected by this.latch.
@@ -134,6 +140,14 @@ public class MatViewState implements QuietCloseable {
     // Protected by this.latch.
     // Base table txn that corresponds to refreshIntervals.
     private volatile long refreshIntervalsBaseTxn = -1;
+    // Wall-clock micros before which the view must not be refreshed after a transient failure
+    // (e.g. base table reader pool exhausted). The view stays valid; MatViewTimerJob re-drives an
+    // incremental refresh once the deadline elapses. Numbers.LONG_NULL means no pending retry.
+    private volatile long refreshRetryAfterMicros = Numbers.LONG_NULL;
+    // Number of consecutive transient refresh failures that were deferred without an intervening
+    // success. MatViewRefreshJob invalidates the view once this exceeds the configured limit, which
+    // releases base-table WAL retention. Mutated only under this.latch, so a plain increment is safe.
+    private volatile int refreshRetryCount = 0;
     private volatile MatViewDefinition viewDefinition;
 
     public MatViewState(
@@ -443,6 +457,14 @@ public class MatViewState implements QuietCloseable {
         return refreshIntervalsSeq.get();
     }
 
+    public long getRefreshRetryAfterMicros() {
+        return refreshRetryAfterMicros;
+    }
+
+    public int getRefreshRetryCount() {
+        return refreshRetryCount;
+    }
+
     public long getRefreshSeq() {
         return refreshSeq.get();
     }
@@ -491,6 +513,15 @@ public class MatViewState implements QuietCloseable {
         return latch.get();
     }
 
+    /**
+     * Returns true if the view is not currently inside a transient-refresh backoff window,
+     * i.e. it is eligible to be refreshed now. See {@link #scheduleRefreshRetry(long)}.
+     */
+    public boolean isRefreshDue(long nowMicros) {
+        final long retryAfter = refreshRetryAfterMicros;
+        return retryAfter == Numbers.LONG_NULL || nowMicros >= retryAfter;
+    }
+
     public boolean isPendingInvalidation() {
         return pendingInvalidation;
     }
@@ -514,6 +545,51 @@ public class MatViewState implements QuietCloseable {
     public void markAsValid() {
         this.invalid = false;
         this.pendingInvalidation = false;
+        this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+        this.refreshRetryCount = 0;
+    }
+
+    /**
+     * Clears the pending transient-refresh retry deadline <em>iff</em> it still equals
+     * {@code observedDeadline}, marking the view eligible for refresh now. This is an off-latch CAS:
+     * {@link MatViewTimerJob} passes the deadline it observed due, so if a concurrent under-latch
+     * refresh re-armed a fresher backoff (a different deadline) in the meantime, the CAS fails and
+     * the fresh deadline is left intact (that re-arm queued its own RETRY heap entry to re-drive the
+     * view later). Keeps the consecutive-failure counter so a re-driven refresh that fails again
+     * still counts toward the retry limit. {@link MatViewTimerJob} calls this just before
+     * re-enqueueing a refresh and only enqueues when this returns true.
+     *
+     * @param observedDeadline the retry deadline the caller observed due
+     * @return true if this call cleared the deadline; false if it was concurrently changed
+     */
+    public boolean clearRefreshRetry(long observedDeadline) {
+        return REFRESH_RETRY_AFTER_UPDATER.compareAndSet(this, observedDeadline, Numbers.LONG_NULL);
+    }
+
+    /**
+     * Bumps and returns the consecutive transient-failure counter. Called under this.latch when a
+     * refresh is deferred after a retriable error.
+     */
+    public int incrementRefreshRetryCount() {
+        return ++refreshRetryCount;
+    }
+
+    /**
+     * Resets the deferred-refresh retry state after a successful refresh: clears both the pending
+     * retry deadline and the consecutive-failure counter that caps retries before invalidation.
+     */
+    public void resetRefreshRetry() {
+        this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+        this.refreshRetryCount = 0;
+    }
+
+    /**
+     * Schedules a deferred incremental refresh retry after a transient failure (e.g. base table
+     * reader pool exhausted) instead of invalidating the view. The view stays valid in the meantime;
+     * {@link MatViewTimerJob} re-drives an incremental refresh once {@code retryAfterMicros} elapses.
+     */
+    public void scheduleRefreshRetry(long retryAfterMicros) {
+        this.refreshRetryAfterMicros = retryAfterMicros;
     }
 
     public void rangeRefreshSuccess(
@@ -590,6 +666,12 @@ public class MatViewState implements QuietCloseable {
         assert latch.get();
         this.lastRefreshFinishTimestampUs = refreshTimestamp;
         markAsInvalid(errorMessage);
+        // Drop any pending transient-refresh backoff and the consecutive-failure counter: a view that
+        // a non-retriable failure has just invalidated must not keep a stale retry deadline or count.
+        // The view may have been deferred before this failure (e.g. it was re-driven by a base commit
+        // through the isRefreshDue gate, which does not pre-clear the deadline), so the fields are not
+        // necessarily already cleared here. markAsValid clears them again on recovery.
+        resetRefreshRetry();
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 

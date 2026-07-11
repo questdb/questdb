@@ -49,6 +49,11 @@ public class SeqTxnTracker {
     // Volatile because fireWaiters() and registerWaiter() can race. See comments there
     private volatile boolean dropped;
     private volatile String errorMessage = "";
+    // Hard-suspend flag: when set, the table is excluded from WAL apply and (when
+    // cairo.wal.apply.suspended.write.denied is enabled) denied WAL writes. Set by
+    // ALTER TABLE ... SUSPEND WAL, cleared by ALTER TABLE ... RESUME WAL. The reloadable
+    // cairo.wal.apply.suspended.tables config list is an additional source checked by the engine.
+    private volatile boolean hardSuspended;
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = UNINITIALIZED_TXN;
@@ -116,6 +121,10 @@ public class SeqTxnTracker {
         return dropped;
     }
 
+    public boolean isHardSuspended() {
+        return hardSuspended;
+    }
+
     public boolean isInitialised() {
         return writerTxn != UNINITIALIZED_TXN;
     }
@@ -179,6 +188,10 @@ public class SeqTxnTracker {
         if (writerTxn >= waiter.getTargetWriterTxn() || isSuspended() || dropped) {
             fireWaiters();
         }
+    }
+
+    public void setHardSuspended(boolean hardSuspended) {
+        this.hardSuspended = hardSuspended;
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {

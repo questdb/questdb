@@ -90,6 +90,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
+        circuitBreaker.statefulThrowExceptionIfTripped();
         if (!isTreeMapBuilt) {
             buildTreeMap();
             isTreeMapBuilt = true;

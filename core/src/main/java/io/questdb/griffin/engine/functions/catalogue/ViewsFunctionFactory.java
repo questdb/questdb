@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.griffin.FunctionFactory;
@@ -83,6 +84,8 @@ public class ViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop(executionContext.getCairoEngine());
             return cursor;
         }
@@ -105,6 +108,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
             private final ViewsRecord record = new ViewsRecord();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private CairoEngine engine;
             private int viewIndex = 0;
 
@@ -121,6 +125,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
             public boolean hasNext() {
                 final int n = viewTokens.size();
                 for (; viewIndex < n; viewIndex++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     final TableToken viewToken = viewTokens.get(viewIndex);
                     if (viewToken.isSystem()) {
                         continue;

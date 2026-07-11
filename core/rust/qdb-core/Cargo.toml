@@ -8,7 +8,7 @@ license = "Apache-2.0"
 bytemuck = "1.24.0"
 dashmap = "6.1.0"
 jni = "0.21.1"
-memmap2 = "0.9.5"
+memmap2 = "0.9.11"
 num-traits = "0.2.19"
 pastey = "0.1.0"
 serde = { version = "1.0.210", features = ["derive"] }

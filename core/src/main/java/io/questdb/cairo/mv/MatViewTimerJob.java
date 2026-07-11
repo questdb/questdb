@@ -55,6 +55,7 @@ import java.util.function.Predicate;
 public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
+    private static final Comparator<RetryEntry> retryComparator = Comparator.comparingLong(RetryEntry::getDeadlineUs);
     private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadlineMicros);
     private final MicrosecondClock clock;
     private final CairoConfiguration configuration;
@@ -62,6 +63,12 @@ public class MatViewTimerJob extends SynchronizedJob {
     private final Predicate<Timer> filterByDirName;
     private final MatViewGraph matViewGraph;
     private final MatViewStateStore matViewStateStore;
+    // Pool of reusable retry heap entries, to avoid per-retry allocation during a retry storm.
+    private final ObjList<RetryEntry> retryEntryPool = new ObjList<>();
+    // (deadline, view) min-heap of pending refresh retries, fed by RETRY timer tasks. Only the
+    // entries that have come due are popped on each tick, so the common case is a single peek().
+    // Accessed only from runSerially() (under the SynchronizedJob lock), so no extra synchronization.
+    private final PriorityQueue<RetryEntry> retryQueue = new PriorityQueue<>(INITIAL_QUEUE_CAPACITY, retryComparator);
     private final PriorityQueue<Timer> timerQueue = new PriorityQueue<>(INITIAL_QUEUE_CAPACITY, timerComparator);
     private final MatViewTimerTask timerTask = new MatViewTimerTask();
     private final Queue<MatViewTimerTask> timerTaskQueue;
@@ -74,6 +81,20 @@ public class MatViewTimerJob extends SynchronizedJob {
         this.matViewGraph = engine.getMatViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
         this.filterByDirName = this::filterByDirName;
+    }
+
+    private RetryEntry acquireRetryEntry(TableToken viewToken, long deadlineUs) {
+        final int n = retryEntryPool.size();
+        final RetryEntry entry;
+        if (n > 0) {
+            entry = retryEntryPool.getQuick(n - 1);
+            retryEntryPool.setPos(n - 1);
+        } else {
+            entry = new RetryEntry();
+        }
+        entry.viewToken = viewToken;
+        entry.deadlineUs = deadlineUs;
+        return entry;
     }
 
     private void addTimers(TableToken viewToken, long nowUs) {
@@ -275,6 +296,59 @@ public class MatViewTimerJob extends SynchronizedJob {
         return ran;
     }
 
+    /**
+     * Re-drives materialized views whose incremental refresh was deferred after a transient "table
+     * busy" error (see {@link MatViewRefreshJob}). Once the per-view backoff deadline elapses, an
+     * incremental refresh is enqueued instead of the view being invalidated. This is the only path
+     * that wakes up immediate views, which have no timer of their own.
+     * <p>
+     * Pending retries live in {@link #retryQueue}, a (deadline, view) min-heap fed by RETRY timer
+     * tasks. Only the entries that have actually come due are popped, so a tick costs O(k log n) in
+     * the number of due retries k rather than an O(V) full-fleet scan. The common no-pending-retry
+     * case is a single {@code peek()} returning null.
+     */
+    private boolean processRefreshRetries(long nowMicros) {
+        boolean ran = false;
+        RetryEntry entry;
+        while ((entry = retryQueue.peek()) != null && entry.deadlineUs <= nowMicros) {
+            entry = retryQueue.poll();
+            final TableToken viewToken = entry.viewToken;
+            releaseRetryEntry(entry);
+            final MatViewState state = matViewStateStore.getViewState(viewToken);
+            if (state == null || state.isDropped() || state.isInvalid() || state.isPendingInvalidation()) {
+                // The view went away or no longer needs re-driving; drop the stale heap entry.
+                continue;
+            }
+            final long retryAfter = state.getRefreshRetryAfterMicros();
+            if (retryAfter == Numbers.LONG_NULL) {
+                // Already cleared (re-driven via another entry or reset by a successful refresh).
+                continue;
+            }
+            if (nowMicros >= retryAfter) {
+                // Clear before enqueue so a refresh that fails busy again can re-arm a fresh backoff.
+                // CAS on the exact deadline we observed due: if a concurrent under-latch refresh
+                // re-armed a fresher backoff (a different deadline) since we read it, the CAS fails
+                // and we leave that deadline intact -- the re-arm queued its own RETRY heap entry,
+                // which re-drives the view when it comes due. This closes the off-latch clobber
+                // window without ever taking the view latch in the timer.
+                if (state.clearRefreshRetry(retryAfter)) {
+                    matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                    LOG.info().$("re-driving deferred materialized view refresh [view=").$(viewToken).I$();
+                    ran = true;
+                }
+                // else: a concurrent re-arm won the race; its newer heap entry will re-drive the view.
+            }
+            // else: the deadline was pushed out by a later re-arm queued after this entry; the newer
+            // entry is already in the heap, so this stale one is simply dropped.
+        }
+        return ran;
+    }
+
+    private void releaseRetryEntry(RetryEntry entry) {
+        entry.viewToken = null;
+        retryEntryPool.add(entry);
+    }
+
     private boolean removeTimers(TableToken viewToken) {
         filteredDirName = viewToken.getDirName();
         try {
@@ -309,13 +383,35 @@ public class MatViewTimerJob extends SynchronizedJob {
                         addTimers(viewToken, nowUs);
                     }
                     break;
+                case MatViewTimerTask.RETRY:
+                    // A refresh was deferred after a transient "table busy" error. Queue a
+                    // (deadline, view) entry so processRefreshRetries re-drives the view once the
+                    // backoff elapses, without scanning the full view fleet.
+                    retryQueue.add(acquireRetryEntry(viewToken, timerTask.getRetryAfterMicros()));
+                    break;
                 default:
                     LOG.error().$("unknown refresh timer operation [op=").$(timerTask.getOperation()).I$();
             }
             ran = true;
         }
-        ran |= processExpiredTimers(clock.getTicks());
+        final long now = clock.getTicks();
+        ran |= processExpiredTimers(now);
+        ran |= processRefreshRetries(now);
         return ran;
+    }
+
+    /**
+     * A pending refresh-retry heap entry: the UTC deadline at which a deferred view should be
+     * re-driven, plus the view token. Pooled and reused via {@link #acquireRetryEntry} /
+     * {@link #releaseRetryEntry} to avoid allocation during a retry storm.
+     */
+    private static class RetryEntry {
+        private long deadlineUs;
+        private TableToken viewToken;
+
+        private long getDeadlineUs() {
+            return deadlineUs;
+        }
     }
 
     /**

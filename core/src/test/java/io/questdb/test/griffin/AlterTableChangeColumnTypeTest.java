@@ -26,11 +26,16 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,8 +43,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -71,8 +79,71 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotChangeDecimalToInteger() throws Exception {
+        // DECIMAL -> {BYTE, SHORT, INT, LONG} are not supported.
+        // This is a problem to fix in the future
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{
+                    "DECIMAL(2, 0)",
+                    "DECIMAL(4, 0)",
+                    "DECIMAL(9, 0)",
+                    "DECIMAL(18, 0)",
+                    "DECIMAL(38, 0)",
+                    "DECIMAL(76, 0)",
+            }) {
+                for (String target : new String[]{"BYTE", "SHORT", "INT", "LONG"}) {
+                    try {
+                        execute("CREATE TABLE x (col " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                                sqlExecutionContext);
+                        assertException(
+                                "alter table x alter column col type " + target,
+                                36,
+                                "incompatible column type change [existing=" + source.replace(" ", "")
+                                        + ", new=" + target + "]",
+                                sqlExecutionContext
+                        );
+                    } finally {
+                        execute("drop table if exists x;");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCannotConvertToSameType() throws Exception {
         assertFailure("alter table x alter column d type double", 34, "column 'd' type is already 'DOUBLE'");
+    }
+
+    @Test
+    public void testChangeDecimalNarrowingOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(5, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            // 12345 fits DECIMAL(5,0) but overflows DECIMAL(4,0) (max 9999).
+            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345)", sqlExecutionContext);
+            drainWalQueue();
+
+            TableToken token = engine.verifyTableName("x");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(4, 0)", sqlExecutionContext);
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+        });
+    }
+
+    @Test
+    public void testChangeDecimalScaleDownRounds() throws Exception {
+        // A scale reduction rounds half away from zero (like every mainstream SQL database storing
+        // into DECIMAL(p,s)); it never NULLs on a dropped fraction. Only a magnitude overflow NULLs.
+        assertChangeDecimal("1.2m", "1", "decimal(2, 1)", "decimal(4, 0)");      // round down
+        assertChangeDecimal("1.5m", "2", "decimal(2, 1)", "decimal(4, 0)");      // tie rounds away
+        assertChangeDecimal("1.6m", "2", "decimal(2, 1)", "decimal(4, 0)");      // round up
+        assertChangeDecimal("-1.5m", "-2", "decimal(2, 1)", "decimal(4, 0)");    // negative tie away
+        assertChangeDecimal("12.34m", "12.3", "decimal(4, 2)", "decimal(4, 1)"); // round down
+        assertChangeDecimal("12.35m", "12.4", "decimal(4, 2)", "decimal(4, 1)"); // tie rounds away
+        assertChangeDecimal("12.99m", "13.0", "decimal(4, 2)", "decimal(4, 1)"); // carry into integer
     }
 
     @Test
@@ -89,7 +160,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertChangeDecimal("1.2m", "1.20", "decimal(2, 1)", "decimal(8, 2)");
         assertChangeDecimal("1.2m", "1.200", "decimal(2, 1)", "decimal(18, 3)");
         assertChangeDecimal("1.2m", "1.2000", "decimal(2, 1)", "decimal(38, 4)");
-        assertChangeDecimalFails("1.2m", "1.2", "decimal(2, 1)", ColumnType.getDecimalType(64, 0));
+        // 1.2 rounds half away from zero to scale 0 -> 1 (a dropped fraction never NULLs).
+        assertChangeDecimal("1.2m", "1", "decimal(2, 1)", "decimal(64, 0)");
         assertChangeDecimal("1.2m", "1.200000000000", "decimal(2, 1)", "decimal(64, 12)");
 
         // DECIMAL16 conversions
@@ -135,9 +207,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 "9999999999999999999999999999999999999999999999999999999999999999999999.999900",
                 "decimal(76, 4)", "decimal(76, 6)");
 
-        // Test precision reduction scenarios (should fail)
-        assertChangeDecimalFails("12345", "12345", "decimal(5, 0)", ColumnType.getDecimalType(4, 0));
-        assertChangeDecimalFails("123.45m", "123.45", "decimal(5, 2)", ColumnType.getDecimalType(4, 2));
+        // Precision reduction: a value that does not fit the narrower target becomes NULL (the
+        // conversion no longer fails or suspends the WAL table).
+        assertChangeDecimalToNull("12345", "decimal(5, 0)", "decimal(4, 0)");
+        assertChangeDecimalToNull("123.45m", "decimal(5, 2)", "decimal(4, 2)");
     }
 
     @Test
@@ -223,6 +296,54 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             2024-05-14T16:00:00.000000Z\t12345.6789
                             2024-05-14T16:00:01.000000Z\t
                             2024-05-14T16:00:02.000000Z\t-99.9999
+                            """);
+
+            execute("DROP TABLE x");
+        });
+    }
+
+    /**
+     * Pre-existing bug in the native ALTER COLUMN TYPE path: VARCHAR to CHAR (and any
+     * other fixed target routed through {@code ColumnTypeConverter.convertFromVarcharToFixed})
+     * treated UTF-8 bytes as Latin-1 chars via {@code Utf8Sequence.asAsciiCharSequence()}.
+     * <p>
+     * For a CHAR destination the downstream converter reads {@code charAt(0)}, so the
+     * first raw UTF-8 byte became the CHAR value instead of the decoded code point. E.g.
+     * the value {@code 'e-acute'} (UTF-8 {@code 0xC3 0xA9}) was stored as CHAR
+     * {@code U+00C3} ('A-tilde') rather than {@code U+00E9} ('e-acute').
+     * <p>
+     * This test exercises only native partitions (no CONVERT PARTITION TO PARQUET) and
+     * asserts the stored CHAR matches the first UTF-16 code point of the source value.
+     * The peer fix lives in
+     * {@code ColumnTypeConverter.convertFromVarcharToFixed}; removing that fix reverts
+     * this test to a failure.
+     */
+    @Test
+    public void testChangeVarcharToCharPreservesNonAsciiCodepoint() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 'a'),
+                    ('2024-05-14T16:00:01.000000Z', 'é'),
+                    ('2024-05-14T16:00:02.000000Z', '日')""", sqlExecutionContext);
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN col TYPE CHAR", sqlExecutionContext);
+            drainWalQueue();
+
+            // Expected: first UTF-16 code point of each stored value.
+            //   'a'  -> 'a'
+            //   'é'  -> 'é' (U+00E9)
+            //   '日' -> '日' (U+65E5)
+            // With the pre-fix code, non-ASCII rows stored the first UTF-8 byte as a char
+            // (e.g. 'é' -> 'A-tilde'), so the assertion below would fail.
+            assertQuery("x").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(
+                    """
+                            ts\tcol
+                            2024-05-14T16:00:00.000000Z\ta
+                            2024-05-14T16:00:01.000000Z\té
+                            2024-05-14T16:00:02.000000Z\t日
                             """);
 
             execute("DROP TABLE x");
@@ -1401,6 +1522,155 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProduceParquetFromNativeResolvesColumnTopByWriterIndex() throws Exception {
+        // A column added after a partition existed has a non-zero column top. Dropping an earlier
+        // column shifts this column's dense index below its writer index in a reader's compacted
+        // metadata, so produceParquetFromNative must read the column top by writer index; the dense
+        // index resolves an earlier column's top and mis-aligns the data. (A re-key alone keeps a
+        // column's display position, so a DROP is what drives the dense/writer split here; the same
+        // reader-metadata path is why no OSS SQL statement reaches this -- see the re-key test.)
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE t (ts TIMESTAMP, a INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN c INT");
+            drainWalQueue();
+            // c gets data in day1 with column top 2 -- rows 0 and 1 predate it.
+            execute("INSERT INTO t VALUES ('2024-01-01T02:00:00', 30, 100), ('2024-01-01T03:00:00', 40, 200)");
+            drainWalQueue();
+            // day2 seals day1 as a non-active native partition.
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 50, 300)");
+            drainWalQueue();
+            // Drop a: c's dense index now drops below its writer index in the reader metadata.
+            execute("ALTER TABLE t DROP COLUMN a");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            final String parquetFile;
+            try (TableReader reader = engine.getReader(tt)) {
+                final ColumnVersionReader cvr = reader.getColumnVersionReader();
+                final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                final int cDense = reader.getMetadata().getColumnIndex("c");
+                final int cWriter = reader.getMetadata().getColumnMetadata(cDense).getWriterIndex();
+                // Precondition: the dense and writer indices resolve different column tops.
+                Assert.assertNotEquals(cDense, cWriter);
+                Assert.assertNotEquals(cvr.getColumnTop(partitionTs, cDense), cvr.getColumnTop(partitionTs, cWriter));
+                parquetFile = produceParquetForPartition(reader, 0);
+            }
+            // Column top honoured: c is null for the two rows that predate it.
+            assertQuery("SELECT c FROM read_parquet('" + parquetFile + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nnull\nnull\n100\n200\n");
+        });
+    }
+
+    @Test
+    public void testProduceParquetFromNativeResolvesReKeyedColumnByWriterIndex() throws Exception {
+        // ALTER COLUMN TYPE re-keys the column: in a TableReader's compacted metadata its dense
+        // index no longer equals its writer index. produceParquetFromNative must resolve the column
+        // name txn by writer index (as TableReader does), else it opens 'x.d' instead of the real
+        // 'x.d.<txn>' and fails. No OSS SQL path hits this -- SQL CONVERT PARTITION TO PARQUET runs
+        // through the writer, whose metadata keeps deleted-column tombstones so dense == writer; the
+        // storage-policy TO PARQUET conversion calls this with a reader's metadata, exercised here.
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+            drainWalQueue();
+            // day2 seals day1 as a non-active native partition.
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 30)");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN x TYPE DOUBLE");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            final String parquetFile;
+            try (TableReader reader = engine.getReader(tt)) {
+                // Precondition: x really is re-keyed (dense index != writer index) in the reader.
+                final int xDense = reader.getMetadata().getColumnIndex("x");
+                Assert.assertNotEquals(xDense, reader.getMetadata().getColumnMetadata(xDense).getWriterIndex());
+                parquetFile = produceParquetForPartition(reader, 0);
+            }
+            assertQuery("SELECT x FROM read_parquet('" + parquetFile + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n10.0\n20.0\n");
+        });
+    }
+
+    @Test
+    public void testProduceParquetFromNativeResolvesSymbolFilesByWriterIndex() throws Exception {
+        // Re-keying a column to SYMBOL leaves its dense index below its writer index in the reader
+        // metadata, and its offset/char files carry a symbol-table name txn. produceParquetFromNative
+        // must resolve that txn by writer index; the dense index opens different (missing) .o/.c files.
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-01T01:00:00', 2)");
+            drainWalQueue();
+            // day2 seals day1 as a non-active native partition.
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 3)");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN k TYPE SYMBOL");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            final String parquetFile;
+            try (TableReader reader = engine.getReader(tt)) {
+                final ColumnVersionReader cvr = reader.getColumnVersionReader();
+                final int kDense = reader.getMetadata().getColumnIndex("k");
+                final int kWriter = reader.getMetadata().getColumnMetadata(kDense).getWriterIndex();
+                // Precondition: the symbol-table name txn differs by index, and only the writer
+                // index yields the real (suffixed) offset/char files.
+                Assert.assertNotEquals(kDense, kWriter);
+                Assert.assertTrue(cvr.getSymbolTableNameTxn(kWriter) > TableUtils.COLUMN_NAME_TXN_NONE);
+                Assert.assertNotEquals(cvr.getSymbolTableNameTxn(kDense), cvr.getSymbolTableNameTxn(kWriter));
+                parquetFile = produceParquetForPartition(reader, 0);
+            }
+            assertQuery("SELECT k FROM read_parquet('" + parquetFile + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\n1\n2\n");
+        });
+    }
+
+    @Test
+    public void testReconcileColumnTopsResolvesByWriterIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN c INT");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-01T02:00:00', 30, 100), ('2024-01-01T03:00:00', 40, 200)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 50, 300)");
+            drainWalQueue();
+            execute("ALTER TABLE t DROP COLUMN a");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tt)) {
+                reader.openPartition(0);
+
+                final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                final int cDense = reader.getMetadata().getColumnIndex("c");
+                final int cWriter = reader.getMetadata().getColumnMetadata(cDense).getWriterIndex();
+                final ColumnVersionReader cvr = reader.getColumnVersionReader();
+
+                Assert.assertNotEquals(cDense, cWriter);
+                Assert.assertNotEquals(cvr.getColumnTop(partitionTs, cDense), cvr.getColumnTop(partitionTs, cWriter));
+
+                final LongList partitionTimestamps = new LongList();
+                partitionTimestamps.add(partitionTs);
+                Assert.assertTrue(DebugUtils.reconcileColumnTops(1, partitionTimestamps, cvr, reader));
+            }
+        });
+    }
+
+    @Test
     public void testShouldTruncateConvertedColumns() throws Exception {
         assertMemoryLeak(() -> {
             // Create table with many partitions
@@ -1527,6 +1797,59 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testWalWriterConvertsRowOnUncommittedDataVarcharToSymbol() throws Exception {
         assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.VARCHAR, " rnd_varchar(5,1024,2) c,", "symbol"));
+    }
+
+    // Encodes the given native partition to parquet through TableUtils.produceParquetFromNative
+    // with the reader's compacted metadata -- the shape the storage-policy TO PARQUET conversion
+    // uses -- and returns the absolute path to the produced data.parquet.
+    private static String produceParquetForPartition(TableReader reader, int partitionIndex) {
+        final DirectIntList bloomIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT);
+        final TableUtils.SymbolTableProviderFromReader symbolProvider = new TableUtils.SymbolTableProviderFromReader();
+        symbolProvider.of(reader);
+        try (
+                Path path = new Path();
+                Path other = new Path();
+                Path parquetPath = new Path()
+        ) {
+            final TxReader tx = reader.getTxFile();
+            final long partitionTs = tx.getPartitionTimestampByIndex(partitionIndex);
+            final long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+            final long rowCount = tx.getPartitionSize(partitionIndex);
+
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            other.of(configuration.getDbRoot()).concat(reader.getTableToken());
+
+            final long parquetLen = TableUtils.produceParquetFromNative(
+                    path,
+                    other,
+                    path.size(),
+                    partitionTs,
+                    partitionNameTxn,
+                    partitionNameTxn,
+                    reader.getTableToken().getTableName(),
+                    rowCount,
+                    reader.getMetadata(),
+                    reader.getColumnVersionReader(),
+                    symbolProvider,
+                    configuration,
+                    null,
+                    Double.NaN,
+                    bloomIndexes,
+                    -1L
+            );
+            Assert.assertTrue("produceParquetFromNative must encode the partition", parquetLen > 0);
+
+            TableUtils.setPathForParquetPartition(
+                    parquetPath.of(configuration.getDbRoot()).concat(reader.getTableToken()),
+                    reader.getMetadata().getTimestampType(),
+                    reader.getMetadata().getPartitionBy(),
+                    partitionTs,
+                    partitionNameTxn
+            );
+            return parquetPath.toString();
+        } finally {
+            bloomIndexes.close();
+        }
     }
 
     private static void testConvertFixedToVar(String varTypeName) throws SqlException {
@@ -1676,25 +1999,25 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
-    private void assertChangeDecimalFails(CharSequence initial, CharSequence expected, CharSequence fromType, int toType) throws Exception {
+    private void assertChangeDecimalToNull(CharSequence initial, CharSequence fromType, CharSequence toType) throws Exception {
         assertMemoryLeak(() -> {
             execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
             execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
             drainWalQueue();
 
-            try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("col", toType, 0, false, IndexType.NONE, 0, false, null);
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
-            }
+            // A value whose magnitude exceeds the target precision becomes NULL (a scale reduction
+            // instead rounds half away from zero, so only magnitude overflow NULLs). The conversion
+            // succeeds and the WAL table is never suspended (mirrors an out-of-range DOUBLE->FLOAT
+            // becoming NaN).
+            execute(String.format("alter table x alter column col type %s", toType), sqlExecutionContext);
+            drainWalQueue();
 
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
             assertQuery("x")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
-                    .returns("ts\tcol\n" +
-                            "2024-05-14T16:00:00.000000Z\t" + expected + "\n");
+                    .returns("ts\tcol\n2024-05-14T16:00:00.000000Z\t\n");
 
             execute("drop table x");
         });

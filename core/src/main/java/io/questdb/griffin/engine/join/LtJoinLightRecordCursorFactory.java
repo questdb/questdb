@@ -159,6 +159,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private long lastSlaveRowID = Long.MIN_VALUE;
         private Record masterRecord;
@@ -209,6 +210,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 MapKey key;
@@ -303,6 +305,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
                 joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }

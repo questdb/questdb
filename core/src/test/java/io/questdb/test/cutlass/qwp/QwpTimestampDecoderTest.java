@@ -104,7 +104,6 @@ public class QwpTimestampDecoderTest {
 
         assertMemoryLeak(() -> {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                encoder.setGorillaEnabled(true);
                 QwpTableBuffer buffer = new QwpTableBuffer("test_ts");
                 QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (long ts : timestamps) {
@@ -416,7 +415,6 @@ public class QwpTimestampDecoderTest {
         assertMemoryLeak(() -> {
             boolean nullable = nulls != null;
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
-                encoder.setGorillaEnabled(true);
                 QwpTableBuffer buffer = new QwpTableBuffer("test_ts");
                 QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
                 for (int i = 0; i < timestamps.length; i++) {
