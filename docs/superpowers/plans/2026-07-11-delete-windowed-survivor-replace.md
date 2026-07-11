@@ -437,6 +437,11 @@ private long replaceWithSurvivors(SqlCompiler compiler, TableWriter tableWriter,
     final long rowsPerStep = engine.getConfiguration().getWalDeleteRowsPerStep();
     final long step = deleteWindowStep(minTs, maxTs, tableWriter.size(), rowsPerStep);
     final BindVariableService bind = executionContext.getBindVariableService();
+    // Designated-ts column type (TIMESTAMP_MICRO or TIMESTAMP_NANO). The window bounds MUST be set in this
+    // unit via DeleteOperation.setWindowBound (Task 4): a raw bind.setTimestamp is micros-only and overflows
+    // in NanosTimestampDriver.from on a nanos table -> ImplicitCastException -> table SUSPENDED. Never call
+    // bind.setTimestamp on WINDOW_LO_BIND/WINDOW_HI_BIND directly.
+    final int tsColType = tableWriter.getMetadata().getColumnType(timestampCursorIndex);
 
     tableWriter.beginReplaceRange();
     boolean finished = false;
@@ -447,8 +452,8 @@ private long replaceWithSurvivors(SqlCompiler compiler, TableWriter tableWriter,
             final long remaining = maxTs - wLo + 1; // >= 1
             final long wHiExcl = (step >= remaining) ? (maxTs + 1) : (wLo + step);
 
-            bind.setTimestamp(DeleteOperation.WINDOW_LO_BIND, wLo);
-            bind.setTimestamp(DeleteOperation.WINDOW_HI_BIND, wHiExcl);
+            DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_LO_BIND, tsColType, wLo);
+            DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_HI_BIND, tsColType, wHiExcl);
             try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
                 tableWriter.applyReplaceRangeWindow(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);
             }
@@ -535,6 +540,7 @@ private long replaceWithSurvivorsDiskBounded(SqlCompiler compiler, TableWriter t
     final long maxTs = tableWriter.getMaxTimestamp();
     final long step = deleteWindowStep(minTs, maxTs, tableWriter.size(), engine.getConfiguration().getWalDeleteRowsPerStep());
     final BindVariableService bind = executionContext.getBindVariableService();
+    final int tsColType = tableWriter.getMetadata().getColumnType(timestampCursorIndex); // for unit-correct window bounds (Task 4 nanos fix)
 
     long removed = 0;
     long wLo = minTs;
@@ -544,8 +550,9 @@ private long replaceWithSurvivorsDiskBounded(SqlCompiler compiler, TableWriter t
         // Convert only THIS window's Parquet partitions to native (its own commit at S-1), so at most one
         // window's partitions are transiently native.
         convertParquetPartitionsForDeleteWindow(tableWriter, wLo, wHiExcl);
-        bind.setTimestamp(DeleteOperation.WINDOW_LO_BIND, wLo);
-        bind.setTimestamp(DeleteOperation.WINDOW_HI_BIND, wHiExcl);
+        // Unit-correct (micros/nanos) window bounds — never raw bind.setTimestamp (see Task 4 nanos fix).
+        DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_LO_BIND, tsColType, wLo);
+        DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_HI_BIND, tsColType, wHiExcl);
         try (RecordCursor c = survivorFactory.getCursor(executionContext)) {
             // Single-call replaceRange => this window is its own commit (still at durable seqTxn S-1).
             removed += tableWriter.replaceRange(wLo, wHiExcl, c, copier, timestampCursorIndex, executionContext);
