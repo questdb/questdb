@@ -1082,6 +1082,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 this.attachPartitionTimestamp = timestamp;
                 ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
 
+                // A backup produced by a skipping primary legitimately lacks replica-only index
+                // sidecars. On a non-skipping node rebuild them synchronously before publishing the
+                // attached partition, now that the directory is at its final table path.
+                if (!configuration.skipReplicaOnlyIndexes()) {
+                    final int attachedPartitionPathLen = path.size();
+                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                        if (metadata.isColumnReplicaOnlyIndex(columnIndex)
+                                && metadata.isColumnIndexed(columnIndex)
+                                && ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                            final CharSequence columnName = metadata.getColumnName(columnIndex);
+                            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
+                            final byte indexType = metadata.getColumnIndexType(columnIndex);
+                            if (!ff.exists(keyFileName(indexType, path.trimTo(attachedPartitionPathLen), columnName, columnNameTxn))) {
+                                rebuildAttachedPartitionColumnIndex(timestamp, partitionSize, columnName);
+                            }
+                            path.trimTo(attachedPartitionPathLen);
+                        }
+                    }
+                }
+
                 // The parquet partition might be lacking the _pm file, we need to create it
                 int partitionPathLen = path.size();
                 try {
@@ -4505,15 +4525,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             byte indexType = metadata.getColumnIndexType(columnIndex);
             if (IndexType.isIndexed(indexType)) {
-                // A replica-only index is never materialized on a skipping primary, and may be
-                // transiently absent on a non-skipping node until the first insert-apply reconcile
-                // rebuilds it (a partition attached before that, e.g. a _dmeta-less backup copy, has
-                // no sidecars). ATTACH must not require the .pk/.pv (or .k/.v) files in either case,
-                // else it throws fileNotFound and suspends the table on the WAL-apply of the ATTACH.
-                // Mirror the gate + tolerance in copyOrRebuildColumnIndexes / linkPartitionIndexFiles.
+                // A replica-only index is never materialized on a skipping primary, so ATTACH must
+                // not require its sidecars there. A non-skipping node remains strict: publishing a
+                // partition with an incomplete index would make an index-selected query unusable.
                 if (metadata.isColumnReplicaOnlyIndex(columnIndex)
                         && (configuration.skipReplicaOnlyIndexes()
                         || !ff.exists(keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn)))) {
+                    // A skipping node intentionally has no files. A non-skipping node rebuilds a
+                    // missing replica-only index after the partition has been moved to its final
+                    // path; the detached-path validation cannot rebuild it in place reliably.
                     return;
                 }
                 // Verify .pk exists before trying to resolve sealTxn from it.
@@ -5386,12 +5406,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (colTop == -1 || colTop >= partitionRowCount) {
-                    continue; // column does not exist or has no data in this partition
-                }
-
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                if (colTop == -1 || colTop >= partitionRowCount) {
+                    // ADD INDEX materializes an empty index for all-top/absent columns. Preserve it
+                    // across native-to-parquet conversion so metadata never points at missing files.
+                    final byte emptyIndexType = metadata.getColumnIndexType(columnIndex);
+                    if (ff.exists(keyFileName(emptyIndexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                        linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, emptyIndexType, partitionTimestamp, oldPartitionNameTxn);
+                    }
+                    continue;
+                }
 
                 // A replica-only index may be UNMATERIALIZED on this (non-skipping) node even when
                 // skipReplicaOnlyIndexes()==false: reconcile only (re)builds the index on a WAL
@@ -5495,8 +5520,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                                 indexer for this file (constructor recovery, DDL fresh build).
      */
     private void createIndexFiles(CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force, boolean allowDestructiveRecovery) {
+        createIndexFiles(path, columnName, columnNameTxn, indexValueBlockCapacity, indexType, plen, force, allowDestructiveRecovery);
+    }
+
+    private void createIndexFiles(Path targetPath, CharSequence columnName, long columnNameTxn, int indexValueBlockCapacity, byte indexType, int plen, boolean force, boolean allowDestructiveRecovery) {
         try {
-            keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
+            keyFileName(indexType, targetPath.trimTo(plen), columnName, columnNameTxn);
 
             if (IndexType.isPosting(indexType)) {
                 // POSTING preserves chain history across the partition's
@@ -5523,37 +5552,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 //    next chain.openExisting will surface a genuinely
                 //    torn header explicitly.
                 if (allowDestructiveRecovery) {
-                    if (PostingIndexUtils.hasInitialisedKeyFileHeader(ff, path.$())) {
+                    if (PostingIndexUtils.hasInitialisedKeyFileHeader(ff, targetPath.$())) {
                         return;
                     }
-                    ff.removeQuiet(path.$());
+                    ff.removeQuiet(targetPath.$());
                 } else {
-                    if (ff.exists(path.$())) {
+                    if (ff.exists(targetPath.$())) {
                         return;
                     }
                 }
-            } else if (!force && ff.exists(path.$())) {
+            } else if (!force && ff.exists(targetPath.$())) {
                 return;
             } else {
-                ff.removeQuiet(path.$());
+                ff.removeQuiet(targetPath.$());
             }
 
             // reuse memory column object to create index and close it at the end
             try {
-                ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
+                ddlMem.smallFile(ff, targetPath.$(), MemoryTag.MMAP_TABLE_WRITER);
                 ddlMem.truncate();
                 IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
                 // looks like we could not create the key file properly;
                 // let's not leave a half-baked file sitting around
                 LOG.error()
-                        .$("could not create index [name=").$(path)
+                        .$("could not create index [name=").$(targetPath)
                         .$(", msg=").$safe(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
-                if (!ff.removeQuiet(path.$())) {
+                if (!ff.removeQuiet(targetPath.$())) {
                     LOG.critical()
-                            .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
+                            .$("could not remove '").$(targetPath).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
                             .I$();
                 }
@@ -5561,14 +5590,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 ddlMem.close();
             }
-            if (!ff.touch(valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, 0L))) {
-                LOG.error().$("could not create index [name=").$(path)
+            if (!ff.touch(valueFileName(indexType, targetPath.trimTo(plen), columnName, columnNameTxn, 0L))) {
+                LOG.error().$("could not create index [name=").$(targetPath)
                         .$(", errno=").$(ff.errno())
                         .I$();
-                throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
+                throw CairoException.critical(ff.errno()).put("could not create index [name=").put(targetPath).put(']');
             }
         } finally {
-            path.trimTo(plen);
+            targetPath.trimTo(plen);
         }
     }
 
@@ -7341,6 +7370,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexParquetPartition(indexer, columnName, i, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
                         } else if (ff.exists(dFile(path.trimTo(plen), columnName, columnNameTxn))) {
                             indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
+                        } else {
+                            createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
                         }
                     }
                 }
@@ -7472,10 +7503,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         int parquetColumnIndex = findParquetColumnIndex(parquetMetadata, columnIndex);
         if (parquetColumnIndex == -1) {
-            path.trimTo(plen);
-            LOG.error().$("could not find symbol column for indexing in parquet, skipping [path=").$substr(pathRootSize, path)
-                    .$(", columnIndex=").$(columnIndex)
-                    .I$();
+            // A re-added column is absent from older parquet schemas. Build an all-NULL index: an
+            // empty key header is not sufficient for POSTING because it has no sealed generation
+            // and can disappear when the writer is reconfigured.
+            final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
+            final IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
+            try {
+                indexWriter.of(path.trimTo(plen), columnName, columnNameTxn, indexValueBlockSize);
+                indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
+                final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+                for (long row = 0; row < partitionSize; row++) {
+                    indexWriter.add(nullKey, row);
+                }
+                indexWriter.setMaxValue(partitionSize - 1);
+                indexWriter.seal();
+            } finally {
+                Misc.free(indexWriter);
+            }
             return;
         }
 
@@ -12089,18 +12133,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)
                         && !(metadata.isColumnReplicaOnlyIndex(columnIndex) && configuration.skipReplicaOnlyIndexes())) {
                     final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                    if (columnTop == -1 || columnTop >= partitionRowCount) {
-                        continue;
-                    }
-
                     final String columnName = metadata.getColumnName(columnIndex);
                     final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
                     final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
                     final byte indexType = metadata.getColumnIndexType(columnIndex);
-
-                    // Map data file for reading
-                    final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
-                    final long dataAddr = TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                    // Map data only for the physical suffix. Absent/all-top columns still need an
+                    // all-NULL index because parquet decode normalizes their destination top to 0.
+                    final long physicalTop = columnTop < 0 ? partitionRowCount : Math.min(columnTop, partitionRowCount);
+                    final long dataSize = (partitionRowCount - physicalTop) * Integer.BYTES;
+                    final long dataAddr = dataSize > 0
+                            ? TableUtils.mapRO(ff, dFile(other.trimTo(dirLen), columnName, columnNameTxn), LOG, dataSize, MemoryTag.MMAP_TABLE_WRITER)
+                            : 0;
                     IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
                     try {
                         indexWriter.of(other.trimTo(dirLen), columnName, columnNameTxn, indexValueBlockCapacity);
@@ -12108,14 +12151,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // conversion before txWriter.commit; tag the chain
                         // entry with the upcoming committed txn.
                         indexWriter.setNextTxnAtSeal(txWriter.getTxn() + 1);
-                        for (long row = columnTop; row < partitionRowCount; row++) {
-                            int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - columnTop) * Integer.BYTES));
+                        final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+                        for (long row = 0; row < physicalTop; row++) {
+                            indexWriter.add(nullKey, row);
+                        }
+                        for (long row = physicalTop; row < partitionRowCount; row++) {
+                            int key = TableUtils.toIndexKey(Unsafe.getInt(dataAddr + (row - physicalTop) * Integer.BYTES));
                             indexWriter.add(key, row);
                         }
                         indexWriter.setMaxValue(partitionRowCount - 1);
                         indexWriter.seal();
                     } finally {
-                        ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        if (dataAddr != 0) {
+                            ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
+                        }
                         Misc.free(indexWriter);
                     }
                 }
@@ -12336,14 +12385,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (!ColumnType.isSymbol(metadata.getColumnType(i)) || !metadata.isColumnIndexed(i)) {
                 continue;
             }
-            // Materialization truth: the on-disk index sidecars (.k/.v) must be present. The
-            // in-memory indexer-wired flag alone is not enough -- after a restore-from-backup the
-            // writer's configureColumn/openPartition will have wired an indexer (skip==false) but
-            // the backup did not carry the index files, so the wired indexer points at absent/empty
-            // sidecars. Use the on-disk key file as the authoritative materialization signal, but
-            // honor the pre-open absence snapshot first: at open time openPartition may have
-            // fabricated an empty key file, so the live probe would lie -- the snapshot recorded
-            // that the index was genuinely absent before that fabrication.
+            // Materialization truth: every partition must have its complete set of on-disk index
+            // sidecars. The in-memory indexer-wired flag alone is not enough -- after a partial
+            // restore the writer may be wired while an older partition is missing files.
             final boolean materialized = !replicaOnlyIndexAbsentAtOpen.contains(i)
                     && replicaOnlyIndexFilesPresent(i);
             if (wantBuilt == materialized) {
@@ -12358,12 +12402,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final ColumnIndexer stale = i < indexers.size() ? indexers.getQuick(i) : null;
                 if (stale != null) {
                     stale.discardAndClose();
-                    // No populateDenseIndexerList() here: the intermediate null slot is never
-                    // observed -- this is straight-line, single-threaded code under the writer lock,
-                    // and the dense list is rebuilt below after the new indexer is set. writeIndex
-                    // (and its indexHistoric/LastPartition helpers) operate on the passed-in indexer
-                    // and never read denseIndexers/indexCount, so rebuilding once is sufficient.
                     indexers.extendAndSet(i, null);
+                    // Keep denseIndexers valid even if the rebuild below throws and the writer's
+                    // error path inspects or closes its indexers.
+                    populateDenseIndexerList();
                 }
                 final byte indexType = metadata.getColumnIndexType(i);
                 final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(i);
@@ -12418,7 +12460,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     for (int p = txWriter.getPartitionCount() - 1; p > -1; p--) {
                         long partitionTimestamp = txWriter.getPartitionTimestampByIndex(p);
                         long partitionNameTxn = txWriter.getPartitionNameTxn(p);
-                        removeIndexFilesInPartition(columnName, i, partitionTimestamp, partitionNameTxn);
+                        if (!removeIndexFilesInPartition(columnName, i, partitionTimestamp, partitionNameTxn)) {
+                            throw CairoException.critical(ff.errno())
+                                    .put("could not purge replica-only index [table=").put(tableToken)
+                                    .put(", column=").put(columnName)
+                                    .put(", partition=").ts(timestampDriver, partitionTimestamp)
+                                    .put(']');
+                        }
                     }
                 } finally {
                     path.trimTo(pathSize);
@@ -12447,25 +12495,58 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    // On-disk materialization probe for a replica-only indexed column: true when the index key
-    // file exists in the last partition. Callers guarantee at least one partition exists. Mirrors
-    // the reader's presence check (see TableReader).
-    //
-    // Assumption: the LAST partition is representative of whole-table materialization. Reconcile
-    // materializes/purges every partition atomically, so in steady state the index is either present
-    // on all partitions or none, and probing the last one is sufficient (and cheap). This can be
-    // fooled by a partial external restore that populates only some partitions - reconcile would then
-    // skip the all-partitions rebuild and a query over an un-indexed older partition surfaces the
-    // retryable "not materialized" error until the next reconcile. A per-partition probe would be more
-    // robust but is not warranted for that transient window.
+    // On-disk materialization probe for a replica-only indexed column. A single key file is not
+    // sufficient: partial restores and interrupted purges can leave older partitions or value and
+    // covering sidecars absent. Reconciliation is cold-path work, so validate every partition.
     private boolean replicaOnlyIndexFilesPresent(int columnIndex) {
-        final long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-        final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         final byte indexType = metadata.getColumnIndexType(columnIndex);
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final CharSequence columnName = metadata.getColumnName(columnIndex);
         try {
-            return ff.exists(keyFileName(indexType, path, metadata.getColumnName(columnIndex), columnNameTxn));
+            for (int p = 0, n = txWriter.getPartitionCount(); p < n; p++) {
+                final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(p);
+                final long partitionNameTxn = txWriter.getPartitionNameTxn(p);
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                final int partitionPathLen = path.size();
+                if (!ff.exists(keyFileName(indexType, path, columnName, columnNameTxn))) {
+                    return false;
+                }
+                long sealTxn = columnNameTxn;
+                if (IndexType.isPosting(indexType)) {
+                    sealTxn = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                            ff,
+                            path,
+                            partitionPathLen,
+                            columnName,
+                            columnNameTxn,
+                            keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn)
+                    );
+                    if (sealTxn < 0) {
+                        sealTxn = 0;
+                    }
+                }
+                if (!ff.exists(valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, sealTxn))) {
+                    return false;
+                }
+                final IntList coveringColumns = metadata.getCoveringColumnIndices(columnIndex);
+                if (IndexType.isPosting(indexType) && coveringColumns != null) {
+                    for (int c = 0, m = coveringColumns.size(); c < m; c++) {
+                        final int coveredColumnIndex = coveringColumns.getQuick(c);
+                        final long coveredColumnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, coveredColumnIndex);
+                        if (!ff.exists(PostingIndexUtils.coverDataFileName(
+                                path.trimTo(partitionPathLen),
+                                columnName,
+                                c,
+                                columnNameTxn,
+                                coveredColumnNameTxn,
+                                sealTxn
+                        ))) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
         } finally {
             path.trimTo(pathSize);
         }
@@ -12663,23 +12744,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
+    private boolean removeIndexFilesInPartition(CharSequence columnName, int columnIndex, long partitionTimestamp, long partitionNameTxn) {
         setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int plen = path.size();
         long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         byte indexType = metadata.getColumnIndexType(columnIndex);
+        boolean failed = false;
         if (IndexType.isIndexed(indexType)) {
             if (IndexType.isPosting(indexType)) {
                 // Enumerate every sealed .pv / .pc<N> for this column
                 // instance across all on-disk sealTxn generations.
-                PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
+                failed = PostingIndexUtils.removeAllSealedFiles(ff, path, plen, columnName, columnNameTxn);
             }
-            removeFileOrLog(ff, keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn));
+            final LPSZ keyFile = keyFileName(indexType, path.trimTo(plen), columnName, columnNameTxn);
+            failed |= !ff.removeQuiet(keyFile) && ff.exists(keyFile);
             if (!IndexType.isPosting(indexType)) {
-                removeFileOrLog(ff, valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn));
+                final LPSZ valueFile = valueFileName(indexType, path.trimTo(plen), columnName, columnNameTxn, columnNameTxn);
+                failed |= !ff.removeQuiet(valueFile) && ff.exists(valueFile);
             }
         }
         path.trimTo(pathSize);
+        return !failed;
     }
 
     private void removeMetaFile() {

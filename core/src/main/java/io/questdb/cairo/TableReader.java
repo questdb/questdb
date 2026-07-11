@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
@@ -371,6 +372,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader != null
+                && (indexReader instanceof AbstractPostingIndexReader)
+                != IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
+            // Metadata transitions can shift dense column slots. Never reopen a cached reader with a
+            // different physical index implementation: it would derive .pk names for a BITMAP index
+            // (or .k names for POSTING) and report false corruption.
+            Misc.free(indexes.getAndSetQuick(index, null));
+            Misc.free(indexes.getAndSetQuick(index + 1, null));
+            indexReader = null;
+        }
         if (indexReader != null) {
             // Single choke point for refreshing the scoreboard pin on cached
             // readers. TableReader.txn advances through several paths
@@ -1040,8 +1051,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         toColumns.setQuick(toIndex, columns.getAndSetQuick(fromIndex, null));
         toColumns.setQuick(toIndex + 1, columns.getAndSetQuick(fromIndex + 1, null));
         toColumnTops.setQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
-        toIndexReaders.setQuick(toIndex, indexes.getAndSetQuick(fromIndex, null));
-        toIndexReaders.setQuick(toIndex + 1, indexes.getAndSetQuick(fromIndex + 1, null));
+        // Do not carry cached index-reader implementations across a metadata transition. Dense
+        // columns can shift after DROP/re-ADD, and a cached POSTING reader moved into a BITMAP
+        // column's slot will later reopen the correct column using the wrong filename family (.pk
+        // instead of .k). Index readers are cheap to recreate lazily and retain table-txn pins, so
+        // close them here rather than risking stale type/column identity.
+        Misc.free(indexes.getAndSetQuick(fromIndex, null));
+        Misc.free(indexes.getAndSetQuick(fromIndex + 1, null));
+        toIndexReaders.setQuick(toIndex, null);
+        toIndexReaders.setQuick(toIndex + 1, null);
     }
 
     private TableReaderMetadata copyMeta(TableReaderMetadata srcMeta) {

@@ -708,6 +708,35 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testPostingIndexOnReaddedParquetColumnSurvivesNativeConversionAndMetadataReload() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a symbol, d symbol, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('x','old',0),('y','old',1000000)");
+            drainWalQueue();
+            execute("alter table x convert partition to parquet list '1970-01-01'");
+            execute("alter table x drop column d");
+            execute("alter table x add column d symbol");
+            execute("alter table x alter column d add index type posting");
+            drainWalQueue();
+            execute("alter table x convert partition to native list '1970-01-01'");
+            execute("insert into x (a,d,ts) values ('z','new',2000000)");
+            drainWalQueue();
+            execute("alter table x convert partition to parquet list '1970-01-01'");
+            execute("truncate table x");
+            execute("insert into x (a,d,ts) values ('z','new',2000000)");
+            drainWalQueue();
+            execute("alter table x drop column a");
+            drainWalQueue();
+
+            assertQuery("select count() from x where d = 'new'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+        });
+    }
+
     // Rename "<partition>.detached" to the attach marker so ATTACH PARTITION LIST can pick it up.
     private void renameDetachedToAttachable(String table, String partition) {
         final TableToken token = engine.verifyTableName(table);

@@ -57,6 +57,15 @@ public final class ReplicaOnlyIndexTestUtils {
         forEachIndexFile(engine, table, col, (ff, fullPath) -> ff.removeQuiet(fullPath.$()));
     }
 
+    public static void deleteIndexFilesInPartition(CairoEngine engine, String table, String col, String partitionDir) {
+        final String pathSegment = "/" + partitionDir + "/";
+        forEachIndexFile(engine, table, col, (ff, fullPath) -> {
+            if (Chars.contains(fullPath.toString(), pathSegment)) {
+                ff.removeQuiet(fullPath.$());
+            }
+        });
+    }
+
     // Invokes action for every per-partition index file (bitmap "<col>.k"/"<col>.v" and posting
     // "<col>.pk"/"<col>.pv", with or without a columnNameTxn suffix) of the given column.
     public static void forEachIndexFile(CairoEngine engine, String table, String col, IndexFileAction action) {

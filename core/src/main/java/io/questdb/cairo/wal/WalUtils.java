@@ -431,7 +431,12 @@ public class WalUtils {
         // Optional section: replica-only index flags (backward compatible), mirrors the index-type
         // section. Written last so older readers ignore the trailing bytes and newer readers find it
         // after the covering-columns section.
-        metaMem.putLong(checkSum * 31 + SEQ_META_REPLICA_ONLY_CHECKSUM_SALT);
+        long replicaOnlyCheckSum = checkSum * 31 + SEQ_META_REPLICA_ONLY_CHECKSUM_SALT;
+        replicaOnlyCheckSum = replicaOnlyCheckSum * 31 + columnCount;
+        for (int i = 0; i < columnCount; i++) {
+            replicaOnlyCheckSum = replicaOnlyCheckSum * 31 + (metadata.getColumnMetadata(i).isReplicaOnlyIndex() ? 1 : 0);
+        }
+        metaMem.putLong(replicaOnlyCheckSum);
         metaMem.putInt(columnCount);
         for (int i = 0; i < columnCount; i++) {
             metaMem.putByte((byte) (metadata.getColumnMetadata(i).isReplicaOnlyIndex() ? 1 : 0));

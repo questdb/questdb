@@ -99,6 +99,30 @@ public class SequencerReplicaOnlyMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplicaOnlySectionNonCanonicalFlagFallsBackToFalse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, n symbol index capacity 128, ts timestamp) " +
+                    "timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("x");
+            final int columnCount = sequencerColumnCountAfterAsserting(token, true, false);
+            corruptReplicaOnlySection(token, columnCount, Corruption.NON_CANONICAL_FLAG);
+            assertSequencerReplicaOnlyFallsBackToFalse(token);
+        });
+    }
+
+    @Test
+    public void testReplicaOnlySectionPayloadBitFlipFallsBackToFalse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (s symbol index capacity 256 replica only, n symbol index capacity 128, ts timestamp) " +
+                    "timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("x");
+            final int columnCount = sequencerColumnCountAfterAsserting(token, true, false);
+            corruptReplicaOnlySection(token, columnCount, Corruption.PAYLOAD_BIT_FLIP);
+            assertSequencerReplicaOnlyFallsBackToFalse(token);
+        });
+    }
+
+    @Test
     public void testReplicaOnlyFlagFromAlterSurvivesColdReload() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (s symbol capacity 256, n symbol index capacity 128, ts timestamp) " +
@@ -198,6 +222,12 @@ public class SequencerReplicaOnlyMetadataTest extends AbstractCairoTest {
                     case COUNT_MISMATCH:
                         writeInt(ff, fd, len - Integer.BYTES - columnCount, columnCount + 7);
                         break;
+                    case NON_CANONICAL_FLAG:
+                        writeByte(ff, fd, len - columnCount, (byte) 2);
+                        break;
+                    case PAYLOAD_BIT_FLIP:
+                        writeByte(ff, fd, len - columnCount, (byte) 0);
+                        break;
                     default:
                         throw new IllegalArgumentException(mode.name());
                 }
@@ -224,6 +254,16 @@ public class SequencerReplicaOnlyMetadataTest extends AbstractCairoTest {
             return Unsafe.getUnsafe().getInt(buf);
         } finally {
             Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void writeByte(FilesFacade ff, long fd, long offset, byte value) {
+        final long buf = Unsafe.malloc(Byte.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.getUnsafe().putByte(buf, value);
+            Assert.assertEquals(Byte.BYTES, ff.write(fd, buf, Byte.BYTES, offset));
+        } finally {
+            Unsafe.free(buf, Byte.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -269,6 +309,6 @@ public class SequencerReplicaOnlyMetadataTest extends AbstractCairoTest {
     }
 
     private enum Corruption {
-        ABSENT, BAD_CHECKSUM, COUNT_MISMATCH
+        ABSENT, BAD_CHECKSUM, COUNT_MISMATCH, NON_CANONICAL_FLAG, PAYLOAD_BIT_FLIP
     }
 }

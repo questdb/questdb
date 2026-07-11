@@ -90,6 +90,26 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReconcileRepairsMissingOlderPartitionIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = false;
+            execute("create table x (s symbol index replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into x values ('a',1,0),('b',2,86400000000)");
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            ReplicaOnlyIndexTestUtils.deleteIndexFilesInPartition(engine, "x", "s", "1970-01-01");
+            execute("insert into x values ('a',3,86401000000)");
+            drainWalQueue();
+
+            assertIndexUsed();
+            assertContents("s\tv\tts\n" +
+                    "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t3.0\t1970-01-02T00:00:01.000000Z\n");
+        });
+    }
+
+    @Test
     public void testReconcileBuildsThenPurgesOnRoleFlip() throws Exception {
         assertMemoryLeak(() -> {
             // 1. Replica (skip=false): index materialized + used.

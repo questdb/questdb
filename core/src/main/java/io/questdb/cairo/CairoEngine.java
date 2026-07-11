@@ -570,7 +570,15 @@ public class CairoEngine implements Closeable, WriterSource {
      * built-when-it-should-be-purged (or vice versa) until the writer is reopened.
      */
     public long bumpRoleGeneration() {
-        return roleGeneration.incrementAndGet();
+        final long generation = roleGeneration.incrementAndGet();
+        // Index eligibility is role-dependent. Cached SELECT factories compiled under the old role
+        // must not survive the transition and try to open a purged index (or retain a full scan after
+        // materialization). Publish the standard cache-flush event after the generation release.
+        final long cursor = messageBus.getQueryCacheEventPubSeq().next();
+        if (cursor > -1) {
+            messageBus.getQueryCacheEventPubSeq().done(cursor);
+        }
+        return generation;
     }
 
     /**

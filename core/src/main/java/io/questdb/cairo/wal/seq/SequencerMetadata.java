@@ -506,21 +506,25 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
             // Optional section: replica-only index flags (backward compatible), mirrors the index-types section.
             if (memSize > offset + 8 + 4) {
-                long replicaOnlyCheckSum = checkSum * 31 + SEQ_META_REPLICA_ONLY_CHECKSUM_SALT;
                 long storedCheckSum = metaMem.getLong(offset);
                 offset += Long.BYTES;
-                if (storedCheckSum == replicaOnlyCheckSum) {
-                    int replicaOnlyCount = metaMem.getInt(offset);
-                    offset += Integer.BYTES;
-                    if (replicaOnlyCount == columnCount && memSize - offset >= columnCount) {
-                        for (int i = 0; i < columnCount; i++) {
-                            byte b = metaMem.getByte(offset);
-                            offset += Byte.BYTES;
-                            columnMetadata.getQuick(i).setReplicaOnlyIndex(b != 0);
-                        }
-                    } else if (memSize - offset >= replicaOnlyCount) {
-                        offset += replicaOnlyCount;
+                int replicaOnlyCount = metaMem.getInt(offset);
+                offset += Integer.BYTES;
+                if (replicaOnlyCount >= 0 && memSize - offset >= replicaOnlyCount) {
+                    long replicaOnlyCheckSum = checkSum * 31 + SEQ_META_REPLICA_ONLY_CHECKSUM_SALT;
+                    replicaOnlyCheckSum = replicaOnlyCheckSum * 31 + replicaOnlyCount;
+                    boolean canonical = true;
+                    for (int i = 0; i < replicaOnlyCount; i++) {
+                        byte value = metaMem.getByte(offset + i);
+                        canonical &= value == 0 || value == 1;
+                        replicaOnlyCheckSum = replicaOnlyCheckSum * 31 + value;
                     }
+                    if (canonical && replicaOnlyCount == columnCount && storedCheckSum == replicaOnlyCheckSum) {
+                        for (int i = 0; i < columnCount; i++) {
+                            columnMetadata.getQuick(i).setReplicaOnlyIndex(metaMem.getByte(offset + i) == 1);
+                        }
+                    }
+                    offset += replicaOnlyCount;
                 }
             }
         } catch (Throwable e) {
