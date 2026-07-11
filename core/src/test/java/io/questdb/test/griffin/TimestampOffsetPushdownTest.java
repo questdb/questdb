@@ -661,6 +661,56 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotInNullOffsetPushdownCompiles() throws Exception {
+        // ts NOT IN NULL inverts to [Long.MIN_VALUE + 1, Long.MAX_VALUE] - a real lower bound one tick
+        // above the NULL sentinel. Shifting it by the inverse offset underflows, which used to throw
+        // and fail the whole query. The underflowed lower bound sits below every representable
+        // timestamp, so it constrains nothing: the shift must collapse it to the open sentinel and the
+        // query must return every row, exactly as the un-offset form does.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z'), " +
+                    "(150, '2022-01-02T12:00:00.000000Z');");
+
+            // CONTROL: no offset. Every row has a non-null designated timestamp.
+            assertQuery("SELECT timestamp, price FROM trades WHERE timestamp NOT IN NULL")
+                    .timestamp("timestamp")
+                    .returns("""
+                            timestamp\tprice
+                            2022-01-01T12:00:00.000000Z\t100.0
+                            2022-01-02T12:00:00.000000Z\t150.0
+                            """);
+
+            // The shifted bound constrains nothing, so the predicate is consumed outright: the scan
+            // keeps its row count (no residual filter) and returns every row.
+            assertQuery("SELECT * FROM (SELECT dateadd('h', 1, timestamp) as ts, price FROM trades) WHERE ts NOT IN NULL")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tprice
+                            2022-01-01T13:00:00.000000Z\t100.0
+                            2022-01-02T13:00:00.000000Z\t150.0
+                            """);
+            // != NULL takes the same inversion through a different analyze method.
+            assertQuery("SELECT * FROM (SELECT dateadd('d', 1, timestamp) as ts, price FROM trades) WHERE ts != NULL")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            2022-01-02T12:00:00.000000Z\t100.0
+                            2022-01-03T12:00:00.000000Z\t150.0
+                            """);
+            // A negative stride shifts the bound the other way, so the union keeps its own constraint.
+            assertQuery("SELECT * FROM (SELECT dateadd('h', -1, timestamp) as ts, price FROM trades) " +
+                    "WHERE ts NOT IN NULL AND ts > '2022-01-02'")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            2022-01-02T11:00:00.000000Z\t150.0
+                            """);
+        });
+    }
+
+    @Test
     public void testNullOffsetThrowsError() throws Exception {
         // Ensure a NULL stride is rejected
         assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));

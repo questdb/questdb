@@ -343,22 +343,24 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
      * instead of rebuilding it. It must never reach below that bound - doing so would drop the
      * window's most recent rows.
      * <p>
-     * A future window ({@code windowHi > 0}) takes {@code windowHi} as its margin. A window that
-     * ends at or before the current row ({@code windowHi <= 0}) - {@code 4 HOURS PRECEDING AND
-     * CURRENT ROW}, or a past-only {@code 4 HOURS PRECEDING AND 2 HOURS PRECEDING} - has no
-     * forward reach to borrow from: scaling {@code windowHi} leaves the horizon at (or below) the
-     * window bound, so the rebuild gate fires for every master row and the index degrades to a
-     * per-row rebuild. Derive the margin from the window's span instead, which amortizes the
-     * rebuild over the rows the index already holds.
+     * The margin is the larger of the window's forward reach ({@code windowHi}) and its span
+     * ({@code windowLo + windowHi}), which is the reach the rebuild has to pay for anyway. Taking
+     * the span alone starves a purely future window ({@code windowLo < 0}, where {@code windowHi}
+     * is the larger of the two); taking {@code windowHi} alone starves every window that reaches
+     * back further than it reaches forward - {@code 4 HOURS PRECEDING AND CURRENT ROW} and the
+     * past-only {@code 4 HOURS PRECEDING AND 2 HOURS PRECEDING} get no margin at all (the rebuild
+     * gate fires for every master row), and {@code 4 HOURS PRECEDING AND 1 HOUR FOLLOWING} rebuilds
+     * every hour while each rebuild rescans five, a 6x slave over-read. The max amortizes the
+     * rebuild over the rows the index already holds in both directions.
      * <p>
-     * The SQL code generator rejects a frame whose hi is below its lo, so the span is
+     * The SQL code generator rejects a frame whose hi is below its lo, so the margin is
      * non-negative here; it only goes non-positive on a zero-width window (nothing to amortize
-     * over) or if the sum overflows. Fall back to the bare window bound in both cases.
+     * over) or if the span overflows. Fall back to the bare window bound in both cases.
      */
     private static long indexLookaheadHi(long masterTimestamp, long windowLo, long windowHi) {
         final long windowTimestampHi = masterTimestamp + windowHi;
         final long span = windowLo + windowHi;
-        final long margin = (windowHi > 0 ? windowHi : span) * (INDEX_LOOKAHEAD - 1);
+        final long margin = Math.max(windowHi, span) * (INDEX_LOOKAHEAD - 1);
         if (margin <= 0) {
             return windowTimestampHi;
         }

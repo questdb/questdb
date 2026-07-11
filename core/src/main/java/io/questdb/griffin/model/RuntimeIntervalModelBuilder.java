@@ -550,35 +550,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
-    /**
-     * Applies the add method with overflow checking.
-     * Throws SqlException if the addition would cause timestamp overflow.
-     */
-    private static long addWithOverflowCheck(TimestampDriver.TimestampAddMethod addMethod, long timestamp, int offset) throws SqlException {
-        // For zero offset, no change needed
-        if (offset == 0) {
-            return timestamp;
-        }
-
-        long result = addMethod.add(timestamp, offset);
-
-        // Detect overflow: if offset is positive but result is less than original,
-        // or if offset is negative but result is greater than original, overflow occurred.
-        if (offset > 0 && result < timestamp) {
-            throw SqlException.position(0)
-                    .put("timestamp overflow: applying offset ")
-                    .put(offset)
-                    .put(" to timestamp would exceed maximum value");
-        } else if (offset < 0 && result > timestamp) {
-            throw SqlException.position(0)
-                    .put("timestamp overflow: applying offset ")
-                    .put(offset)
-                    .put(" to timestamp would exceed minimum value");
-        }
-
-        return result;
-    }
-
     private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
         for (int i = lo; i < lim - 1; i++) {
             if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
@@ -588,14 +559,48 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return false;
     }
 
-    // Shifts one interval boundary from the source driver's resolution into this builder's and applies
-    // the calendar offset, leaving the open-ended sentinels untouched. Throws on timestamp overflow.
-    private long applyOffset(long value, TimestampDriver.TimestampAddMethod addMethod, int offset, TimestampDriver otherDriver) throws SqlException {
-        if (value != Numbers.LONG_NULL && value != Long.MAX_VALUE) {
-            value = timestampDriver.from(value, otherDriver.getTimestampType());
-            return addWithOverflowCheck(addMethod, value, offset);
+    /**
+     * Shifts one source interval boundary from the source driver's resolution into this builder's and
+     * applies the calendar offset, leaving the open-ended sentinels untouched.
+     * <p>
+     * The offset can push a boundary past the end of the timestamp range in either direction, and the
+     * two directions mean opposite things. A LOWER boundary that underflows (or an UPPER one that
+     * overflows) lands beyond the end of the range it guards, so every representable timestamp
+     * satisfies it: the boundary constrains nothing and collapses to the open sentinel. That is how
+     * {@code ts NOT IN NULL} shifts - its inversion starts one tick above the NULL sentinel, and any
+     * negative offset underflows it. The opposite direction leaves the interval unsatisfiable because
+     * the predicate asks for timestamps outside the representable range; QuestDB reports that as an
+     * error rather than silently returning nothing, so keep throwing there.
+     *
+     * @param isLo whether {@code value} is the lower boundary of the source interval
+     */
+    private long applyOffset(long value, TimestampDriver.TimestampAddMethod addMethod, int offset, TimestampDriver otherDriver, boolean isLo) throws SqlException {
+        if (value == Numbers.LONG_NULL || value == Long.MAX_VALUE || offset == 0) {
+            return value;
         }
-        return value;
+        final long base = timestampDriver.from(value, otherDriver.getTimestampType());
+        final long result = addMethod.add(base, offset);
+        // A positive offset that lowers the value has overflowed; a negative one that raises it has
+        // underflowed.
+        if (offset > 0 && result < base) {
+            if (!isLo) {
+                return Long.MAX_VALUE;
+            }
+            throw SqlException.position(0)
+                    .put("timestamp overflow: applying offset ")
+                    .put(offset)
+                    .put(" to timestamp would exceed maximum value");
+        }
+        if (offset < 0 && result > base) {
+            if (isLo) {
+                return Numbers.LONG_NULL;
+            }
+            throw SqlException.position(0)
+                    .put("timestamp overflow: applying offset ")
+                    .put(offset)
+                    .put(" to timestamp would exceed minimum value");
+        }
+        return result;
     }
 
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
@@ -764,8 +769,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             if (dynamicStart > 2) {
                 return false;
             }
-            final long lo = applyOffset(otherIntervals.getQuick(0), addMethod, offset, otherDriver);
-            final long hi = applyOffset(otherIntervals.getQuick(1), addMethod, offset, otherDriver);
+            final long lo = applyOffset(otherIntervals.getQuick(0), addMethod, offset, otherDriver, true);
+            final long hi = applyOffset(otherIntervals.getQuick(1), addMethod, offset, otherDriver, false);
             if (lo != Numbers.LONG_NULL || hi != Long.MAX_VALUE) {
                 intersect(lo, hi);
             }
@@ -775,8 +780,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         boolean hasUnion = false;
         for (int i = 0; i < dynamicStart; i += 2) {
-            final long lo = applyOffset(otherIntervals.getQuick(i), addMethod, offset, otherDriver);
-            final long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, offset, otherDriver);
+            final long lo = applyOffset(otherIntervals.getQuick(i), addMethod, offset, otherDriver, true);
+            final long hi = applyOffset(otherIntervals.getQuick(i + 1), addMethod, offset, otherDriver, false);
             if (lo == Numbers.LONG_NULL && hi == Long.MAX_VALUE) {
                 // A shifted interval spans the entire range, so the union does too: no constraint from
                 // the offset predicate. Drop any partial union and keep this builder's own intervals.

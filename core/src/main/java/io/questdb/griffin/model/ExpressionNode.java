@@ -833,6 +833,24 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     /**
+     * Screens out a constant token that no numeric parse can accept. Every numeric literal starts
+     * with a digit, a sign or a decimal point (see {@link Numbers#parseInt} / {@link Numbers#parseLong}
+     * / {@link Numbers#parseDouble}), so a token that starts with anything else - a quoted string, a
+     * geohash, a type keyword, {@code null} / {@code true} / {@code false} - folds to nothing and must
+     * not pay for the parses. A failed parse is not free: {@link NumericException} formats a message
+     * into a sink, and under {@code -ea} it also allocates a fresh exception and fills in its stack
+     * trace. {@link #reassociateConstants} runs over every expression of every compiled query, so a
+     * long IN list of string literals would otherwise throw thousands of them per compile.
+     */
+    private static boolean isNumericConstantToken(CharSequence token) {
+        if (token == null || token.length() == 0) {
+            return false;
+        }
+        final char first = token.charAt(0);
+        return (first >= '0' && first <= '9') || first == '-' || first == '+' || first == '.';
+    }
+
+    /**
      * Reports whether regrouping the constant pair {@code (a OP b)} is value-preserving,
      * so {@link #reassociateConstants} may combine them. Two hazards block it:
      * <ul>
@@ -865,26 +883,22 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
     /**
-     * Classifies a constant token as widening an INT operation, mirroring the type
-     * precedence in {@link io.questdb.griffin.FunctionParser}: a DECIMAL literal
-     * (an {@code m}/{@code M} suffix) widens, as does a DOUBLE or FLOAT literal. An
-     * integer literal (INT, then LONG) does not widen - an integer pair is governed
-     * by the NULL-sentinel guard instead. A non-numeric token (string, geohash, type
+     * Classifies a non-integer constant token as widening an INT operation, mirroring the type
+     * precedence in {@link io.questdb.griffin.FunctionParser}: a DECIMAL literal (an {@code m}/{@code M}
+     * suffix) widens, as does a DOUBLE or FLOAT literal. A non-numeric token (string, geohash, type
      * keyword, ...) does not widen.
+     * <p>
+     * The only caller has already run {@link Numbers#parseInt} and {@link Numbers#parseLong} over the
+     * token and seen both fail, so an integer literal (INT or LONG) never reaches here - it does not
+     * widen, and an integer pair is governed by the NULL-sentinel guard instead. Re-parsing it to
+     * re-derive that would cost another failed parse per constant.
      */
     private static boolean isWideningConstantToken(CharSequence token) {
         final int len = token.length();
-        // A DECIMAL literal ends with 'm'/'M' (see FunctionParser); parseLong /
-        // parseDouble / parseFloat all reject it, so it must be recognized first.
+        // A DECIMAL literal ends with 'm'/'M' (see FunctionParser); parseDouble and parseFloat both
+        // reject it, so it must be recognized first.
         if (len > 1 && (token.charAt(len - 1) | 32) == 'm') {
             return true;
-        }
-        try {
-            // parseLong accepts every token parseInt does, plus the 'L' suffix.
-            Numbers.parseLong(token);
-            return false;
-        } catch (NumericException notInteger) {
-            // not an integer literal; fall through
         }
         try {
             Numbers.parseDouble(token);
@@ -932,21 +946,38 @@ public class ExpressionNode implements Mutable, Sinkable {
      */
     private void cacheConstantFold() {
         if (type == CONSTANT) {
+            if (!isNumericConstantToken(token)) {
+                constFoldIntValue = NOT_INT_CONSTANT;
+                isConstFoldLongValid = false;
+                isConstFoldWidening = false;
+                return;
+            }
             try {
                 // parseInt rejects an 'L' suffix, a decimal/exponent, and out-of-INT-range
                 // literals, so only genuine INT constants fold here; wider types fall through.
                 constFoldIntValue = Numbers.parseInt(token);
+                // parseLong accepts every token parseInt does and yields the same value, so an
+                // INT literal is trivially a LONG one: don't parse the token a second time.
+                constFoldLongValue = constFoldIntValue;
+                isConstFoldLongValid = true;
+                // An integer literal never widens; the NULL-sentinel guard governs integer pairs.
+                isConstFoldWidening = false;
+                return;
             } catch (NumericException notIntLiteral) {
                 constFoldIntValue = NOT_INT_CONSTANT;
             }
             try {
                 // parseLong rejects a decimal/exponent and a DECIMAL 'm' suffix, so only
-                // genuine INT / LONG constants fold at long width; wider types are invalid.
+                // genuine LONG constants fold at long width; wider types are invalid.
                 constFoldLongValue = Numbers.parseLong(token);
                 isConstFoldLongValid = true;
+                isConstFoldWidening = false;
+                return;
             } catch (NumericException notLongLiteral) {
                 isConstFoldLongValid = false;
             }
+            // Neither integer parse took the token, so only a floating-point or DECIMAL literal
+            // is left to classify.
             isConstFoldWidening = isWideningConstantToken(token);
             return;
         }

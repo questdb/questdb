@@ -56,6 +56,8 @@ import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.StringSink;
@@ -123,6 +125,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // Maximum number of labels supported by the backend (must match LabelArray::MAX_LABELS in x86.h)
     private static final int MAX_LABELS = 8;
+    // Absent-key marker for the arithmetic type caches. UNDEFINED_CODE is a cacheable answer, so it
+    // cannot double as the miss value.
+    private static final int NOT_CACHED = Integer.MIN_VALUE;
     // Predicate priority for short-circuit evaluation
     private static final int PRIORITY_I16_EQ = 0;  // highest priority
     private static final int PRIORITY_I16_NEQ = 10; // lowest priority
@@ -135,19 +140,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int PRIORITY_OTHER_NEQ = 6;
     private static final int PRIORITY_SYM_EQ = 3;
     private static final int PRIORITY_SYM_NEQ = 7;
+    // Memoizes arithExprType() for the current predicate, keyed by node identity. The classification
+    // walks the whole subtree (and folds pure-constant arithmetic), and the marker passes ask for it
+    // repeatedly at every level, so without the cache a deep chain costs O(depth^2) subtree walks and
+    // re-parses the same constant tokens. The tree does not mutate during serialize(), so the answer
+    // is stable; onNodeDescended() clears the cache when it enters the next predicate.
+    private final ObjIntHashMap<ExpressionNode> arithExprTypeCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     // List to collect predicates from AND chains for reordering
     private final ObjList<ExpressionNode> collectedPredicates = new ObjList<>();
+    // Memoizes genuineArithType() for the current predicate. See arithExprTypeCache.
+    private final ObjIntHashMap<ExpressionNode> genuineArithTypeCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Overflowing constant-arithmetic fold roots that the Java filter reads at
     // long width (a genuine LONG leaf, or a LONG operand promoting the enclosing
     // arithmetic op / comparison), so descend() must emit a full I8 IMM rather
-    // than a wrapped I4. Compared by identity. See markI64WidenFoldRoots.
-    private final ObjList<ExpressionNode> i64WidenFoldRoots = new ObjList<>();
+    // than a wrapped I4. Compared by identity (ExpressionNode overrides neither
+    // equals nor hashCode). See markI64WidenFoldRoots.
+    private final ObjHashSet<ExpressionNode> i64WidenFoldRoots = new ObjHashSet<>();
     // Leaf nodes (column / bind variable / constant) the float-suppressed
     // narrow-i64 widening must sign-extend to i64 for the current predicate.
     // Holds node references, compared by identity. See markFloatI64WidenLeaves.
-    private final ObjList<ExpressionNode> i64WidenLeaves = new ObjList<>();
+    private final ObjHashSet<ExpressionNode> i64WidenLeaves = new ObjHashSet<>();
     // Narrow-int arithmetic operand leaves that must NOT sign-extend to i64 even
     // when the predicate-global narrow-i64 widening is on: they feed an INT-width
     // comparison (which the Java filter reads via getInt and wraps mod 2^32), so
@@ -156,7 +170,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     // is a single predicate: a sibling LONG comparison flips the global flag on,
     // but a narrow-int product on the wrap-side must still wrap. Compared by
     // identity. See markI64WrapArithLeaves.
-    private final ObjList<ExpressionNode> i64WrapLeaves = new ObjList<>();
+    private final ObjHashSet<ExpressionNode> i64WrapLeaves = new ObjHashSet<>();
     // inKeyWidthOverride captured per stub offset for a constant serialized inside a width-sensitive
     // IN key; the constant backfills after the override is reset, and the key re-serializes per
     // element, so the width is keyed by memory offset (not node identity). get() == UNDEFINED_CODE
@@ -199,6 +213,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         collectedPredicates.clear();
         // Reused per-predicate width state; reset defensively so a fresh filter can never read a
         // stale mark from an earlier one (onNodeDescended / serialize() already reset before use).
+        arithExprTypeCache.clear();
+        genuineArithTypeCache.clear();
         i64WidenFoldRoots.clear();
         i64WidenLeaves.clear();
         i64WrapLeaves.clear();
@@ -411,12 +427,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    // Adds a leaf / constant node to the i64-widen set once (identity dedup): the
-    // same node can be reached by more than one marker pass.
+    // Adds a leaf / constant node to the i64-widen set. The set dedups by node identity: the same
+    // node can be reached by more than one marker pass.
     private void addI64WidenLeaf(ExpressionNode node) {
-        if (!isI64WidenLeaf(node)) {
-            i64WidenLeaves.add(node);
-        }
+        i64WidenLeaves.add(node);
     }
 
     private void addNarrowLeaf(ExpressionNode node) {
@@ -438,6 +452,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (node == null) {
             return UNDEFINED_CODE;
         }
+        final int cached = arithExprTypeCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached;
+        }
+        final int typeCode = arithExprType0(node);
+        arithExprTypeCache.put(node, typeCode);
+        return typeCode;
+    }
+
+    private int arithExprType0(ExpressionNode node) {
         switch (node.type) {
             case ExpressionNode.LITERAL: {
                 int index = metadata.getColumnIndexQuiet(node.token);
@@ -595,18 +619,28 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * getInt() and wraps).
      */
     private int genuineArithType(ExpressionNode node) {
-        if (node != null && node.type == ExpressionNode.OPERATION) {
-            if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
-                return genuineArithType(node.rhs != null ? node.rhs : node.lhs);
-            }
-            if (!isArithmeticOperation(node)) {
-                return UNDEFINED_CODE;
-            }
-            return promoteArithType(genuineArithType(node.lhs), genuineArithType(node.rhs));
+        if (node == null || node.type != ExpressionNode.OPERATION) {
+            // Leaves (column / bind variable / constant) carry their real type
+            // already; only the OPERATION fold-overflow shortcut differs.
+            return arithExprType(node);
         }
-        // Leaves (column / bind variable / constant) carry their real type
-        // already; only the OPERATION fold-overflow shortcut differs.
-        return arithExprType(node);
+        final int cached = genuineArithTypeCache.get(node);
+        if (cached != NOT_CACHED) {
+            return cached;
+        }
+        final int typeCode = genuineArithType0(node);
+        genuineArithTypeCache.put(node, typeCode);
+        return typeCode;
+    }
+
+    private int genuineArithType0(ExpressionNode node) {
+        if (node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return genuineArithType(node.rhs != null ? node.rhs : node.lhs);
+        }
+        if (!isArithmeticOperation(node)) {
+            return UNDEFINED_CODE;
+        }
+        return promoteArithType(genuineArithType(node.lhs), genuineArithType(node.rhs));
     }
 
     /**
@@ -1113,32 +1147,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     // Reference (not value) membership: the same node objects are marked and folded.
     private boolean isI64WidenFoldRoot(ExpressionNode node) {
-        for (int i = 0, n = i64WidenFoldRoots.size(); i < n; i++) {
-            if (i64WidenFoldRoots.getQuick(i) == node) {
-                return true;
-            }
-        }
-        return false;
+        return i64WidenFoldRoots.contains(node);
     }
 
     // Reference (not value) membership: the same node objects are marked and serialized.
     private boolean isI64WidenLeaf(ExpressionNode node) {
-        for (int i = 0, n = i64WidenLeaves.size(); i < n; i++) {
-            if (i64WidenLeaves.getQuick(i) == node) {
-                return true;
-            }
-        }
-        return false;
+        return i64WidenLeaves.contains(node);
     }
 
     // Reference (not value) membership: the same node objects are marked and serialized.
     private boolean isI64WrapLeaf(ExpressionNode node) {
-        for (int i = 0, n = i64WrapLeaves.size(); i < n; i++) {
-            if (i64WrapLeaves.getQuick(i) == node) {
-                return true;
-            }
-        }
-        return false;
+        return i64WrapLeaves.contains(node);
     }
 
     private boolean isInTimestampPredicate() throws SqlException {
@@ -3082,6 +3101,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     i64WidenLeaves.clear();
                     i64WidenFoldRoots.clear();
                     i64WrapLeaves.clear();
+                    // The type caches hold nodes of the predicate we are leaving behind, and the node
+                    // pool can hand the same objects to a later filter. Drop them with the marks.
+                    arithExprTypeCache.clear();
+                    genuineArithTypeCache.clear();
                     try {
                         narrowI64WidenDetector.clear();
                         traverseAlgo.traverse(node, narrowI64WidenDetector);
