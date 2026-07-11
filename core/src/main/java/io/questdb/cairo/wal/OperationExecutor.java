@@ -42,6 +42,8 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
@@ -50,6 +52,7 @@ import io.questdb.std.Rnd;
 import java.io.Closeable;
 
 class OperationExecutor implements Closeable {
+    private static final Log LOG = LogFactory.getLog(OperationExecutor.class);
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
     // Sized to all survivor-cursor columns to build a 1:1 SELECT*->writer copier (see executeDelete).
@@ -196,6 +199,8 @@ class OperationExecutor implements Closeable {
                     }
                     return deleted;
                 } catch (CairoException ex) {
+                    // Rollback in case of any dirty state. Do not catch rollback exceptions here:
+                    // let the calling code handle a distressed writer (mirrors TableWriter.apply).
                     tableWriter.rollback();
                     if (ex.isWALTolerable()) {
                         // Mark this txn applied and skip it (mirrors TableWriter.apply).
@@ -205,6 +210,22 @@ class OperationExecutor implements Closeable {
                     // Mark as not applied so the apply job can retry.
                     tableWriter.setSeqTxn(seqTxn - 1);
                     throw ex;
+                } catch (Throwable th) {
+                    // Any other throwable (an Error such as OOM, or e.g. a SqlException thrown by
+                    // survivorFactory.getCursor() before any row was staged) must not escape without
+                    // rolling back and marking this txn as not applied, or the writer is left dirty
+                    // with an advanced in-memory seqTxn that the apply job will never retry. Guard the
+                    // rollback itself so a distressed-writer failure during cleanup doesn't mask the
+                    // original throwable (mirrors TableWriter.apply's broad Throwable branch).
+                    try {
+                        tableWriter.rollback();
+                    } catch (Throwable th2) {
+                        LOG.critical().$("could not rollback, table is distressed [table=")
+                                .$(tableToken).$(", error=").$(th2).I$();
+                    }
+                    // Mark as not applied so the apply job can retry.
+                    tableWriter.setSeqTxn(seqTxn - 1);
+                    throw th;
                 }
             }
         }
