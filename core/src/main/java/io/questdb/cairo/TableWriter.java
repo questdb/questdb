@@ -9919,46 +9919,103 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
 
-                        long o3TimestampLo, o3TimestampHi;
+                        long o3TimestampLo = 0, o3TimestampHi = 0;
+                        // Approach B (see task 2.2): a fully-covered Parquet partition is dropped INLINE here by
+                        // writing the same partition-update-sink record the async O3PartitionJob writes for a full
+                        // removal, then letting o3ConsumePartitionUpdateSink perform the actual drop. This reuses
+                        // ALL of the downstream drop machinery (split/first/last tracking, columnVersion fixups,
+                        // min/max recompute, truncate-when-empty) instead of duplicating it, and never decodes the
+                        // Parquet data (O(1)). Boundary trims / arbitrary rewrites of a Parquet partition still throw
+                        // (Task 3.1 convert-to-native).
+                        boolean droppedFullyCoveredParquet = false;
                         if (isCommitReplaceMode()) {
                             if (isParquet) {
-                                // Parquet partitions do not support replace commits feature yet
-                                o3PartitionUpdRemaining.decrementAndGet();
-                                latchCount--;
-                                pressureControl.updateInflightPartitions(--inflightPartitions);
-                                throw CairoException.critical(0)
-                                        .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
-                                        .put(", partition=").ts(timestampDriver, partitionTimestamp).put(']');
+                                // A replace commit cannot rewrite a Parquet partition (no in-place row-group merge
+                                // yet), but a partition the range covers ENTIRELY is only DROPPED downstream -- a
+                                // format-agnostic operation that needs no data rewrite, hence Parquet-safe.
+                                //
+                                // Fully covered == every row of this partition is inside the replace range
+                                // [o3TimestampMin, o3TimestampMax] AND no replacement rows are destined for it
+                                // (empty O3 batch: srcOooLo > srcOooHi; a non-empty batch would need a rewrite to
+                                // merge survivors -> throw). We cannot decode the Parquet data, so we bound the
+                                // partition's data extent with values already on the writer:
+                                //  - low: exact for the first partition (getMinTimestamp()), else the partition floor
+                                //    (partitionTimestamp) -- a sound LOWER bound on the partition's min data ts;
+                                //  - high: exact for the last partition (getMaxTimestamp()), else the time-span
+                                //    ceiling getCurrentPartitionMaxTimestamp() -- a sound UPPER bound on its max data ts.
+                                // Using bounds only makes the test STRICTER (it never drops while data survives), so a
+                                // range that covers all data but stops inside a boundary partition's time-span gap
+                                // conservatively falls through to the throw (Task 3.1) rather than dropping.
+                                final long partitionDataMin = (partitionTimestamp == txWriter.getPartitionTimestampByIndex(0))
+                                        ? txWriter.getMinTimestamp()
+                                        : partitionTimestamp;
+                                final long partitionDataMax = (partitionTimestamp == lastPartitionTimestamp)
+                                        ? txWriter.getMaxTimestamp()
+                                        : txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
+                                final boolean fullyCovered = srcOooLo > srcOooHi
+                                        && partitionDataMin >= o3TimestampMin
+                                        && partitionDataMax <= o3TimestampMax;
+                                if (!fullyCovered) {
+                                    // Parquet boundary trim / arbitrary rewrite -> Task 3.1. Undo this partition's
+                                    // in-flight/latch increments (mirrors the pre-existing throw path) and fail.
+                                    o3PartitionUpdRemaining.decrementAndGet();
+                                    latchCount--;
+                                    pressureControl.updateInflightPartitions(--inflightPartitions);
+                                    throw CairoException.critical(0)
+                                            .put("commit replace mode is not supported for Parquet partitions [table=").put(getTableToken().getTableName())
+                                            .put(", partition=").ts(timestampDriver, partitionTimestamp).put(']');
+                                }
+                                // Fully covered: drop inline. Write exactly the sink record O3PartitionJob.updatePartition
+                                // writes for a full removal (timestampMin=Long.MAX_VALUE, newSize=0, partitionMutates=1),
+                                // then settle the counters exactly as a COMPLETED async partition would -- decrement
+                                // o3PartitionUpdRemaining and count the done-latch down (matching the ++ done at
+                                // o3PartitionUpdRemaining.incrementAndGet()/latchCount++ above), NOT the throw path's
+                                // decrements. latchCount and inflightPartitions stay incremented, as for any completed
+                                // async partition (reset by the periodic flush). Skip o3CommitPartitionAsync -> no
+                                // async task, no data decoded/rewritten; the sink record is consumed at loop end by
+                                // o3ConsumePartitionUpdateSink's srcDataNewPartitionSize == 0 drop branch.
+                                Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, Long.MAX_VALUE); // timestampMin: MAX so a removed partition can't lower the table minTimestamp
+                                Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, 0);          // srcDataNewPartitionSize == 0 -> drop
+                                Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataMax); // srcDataOldPartitionSize (drives the fixedRowCount decrement)
+                                Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1);          // partitionMutates == 1
+                                Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);          // o3SplitPartitionSize
+                                Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);         // parquetFileSize == -1 -> native drop path
+                                o3ClockDownPartitionUpdateCount();
+                                o3CountDownDoneLatch();
+                                droppedFullyCoveredParquet = true;
+                            } else {
+                                o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
+                                o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
+                                        txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
                             }
-                            o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
-                            o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
-                                    txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
                         } else {
                             o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
                             o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
                         }
 
-                        o3CommitPartitionAsync(
-                                columnCounter,
-                                maxTimestamp,
-                                sortedTimestampsAddr,
-                                srcOooLo,
-                                srcOooHi,
-                                srcOooMax,
-                                o3TimestampMin,
-                                partitionTimestamp,
-                                srcDataMax,
-                                last,
-                                srcNameTxn,
-                                o3Basket,
-                                newPartitionSize,
-                                srcDataMax,
-                                partitionUpdateSinkAddr,
-                                dedupColSinkAddr,
-                                isParquet,
-                                o3TimestampLo,
-                                o3TimestampHi
-                        );
+                        if (!droppedFullyCoveredParquet) {
+                            o3CommitPartitionAsync(
+                                    columnCounter,
+                                    maxTimestamp,
+                                    sortedTimestampsAddr,
+                                    srcOooLo,
+                                    srcOooHi,
+                                    srcOooMax,
+                                    o3TimestampMin,
+                                    partitionTimestamp,
+                                    srcDataMax,
+                                    last,
+                                    srcNameTxn,
+                                    o3Basket,
+                                    newPartitionSize,
+                                    srcDataMax,
+                                    partitionUpdateSinkAddr,
+                                    dedupColSinkAddr,
+                                    isParquet,
+                                    o3TimestampLo,
+                                    o3TimestampHi
+                            );
+                        }
                     }
                 } catch (CairoException | CairoError e) {
                     LOG.error().$((Sinkable) e).$();

@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -746,6 +747,125 @@ public class DeleteTest extends AbstractCairoTest {
                     x
                     2
                     """);
+        });
+    }
+
+    // ---- Parquet partitions (Task 2.2) ----
+
+    /**
+     * A whole-partition time-range delete over a FULLY-COVERED Parquet partition is applied as an inline
+     * O(1) drop during the replace-commit apply - no data rewrite, so it is Parquet-safe. Task 2.1 routes
+     * this delete to a single empty-replace over [MIN, 1970-01-02); the replace-path guard (TableWriter
+     * processO3Block) detects that the range covers the whole 1970-01-01 partition and drops it inline
+     * instead of throwing "commit replace mode is not supported for Parquet partitions".
+     */
+    @Test
+    public void testDeleteWholeParquetPartitionByTimeRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(72)) " +
+                    "timestamp(ts) partition by DAY WAL"); // 3 days
+            drainWalQueue();
+            execute("alter table t convert partition to parquet list '1970-01-01'");
+            drainWalQueue();
+            execute("DELETE FROM t WHERE ts < '1970-01-02T00:00:00.000000Z'");
+            drainWalQueue();
+            assertQuery("select min(ts) from t").timestamp("min").expectSize().returns("min\n1970-01-02T00:00:00.000000Z\n");
+        });
+    }
+
+    /**
+     * A time-range delete that only PARTIALLY covers a Parquet partition (a boundary trim) needs a data
+     * rewrite, which is not yet supported for Parquet and is deferred to Phase 3 / Task 3.1 (convert-to-native
+     * fallback). Until then the replace-apply guard rejects it and the WAL apply suspends the table. This pins
+     * the Phase-2 boundary so a future change that silently trimmed a Parquet partition (data loss risk) fails
+     * loudly here.
+     */
+    @Test
+    public void testDeleteParquetBoundaryTrimStillRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(72)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("alter table t convert partition to parquet list '1970-01-01'");
+            drainWalQueue();
+            // Deletes only the first half of the parquet partition 1970-01-01 (x=1..11); x=12..23 must survive.
+            // A boundary trim of a Parquet partition needs a data rewrite -> Task 3.1, not this task.
+            execute("DELETE FROM t WHERE ts < '1970-01-01T12:00:00.000000Z'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertTrue(
+                    "a partial-coverage Parquet delete (boundary trim) must still be rejected until Task 3.1, " +
+                            "suspending the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // The failed apply left the data unchanged - nothing was trimmed from the parquet partition.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n72\n");
+        });
+    }
+
+    /**
+     * Drops TWO interior (non-first, non-last) Parquet partitions in a single replace-commit, mixed with
+     * surviving native partitions on both sides. This exercises the coverage check's floor/ceiling bounds
+     * (used for a partition that is neither the first nor the last, so neither getMinTimestamp() nor
+     * getMaxTimestamp() applies) and confirms multiple inline Parquet drops settle the O3 partition
+     * counters/latch without a hang. The delete range is partition-aligned, so both parquet partitions are
+     * fully covered and dropped inline (no rewrite, no suspension).
+     */
+    @Test
+    public void testDeleteInteriorParquetPartitionsByTimeRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(96)) " +
+                    "timestamp(ts) partition by DAY WAL"); // day1(x1-23) day2(x24-47) day3(x48-71) day4(x72-95) day5(x96)
+            drainWalQueue();
+            execute("alter table t convert partition to parquet list '1970-01-02'");
+            drainWalQueue();
+            execute("alter table t convert partition to parquet list '1970-01-03'");
+            drainWalQueue();
+            // Delete the two parquet days 2 and 3; day1 (native, before) and day4/day5 (native, after) survive.
+            execute("DELETE FROM t WHERE ts >= '1970-01-02T00:00:00.000000Z' AND ts < '1970-01-04T00:00:00.000000Z'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "fully-covered whole-partition Parquet drops must NOT suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // 48 rows removed (x=24..71); 48 survive (x=1..23, 72..96).
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n48\n");
+            // min unchanged (day1 native survives), max unchanged (day5 native survives), and the deleted band is gone.
+            assertQuery("select min(ts), max(ts) from t").noRandomAccess().expectSize()
+                    .returns("min\tmax\n1970-01-01T01:00:00.000000Z\t1970-01-05T00:00:00.000000Z\n");
+            assertQuery("select count(*) from t where ts >= '1970-01-02T00:00:00.000000Z' and ts < '1970-01-04T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    /**
+     * A single replace-commit that would inline-drop a FULLY-covered Parquet partition (1970-01-01) and then
+     * hits a PARTIALLY-covered Parquet partition (1970-01-02, a boundary trim) must roll back ATOMICALLY: the
+     * throw sets success=false, so o3ConsumePartitionUpdateSink is skipped and the already-written size-0 drop
+     * record for day 1 is never applied. Negative control: all 72 rows (including day 1) must survive. This
+     * pins the one property that keeps a partial Parquet drop from persisting, and confirms the drop-then-throw
+     * path settles the O3 counters/latch without a hang.
+     */
+    @Test
+    public void testDeleteParquetDropThenPartialTrimRejectedAtomically() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(72)) " +
+                    "timestamp(ts) partition by DAY WAL"); // day1(x1-23) day2(x24-47) day3(x48-71) day4(x72)
+            drainWalQueue();
+            execute("alter table t convert partition to parquet list '1970-01-01'");
+            drainWalQueue();
+            execute("alter table t convert partition to parquet list '1970-01-02'");
+            drainWalQueue();
+            // Range fully covers parquet day1 (would inline-drop, processed first) AND partially covers parquet
+            // day2 (must throw). The whole commit must roll back -> day1 must NOT be dropped.
+            execute("DELETE FROM t WHERE ts < '1970-01-02T12:00:00.000000Z'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertTrue(
+                    "drop-then-partial-trim in one commit must be rejected atomically (table suspended)",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // Negative control: the fully-covered day1 was NOT dropped by the rolled-back commit.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n72\n");
+            assertQuery("select min(ts) from t").timestamp("min").expectSize().returns("min\n1970-01-01T01:00:00.000000Z\n");
         });
     }
 
