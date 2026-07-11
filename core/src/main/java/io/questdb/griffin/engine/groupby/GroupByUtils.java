@@ -531,6 +531,24 @@ public class GroupByUtils {
     }
 
     /**
+     * Builds a borrowed list of the non-group-by entries of {@code recordFunctions}. Cursors
+     * call this once at construction, so every subsequent cached execution initializes the
+     * non-group-by functions with a plain Theta(V) walk instead of re-classifying all
+     * P record functions with instanceof checks. Ownership stays with {@code recordFunctions}:
+     * callers must never close the returned list's entries.
+     */
+    public static ObjList<Function> extractNonGroupByFunctions(ObjList<Function> recordFunctions) {
+        final ObjList<Function> nonGroupByFunctions = new ObjList<>(recordFunctions.size());
+        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+            final Function function = recordFunctions.getQuick(i);
+            if (!(function instanceof GroupByFunction)) {
+                nonGroupByFunctions.add(function);
+            }
+        }
+        return nonGroupByFunctions;
+    }
+
+    /**
      * Frees the projection functions produced by {@link #assembleGroupByFunctions} exactly once
      * when generation fails after assembly, in Theta(outer + inner) time and constant space by
      * walking the producer's positional correspondence. The first assembly loop adds each parsed
@@ -652,11 +670,7 @@ public class GroupByUtils {
     }
 
     public static void toTop(ObjList<? extends Function> args) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            if (PerWorkerFunctionList.isOwned(args, i)) {
-                args.getQuick(i).toTop();
-            }
-        }
+        PerWorkerFunctionList.toTop(args);
     }
 
     public static void validateGroupByColumns(

@@ -30,14 +30,21 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.BitSet;
+import java.util.Comparator;
 
 /**
  * An aligned per-worker function list that shares thread-safe owner functions and owns only the
  * marked worker-local clones. Callers use the list normally during execution and use the static
- * lifecycle helpers to avoid initializing, clearing, or closing shared owner references.
+ * lifecycle helpers to avoid initializing, clearing, rewinding, or closing shared owner references.
+ * <p>
+ * Ownership follows positional bits, so the class rejects every inherited structural mutator that
+ * would reorder or replace elements without updating the bits. Callers grow the list only through
+ * {@link #add(Function, boolean)}; {@link #clear()} stays supported and resets the ownership bits
+ * together with the elements.
  */
 public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> {
     private final BitSet ownedFunctions = new BitSet();
@@ -46,12 +53,113 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
         super(capacity);
     }
 
+    @Override
+    public void add(T value) {
+        throw new UnsupportedOperationException("use add(function, isOwned)");
+    }
+
     public void add(T function, boolean isOwned) {
         final int index = size();
-        add(function);
+        super.add(function);
         if (isOwned) {
             ownedFunctions.set(index);
         }
+    }
+
+    @Override
+    public void addAll(ReadOnlyObjList<? extends T> that) {
+        throw new UnsupportedOperationException("use add(function, isOwned)");
+    }
+
+    @Override
+    public void addAll(ReadOnlyObjList<? extends T> that, int lo, int hi) {
+        throw new UnsupportedOperationException("use add(function, isOwned)");
+    }
+
+    @Override
+    public void addReverseAll(ReadOnlyObjList<? extends T> that) {
+        throw new UnsupportedOperationException("use add(function, isOwned)");
+    }
+
+    @Override
+    public void clear() {
+        super.clear();
+        ownedFunctions.clear();
+    }
+
+    @Override
+    public void extendAndSet(int index, T value) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void extendPos(int capacity) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public T getAndSetQuick(int index, T value) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void insert(int index, int length, T defaultValue) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public T popLast() {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void remove(int index) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void remove(int from, int to) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public int remove(Object o) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void set(int from, int to, T value) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void set(int index, T value) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void setAll(int count, T value) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void setPos(int newPos) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void setQuick(int index, T value) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void sort(Comparator<T> cmp) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
+    }
+
+    @Override
+    public void sort(int from, int to, Comparator<T> cmp) {
+        throw new UnsupportedOperationException("structural mutation invalidates ownership bits");
     }
 
     public static void clear(ObjList<? extends Function> functions) {
@@ -66,10 +174,7 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
 
     public static void close(ObjList<? extends Function> functions) {
         if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
-            for (int i = perWorkerFunctions.ownedFunctions.nextSetBit(0); i > -1; i = perWorkerFunctions.ownedFunctions.nextSetBit(i + 1)) {
-                Misc.free(perWorkerFunctions.getQuick(i));
-                perWorkerFunctions.setQuick(i, null);
-            }
+            perWorkerFunctions.closeOwned();
         } else {
             Misc.freeObjList(functions);
         }
@@ -103,4 +208,22 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
         return !(functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) || perWorkerFunctions.ownedFunctions.get(index);
     }
 
+    public static void toTop(ObjList<? extends Function> functions) {
+        if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
+            for (int i = perWorkerFunctions.ownedFunctions.nextSetBit(0); i > -1; i = perWorkerFunctions.ownedFunctions.nextSetBit(i + 1)) {
+                perWorkerFunctions.getQuick(i).toTop();
+            }
+        } else {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                functions.getQuick(i).toTop();
+            }
+        }
+    }
+
+    private void closeOwned() {
+        for (int i = ownedFunctions.nextSetBit(0); i > -1; i = ownedFunctions.nextSetBit(i + 1)) {
+            Misc.free(getQuick(i));
+            super.setQuick(i, null);
+        }
+    }
 }

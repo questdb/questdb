@@ -53,6 +53,103 @@ abstract class AbstractCursorFunctionFactoryTest extends AbstractCairoTest {
         super.setUp();
     }
 
+    /**
+     * Asserts that a bare {@code null} literal on the right of every comparison operator compiles
+     * to a scalar null-comparison (never a cursor comparison) and matches no rows. The generic
+     * behavior is shared by every numeric left-operand type; type-specific rationale stays with
+     * the concrete test.
+     */
+    protected final void assertBareNullBehavior(String columnType, String columnName) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::" + columnType + " " + columnName + " from long_sequence(10))");
+            final String empty = columnName + "\n";
+            // null comparison matches no rows for every operator, and must not throw at compile time
+            assertQuery("select " + columnName + " from t where " + columnName + " <= null")
+                    .noLeakCheck()
+                    .returns(empty);
+            assertQuery("select " + columnName + " from t where " + columnName + " >= null")
+                    .noLeakCheck()
+                    .returns(empty);
+            assertQuery("select " + columnName + " from t where " + columnName + " > null")
+                    .noLeakCheck()
+                    .returns(empty);
+            assertQuery("select " + columnName + " from t where " + columnName + " < null")
+                    .noLeakCheck()
+                    .returns(empty);
+        });
+    }
+
+    /**
+     * Asserts that a null cursor scalar (bare or typed) and an empty scalar sub-query match no
+     * rows for the strict operators and their negated forms alike. The generic behavior is shared
+     * by every numeric left-operand type.
+     */
+    protected final void assertNullAndEmptyCursorBehavior(String columnType, String columnName) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select x::" + columnType + " " + columnName + " from long_sequence(10))");
+            final String empty = columnName + "\n";
+            assertQuery("select " + columnName + " from t where " + columnName + " < (select null)")
+                    .noLeakCheck()
+                    .returns(empty);
+            assertQuery("select " + columnName + " from t where " + columnName + " > (select null::long)")
+                    .noLeakCheck()
+                    .returns(empty);
+            assertQuery("select " + columnName + " from t where " + columnName + " < (select max(" + columnName + ") from t where 1 <> 1)")
+                    .noLeakCheck()
+                    .returns(empty);
+            // negated operators over a null / empty cursor must also match no rows
+            assertQuery("select " + columnName + " from t where " + columnName + " >= (select null)")
+                    .noLeakCheck()
+                    .returns(empty);
+            assertQuery("select " + columnName + " from t where " + columnName + " <= (select null::long)")
+                    .noLeakCheck()
+                    .returns(empty);
+            assertQuery("select " + columnName + " from t where " + columnName + " >= (select max(" + columnName + ") from t where 1 <> 1)")
+                    .noLeakCheck()
+                    .returns(empty);
+        });
+    }
+
+    /**
+     * Asserts the null LEFT-column contract: long_sequence never yields null cells, so the table
+     * carries an explicit null. A null left value must never match a non-null cursor scalar (any
+     * operator), and must follow QuestDB's null == null convention against a null cursor: >= and
+     * <= match, strict > / < do not. The generic behavior is shared by every numeric left-operand
+     * type.
+     */
+    protected final void assertNullLeftColumnBehavior(String columnType, String columnName) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (id int, " + columnName + " " + columnType + ")");
+            execute("insert into t values (1, null), (2, 5), (3, 8)");
+            // null-left (id 1) is excluded for every operator against a non-null cursor
+            assertQuery("select id from t where " + columnName + " > (select min(" + columnName + ") from t)") // > 5
+                    .noLeakCheck()
+                    .returns("id\n3\n");
+            assertQuery("select id from t where " + columnName + " < (select max(" + columnName + ") from t)") // < 8
+                    .noLeakCheck()
+                    .returns("id\n2\n");
+            assertQuery("select id from t where " + columnName + " >= (select max(" + columnName + ") from t)") // >= 8
+                    .noLeakCheck()
+                    .returns("id\n3\n");
+            assertQuery("select id from t where " + columnName + " <= (select min(" + columnName + ") from t)") // <= 5
+                    .noLeakCheck()
+                    .returns("id\n2\n");
+            // null == null: a null left value matches a null cursor for >= and <= only
+            assertQuery("select id from t where " + columnName + " >= (select null)")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
+            assertQuery("select id from t where " + columnName + " <= (select null)")
+                    .noLeakCheck()
+                    .returns("id\n1\n");
+            assertQuery("select id from t where " + columnName + " > (select null)")
+                    .noLeakCheck()
+                    .returns("id\n");
+            assertQuery("select id from t where " + columnName + " < (select null)")
+                    .noLeakCheck()
+                    .returns("id\n");
+        });
+    }
+
     protected final void runWithPool(PoolRunnable body) throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {

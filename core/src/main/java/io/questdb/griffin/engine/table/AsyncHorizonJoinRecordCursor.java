@@ -41,7 +41,6 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.mp.SOUnboundedCountDownLatch;
@@ -54,6 +53,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
     private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker;
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -86,6 +87,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             this.messageBus = messageBus;
             this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;
+            this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
             this.slaveFactory = slaveFactory;
             this.recordA = new VirtualRecord(recordFunctions);
             this.recordB = new VirtualRecord(recordFunctions);
@@ -274,15 +276,12 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         // functions: the atom initializes them in initTimeFrameCursors(), before any frame is
         // dispatched, and donates the owner state to the per-worker clones. Re-initializing them
         // here would re-run stateful initialization, such as a cursor comparison re-executing its
-        // scalar sub-query, and could diverge from the state the workers observe.
+        // scalar sub-query, and could diverge from the state the workers observe. The constructor
+        // pre-filters the non-group-by functions once, so cached re-executions skip the
+        // per-function classification scan.
         final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            final Function function = recordFunctions.getQuick(i);
-            if (!(function instanceof GroupByFunction)) {
-                function.init(symbolTableSource, executionContext);
-            }
-        }
+        Function.init(nonGroupByFunctions, symbolTableSource, executionContext, null);
 
         isDataMapBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

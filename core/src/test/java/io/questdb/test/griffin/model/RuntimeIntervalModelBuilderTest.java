@@ -43,8 +43,6 @@ import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-
 /**
  * Function-ownership tests for {@link RuntimeIntervalModelBuilder}. Every Function handed to the
  * builder must end up closed exactly once: either by the {@link RuntimeIntrinsicIntervalModel}
@@ -289,15 +287,13 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
-    public void testDynamicIntervalsDoNotAllocateErrorPositions() throws Exception {
-        RuntimeIntervalModelBuilder builder = newBuilder();
+    public void testDynamicIntervalsDoNotAllocateErrorPositions() {
+        CursorPositionsExposingBuilder builder = newCursorPositionsExposingBuilder();
         for (int i = 0; i < 32; i++) {
             builder.intersectRuntimeTimestamp(new CloseCountingFunction(), i);
         }
 
-        final Field field = RuntimeIntervalModelBuilder.class.getDeclaredField("cursorFunctionPositions");
-        field.setAccessible(true);
-        Assert.assertEquals(0, ((IntList) field.get(builder)).size());
+        Assert.assertEquals(0, builder.cursorFunctionPositionsCopy().size());
         builder.freeAndClear();
     }
 
@@ -442,6 +438,12 @@ public class RuntimeIntervalModelBuilderTest {
         return builder;
     }
 
+    private static CursorPositionsExposingBuilder newCursorPositionsExposingBuilder() {
+        CursorPositionsExposingBuilder builder = new CursorPositionsExposingBuilder();
+        builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
+        return builder;
+    }
+
     private static ReservationFailingBuilder newFailingBuilder() {
         ReservationFailingBuilder builder = new ReservationFailingBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
@@ -528,6 +530,16 @@ public class RuntimeIntervalModelBuilderTest {
         @Override
         public boolean isRuntimeConstant() {
             return true;
+        }
+    }
+
+    /**
+     * Exposes the protected {@link RuntimeIntervalModelBuilder#copyCursorFunctionPositions()}
+     * accessor so the test can assert on the sparse positions list without reflection.
+     */
+    private static class CursorPositionsExposingBuilder extends RuntimeIntervalModelBuilder {
+        IntList cursorFunctionPositionsCopy() {
+            return copyCursorFunctionPositions();
         }
     }
 

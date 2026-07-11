@@ -248,22 +248,7 @@ public class LongCursorFunctionFactoryTest extends AbstractCursorFunctionFactory
         // End-to-end guard for the ColumnType NULL->CURSOR overload fix: a bare `null` literal is a scalar,
         // never a cursor. `l <= null` (i.e. not(l > null)) must compile to a scalar null-comparison instead
         // of binding to the `>(?C)` cursor-comparison factory and blowing up on getRecordCursorFactory().
-        assertMemoryLeak(() -> {
-            execute("create table t as (select x::long l from long_sequence(10))");
-            // null comparison matches no rows for every operator, and must not throw at compile time
-            assertQuery("select l from t where l <= null")
-                    .noLeakCheck()
-                    .returns("l\n");
-            assertQuery("select l from t where l >= null")
-                    .noLeakCheck()
-                    .returns("l\n");
-            assertQuery("select l from t where l > null")
-                    .noLeakCheck()
-                    .returns("l\n");
-            assertQuery("select l from t where l < null")
-                    .noLeakCheck()
-                    .returns("l\n");
-        });
+        assertBareNullBehavior("long", "l");
     }
 
     @Test
@@ -320,65 +305,12 @@ public class LongCursorFunctionFactoryTest extends AbstractCursorFunctionFactory
 
     @Test
     public void testNullAndEmptyCursorSelectNoRows() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table t as (select x::long l from long_sequence(10))");
-            assertQuery("select l from t where l < (select null)")
-                    .noLeakCheck()
-                    .returns("l\n");
-            assertQuery("select l from t where l > (select null::long)")
-                    .noLeakCheck()
-                    .returns("l\n");
-            assertQuery("select l from t where l < (select max(l) from t where 1 <> 1)")
-                    .noLeakCheck()
-                    .returns("l\n");
-            // negated operators over a null / empty cursor must also match no rows
-            assertQuery("select l from t where l >= (select null)")
-                    .noLeakCheck()
-                    .returns("l\n");
-            assertQuery("select l from t where l <= (select null::long)")
-                    .noLeakCheck()
-                    .returns("l\n");
-            assertQuery("select l from t where l >= (select max(l) from t where 1 <> 1)")
-                    .noLeakCheck()
-                    .returns("l\n");
-        });
+        assertNullAndEmptyCursorBehavior("long", "l");
     }
 
     @Test
     public void testNullLeftColumn() throws Exception {
-        // long_sequence never yields null cells, so the null LEFT-column path needs an explicit null.
-        // A null left value must never match a non-null cursor scalar (any operator), and must follow
-        // QuestDB's null == null convention against a null cursor: >= and <= match, strict > / < do not.
-        assertMemoryLeak(() -> {
-            execute("create table t (id int, l long)");
-            execute("insert into t values (1, null), (2, 5), (3, 8)");
-            // null-left (id 1) is excluded for every operator against a non-null cursor
-            assertQuery("select id from t where l > (select min(l) from t)") // > 5
-                    .noLeakCheck()
-                    .returns("id\n3\n");
-            assertQuery("select id from t where l < (select max(l) from t)") // < 8
-                    .noLeakCheck()
-                    .returns("id\n2\n");
-            assertQuery("select id from t where l >= (select max(l) from t)") // >= 8
-                    .noLeakCheck()
-                    .returns("id\n3\n");
-            assertQuery("select id from t where l <= (select min(l) from t)") // <= 5
-                    .noLeakCheck()
-                    .returns("id\n2\n");
-            // null == null: a null left value matches a null cursor for >= and <= only
-            assertQuery("select id from t where l >= (select null)")
-                    .noLeakCheck()
-                    .returns("id\n1\n");
-            assertQuery("select id from t where l <= (select null)")
-                    .noLeakCheck()
-                    .returns("id\n1\n");
-            assertQuery("select id from t where l > (select null)")
-                    .noLeakCheck()
-                    .returns("id\n");
-            assertQuery("select id from t where l < (select null)")
-                    .noLeakCheck()
-                    .returns("id\n");
-        });
+        assertNullLeftColumnBehavior("long", "l");
     }
 
     @Test

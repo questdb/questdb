@@ -398,8 +398,16 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             Function.init(ownerKeyFunctions, symbolTableSource, executionContext, null);
         }
 
+        // The owner group by functions initialize here, once per query execution; the cursor does
+        // not re-initialize them. Donate the initialized owner state to the aligned per-worker
+        // clones before they initialize. Stateful functions inside aggregate arguments, such as
+        // cursor comparisons caching a scalar sub-query result, must run their expensive and
+        // potentially nondeterministic initialization exactly once per query, not once per worker,
+        // and every worker must observe the same state as the owner.
+        Function.init(ownerGroupByFunctions, symbolTableSource, executionContext, null);
+
         initPerWorkerFunctions(perWorkerKeyFunctions, ownerKeyFunctions, symbolTableSource, executionContext);
-        initPerWorkerFunctions(perWorkerGroupByFunctions, null, symbolTableSource, executionContext);
+        initPerWorkerFunctions(perWorkerGroupByFunctions, ownerGroupByFunctions, symbolTableSource, executionContext);
     }
 
     public boolean isSharded() {

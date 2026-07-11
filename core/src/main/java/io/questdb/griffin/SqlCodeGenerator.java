@@ -1196,72 +1196,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private static @Nullable WorkerFunctionLists extractWorkerFunctions(
-            IntList projectionFunctionFlags,
-            ObjList<ObjList<Function>> perThreadFunctions
-    ) {
-        // No per-worker copies were made: workers share the owner functions.
-        if (perThreadFunctions == null) {
-            return null;
-        }
-
-        ObjList<ObjList<GroupByFunction>> perThreadGroupByFunctions = null;
-        ObjList<ObjList<Function>> perThreadKeyFunctions = null;
-        final int workerCount = perThreadFunctions.size();
-        if (workerCount == 0) {
-            // Preserve the empty-list contract for a configuration with no shared workers.
-            for (int i = 0, n = projectionFunctionFlags.size(); i < n; i++) {
-                final int flag = projectionFunctionFlags.getQuick(i);
-                if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY && perThreadGroupByFunctions == null) {
-                    perThreadGroupByFunctions = new ObjList<>();
-                } else if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL && perThreadKeyFunctions == null) {
-                    perThreadKeyFunctions = new ObjList<>();
-                }
-            }
-        } else {
-            // Partition the worker matrix once. On the first row, create an output only when its
-            // flag occurs; subsequent rows then preserve the per-worker shape of that output.
-            for (int i = 0; i < workerCount; i++) {
-                PerWorkerFunctionList<GroupByFunction> threadGroupByFunctions = null;
-                PerWorkerFunctionList<Function> threadKeyFunctions = null;
-                if (perThreadGroupByFunctions != null) {
-                    threadGroupByFunctions = new PerWorkerFunctionList<>(0);
-                    perThreadGroupByFunctions.add(threadGroupByFunctions);
-                }
-                if (perThreadKeyFunctions != null) {
-                    threadKeyFunctions = new PerWorkerFunctionList<>(0);
-                    perThreadKeyFunctions.add(threadKeyFunctions);
-                }
-
-                final ObjList<Function> functions = perThreadFunctions.getQuick(i);
-                for (int j = 0, n = functions.size(); j < n; j++) {
-                    final int flag = projectionFunctionFlags.getQuick(j);
-                    if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY) {
-                        if (perThreadGroupByFunctions == null) {
-                            assert i == 0;
-                            perThreadGroupByFunctions = new ObjList<>();
-                            threadGroupByFunctions = new PerWorkerFunctionList<>(0);
-                            perThreadGroupByFunctions.add(threadGroupByFunctions);
-                        }
-                        threadGroupByFunctions.add(
-                                (GroupByFunction) functions.getQuick(j),
-                                PerWorkerFunctionList.isOwned(functions, j)
-                        );
-                    } else if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL) {
-                        if (perThreadKeyFunctions == null) {
-                            assert i == 0;
-                            perThreadKeyFunctions = new ObjList<>();
-                            threadKeyFunctions = new PerWorkerFunctionList<>(0);
-                            perThreadKeyFunctions.add(threadKeyFunctions);
-                        }
-                        threadKeyFunctions.add(functions.getQuick(j), PerWorkerFunctionList.isOwned(functions, j));
-                    }
-                }
-            }
-        }
-        return new WorkerFunctionLists(perThreadGroupByFunctions, perThreadKeyFunctions);
-    }
-
     /**
      * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
      * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
@@ -1754,7 +1688,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
-    private @Nullable ObjList<ObjList<Function>> compilePerWorkerInnerProjectionFunctions(
+    private @Nullable WorkerFunctionLists compilePerWorkerInnerProjectionFunctions(
             SqlExecutionContext executionContext,
             ObjList<QueryColumn> queryColumns,
             ObjList<Function> innerProjectionFunctions,
@@ -1762,59 +1696,86 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata metadata,
             IntList projectionFunctionFlags
     ) throws SqlException {
-        boolean isThreadSafe = true;
-
         assert innerProjectionFunctions.size() == queryColumns.size();
 
+        // Single pass over the projection: collect the retained GROUP_BY/VIRTUAL slot indexes
+        // and detect whether any retained function forces per-worker clones. Column keys are
+        // read natively by the per-worker RecordSink, so skip them here.
+        boolean isThreadSafe = true;
+        int groupByFunctionCount = 0;
+        int keyFunctionCount = 0;
+        final IntList retainedIndexes = new IntList();
         for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
-            // Column keys are read natively by the per-worker RecordSink, so skip them here.
-            if (projectionFunctionFlags.get(i) != GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN
-                    && !innerProjectionFunctions.getQuick(i).isThreadSafe()) {
-                isThreadSafe = false;
-                break;
+            final int flag = projectionFunctionFlags.getQuick(i);
+            if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN) {
+                continue;
             }
+            retainedIndexes.add(i);
+            if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY) {
+                groupByFunctionCount++;
+            } else {
+                keyFunctionCount++;
+            }
+            isThreadSafe &= innerProjectionFunctions.getQuick(i).isThreadSafe();
         }
-        if (!isThreadSafe) {
-            final ObjList<ObjList<Function>> allWorkerKeyFunctions = new ObjList<>();
-            final int columnCount = queryColumns.size();
-            try {
-                for (int i = 0; i < workerCount; i++) {
-                    final PerWorkerFunctionList<Function> workerKeyFunctions = new PerWorkerFunctionList<>(columnCount);
-                    allWorkerKeyFunctions.add(workerKeyFunctions);
-                    for (int j = 0; j < columnCount; j++) {
-                        if (projectionFunctionFlags.get(j) == GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN) {
-                            // Native column key needs no function; keep a null slot to stay flag-aligned.
-                            workerKeyFunctions.add(null, false);
-                            continue;
-                        }
-                        final Function ownerFunction = innerProjectionFunctions.getQuick(j);
-                        if (ownerFunction.isThreadSafe()) {
-                            workerKeyFunctions.add(ownerFunction, false);
-                            continue;
-                        }
-                        final Function function = functionParser.parseFunction(
-                                queryColumns.getQuick(j).getAst(),
-                                metadata,
-                                executionContext
-                        );
-                        if (function instanceof GroupByFunction groupByFunction) {
+        if (isThreadSafe) {
+            // No per-worker copies needed: workers share the owner functions.
+            return null;
+        }
+
+        // Compile straight into the compact per-worker views, keeping each one index-aligned
+        // with its compact owner list (the group-by functions and the extracted key functions):
+        // thread-safe owners are borrowed, the rest are cloned per worker. An output view exists
+        // only when its flag occurs; with no shared workers both views stay empty.
+        final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = groupByFunctionCount > 0 ? new ObjList<>(workerCount) : null;
+        final ObjList<ObjList<Function>> perWorkerKeyFunctions = keyFunctionCount > 0 ? new ObjList<>(workerCount) : null;
+        try {
+            for (int i = 0; i < workerCount; i++) {
+                PerWorkerFunctionList<GroupByFunction> workerGroupByFunctions = null;
+                if (perWorkerGroupByFunctions != null) {
+                    workerGroupByFunctions = new PerWorkerFunctionList<>(groupByFunctionCount);
+                    perWorkerGroupByFunctions.add(workerGroupByFunctions);
+                }
+                PerWorkerFunctionList<Function> workerKeyFunctions = null;
+                if (perWorkerKeyFunctions != null) {
+                    workerKeyFunctions = new PerWorkerFunctionList<>(keyFunctionCount);
+                    perWorkerKeyFunctions.add(workerKeyFunctions);
+                }
+                for (int j = 0, n = retainedIndexes.size(); j < n; j++) {
+                    final int columnIndex = retainedIndexes.getQuick(j);
+                    final Function ownerFunction = innerProjectionFunctions.getQuick(columnIndex);
+                    final boolean isOwned = !ownerFunction.isThreadSafe();
+                    final Function function = isOwned
+                            ? functionParser.parseFunction(queryColumns.getQuick(columnIndex).getAst(), metadata, executionContext)
+                            : ownerFunction;
+                    if (projectionFunctionFlags.getQuick(columnIndex) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY) {
+                        final GroupByFunction groupByFunction = (GroupByFunction) function;
+                        if (isOwned) {
                             // Keep worker aggregate value indexes aligned with the owner functions.
                             groupByFunction.initValueIndex(((GroupByFunction) ownerFunction).getValueIndex());
                         }
-                        workerKeyFunctions.add(function, true);
+                        workerGroupByFunctions.add(groupByFunction, isOwned);
+                    } else {
+                        workerKeyFunctions.add(function, isOwned);
                     }
                 }
-            } catch (Throwable th) {
-                // A clone failed to compile mid-loop. Free every owned clone, including functions
-                // in the partially populated current list, without closing shared owner references.
-                for (int i = 0, n = allWorkerKeyFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.close(allWorkerKeyFunctions.getQuick(i));
-                }
-                throw th;
             }
-            return allWorkerKeyFunctions;
+        } catch (Throwable th) {
+            // A clone failed to compile mid-loop. Free every owned clone, including functions
+            // in the partially populated current lists, without closing shared owner references.
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
+                }
+            }
+            if (perWorkerKeyFunctions != null) {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerKeyFunctions.getQuick(i));
+                }
+            }
+            throw th;
         }
-        return null;
+        return new WorkerFunctionLists(perWorkerGroupByFunctions, perWorkerKeyFunctions);
     }
 
     private @Nullable ObjList<Function> compileWorkerFiltersConditionally(
@@ -4491,10 +4452,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata innerMetadata = null;
         ObjList<GroupByFunction> groupByFunctions = null;
         ObjList<Function> keyFunctions = null;
+        // Catch-visible owners of the per-worker projection clones between compilation and
+        // adoption by the factory constructor; the transfer block nulls them on adoption.
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
-        // Catch-visible owner of the per-worker projection clones between compilation and
-        // partitioning; nulled once the extracted views own them.
-        ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = null;
         ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
 
         try {
@@ -4606,8 +4566,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // HORIZON JOIN tasks are "heavy", hence smaller frame sizes
                 masterFactory.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
 
-                // Compile per-worker inner projection functions for expression keys
-                perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
+                // Compile per-worker inner projection function clones for expression keys and
+                // aggregates, directly into disjoint GROUP_BY and VIRTUAL ownership views.
+                final WorkerFunctionLists workerFunctions = compilePerWorkerInnerProjectionFunctions(
                         executionContext,
                         parentModel.getColumns(),
                         innerProjectionFunctions,
@@ -4615,18 +4576,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         innerMetadata,
                         projectionFunctionFlags
                 );
-
-                // Partition the worker clones into disjoint GROUP_BY and VIRTUAL ownership views.
-                final WorkerFunctionLists workerFunctions = extractWorkerFunctions(
-                        projectionFunctionFlags,
-                        perWorkerInnerProjectionFunctions
-                );
                 if (workerFunctions != null) {
                     perWorkerGroupByFunctions = workerFunctions.groupByFunctions;
                     perWorkerKeyFunctions = workerFunctions.keyFunctions;
                 }
-                // Both views exist now and cover every non-null clone slot between them.
-                perWorkerInnerProjectionFunctions = null;
             }
 
             // Build column mappings from innerMetadata to source records (master, horizon, slave)
@@ -4964,22 +4917,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // no resources), so freeing them here covers the projection lists without
             // double-freeing.
             Misc.freeObjList(keyFunctions);
-            if (perWorkerInnerProjectionFunctions != null) {
-                // a flag extraction did not complete: the source lists still own every worker
-                // clone and any already-extracted view merely aliases them
-                for (int i = 0, n = perWorkerInnerProjectionFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.close(perWorkerInnerProjectionFunctions.getQuick(i));
+            // The per-worker views are disjoint owners of the worker clones (each clone reaches
+            // exactly one view), so closing both frees every clone exactly once.
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
                 }
-            } else {
-                if (perWorkerGroupByFunctions != null) {
-                    for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                        PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
-                    }
-                }
-                if (perWorkerKeyFunctions != null) {
-                    for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                        PerWorkerFunctionList.close(perWorkerKeyFunctions.getQuick(i));
-                    }
+            }
+            if (perWorkerKeyFunctions != null) {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerKeyFunctions.getQuick(i));
                 }
             }
             Misc.free(compiledFilter);
@@ -6933,10 +6880,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         JoinRecordMetadata innerMetadata = null;
         ObjList<GroupByFunction> groupByFunctions = null;
         ObjList<Function> keyFunctions = null;
+        // Catch-visible owners of the per-worker projection clones between compilation and
+        // adoption by the factory constructor; the transfer block nulls them on adoption.
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
-        // Catch-visible owner of the per-worker projection clones between compilation and
-        // partitioning; nulled once the extracted views own them.
-        ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = null;
+        ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
         ObjList<Function> perWorkerFilters = null;
         ObjList<HorizonJoinSlaveState> slaveStates = null;
         boolean isSlaveFactoriesTransferred = false;
@@ -7334,8 +7281,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            // These calls may throw, so ownership transfer must happen after them
-            perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
+            // These calls may throw, so ownership transfer must happen after them. The compiled
+            // clones arrive partitioned into disjoint GROUP_BY and VIRTUAL ownership views.
+            final WorkerFunctionLists workerFunctions = compilePerWorkerInnerProjectionFunctions(
                     executionContext,
                     parentModel.getColumns(),
                     innerProjectionFunctions,
@@ -7343,20 +7291,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     innerMetadata,
                     projectionFunctionFlags
             );
-            final WorkerFunctionLists workerFunctions = extractWorkerFunctions(
-                    projectionFunctionFlags,
-                    perWorkerInnerProjectionFunctions
-            );
-            final ObjList<ObjList<Function>> perWorkerKeyFunctions = workerFunctions != null ? workerFunctions.keyFunctions : null;
-            perWorkerGroupByFunctions = workerFunctions != null ? workerFunctions.groupByFunctions : null;
-            // Both views exist now and cover every non-null clone slot between them.
-            perWorkerInnerProjectionFunctions = null;
+            if (workerFunctions != null) {
+                perWorkerGroupByFunctions = workerFunctions.groupByFunctions;
+                perWorkerKeyFunctions = workerFunctions.keyFunctions;
+            }
 
             // Transfer ownership to the factory
             final JoinRecordMetadata innerMetadata0 = innerMetadata;
             final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
             final ObjList<Function> keyFunctions0 = keyFunctions;
             final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
+            final ObjList<ObjList<Function>> perWorkerKeyFunctions0 = perWorkerKeyFunctions;
             final ObjList<HorizonJoinSlaveState> slaveStates0 = slaveStates;
             final CompiledFilter compiledFilter0 = compiledFilter;
             final MemoryCARW bindVarMemory0 = bindVarMemory;
@@ -7367,6 +7312,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             groupByFunctions = null;
             keyFunctions = null;
             perWorkerGroupByFunctions = null;
+            perWorkerKeyFunctions = null;
             slaveStates = null;
             isSlaveFactoriesTransferred = true;
             compiledFilter = null;
@@ -7393,7 +7339,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     perWorkerGroupByFunctions0,
                     outerProjectionFunctions,
                     keyFunctions0,
-                    perWorkerKeyFunctions,
+                    perWorkerKeyFunctions0,
                     keyTypesCopy,
                     valueTypesCopy,
                     groupByColumnFilter,
@@ -7415,15 +7361,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // no resources), so freeing them here covers the projection lists without
             // double-freeing.
             Misc.freeObjList(keyFunctions);
-            if (perWorkerInnerProjectionFunctions != null) {
-                // a flag extraction did not complete: the source lists still own every worker
-                // clone and any already-extracted view merely aliases them
-                for (int i = 0, n = perWorkerInnerProjectionFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.close(perWorkerInnerProjectionFunctions.getQuick(i));
-                }
-            } else if (perWorkerGroupByFunctions != null) {
+            // The per-worker views are disjoint owners of the worker clones (each clone reaches
+            // exactly one view), so closing both frees every clone exactly once.
+            if (perWorkerGroupByFunctions != null) {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                     PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
+                }
+            }
+            if (perWorkerKeyFunctions != null) {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerKeyFunctions.getQuick(i));
                 }
             }
             Misc.free(compiledFilter);
@@ -8806,7 +8753,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<Function> outerProjectionFunctions = null;
         ObjList<ObjList<Function>> sharedOuterProjectionFunctions = null;
         ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = null;
-        ObjList<ObjList<Function>> perWorkerInnerProjectionFunctions = null;
+        ObjList<ObjList<Function>> perWorkerKeyFunctions = null;
         ObjList<Function> perWorkerFilters = null;
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
@@ -9289,10 +9236,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     // These calls may throw, so ownership transfer must happen after them.
-                    // perWorkerInnerProjectionFunctions is a catch-visible owner: if a later
-                    // step (extraction or worker-filter cloning) throws, the catch frees the
-                    // completed projection clones through it.
-                    perWorkerInnerProjectionFunctions = compilePerWorkerInnerProjectionFunctions(
+                    // perWorkerGroupByFunctions and perWorkerKeyFunctions are catch-visible
+                    // owners: if a later step (worker-filter cloning) throws, the catch frees
+                    // the compiled projection clones through them.
+                    final WorkerFunctionLists workerFunctions = compilePerWorkerInnerProjectionFunctions(
                             executionContext,
                             model.getColumns(),
                             innerProjectionFunctions,
@@ -9300,12 +9247,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             baseMetadata,
                             projectionFunctionFlags
                     );
-                    final WorkerFunctionLists workerFunctions = extractWorkerFunctions(
-                            projectionFunctionFlags,
-                            perWorkerInnerProjectionFunctions
-                    );
-                    final ObjList<ObjList<GroupByFunction>> perWorkerGroupByClones = workerFunctions != null ? workerFunctions.groupByFunctions : null;
-                    final ObjList<ObjList<Function>> perWorkerKeyFunctions = workerFunctions != null ? workerFunctions.keyFunctions : null;
+                    if (workerFunctions != null) {
+                        perWorkerGroupByFunctions = workerFunctions.groupByFunctions;
+                        perWorkerKeyFunctions = workerFunctions.keyFunctions;
+                    }
                     perWorkerFilters = compileWorkerFiltersConditionally(
                             executionContext,
                             filter,
@@ -9315,18 +9260,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
 
                     // Transfer ownership to the factory constructor. The factory adopts the
-                    // per-worker projection clones through the extracted group-by/key views, so
-                    // the source list is nulled here too - freeing both it and the views in the
-                    // catch would double-close the aliased clones.
+                    // per-worker projection clones through the disjoint group-by/key views.
                     final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                     final ObjList<Function> outerProjectionFunctions0 = outerProjectionFunctions;
+                    final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
+                    final ObjList<ObjList<Function>> perWorkerKeyFunctions0 = perWorkerKeyFunctions;
                     final ObjList<Function> perWorkerFilters0 = perWorkerFilters;
                     final ObjList<ObjList<Function>> sharedOuterProjectionFunctions0 = sharedOuterProjectionFunctions;
                     groupByFunctions = null;
                     innerProjectionFunctions = null;
                     outerProjectionFunctions = null;
                     perWorkerFilters = null;
-                    perWorkerInnerProjectionFunctions = null;
+                    perWorkerGroupByFunctions = null;
+                    perWorkerKeyFunctions = null;
                     sharedOuterProjectionFunctions = null;
 
                     return generateFill(
@@ -9342,9 +9288,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     keyTypesCopy,
                                     valueTypesCopy,
                                     groupByFunctions0,
-                                    perWorkerGroupByClones,
+                                    perWorkerGroupByFunctions0,
                                     keyFunctions,
-                                    perWorkerKeyFunctions,
+                                    perWorkerKeyFunctions0,
                                     outerProjectionFunctions0,
                                     compiledFilter,
                                     bindVarMemory,
@@ -9420,17 +9366,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     Misc.freeObjList(sharedOuterProjectionFunctions.getQuick(i));
                 }
             }
+            // The per-worker group-by/key views are disjoint owners of the worker clones (each
+            // clone reaches exactly one view), so closing both frees every clone exactly once.
             if (perWorkerGroupByFunctions != null) {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                     PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
                 }
             }
-            // The extracted per-worker group-by/key views alias entries of these lists, so
-            // freeing the source lists alone frees every clone exactly once (column slots
-            // are null and skipped).
-            if (perWorkerInnerProjectionFunctions != null) {
-                for (int i = 0, n = perWorkerInnerProjectionFunctions.size(); i < n; i++) {
-                    PerWorkerFunctionList.close(perWorkerInnerProjectionFunctions.getQuick(i));
+            if (perWorkerKeyFunctions != null) {
+                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerKeyFunctions.getQuick(i));
                 }
             }
             Misc.freeObjList(perWorkerFilters);

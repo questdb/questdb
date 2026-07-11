@@ -113,14 +113,70 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     }
 
     @Test
+    public void testKeyedAggregateArgumentExecutesCursorOnce() throws Exception {
+        // An aggregate whose argument contains a cursor comparison reaches the KEYED parallel
+        // group by path (AsyncGroupByAtom) when the projection carries only the aggregate and the
+        // key comes from the SAMPLE BY rewrite (a timestamp_floor() key absent from the
+        // projection). The scalar sub-query inside the aggregate argument must execute exactly
+        // once per query - not once per worker clone - and every worker must observe the same
+        // threshold, or nondeterministic sub-queries produce internally inconsistent bucket
+        // aggregates within a single execution. test_timestamp_counter() increments once per row
+        // the sub-query cursor reads, so the counter equals the number of RHS executions.
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "create table src (ts timestamp)", ctx);
+            execute(compiler, "insert into src values (5000)", ctx);
+            execute(
+                    compiler,
+                    "create table t as (" +
+                            "  select x::double price, timestamp_sequence(0, 1000000) ts" +
+                            "  from long_sequence(10000)" +
+                            ") timestamp(ts) partition by day",
+                    ctx
+            );
+
+            final String query = "select sum((price::string::double > (select test_timestamp_counter(ts)::long from src))::int) s " +
+                    "from t sample by 1h";
+
+            // the non-thread-safe aggregate argument must still run on the keyed parallel group by
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Group By workers: 4");
+
+            // threshold = 5000; 1h buckets hold prices 1..3600, 3601..7200, 7201..10000,
+            // so prices above the threshold count 0, 2200 and 2800 per bucket
+            assertQuery(query)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            0
+                            2200
+                            2800
+                            """);
+
+            // one explicitly compiled execution pins the exact sub-query execution count,
+            // decoupled from how many times the assertion battery above opens cursors
+            TestTimestampCounterFactory.COUNTER.set(0);
+            try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    TestUtils.assertCursor("s\n0\n2200\n2800\n", cursor, factory.getMetadata(), true, sink);
+                }
+            }
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+        });
+    }
+
+    @Test
     public void testNotKeyedAggregateArgumentExecutesCursorOnce() throws Exception {
         // An aggregate whose argument contains a cursor comparison runs on the not-keyed parallel
         // group by path (AsyncGroupByNotKeyedAtom) with per-worker clones of the group-by functions.
         // The scalar sub-query inside the aggregate argument must execute exactly once per query -
         // not once per worker - and every worker clone must observe the same threshold.
         // test_timestamp_counter() increments once per row the sub-query cursor reads, so the counter
-        // equals the number of RHS executions. (The keyed variant is not testable: the optimizer
-        // rejects scalar sub-queries inside aggregate arguments of keyed GROUP BY queries.)
+        // equals the number of RHS executions. (The keyed variant, reached through the SAMPLE BY
+        // rewrite, is covered by testKeyedAggregateArgumentExecutesCursorOnce.)
         runWithPool((compiler, ctx) -> {
             execute(compiler, "create table src (ts timestamp)", ctx);
             execute(compiler, "insert into src values (5000)", ctx);
@@ -963,22 +1019,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         // instead of binding to the `>(?C)` cursor-comparison factory and blowing up on
         // getRecordCursorFactory() of the NULL constant. The existing null tests all use (select null...),
         // a different code path, so this pins the bare-literal end-to-end path.
-        assertMemoryLeak(() -> {
-            execute("create table t as (select x::double price from long_sequence(10))");
-            // null comparison matches no rows for every operator, and must not throw at compile time
-            assertQuery("select price from t where price <= null")
-                    .noLeakCheck()
-                    .returns("price\n");
-            assertQuery("select price from t where price >= null")
-                    .noLeakCheck()
-                    .returns("price\n");
-            assertQuery("select price from t where price > null")
-                    .noLeakCheck()
-                    .returns("price\n");
-            assertQuery("select price from t where price < null")
-                    .noLeakCheck()
-                    .returns("price\n");
-        });
+        assertBareNullBehavior("double", "price");
     }
 
     @Test
