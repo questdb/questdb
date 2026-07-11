@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
@@ -52,7 +53,7 @@ import io.questdb.std.Rnd;
 
 import java.io.Closeable;
 
-class OperationExecutor implements Closeable {
+public class OperationExecutor implements Closeable {
     private static final Log LOG = LogFactory.getLog(OperationExecutor.class);
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
@@ -431,6 +432,23 @@ class OperationExecutor implements Closeable {
         try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
             return tableWriter.replaceRange(loInclusive, hiExclusive, survivorCursor, copier, timestampCursorIndex, executionContext);
         }
+    }
+
+    /**
+     * Ts-width (in the table's designated-timestamp unit) that spans roughly {@code rowsPerStep} rows over the
+     * populated range {@code [minTs, maxTs]}, used to tile an arbitrary DELETE's survivor-replace into
+     * memory-bounded windows. Reuses {@link MatViewRefreshJob#estimateBucketsForRows} with {@code bucket=1},
+     * {@code partitionDuration=span}, {@code partitionCount=1}, which reduces to
+     * {@code max(1, span * rowsPerStep / tableRows)} computed in double (overflow-safe for large spans). Returns
+     * {@code Long.MAX_VALUE} (one window) for an empty table.
+     */
+    // public for testing (mirrors MatViewRefreshJob.estimateBucketsForRows, which this delegates to)
+    public static long deleteWindowStep(long minTs, long maxTs, long tableRows, long rowsPerStep) {
+        if (tableRows <= 0) {
+            return Long.MAX_VALUE;
+        }
+        final long span = maxTs - minTs + 1; // caller guarantees maxTs >= minTs (non-empty populated range)
+        return MatViewRefreshJob.estimateBucketsForRows(rowsPerStep, tableRows, 1, span, 1);
     }
 
     /**
