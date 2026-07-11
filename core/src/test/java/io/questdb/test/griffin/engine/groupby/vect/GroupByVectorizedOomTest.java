@@ -25,13 +25,9 @@
 package io.questdb.test.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -49,8 +45,22 @@ import org.junit.Test;
  * closes it; the factory's {@code _close()} does not free the cache either, leaking
  * the already-reopened buffer (512 bytes, {@code NATIVE_DEFAULT}). The query fuzzer's
  * malloc fault injection surfaced this leak.
+ * <p>
+ * Each sweep arms the RSS ceiling on the operation it targets and nothing else, so only the code
+ * under test can trip the fault and the swept range covers that operation alone. The cursor-open
+ * sweep compiles above the ceiling and opens the cursor without draining it. The parquet sweep
+ * compiles and opens above the ceiling, then arms it for the {@code hasNext()} drain, where
+ * {@code buildRosti} publishes work before the fault lands. Both compile a fresh factory per point:
+ * a reused one would let a later success clean up a stranded partial allocation, and would hand the
+ * parquet survivor live pools instead of the freed ones it must dereference.
  */
 public class GroupByVectorizedOomTest extends AbstractCairoTest {
+
+    // Ceiling ranges the sweeps walk. Cursor open allocates ~2 KiB and the buildRosti drain ~32 KiB,
+    // so each sweep crosses its whole OOM/success transition with room to spare; the armed-success
+    // assertions fail loudly if a later allocation-path change ever pushes a transition past them.
+    private static final int CURSOR_OPEN_SLACK_MAX = 8 * 1024;
+    private static final int ROSTI_BUILD_SLACK_MAX = 48 * 1024;
 
     @Test
     public void testVectorizedGroupByCleansUpWhenCursorRunsOutOfMemory() throws Exception {
@@ -68,25 +78,37 @@ public class GroupByVectorizedOomTest extends AbstractCairoTest {
             // table open.
             drain(query);
 
-            boolean sawOom = false;
+            boolean hasSeenOom = false;
+            boolean hasOpenedUnderLimit = false;
             // Sweep the native-memory ceiling across the cursor-open allocation points.
             // Some ceiling lets an earlier PageFrameAddressCache list reopen() succeed
             // and trips a later one; the pre-fix code then leaked the earlier buffer.
-            // 80 KiB covers the whole cursor-open allocation span (the last observed OOM
-            // sits near 68 KiB of slack); past that the query just runs to completion,
-            // which the recovery drain below already exercises.
-            for (int slack = 0; slack <= 80 * 1024; slack += 16) {
-                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-                try {
-                    drain(query);
-                } catch (CairoException e) {
-                    Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                    sawOom = true;
-                } finally {
-                    Unsafe.setRssMemLimit(0);
+            for (int slack = 0; slack <= CURSOR_OPEN_SLACK_MAX; slack += 8) {
+                // Compile outside the ceiling. Under it, a compiler allocation satisfies the
+                // fault instead, and cursor open - the code under test - never runs.
+                try (RecordCursorFactory factory = select(query)) {
+                    // Arm immediately before the operation under test, and open the cursor without
+                    // draining it: the leak happens while the cursor opens, and buildRosti (which
+                    // the first hasNext() triggers) would only add allocation noise on top.
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                    try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                        hasOpenedUnderLimit = true;
+                    } catch (CairoException e) {
+                        Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
+                        hasSeenOom = true;
+                    } finally {
+                        // Disarm before the factory closes, so close() cannot trip the ceiling.
+                        Unsafe.setRssMemLimit(0);
+                    }
                 }
             }
-            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", sawOom);
+            // slack=0 rejects the next allocation outright, so an OOM alone proves nothing. Pair it
+            // with an open that survived its ceiling: together they bracket the whole cursor-open
+            // allocation span, so the sweep provably crossed the failing-to-succeeding transition
+            // the leak hides in.
+            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", hasSeenOom);
+            Assert.assertTrue("sweep never opened the cursor under an armed ceiling, so it stopped short of "
+                    + "the transition the leak hides in; widen CURSOR_OPEN_SLACK_MAX", hasOpenedUnderLimit);
 
             // Recovery: with the ceiling removed the same query runs cleanly.
             Unsafe.setRssMemLimit(0);
@@ -112,63 +134,60 @@ public class GroupByVectorizedOomTest extends AbstractCairoTest {
             // not first-touch table open.
             drain(query);
 
-            boolean sawOom = false;
+            boolean hasSeenOom = false;
+            boolean hasDrainedUnderLimit = false;
             // An OOM tripping a parquet decode inside the finally drain used to abort it,
             // leaving a published entry in the shared queue that referenced the frame
-            // memory pools buildRosti then freed. The recovery drain after each ceiling
+            // memory pools buildRosti then freed. The recovery drain after each OOM
             // work-steals that survivor and dereferences the freed pool (NPE pre-fix).
-            // The ceiling is armed after compile (like the query fuzzer's MALLOC fault) so
-            // the trip lands in buildRosti, not in cursor open. 48 KiB covers the whole
-            // buildRosti allocation span (the last observed OOM sits near 34 KiB of slack);
-            // past that both drains just run to completion without exercising the survivor.
-            for (int slack = 0; slack <= 48 * 1024; slack += 64) {
-                try {
-                    drainArmedAfterCompile(query, slack);
-                } catch (CairoException e) {
-                    Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                    sawOom = true;
-                } finally {
-                    Unsafe.setRssMemLimit(0);
+            for (int slack = 0; slack <= ROSTI_BUILD_SLACK_MAX; slack += 64) {
+                boolean hasOomed = false;
+                // Compile and open above the ceiling, so only buildRosti - which the first
+                // hasNext() triggers - can trip it. Under the ceiling, a compiler or cursor-open
+                // allocation satisfies the fault instead, and no work is ever published.
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                        try {
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                                // Pull every row; no assertion reads them, so formatting is waste.
+                            }
+                            hasDrainedUnderLimit = true;
+                        } catch (CairoException e) {
+                            Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
+                            hasSeenOom = true;
+                            hasOomed = true;
+                        } finally {
+                            // Disarm before the cursor and factory close, so neither trips the ceiling.
+                            Unsafe.setRssMemLimit(0);
+                        }
+                    }
                 }
-                // Recovery with the ceiling removed must run cleanly.
-                drain(query);
+                if (hasOomed) {
+                    // Only an aborted drain can strand a published entry, so only then is there a
+                    // survivor to work-steal. Compiling a fresh factory is load-bearing: the
+                    // survivor must outlive the pools it points at, and reusing the factory above
+                    // would hand it live pools and mask the NPE.
+                    drain(query);
+                }
             }
-            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", sawOom);
+            // slack=0 rejects the next allocation outright, so an OOM alone proves nothing. Pair it
+            // with a drain that survived its ceiling: together they bracket the whole buildRosti
+            // allocation span, so the sweep provably crossed the failing-to-succeeding transition,
+            // and with it the window where work is published before the fault lands.
+            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", hasSeenOom);
+            Assert.assertTrue("sweep never drained under an armed ceiling, so it stopped short of the "
+                    + "publish-then-fault window; widen ROSTI_BUILD_SLACK_MAX", hasDrainedUnderLimit);
         });
     }
 
-    // Compiles first, then arms the RSS ceiling so the failure lands in getCursor work
-    // (buildRosti) rather than during compilation.
-    private static void drainArmedAfterCompile(String query, long slack) throws Exception {
-        final StringSink localSink = new StringSink();
-        try (RecordCursorFactory factory = select(query)) {
-            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                final int columnCount = metadata.getColumnCount();
-                final Record record = cursor.getRecord();
-                while (cursor.hasNext()) {
-                    for (int i = 0; i < columnCount; i++) {
-                        CursorPrinter.printColumn(record, metadata, i, localSink, false);
-                    }
-                    localSink.clear();
-                }
-            }
-        }
-    }
-
     private static void drain(String query) throws Exception {
-        final StringSink localSink = new StringSink();
         try (RecordCursorFactory factory = select(query)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                final int columnCount = metadata.getColumnCount();
-                final Record record = cursor.getRecord();
+                //noinspection StatementWithEmptyBody
                 while (cursor.hasNext()) {
-                    for (int i = 0; i < columnCount; i++) {
-                        CursorPrinter.printColumn(record, metadata, i, localSink, false);
-                    }
-                    localSink.clear();
+                    // Pull every row; no assertion reads them, so formatting them would be waste.
                 }
             }
         }

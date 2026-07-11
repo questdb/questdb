@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -45,12 +46,20 @@ import org.junit.Test;
  * all-null slot's rowId sorts the wrong way. Every merge must additionally accept the src when the
  * dest slot still holds a NULL value.
  * <p>
- * Each table gives every key exactly one non-null value and many NULLs. For last_not_null the
- * non-null sits at the key's first (lowest) rowId, so an all-null slot built from later rows
- * carries a higher rowId; for first_not_null the non-null sits at the key's last (highest) rowId,
- * so an all-null slot built from earlier rows carries a lower rowId. Either way the all-null slot
- * sorts ahead of the real value and a guardless merge drops it. The correct answer is non-null for
- * all KEY_COUNT keys, so the count of keys whose aggregate is non-null must equal KEY_COUNT.
+ * The table gives every key exactly one non-null value per type column and many NULLs. For
+ * last_not_null the non-null sits at the key's first (lowest) rowId, so an all-null slot built from
+ * later rows carries a higher rowId; for first_not_null the non-null sits at the key's last
+ * (highest) rowId, so an all-null slot built from earlier rows carries a lower rowId. Either way the
+ * all-null slot sorts ahead of the real value and a guardless merge drops it. The correct answer is
+ * non-null for all KEY_COUNT keys, so the count of keys whose aggregate is non-null must equal
+ * KEY_COUNT, for every type column.
+ * <p>
+ * One table carries one value column per type, and one query aggregates all of them at once, so a
+ * single grouped scan covers every type: the key hashing, frame dispatch and shard merge run once
+ * per iteration instead of once per type. {@code assertEveryTypeKeepsNonNull} asserts a separate
+ * count per type column, and each count is aliased with its type name, so a dropped value still
+ * names the type it belongs to. A plan guard keeps the query on the parallel factory, without which
+ * no shard merge would run at all.
  * <p>
  * Scope - this test exercises the merge dest-null guard only. For last_not_null that guard is the
  * defect fixed on this branch (the merge previously compared rowId alone), so the pre-fix code
@@ -79,26 +88,26 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
     private static final String FIRST_OCCURRENCE = "x <= " + KEY_COUNT;
     // first_not_null: non-null at each key's last (highest-rowId) occurrence.
     private static final String LAST_OCCURRENCE = "x > " + (ROW_COUNT - KEY_COUNT);
-    // {label, value expression} for every value type. valueExpr produces the single non-null value
-    // of that type; the label identifies the type in a failure message. All types run in one shared
-    // WorkerPool/engine per function (see assertEveryTypeKeepsNonNull) so the expensive per-test
-    // fixture (fresh engine + worker pool + memory-leak scaffolding) is paid twice, not 28 times.
-    private static final String[][] TYPES = {
-            {"Char", "'a'::char"},
-            {"Date", "100000::date"},
-            {"Decimal", "1.5::decimal(18,3)"},
-            {"Double", "1.5::double"},
-            {"Float", "1.5::float"},
-            {"GeoHash", "#u"},
-            {"IPv4", "ipv4 '10.0.0.1'"},
-            {"Int", "42::int"},
-            {"Long", "42::long"},
-            {"Str", "'abc'"},
-            {"Symbol", "'abc'::symbol"},
-            {"Timestamp", "100000::timestamp"},
-            {"Uuid", "'00000000-0000-0000-0000-000000000001'::uuid"},
-            {"Varchar", "'abc'::varchar"},
-    };
+    // One case per value type. valueExpr produces the single non-null value of that type; the label
+    // names the type's column, so a failing count identifies the type it belongs to.
+    private static final ObjList<TypeCase> TYPES = new ObjList<>();
+
+    static {
+        TYPES.add(new TypeCase("Char", "'a'::char"));
+        TYPES.add(new TypeCase("Date", "100_000::date"));
+        TYPES.add(new TypeCase("Decimal", "1.5::decimal(18,3)"));
+        TYPES.add(new TypeCase("Double", "1.5::double"));
+        TYPES.add(new TypeCase("Float", "1.5::float"));
+        TYPES.add(new TypeCase("GeoHash", "#u"));
+        TYPES.add(new TypeCase("IPv4", "ipv4 '10.0.0.1'"));
+        TYPES.add(new TypeCase("Int", "42::int"));
+        TYPES.add(new TypeCase("Long", "42::long"));
+        TYPES.add(new TypeCase("Str", "'abc'"));
+        TYPES.add(new TypeCase("Symbol", "'abc'::symbol"));
+        TYPES.add(new TypeCase("Timestamp", "100_000::timestamp"));
+        TYPES.add(new TypeCase("Uuid", "'00000000-0000-0000-0000-000000000001'::uuid"));
+        TYPES.add(new TypeCase("Varchar", "'abc'::varchar"));
+    }
 
     @Override
     @Before
@@ -123,43 +132,70 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
         assertEveryTypeKeepsNonNull("last_not_null", FIRST_OCCURRENCE);
     }
 
-    // Runs the merge invariant for every value type against a single shared engine and worker pool.
-    // Each type builds its own table (single non-null value per key, placed where nonNullCondition
-    // holds; the CASE has no ELSE, so every other row of the key is NULL of the same type) and runs
-    // the aggregate ITERATIONS times, since the buggy merge direction is hit only on some runs.
+    // Runs the merge invariant for every value type in a single grouped query. The table holds one
+    // value column per type (single non-null value per key, placed where nonNullCondition holds; the
+    // CASE has no ELSE, so every other row of the key is NULL of the same type). The query applies
+    // the aggregate to all of them and counts, per type, the keys whose aggregate survived. It runs
+    // ITERATIONS times, since the buggy merge direction is hit only on some runs.
     private void assertEveryTypeKeepsNonNull(String func, String nonNullCondition) throws Exception {
+        final StringBuilder columns = new StringBuilder();
+        final StringBuilder aggregates = new StringBuilder();
+        final StringBuilder counts = new StringBuilder();
+        final StringBuilder expected = new StringBuilder();
+        final StringBuilder expectedRow = new StringBuilder();
+        for (int i = 0, n = TYPES.size(); i < n; i++) {
+            final TypeCase type = TYPES.getQuick(i);
+            if (i > 0) {
+                columns.append(", ");
+                aggregates.append(", ");
+                counts.append(", ");
+                expected.append('\t');
+                expectedRow.append('\t');
+            }
+            columns.append("CASE WHEN ").append(nonNullCondition).append(" THEN ").append(type.valueExpr)
+                    .append(" END AS v").append(type.label);
+            aggregates.append(func).append("(v").append(type.label).append(") a").append(type.label);
+            // Alias each count with its type, so a dropped value names the type in the failure diff.
+            counts.append("count(a").append(type.label).append(") ").append(type.label);
+            expected.append(type.label);
+            expectedRow.append(KEY_COUNT);
+        }
+        final String createSql = "CREATE TABLE tab AS (" +
+                "  SELECT (x % " + KEY_COUNT + ")::int AS g, " + columns +
+                "  FROM long_sequence(" + ROW_COUNT + ")" +
+                ")";
+        final String query = "SELECT " + counts + " FROM (SELECT g, " + aggregates + " FROM tab)";
+
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
-                    for (String[] type : TYPES) {
-                        final String label = type[0];
-                        final String valueExpr = type[1];
-                        final String createSql = "CREATE TABLE tab AS (" +
-                                "  SELECT (x % " + KEY_COUNT + ")::int AS g," +
-                                "         CASE WHEN " + nonNullCondition + " THEN " + valueExpr + " END AS v" +
-                                "  FROM long_sequence(" + ROW_COUNT + ")" +
-                                ")";
-                        final String query = "SELECT count(*) FROM (SELECT g, " + func + "(v) lv FROM tab) WHERE lv IS NOT NULL";
-                        try {
-                            execute(compiler, "DROP TABLE IF EXISTS tab", ctx);
-                            execute(compiler, createSql, ctx);
-                            // Every key has exactly one non-null value, so a correct aggregate is
-                            // non-null for all KEY_COUNT keys. A guardless merge drops some on most runs.
-                            for (int i = 0; i < ITERATIONS; i++) {
-                                assertQuery(query)
-                                        .noLeakCheck()
-                                        .withCompiler(compiler)
-                                        .withContext(ctx)
-                                        .noRandomAccess()
-                                        .expectSize()
-                                        .returns("count\n" + KEY_COUNT + "\n");
-                            }
-                        } catch (AssertionError e) {
-                            throw new AssertionError("type=" + label + " func=" + func + ": " + e.getMessage(), e);
-                        }
+                    execute(compiler, createSql, ctx);
+                    // Without the parallel factory there is no shard merge left to guard.
+                    TestUtils.printSql(compiler, ctx, "EXPLAIN " + query, sink);
+                    TestUtils.assertContains(sink, "Async Group By");
+                    // Every key has exactly one non-null value per type, so a correct aggregate is
+                    // non-null for all KEY_COUNT keys. A guardless merge drops some on most runs.
+                    for (int i = 0; i < ITERATIONS; i++) {
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .withCompiler(compiler)
+                                .withContext(ctx)
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(expected + "\n" + expectedRow + "\n");
                     }
                 }, configuration, LOG);
             }
         });
+    }
+
+    private static class TypeCase {
+        private final String label;
+        private final String valueExpr;
+
+        private TypeCase(String label, String valueExpr) {
+            this.label = label;
+            this.valueExpr = valueExpr;
+        }
     }
 }
