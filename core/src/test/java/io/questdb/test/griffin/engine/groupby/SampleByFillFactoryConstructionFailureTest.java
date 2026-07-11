@@ -34,9 +34,16 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
@@ -53,6 +60,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -241,6 +249,16 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     }
 
     @Test
+    public void testFillRecordFunctionInitFailureReleasesMapAndAllowsRetry() throws Exception {
+        assertFillRecordFunctionInitFailureReleasesMapAndAllowsRetry(false);
+    }
+
+    @Test
+    public void testFillRecordFunctionInitFailureWithThrowingCloseReleasesMapAndAllowsRetry() throws Exception {
+        assertFillRecordFunctionInitFailureReleasesMapAndAllowsRetry(true);
+    }
+
+    @Test
     public void testFillValueConstructorFailureClosesAdoptedResources() throws Exception {
         assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
                 new SampleByFillValueRecordCursorFactory(
@@ -419,6 +437,99 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         });
     }
 
+    private void assertFillRecordFunctionInitFailureReleasesMapAndAllowsRetry(boolean isCloseFailing) throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata baseMetadata = new GenericRecordMetadata();
+            baseMetadata.add(new TableColumnMetadata("k", ColumnType.INT));
+            baseMetadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+            baseMetadata.setTimestampIndex(1);
+
+            final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+            groupByMetadata.add(new TableColumnMetadata("value", ColumnType.LONG));
+            final ObjList<Function> recordFunctions = new ObjList<>();
+            final ToggleFailingInitFunction recordFunction = new ToggleFailingInitFunction();
+            recordFunctions.add(recordFunction);
+            final IntList recordFunctionPositions = new IntList();
+            recordFunctionPositions.add(0);
+            final ListColumnFilter keyColumnFilter = new ListColumnFilter();
+            keyColumnFilter.add(1);
+            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+            final Function timestampNull = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).getTimestampConstantNull();
+
+            final CloseThrowingBaseFactory baseFactory = new CloseThrowingBaseFactory(baseMetadata);
+            try (SampleByFillNullRecordCursorFactory factory = new SampleByFillNullRecordCursorFactory(
+                    new BytecodeAssembler(),
+                    configuration,
+                    baseFactory,
+                    new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP),
+                    keyColumnFilter,
+                    keyTypes,
+                    valueTypes,
+                    groupByMetadata,
+                    new ObjList<>(),
+                    recordFunctions,
+                    recordFunctionPositions,
+                    1,
+                    ColumnType.TIMESTAMP,
+                    StrConstant.NULL,
+                    0,
+                    StrConstant.NULL,
+                    0,
+                    timestampNull,
+                    0,
+                    timestampNull,
+                    0
+            )) {
+                // Establish the reused-cursor state: one successful open and close leaves the
+                // lazy map closed, ready for getCursor() to reopen it on the next execution.
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    // no rows required
+                }
+
+                final long memoryBeforeFailure = Unsafe.getMemUsed();
+                final int closeCountBeforeFailure = baseFactory.cursor.closeCount;
+                baseFactory.cursor.isCloseFailing = isCloseFailing;
+                recordFunction.isFailing = true;
+                try {
+                    factory.getCursor(sqlExecutionContext);
+                    Assert.fail("record-function init failure expected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "injected record-function init failure");
+                    Assert.assertEquals(isCloseFailing ? 1 : 0, e.getSuppressed().length);
+                    if (isCloseFailing) {
+                        TestUtils.assertContains(e.getSuppressed()[0].getMessage(), "injected base-cursor close failure");
+                    }
+                } finally {
+                    baseFactory.cursor.isCloseFailing = false;
+                    recordFunction.isFailing = false;
+                }
+                Assert.assertEquals(
+                        "base cursor close must be attempted",
+                        closeCountBeforeFailure + 1,
+                        baseFactory.cursor.closeCount
+                );
+                Assert.assertEquals(
+                        "failed post-reopen init must release the map",
+                        memoryBeforeFailure,
+                        Unsafe.getMemUsed()
+                );
+
+                // A later execution of the same cached factory must reopen and close normally.
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    // no rows required
+                }
+                Assert.assertEquals(
+                        "successful retry must keep native memory balanced",
+                        memoryBeforeFailure,
+                        Unsafe.getMemUsed()
+                );
+            }
+        });
+    }
+
     @FunctionalInterface
     private interface FactoryConstructor {
         void construct(Fixture fixture) throws Exception;
@@ -453,6 +564,75 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         @Override
         public long getLong(Record rec) {
             return 0;
+        }
+    }
+
+    private static class CloseThrowingBaseFactory extends EmptyTableRecordCursorFactory {
+        private final CloseThrowingCursor cursor = new CloseThrowingCursor();
+
+        CloseThrowingBaseFactory(GenericRecordMetadata metadata) {
+            super(metadata);
+        }
+
+        @Override
+        public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            return cursor;
+        }
+    }
+
+    private static class CloseThrowingCursor implements RecordCursor {
+        private int closeCount;
+        private boolean isCloseFailing;
+
+        @Override
+        public void close() {
+            closeCount++;
+            if (isCloseFailing) {
+                throw new RuntimeException("injected base-cursor close failure");
+            }
+        }
+
+        @Override
+        public Record getRecord() {
+            return EmptyTableRandomRecordCursor.INSTANCE.getRecord();
+        }
+
+        @Override
+        public Record getRecordB() {
+            return EmptyTableRandomRecordCursor.INSTANCE.getRecordB();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return EmptyTableRandomRecordCursor.INSTANCE.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return false;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return EmptyTableRandomRecordCursor.INSTANCE.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public long size() {
+            return 0;
+        }
+
+        @Override
+        public void toTop() {
         }
     }
 
@@ -514,6 +694,22 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                 throw CairoException.nonCritical().put(message);
             }
             super.init(host);
+        }
+    }
+
+    private static class ToggleFailingInitFunction extends LongFunction {
+        private boolean isFailing;
+
+        @Override
+        public long getLong(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            if (isFailing) {
+                throw SqlException.$(0, "injected record-function init failure");
+            }
         }
     }
 }

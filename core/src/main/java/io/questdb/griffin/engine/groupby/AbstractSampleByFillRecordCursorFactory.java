@@ -109,7 +109,36 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             Misc.free(cursor);
             throw th;
         }
-        return initFunctionsAndCursor(executionContext, baseCursor);
+        try {
+            // Init all record functions for this cursor, in case functions require metadata and/or symbol tables.
+            Function.init(recordFunctions, baseCursor, executionContext, null);
+        } catch (Throwable th) {
+            try {
+                Misc.free(baseCursor);
+            } catch (Throwable cleanupTh) {
+                if (cleanupTh != th) {
+                    th.addSuppressed(cleanupTh);
+                }
+            }
+            // The cursor's map was reopened before record-function initialization. Release it on
+            // init failure so the tracker stays balanced and the cached cursor can reopen safely.
+            try {
+                Misc.free(cursor);
+            } catch (Throwable cleanupTh) {
+                if (cleanupTh != th) {
+                    th.addSuppressed(cleanupTh);
+                }
+            }
+            throw th;
+        }
+
+        try {
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            Misc.free(cursor);
+            throw th;
+        }
     }
 
     @Override

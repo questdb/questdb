@@ -48,6 +48,14 @@ public class AbstractRecordCursorFactoryTest {
         Assert.assertEquals("_close() must run exactly once across repeated close() calls", 1, factory.closeCount);
     }
 
+    @Test
+    public void testCloseIsIdempotentWhenCloseThrows() {
+        ThrowingCloseCountingFactory factory = new ThrowingCloseCountingFactory();
+        Assert.assertThrows(RuntimeException.class, factory::close);
+        factory.close();
+        Assert.assertEquals("_close() must not run again after throwing", 1, factory.closeCount);
+    }
+
     private static class CloseCountingFactory extends AbstractRecordCursorFactory {
         int closeCount;
 
@@ -68,6 +76,14 @@ public class AbstractRecordCursorFactoryTest {
         @Override
         protected void _close() {
             closeCount++;
+        }
+    }
+
+    private static class ThrowingCloseCountingFactory extends CloseCountingFactory {
+        @Override
+        protected void _close() {
+            super._close();
+            throw new RuntimeException("expected");
         }
     }
 }
