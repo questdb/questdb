@@ -131,9 +131,11 @@ public abstract class BasePlanSink implements PlanSink {
         // calls must not clobber the flag for the remainder of the enclosing attribute.
         final boolean wasUsingBaseMetadata = this.useBaseMetadata;
         this.useBaseMetadata = useBaseMetadata;
-        optAttr(name, value);
-        this.useBaseMetadata = wasUsingBaseMetadata;
-        return this;
+        try {
+            return optAttr(name, value);
+        } finally {
+            this.useBaseMetadata = wasUsingBaseMetadata;
+        }
     }
 
     @Override
@@ -151,9 +153,11 @@ public abstract class BasePlanSink implements PlanSink {
         // calls must not clobber the flag for the entries that follow it.
         final boolean wasUsingBaseMetadata = this.useBaseMetadata;
         this.useBaseMetadata = useBaseMetadata;
-        optAttr(name, value);
-        this.useBaseMetadata = wasUsingBaseMetadata;
-        return this;
+        try {
+            return optAttr(name, value);
+        } finally {
+            this.useBaseMetadata = wasUsingBaseMetadata;
+        }
     }
 
     @Override

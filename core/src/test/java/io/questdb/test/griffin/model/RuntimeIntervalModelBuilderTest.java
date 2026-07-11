@@ -25,17 +25,25 @@
 package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Field;
 
 /**
  * Function-ownership tests for {@link RuntimeIntervalModelBuilder}. Every Function handed to the
@@ -195,56 +203,59 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
-    public void testBuildCopyFailureLeavesFunctionsOwnedByBuilder() {
-        // build() constructs the model - defensive list copies included - before committing the
-        // ownership transfer. When that construction throws, the adopted functions must stay
-        // owned by the builder, so the next clear() closes them exactly once instead of
-        // dropping the references.
-        BuildFailingBuilder builder = newBuildFailingBuilder();
-        CloseCountingFunction lo = new CloseCountingFunction();
-        CloseCountingFunction hi = new CloseCountingFunction();
-        builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(hi, 0);
-        builder.failNextBuild = true;
-        try {
-            builder.build();
-            Assert.fail("injected failure expected");
-        } catch (RuntimeException e) {
-            Assert.assertEquals("injected model copy failure", e.getMessage());
-        }
-        Assert.assertEquals("failed build must not close adopted functions", 0, lo.closeCount);
-        Assert.assertEquals("failed build must not close adopted functions", 0, hi.closeCount);
+    public void testBuildFailureLeavesFunctionsOwnedByBuilderAtEveryStage() {
+        for (BuildFailureStage stage : BuildFailureStage.values()) {
+            BuildFailingBuilder builder = newBuildFailingBuilder();
+            CloseCountingFunction timestampFunction = new CloseCountingFunction();
+            CloseCountingCursorFunction cursorFunction = new CloseCountingCursorFunction();
+            builder.intersectRuntimeTimestamp(timestampFunction, 11);
+            builder.intersectRuntimeTimestamp(cursorFunction, 22);
+            // Once dynamic mode starts, this static interval adds a null dynamic-function slot.
+            builder.intersect(30, 40);
 
-        // the transfer never committed: the builder still owns the functions
-        builder.clear();
-        Assert.assertEquals("clear after failed build must close adopted functions exactly once", 1, lo.closeCount);
-        Assert.assertEquals("clear after failed build must close adopted functions exactly once", 1, hi.closeCount);
+            assertBuildFailure(builder, stage);
+            Assert.assertEquals("failed build must not close the timestamp function at " + stage, 0, timestampFunction.closeCount);
+            Assert.assertEquals("failed build must not close the cursor function at " + stage, 0, cursorFunction.closeCount);
+
+            // No model exists, so the transfer never committed and builder cleanup owns both
+            // non-null functions. The null slot needs no cleanup.
+            builder.clear();
+            Assert.assertEquals("builder must close the timestamp function exactly once at " + stage, 1, timestampFunction.closeCount);
+            Assert.assertEquals("builder must close the cursor function exactly once at " + stage, 1, cursorFunction.closeCount);
+            builder.clear();
+            Assert.assertEquals("repeated cleanup must not close the timestamp function again at " + stage, 1, timestampFunction.closeCount);
+            Assert.assertEquals("repeated cleanup must not close the cursor function again at " + stage, 1, cursorFunction.closeCount);
+
+            // A builder remains reusable after rolling back any build stage.
+            CloseCountingFunction reusedFunction = new CloseCountingFunction();
+            builder.intersectRuntimeTimestamp(reusedFunction, 33);
+            RuntimeIntrinsicIntervalModel model = builder.build();
+            builder.clear();
+            Assert.assertEquals(0, reusedFunction.closeCount);
+            Misc.free(model);
+            Assert.assertEquals(1, reusedFunction.closeCount);
+        }
     }
 
     @Test
-    public void testBuildRetryAfterCopyFailureTransfersOwnership() {
-        // a failed build() leaves the builder fully consistent: a retry must transfer the same
-        // functions to the model, which then closes them exactly once
-        BuildFailingBuilder builder = newBuildFailingBuilder();
-        CloseCountingFunction lo = new CloseCountingFunction();
-        CloseCountingFunction hi = new CloseCountingFunction();
-        builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(hi, 0);
-        builder.failNextBuild = true;
-        try {
-            builder.build();
-            Assert.fail("injected failure expected");
-        } catch (RuntimeException e) {
-            Assert.assertEquals("injected model copy failure", e.getMessage());
-        }
+    public void testBuildRetryAfterEveryFailureStageTransfersOwnership() {
+        for (BuildFailureStage stage : BuildFailureStage.values()) {
+            BuildFailingBuilder builder = newBuildFailingBuilder();
+            CloseCountingFunction timestampFunction = new CloseCountingFunction();
+            CloseCountingCursorFunction cursorFunction = new CloseCountingCursorFunction();
+            builder.intersectRuntimeTimestamp(timestampFunction, 11);
+            builder.intersectRuntimeTimestamp(cursorFunction, 22);
+            builder.intersect(30, 40);
 
-        RuntimeIntrinsicIntervalModel model = builder.build();
-        builder.clear();
-        Assert.assertEquals("clear after successful retry must not close transferred functions", 0, lo.closeCount);
-        Assert.assertEquals("clear after successful retry must not close transferred functions", 0, hi.closeCount);
-        Misc.free(model);
-        Assert.assertEquals("model must close transferred functions exactly once", 1, lo.closeCount);
-        Assert.assertEquals("model must close transferred functions exactly once", 1, hi.closeCount);
+            assertBuildFailure(builder, stage);
+            RuntimeIntrinsicIntervalModel model = builder.build();
+            builder.clear();
+            Assert.assertEquals("builder must not close the transferred timestamp function after " + stage, 0, timestampFunction.closeCount);
+            Assert.assertEquals("builder must not close the transferred cursor function after " + stage, 0, cursorFunction.closeCount);
+            Misc.free(model);
+            Assert.assertEquals("model must close the timestamp function exactly once after " + stage, 1, timestampFunction.closeCount);
+            Assert.assertEquals("model must close the cursor function exactly once after " + stage, 1, cursorFunction.closeCount);
+        }
     }
 
     @Test
@@ -275,6 +286,19 @@ public class RuntimeIntervalModelBuilderTest {
         builder.setBetweenBoundary(lo, 0);
         builder.clear();
         Assert.assertEquals(1, lo.closeCount);
+    }
+
+    @Test
+    public void testDynamicIntervalsDoNotAllocateErrorPositions() throws Exception {
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        for (int i = 0; i < 32; i++) {
+            builder.intersectRuntimeTimestamp(new CloseCountingFunction(), i);
+        }
+
+        final Field field = RuntimeIntervalModelBuilder.class.getDeclaredField("cursorFunctionPositions");
+        field.setAccessible(true);
+        Assert.assertEquals(0, ((IntList) field.get(builder)).size());
+        builder.freeAndClear();
     }
 
     @Test
@@ -396,6 +420,16 @@ public class RuntimeIntervalModelBuilderTest {
         Assert.assertEquals(1, lo.closeCount);
     }
 
+    private static void assertBuildFailure(BuildFailingBuilder builder, BuildFailureStage stage) {
+        builder.failAt = stage;
+        try {
+            builder.build();
+            Assert.fail("injected failure expected at " + stage);
+        } catch (RuntimeException e) {
+            Assert.assertEquals("injected build failure at " + stage, e.getMessage());
+        }
+    }
+
     private static BuildFailingBuilder newBuildFailingBuilder() {
         BuildFailingBuilder builder = new BuildFailingBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
@@ -414,20 +448,63 @@ public class RuntimeIntervalModelBuilderTest {
         return builder;
     }
 
-    /**
-     * Simulates an allocation failure inside build(): the model construction (defensive list
-     * copies included) throws before the ownership transfer commits.
-     */
     private static class BuildFailingBuilder extends RuntimeIntervalModelBuilder {
-        boolean failNextBuild;
+        BuildFailureStage failAt;
 
         @Override
-        protected RuntimeIntrinsicIntervalModel newModel() {
-            if (failNextBuild) {
-                failNextBuild = false;
-                throw new RuntimeException("injected model copy failure");
+        protected IntList copyCursorFunctionPositions() {
+            fail(BuildFailureStage.CURSOR_POSITIONS_COPY);
+            return super.copyCursorFunctionPositions();
+        }
+
+        @Override
+        protected ObjList<Function> copyDynamicRangeList() {
+            fail(BuildFailureStage.DYNAMIC_RANGE_COPY);
+            return super.copyDynamicRangeList();
+        }
+
+        @Override
+        protected LongList copyStaticIntervals() {
+            fail(BuildFailureStage.STATIC_INTERVALS_COPY);
+            return super.copyStaticIntervals();
+        }
+
+        @Override
+        protected RuntimeIntrinsicIntervalModel createModel(
+                LongList staticIntervals,
+                ObjList<Function> dynamicRangeList,
+                IntList cursorFunctionPositions
+        ) {
+            fail(BuildFailureStage.MODEL_CREATION);
+            return super.createModel(staticIntervals, dynamicRangeList, cursorFunctionPositions);
+        }
+
+        private void fail(BuildFailureStage stage) {
+            if (failAt == stage) {
+                failAt = null;
+                throw new RuntimeException("injected build failure at " + stage);
             }
-            return super.newModel();
+        }
+    }
+
+    private enum BuildFailureStage {
+        STATIC_INTERVALS_COPY,
+        DYNAMIC_RANGE_COPY,
+        CURSOR_POSITIONS_COPY,
+        MODEL_CREATION
+    }
+
+    private static class CloseCountingCursorFunction extends CursorFunction {
+        int closeCount;
+
+        CloseCountingCursorFunction() {
+            super(new EmptyTableRecordCursorFactory(new GenericRecordMetadata()));
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            super.close();
         }
     }
 
@@ -462,12 +539,12 @@ public class RuntimeIntervalModelBuilderTest {
         boolean failNextReservation;
 
         @Override
-        protected void reserveEncodedIntervals(int intervalCount) {
+        protected void reserveEncodedIntervals(int intervalCount, int cursorFunctionCount) {
             if (failNextReservation) {
                 failNextReservation = false;
                 throw new RuntimeException("injected allocation failure");
             }
-            super.reserveEncodedIntervals(intervalCount);
+            super.reserveEncodedIntervals(intervalCount, cursorFunctionCount);
         }
     }
 }

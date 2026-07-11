@@ -46,6 +46,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -302,7 +303,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         Misc.clearObjList(ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
+                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
             }
         }
         Misc.clear(ownerAllocator);
@@ -350,7 +351,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         // recordFunctions/groupByFunctions field, so we only free per-worker clones here.
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
+                PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
             }
         }
         Misc.free(ownerAsOfJoinMap);
@@ -502,25 +503,16 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             ownerGroupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
         }
         if (perWorkerGroupByFunctions != null) {
-            // Donate the initialized owner state to the aligned per-worker clones before they
-            // initialize. Stateful functions inside aggregate arguments, such as cursor comparisons
-            // caching a scalar sub-query result, must run their expensive and potentially
-            // nondeterministic initialization exactly once per query, not once per worker, and
-            // every worker must observe the same state as the owner.
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
-                for (int j = 0, m = functions.size(); j < m; j++) {
-                    ownerGroupByFunctions.getQuick(j).offerStateTo(functions.getQuick(j));
-                }
-            }
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
-                    for (int j = 0, m = functions.size(); j < m; j++) {
-                        functions.getQuick(j).init(horizonJoinSymbolTableSource, executionContext);
-                    }
+                    PerWorkerFunctionList.init(
+                            perWorkerGroupByFunctions.getQuick(i),
+                            ownerGroupByFunctions,
+                            horizonJoinSymbolTableSource,
+                            executionContext
+                    );
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);

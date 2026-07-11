@@ -34,6 +34,24 @@ import org.junit.Test;
 public class TextPlanSinkTest {
 
     @Test
+    public void testListMetadataModeRestoredAfterException() {
+        final TextPlanSink sink = new TextPlanSink();
+        final ObjList<Plannable> values = new ObjList<>();
+        values.add(planSink -> {
+            throw new RuntimeException("expected");
+        });
+        sink.useBaseMetadata(true);
+
+        try {
+            sink.optAttr("values", values, false);
+            Assert.fail();
+        } catch (RuntimeException e) {
+            Assert.assertEquals("expected", e.getMessage());
+        }
+        Assert.assertTrue(sink.getUseBaseMetadata());
+    }
+
+    @Test
     public void testSink() {
         TextPlanSink sink = new TextPlanSink();
 

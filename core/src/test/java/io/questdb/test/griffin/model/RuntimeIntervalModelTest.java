@@ -43,11 +43,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Covers the legacy position-list fallback of {@link RuntimeIntervalModel}: models constructed
- * without a dynamic-range position list (or with a shorter one, as legacy callers could produce)
- * must evaluate their dynamic intervals normally, falling back to position 0 for error
- * reporting instead of failing on the missing list. The error path is exercised with a
- * multi-row scalar sub-query, whose rejection must carry the fallback position 0.
+ * Covers sparse cursor-position handling in {@link RuntimeIntervalModel}. Models without a cursor
+ * position list (or with a shorter one) must evaluate dynamic intervals normally and fall back to
+ * position 0. Cursor entries carry their positions in cursor encounter order.
  */
 public class RuntimeIntervalModelTest extends AbstractCairoTest {
 
@@ -97,7 +95,7 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
             );
             final ObjList<Function> dynamicFunctions = new ObjList<>();
             dynamicFunctions.add(TimestampConstant.newInstance(7_000L, ColumnType.TIMESTAMP));
-            // position list shorter than the dynamic function list
+            // No cursor positions are needed for a timestamp function.
             final RuntimeIntervalModel model = new RuntimeIntervalModel(
                     ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
                     PartitionBy.DAY,
@@ -120,7 +118,7 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
     public void testMultiRowSubQueryErrorFallsBackToPositionZeroWithNullPositionList() throws Exception {
         assertMemoryLeak(() -> {
             createTwoRowTable();
-            assertMultiRowSubQueryErrorAtPositionZero(null);
+            assertMultiRowSubQueryError(null, 0);
         });
     }
 
@@ -128,22 +126,69 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
     public void testMultiRowSubQueryErrorFallsBackToPositionZeroWithShortPositionList() throws Exception {
         assertMemoryLeak(() -> {
             createTwoRowTable();
-            assertMultiRowSubQueryErrorAtPositionZero(new IntList());
+            assertMultiRowSubQueryError(new IntList(), 0);
         });
     }
 
-    private void assertMultiRowSubQueryErrorAtPositionZero(IntList positions) throws Exception {
-        final LongList intervals = new LongList();
-        IntervalUtils.encodeInterval(
-                1_000L,
-                0,
-                (short) 0,
-                IntervalDynamicIndicator.IS_HI_DYNAMIC,
-                IntervalOperation.INTERSECT,
-                intervals
-        );
+    @Test
+    public void testMultiRowSubQueryErrorUsesCursorPositionAfterNonCursorFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwoRowTable();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            dynamicFunctions.add(TimestampConstant.newInstance(2_000L, ColumnType.TIMESTAMP));
+            dynamicFunctions.add(new CursorFunction(select("SELECT ts FROM tab")));
+            final IntList positions = new IntList();
+            positions.add(42);
+            assertMultiRowSubQueryError(dynamicFunctions, positions, 42);
+        });
+    }
+
+    @Test
+    public void testMultiRowSubQueryErrorUsesSecondCursorPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwoRowTable();
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            dynamicFunctions.add(new CursorFunction(select("SELECT 2_000::timestamp")));
+            dynamicFunctions.add(new CursorFunction(select("SELECT ts FROM tab")));
+            final IntList positions = new IntList();
+            positions.add(17);
+            positions.add(42);
+            assertMultiRowSubQueryError(dynamicFunctions, positions, 42);
+        });
+    }
+
+    @Test
+    public void testMultiRowSubQueryErrorUsesSparseCursorPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwoRowTable();
+            final IntList positions = new IntList();
+            positions.add(42);
+            assertMultiRowSubQueryError(positions, 42);
+        });
+    }
+
+    private void assertMultiRowSubQueryError(IntList positions, int expectedPosition) throws Exception {
         final ObjList<Function> dynamicFunctions = new ObjList<>();
-        dynamicFunctions.add(new CursorFunction(select("select ts from tab")));
+        dynamicFunctions.add(new CursorFunction(select("SELECT ts FROM tab")));
+        assertMultiRowSubQueryError(dynamicFunctions, positions, expectedPosition);
+    }
+
+    private void assertMultiRowSubQueryError(
+            ObjList<Function> dynamicFunctions,
+            IntList positions,
+            int expectedPosition
+    ) throws Exception {
+        final LongList intervals = new LongList();
+        for (int i = 0, n = dynamicFunctions.size(); i < n; i++) {
+            IntervalUtils.encodeInterval(
+                    1_000L,
+                    0,
+                    (short) 0,
+                    IntervalDynamicIndicator.IS_HI_DYNAMIC,
+                    IntervalOperation.INTERSECT,
+                    intervals
+            );
+        }
         final RuntimeIntervalModel model = new RuntimeIntervalModel(
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
                 PartitionBy.DAY,
@@ -156,8 +201,8 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
             Assert.fail("multi-row scalar sub-query must be rejected");
         } catch (SqlException e) {
             Assert.assertEquals(
-                    "error must fall back to position 0 when the position list is missing or short",
-                    0,
+                    "error must use the sparse cursor position, or 0 when it is unavailable",
+                    expectedPosition,
                     e.getPosition()
             );
             TestUtils.assertContains(e.getFlyweightMessage(), "scalar sub-query returned more than one row");

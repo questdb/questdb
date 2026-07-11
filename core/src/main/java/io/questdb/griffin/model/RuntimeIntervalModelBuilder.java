@@ -54,15 +54,16 @@ import io.questdb.std.str.StringSink;
  * 3: period (int), count (int)
  * <p>
  * Each encoded entry has a parallel slot in dynamicRangeList (the dynamic Function, or null
- * for an encoded static interval) and in dynamicRangePositionList (the expression position
- * for error reporting), so the encoded suffix of staticIntervals always spans
- * dynamicRangeList.size() * 4 longs and needs no separate boundary index.
+ * for an encoded static interval), so the encoded suffix of staticIntervals always spans
+ * dynamicRangeList.size() * 4 longs and needs no separate boundary index. Cursor function parse
+ * positions use a separate sparse list, in cursor encounter order, because only cursor scalar
+ * functions need a position for error reporting.
  */
 public class RuntimeIntervalModelBuilder implements Mutable {
+    // Parse positions of cursor functions, in cursor encounter order. Other dynamic intervals do
+    // not need an error position, so keeping this list sparse avoids O(D) storage when C is zero.
+    private final IntList cursorFunctionPositions = new IntList();
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
-    // parse positions of the dynamic range functions, parallel to dynamicRangeList;
-    // used to point error messages at the offending expression in the query text
-    private final IntList dynamicRangePositionList = new IntList();
     private final StringSink sink = new StringSink();
     // All data needed to re-evaluate intervals is stored in 2 lists - a LongList and a list of
     // functions. The LongList starts with plain [lo, hi] static interval pairs and ends with
@@ -97,8 +98,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             isOwnershipTransferred = false;
             clearBetweenParsing();
             staticIntervals.clear();
+            cursorFunctionPositions.clear();
             dynamicRangeList.clear();
-            dynamicRangePositionList.clear();
             intervalApplied = false;
         } else {
             // no build(): the accumulated functions are orphaned, free them here
@@ -118,7 +119,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // below.
         clearBetweenParsing();
         Misc.freeObjListAndClear(dynamicRangeList);
-        dynamicRangePositionList.clear();
+        cursorFunctionPositions.clear();
         staticIntervals.clear();
         intervalApplied = false;
     }
@@ -550,34 +551,57 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
-    /**
-     * Copies the accumulated state into a new model instance. Everything fallible in build() -
-     * the defensive list copies and the model constructor - lives here, so that ownership of the
-     * dynamic functions transfers to the model only after this method returns. Overridable so
-     * tests can inject an allocation failure at the single fallible point of the transfer.
-     */
-    protected RuntimeIntrinsicIntervalModel newModel() {
+    protected IntList copyCursorFunctionPositions() {
+        return new IntList(cursorFunctionPositions);
+    }
+
+    protected ObjList<Function> copyDynamicRangeList() {
+        return new ObjList<>(dynamicRangeList);
+    }
+
+    protected LongList copyStaticIntervals() {
+        return new LongList(staticIntervals);
+    }
+
+    protected RuntimeIntrinsicIntervalModel createModel(
+            LongList staticIntervals,
+            ObjList<Function> dynamicRangeList,
+            IntList cursorFunctionPositions
+    ) {
         return new RuntimeIntervalModel(
                 timestampDriver,
                 partitionBy,
-                new LongList(staticIntervals),
-                new ObjList<>(dynamicRangeList),
-                new IntList(dynamicRangePositionList)
+                staticIntervals,
+                dynamicRangeList,
+                cursorFunctionPositions
         );
     }
 
     /**
-     * Reserves capacity for {@code intervalCount} encoded intervals in staticIntervals and for
-     * their parallel slots in dynamicRangeList and dynamicRangePositionList before any of them
-     * is mutated. Growth is the only failure mode of the appends that follow, so reserving up
-     * front makes a multi-entry append effectively atomic: a failure here leaves the lists
-     * untouched and aligned, and every involved Function with its previous owner. Overridable
-     * so tests can inject an allocation failure at the single fallible point of the append.
+     * Copies the accumulated state into a new model instance. Everything fallible in build() -
+     * the defensive list copies and the model constructor - lives here, so that ownership of the
+     * dynamic functions transfers to the model only after this method returns. The protected copy
+     * and creation methods let tests fail each allocation stage deterministically.
      */
-    protected void reserveEncodedIntervals(int intervalCount) {
+    protected RuntimeIntrinsicIntervalModel newModel() {
+        final LongList staticIntervals = copyStaticIntervals();
+        final ObjList<Function> dynamicRangeList = copyDynamicRangeList();
+        final IntList cursorFunctionPositions = copyCursorFunctionPositions();
+        return createModel(staticIntervals, dynamicRangeList, cursorFunctionPositions);
+    }
+
+    /**
+     * Reserves capacity for {@code intervalCount} encoded intervals and their functions, plus
+     * {@code cursorFunctionCount} sparse error positions, before any list is mutated. Growth is
+     * the only failure mode of the appends that follow, so reserving up front makes a multi-entry
+     * append effectively atomic: a failure leaves the lists untouched and every involved Function
+     * with its previous owner. Overridable so tests can inject an allocation failure at the single
+     * fallible point of the append.
+     */
+    protected void reserveEncodedIntervals(int intervalCount, int cursorFunctionCount) {
         staticIntervals.checkCapacity(staticIntervals.size() + intervalCount * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL);
         dynamicRangeList.checkCapacity(dynamicRangeList.size() + intervalCount);
-        dynamicRangePositionList.checkCapacity(dynamicRangePositionList.size() + intervalCount);
+        cursorFunctionPositions.checkCapacity(cursorFunctionPositions.size() + cursorFunctionCount);
     }
 
     /**
@@ -610,14 +634,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private void addDynamicFunction(Function function, int functionPosition) {
-        // Grow both parallel lists before adopting: growth is the only failure mode of add(),
-        // so pre-sizing makes the two adds effectively atomic. A growth failure then leaves the
-        // incoming function unadopted (still owned by the caller) and the lists aligned, instead
-        // of stranding a half-adopted function or misaligning the parallel position list.
+        // Grow all applicable lists before adopting: growth is the only failure mode of add(), so
+        // a growth failure leaves the incoming function unadopted and the sparse positions aligned.
+        final boolean isCursor = function != null && function.getType() == ColumnType.CURSOR;
         dynamicRangeList.checkCapacity(dynamicRangeList.size() + 1);
-        dynamicRangePositionList.checkCapacity(dynamicRangePositionList.size() + 1);
+        if (isCursor) {
+            cursorFunctionPositions.checkCapacity(cursorFunctionPositions.size() + 1);
+        }
         dynamicRangeList.add(function);
-        dynamicRangePositionList.add(functionPosition);
+        if (isCursor) {
+            cursorFunctionPositions.add(functionPosition);
+        }
     }
 
     private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
@@ -641,7 +668,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // function: a growth failure here leaves both functions with their previous owners and
         // the lists untouched, instead of adopting one endpoint (double-closed by the caller and
         // this builder) while stranding the other.
-        reserveEncodedIntervals(2);
+        reserveEncodedIntervals(
+                2,
+                (funcValue1.getType() == ColumnType.CURSOR ? 1 : 0) + (funcValue2.getType() == ColumnType.CURSOR ? 1 : 0)
+        );
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
@@ -682,7 +712,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Reserve capacity for the whole operation before mutating any list or adopting the
         // function: a growth failure here leaves the function with its previous owner and the
         // lists untouched and aligned.
-        reserveEncodedIntervals(1);
+        reserveEncodedIntervals(1, funcValue.getType() == ColumnType.CURSOR ? 1 : 0);
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);

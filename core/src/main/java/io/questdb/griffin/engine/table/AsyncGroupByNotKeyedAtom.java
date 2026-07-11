@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
@@ -175,7 +176,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));
+                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
             }
         }
         Misc.clear(ownerAllocator);
@@ -206,7 +207,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         Misc.freeObjList(perWorkerMapValues);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
+                PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
             }
         }
         Misc.free(filterCtx);
@@ -272,17 +273,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         // and every worker must observe the same state as the owner.
         Function.init(ownerGroupByFunctions, symbolTableSource, executionContext, null);
         if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                final ObjList<GroupByFunction> workerGroupByFunctions = perWorkerGroupByFunctions.getQuick(i);
-                for (int j = 0, m = workerGroupByFunctions.size(); j < m; j++) {
-                    ownerGroupByFunctions.getQuick(j).offerStateTo(workerGroupByFunctions.getQuick(j));
-                }
-            }
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext, null);
+                    PerWorkerFunctionList.init(
+                            perWorkerGroupByFunctions.getQuick(i),
+                            ownerGroupByFunctions,
+                            symbolTableSource,
+                            executionContext
+                    );
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);

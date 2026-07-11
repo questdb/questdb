@@ -1560,6 +1560,31 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     }
 
     @Test
+    public void testPlanNestedListBaseMetadataRestored() throws Exception {
+        // The outer GROUP BY values list renders with base metadata. Its first aggregate contains
+        // a scalar sub-query whose GROUP BY values use the nested ObjList optAttr overload. That
+        // overload must restore the ambient mode before the later vwap element renders its columns.
+        assertMemoryLeak(() -> {
+            execute("create table tab (price double, qty double, ts timestamp) timestamp(ts) partition by day");
+            assertQuery("select avg((qty > (select avg(price) from tab))::int) a, vwap(price, qty) v from tab")
+                    .assertsPlan("Async Group By workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  values: [avg(qty [thread-safe] > cursor \n" +
+                            "    Async Group By workers: 1\n" +
+                            "      vectorized: true\n" +
+                            "      values: [avg(price)]\n" +
+                            "      filter: null\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab::int),vwap(price,qty)]\n" +
+                            "  filter: null\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n");
+        });
+    }
+
+    @Test
     public void testPlanNestedSingleValueBaseMetadataRestored() throws Exception {
         // The values list of a GROUP BY plan renders with base metadata. The first aggregate's
         // argument contains a scalar sub-query whose own async-filter plan goes through the

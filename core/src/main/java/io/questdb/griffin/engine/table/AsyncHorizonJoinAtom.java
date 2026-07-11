@@ -39,6 +39,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
@@ -223,19 +224,6 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource = getSymbolTableSource();
         if (ownerKeyFunctions != null) {
             Function.init(ownerKeyFunctions, horizonJoinSymbolTableSource, executionContext, null);
-            // Donate the initialized owner key functions' state to the aligned per-worker clones
-            // before they initialize. Stateful key functions, such as cursor comparisons caching
-            // a scalar sub-query result, must run their expensive and potentially nondeterministic
-            // initialization exactly once per query, not once per worker, and every worker must
-            // observe the same state as the owner.
-            if (perWorkerKeyFunctions != null) {
-                for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    final ObjList<Function> workerKeyFunctions = perWorkerKeyFunctions.getQuick(i);
-                    for (int j = 0, m = workerKeyFunctions.size(); j < m; j++) {
-                        ownerKeyFunctions.getQuick(j).offerStateTo(workerKeyFunctions.getQuick(j));
-                    }
-                }
-            }
         }
 
         if (perWorkerKeyFunctions != null) {
@@ -243,7 +231,12 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerKeyFunctions.getQuick(i), horizonJoinSymbolTableSource, executionContext, null);
+                    PerWorkerFunctionList.init(
+                            perWorkerKeyFunctions.getQuick(i),
+                            ownerKeyFunctions,
+                            horizonJoinSymbolTableSource,
+                            executionContext
+                    );
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
@@ -311,7 +304,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         Misc.freeObjList(ownerKeyFunctions);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                Misc.freeObjList(perWorkerKeyFunctions.getQuick(i));
+                PerWorkerFunctionList.close(perWorkerKeyFunctions.getQuick(i));
             }
         }
     }

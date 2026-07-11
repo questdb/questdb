@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.ArrayColumn;
@@ -644,13 +645,17 @@ public class GroupByUtils {
 
     public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
         for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).setAllocator(allocator);
+            if (PerWorkerFunctionList.isOwned(functions, i)) {
+                functions.getQuick(i).setAllocator(allocator);
+            }
         }
     }
 
     public static void toTop(ObjList<? extends Function> args) {
         for (int i = 0, n = args.size(); i < n; i++) {
-            args.getQuick(i).toTop();
+            if (PerWorkerFunctionList.isOwned(args, i)) {
+                args.getQuick(i).toTop();
+            }
         }
     }
 

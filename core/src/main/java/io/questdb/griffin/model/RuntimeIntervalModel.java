@@ -50,10 +50,10 @@ import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_IN
 
 public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private static final Log LOG = LogFactory.getLog(RuntimeIntervalModel.class);
+    // Parse positions of cursor functions, in cursor encounter order. Only cursor scalar functions
+    // consume these positions when reporting a multi-row error.
+    private final IntList cursorFunctionPositions;
     private final ObjList<Function> dynamicRangeList;
-    // parse positions of the dynamic range functions, parallel to dynamicRangeList;
-    // used to point error messages at the offending expression in the query text
-    private final IntList dynamicRangePositions;
     // These 2 are incoming model
     private final LongList intervals;
     private final int partitionBy;
@@ -75,11 +75,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             int partitionBy,
             LongList staticIntervals,
             ObjList<Function> dynamicRangeList,
-            IntList dynamicRangePositions
+            IntList cursorFunctionPositions
     ) {
         this.intervals = staticIntervals;
+        this.cursorFunctionPositions = cursorFunctionPositions;
         this.dynamicRangeList = dynamicRangeList;
-        this.dynamicRangePositions = dynamicRangePositions;
         this.timestampDriver = timestampDriver;
         this.partitionBy = partitionBy;
     }
@@ -176,12 +176,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     private void addEvaluateDynamicIntervals(LongList outIntervals, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int size = intervals.size();
         int dynamicStart = size - dynamicRangeList.size() * STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+        int cursorFunctionIndex = 0;
         int dynamicIndex = 0;
         boolean firstFuncApplied = false;
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
-            int dynamicFunctionPosition = getDynamicFunctionPosition(dynamicIndex);
             dynamicIndex++;
             short operation = IntervalUtils.getEncodedOperation(intervals, i);
             boolean negated = operation > IntervalOperation.NEGATED_BORDERLINE;
@@ -225,16 +225,21 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 dynamicFunction.init(null, sqlExecutionContext);
 
                 if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
-                    long dynamicValue = getTimestamp(dynamicFunction, sqlExecutionContext, dynamicFunctionPosition);
+                    long dynamicValue = getTimestamp(dynamicFunction, sqlExecutionContext, cursorFunctionIndex);
+                    if (dynamicFunction.getType() == ColumnType.CURSOR) {
+                        cursorFunctionIndex++;
+                    }
                     long dynamicValue2 = 0;
                     if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
                         // Both ends of BETWEEN are dynamic and different values. Take the next dynamic point.
                         i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
                         dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
-                        dynamicFunctionPosition = getDynamicFunctionPosition(dynamicIndex);
                         dynamicIndex++;
                         dynamicFunction.init(null, sqlExecutionContext);
-                        dynamicValue2 = hi = getTimestamp(dynamicFunction, sqlExecutionContext, dynamicFunctionPosition);
+                        dynamicValue2 = hi = getTimestamp(dynamicFunction, sqlExecutionContext, cursorFunctionIndex);
+                        if (dynamicFunction.getType() == ColumnType.CURSOR) {
+                            cursorFunctionIndex++;
+                        }
                         lo = dynamicValue;
                     } else {
                         if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
@@ -366,13 +371,13 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
     }
 
-    private int getDynamicFunctionPosition(int dynamicIndex) {
-        return dynamicRangePositions != null && dynamicIndex < dynamicRangePositions.size()
-                ? dynamicRangePositions.getQuick(dynamicIndex)
+    private int getCursorFunctionPosition(int cursorFunctionIndex) {
+        return cursorFunctionPositions != null && cursorFunctionIndex < cursorFunctionPositions.size()
+                ? cursorFunctionPositions.getQuick(cursorFunctionIndex)
                 : 0;
     }
 
-    private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext, int functionPosition) throws SqlException {
+    private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext, int cursorFunctionIndex) throws SqlException {
         final int functionType = dynamicFunction.getType();
         if (ColumnType.isString(functionType)) {
             final CharSequence value = dynamicFunction.getStrA(null);
@@ -395,7 +400,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 if (cursor.hasNext()) {
                     final long timestamp = timestampDriver.from(cursor.getRecord().getTimestamp(0), ColumnType.getTimestampType(factory.getMetadata().getColumnType(0)));
-                    ScalarSubQueryUtils.assertNoMoreRows(cursor, functionPosition);
+                    ScalarSubQueryUtils.assertNoMoreRows(cursor, getCursorFunctionPosition(cursorFunctionIndex));
                     return timestamp;
                 } else {
                     return Numbers.LONG_NULL;
