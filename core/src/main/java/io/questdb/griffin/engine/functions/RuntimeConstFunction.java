@@ -47,9 +47,11 @@ import io.questdb.griffin.SqlExecutionContext;
  * function of that type would return. A flat hand-rolled getter table would have to reproduce all
  * of that by hand, which is exactly where a wrong-field read can sneak in. The one exception is
  * {@link IntRuntimeConstFunction#getLong}: an overflowing INT arithmetic arg wraps in getInt() but
- * widens in getLong(), so that subclass keeps the wrapped int from init() and fills the widened
- * long lazily on the first LONG-promoting read rather than re-deriving it from the wrapped int (see
- * its comments).
+ * widens in getLong(), so the widened long is not derivable from the wrapped int and that subclass
+ * caches both, reading both getters in init() (see its comments).
+ * <p>
+ * Every subclass is read-only after init(), so it inherits the argument's thread-safety
+ * ({@link UnaryFunction#isThreadSafe()}) and a single instance serves every parallel worker.
  * <p>
  * Transparent in plans ({@link #toPlan(PlanSink)} delegates to the argument).
  */
@@ -456,7 +458,6 @@ public interface RuntimeConstFunction extends UnaryFunction {
 
     final class IntRuntimeConstFunction extends IntFunction implements RuntimeConstFunction {
         private final Function arg;
-        private boolean isLongValueComputed;
         private long longValue;
         private int value;
 
@@ -476,41 +477,25 @@ public interface RuntimeConstFunction extends UnaryFunction {
 
         @Override
         public long getLong(Record rec) {
-            // INT is the one foldable type whose getLong() is not a pure function of getInt():
-            // an overflowing INT arithmetic arg (e.g. an INT*INT product) wraps mod 2^32 in
-            // getInt() but widens to the full-width result in getLong(). For + - * the two agree
-            // on their low 32 bits (a modular ring homomorphism), but division breaks even that:
-            // (1000000 * 1000000) / 7 wraps to -103911424 under getInt() yet widens to
-            // 142857142857 under getLong(), whose low 32 bits (1123222089) are a different
-            // number. So the widened value cannot be derived from the cached int. Reading both
-            // getters in init() would evaluate the composite subtree twice; instead init() reads
-            // only getInt() and this getter fills the widened long lazily, the first time a
-            // LONG-promoting context asks for it, then serves it for the remaining rows. The lazy
-            // fill mutates state outside init(), so this subclass is not read thread-safe (see
-            // isThreadSafe()) and runs on a per-worker copy.
-            if (!isLongValueComputed) {
-                longValue = arg.getLong(null);
-                isLongValueComputed = true;
-            }
             return longValue;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            // Evaluate the composite subtree exactly once, at its native INT width. getLong()
-            // widens lazily on first use (see its comment), so only the rarer LONG-promoting read
-            // pays a second evaluation while the common INT read stays single-evaluation. NULL
-            // flows through unchanged: getInt() yields INT_NULL and getLong() yields LONG_NULL.
+            // INT is the one foldable type whose getLong() is not a pure function of getInt(): an
+            // overflowing INT arithmetic arg (e.g. an INT*INT product) wraps mod 2^32 in getInt() but
+            // widens to the full-width result in getLong(). For + - * the two agree on their low 32
+            // bits (a modular ring homomorphism), but division breaks even that: (1000000 * 1000000) / 7
+            // wraps to -103911424 under getInt() yet widens to 142857142857 under getLong(), whose low
+            // 32 bits (1123222089) are a different number. So the widened value cannot be derived from
+            // the cached int and init() reads both getters, evaluating the runtime-constant subtree
+            // twice. That is two evaluations per cursor, and it keeps every field read-only outside
+            // init(): the wrapper stays thread-safe, so parallel filters and GROUP BYs share one
+            // instance instead of recompiling the whole expression once per worker. NULL flows through
+            // unchanged: getInt() yields INT_NULL and getLong() yields LONG_NULL.
             value = arg.getInt(null);
-            isLongValueComputed = false;
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            // getLong() fills longValue lazily, mutating state outside init(), so a single
-            // instance cannot be shared across worker threads; each worker gets its own copy.
-            return false;
+            longValue = arg.getLong(null);
         }
     }
 

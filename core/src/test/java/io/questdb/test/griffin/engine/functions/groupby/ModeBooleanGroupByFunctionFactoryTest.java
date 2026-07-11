@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.groupby.ModeBooleanGroupByFunction;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -32,6 +36,24 @@ import org.junit.Test;
  * Please check the comment on `testModeWithGroupBy` for clarity.
  */
 public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testIsThreadSafeDelegatesToArg() {
+        // Unlike the other mode functions this one keeps no map, so it once hard-coded isThreadSafe()=true.
+        // But it reads the arg per row, and SqlCodeGenerator.compileWorkerGroupByFunctionsConditionally
+        // only builds per-worker copies when some group-by function reports false - so a hard-coded true
+        // hands the same instance, and the same non-thread-safe arg, to every parallel GROUP BY worker
+        // (AsyncGroupByAtom.getGroupByFunctions returns ownerGroupByFunctions when perWorkerGroupByFunctions
+        // is null). It must report the arg's thread-safety instead.
+        Assert.assertFalse(
+                "mode() must inherit a non-thread-safe arg",
+                new ModeBooleanGroupByFunction(new TestBooleanFunction(false)).isThreadSafe()
+        );
+        Assert.assertTrue(
+                "mode() must inherit a thread-safe arg",
+                new ModeBooleanGroupByFunction(new TestBooleanFunction(true)).isThreadSafe()
+        );
+    }
 
     @Test
     public void testModeAllFalse() throws Exception {
@@ -206,5 +228,23 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                         1970-01-01T01:00:00.000000Z\ttrue
                         1970-01-01T02:00:00.000000Z\ttrue
                         """);
+    }
+
+    private static class TestBooleanFunction extends BooleanFunction {
+        private final boolean isThreadSafe;
+
+        private TestBooleanFunction(boolean isThreadSafe) {
+            this.isThreadSafe = isThreadSafe;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return true;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return isThreadSafe;
+        }
     }
 }

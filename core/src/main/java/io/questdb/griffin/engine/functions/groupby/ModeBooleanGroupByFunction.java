@@ -103,7 +103,11 @@ public class ModeBooleanGroupByFunction extends BooleanFunction implements Unary
 
     @Override
     public boolean isThreadSafe() {
-        return true;
+        // Unlike the other mode functions this one keeps no map, so it adds no per-instance state of
+        // its own - but it still reads the arg per row, so it must report the arg's thread-safety.
+        // Hard-coding true here shares a single instance across every parallel GROUP BY worker, which
+        // races whenever the arg is not thread-safe.
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override
