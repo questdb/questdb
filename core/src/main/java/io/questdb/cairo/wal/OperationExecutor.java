@@ -255,7 +255,13 @@ class OperationExecutor implements Closeable {
                         LOG.critical().$("could not rollback, table is distressed [table=")
                                 .$(tableToken).$(", error=").$(th2).I$();
                     }
-                    // Mark as not applied so the apply job can retry.
+                    // rollback() above already restores the durably-committed seqTxn (S-1) - it reloads the
+                    // txn state from disk via txWriter.unsafeLoadAll() - so this explicit set is not "fixing"
+                    // a rollback no-op. It is defensive parity with the CairoException-non-tolerable branch
+                    // above, and it guards the case where the guarded rollback() itself failed (th2, logged
+                    // above): rollback() reaches that reload only partway through its own cleanup, so a
+                    // failure before it means seqTxn was never reloaded, and this line is what still marks
+                    // the txn as not applied so the apply job retries S.
                     tableWriter.setSeqTxn(seqTxn - 1);
                     throw th;
                 }

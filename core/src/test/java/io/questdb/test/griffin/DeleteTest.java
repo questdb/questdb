@@ -89,6 +89,27 @@ public class DeleteTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Mat-view counterpart of {@link #testDeleteRejectsPlainView}: {@code generateDelete}'s
+     * {@code checkMatViewModification(tableToken)} call (see {@code SqlCompilerImpl}) is untested for DELETE
+     * - only the plain-VIEW branch ({@code checkViewModification}) had coverage. {@code TableToken.isView()}
+     * and {@code isMatView()} are mutually exclusive (see {@code TableToken}'s constructor), so a mat view
+     * never trips the plain-view check first; this pins the actual, distinct "materialized view" error.
+     */
+    @Test
+    public void testDeleteRejectsMaterializedView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view t_mv as (select ts, max(x) as x from t sample by 1h) partition by DAY");
+            try {
+                execute("DELETE FROM t_mv WHERE x = 1");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view");
+            }
+        });
+    }
+
     @Test
     public void testDeleteRejectsUnknownColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -194,6 +215,44 @@ public class DeleteTest extends AbstractCairoTest {
             assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n0\n");
             // Exact survivor set: the table must be truly empty, not just report a zero count.
             assertQuery("select * from t").timestamp("ts").expectSize().returns("ts\tx\n");
+        });
+    }
+
+    /**
+     * {@link #testDeleteEverythingEmptiesTable} drains a pure time-range delete-all (Task 2.1 fast path:
+     * {@code deleteTimeRange}, a single empty {@code replaceRange} over the whole populated interval). This
+     * is the survivor-path counterpart: an ARBITRARY predicate (no designated-timestamp component at all, so
+     * {@code classifyDeleteTimeRange} cannot classify it as a pure interval - confirmed below via the
+     * white-box {@link #assertNotPureTimeRange} helper) that still happens to match every row, so
+     * {@code executeDelete} routes through {@code replaceWithSurvivors} instead, and the negated survivor
+     * factory ({@code WHERE NOT(pred)}) yields a genuinely EMPTY cursor. Pins that the general survivor path
+     * empties (truncates) the table correctly too, not just the dedicated fast path.
+     */
+    @Test
+    public void testDeleteArbitraryDeletesAllRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(48)) " +
+                    "timestamp(ts) partition by DAY WAL"); // 2 days
+            drainWalQueue();
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // x % 1 = 0 is true for every integer x regardless of sign/value - matches every row - yet
+                // has no designated-timestamp component whatsoever, so it cannot be (mis)classified as a
+                // pure time range.
+                assertNotPureTimeRange(compiler, "DELETE FROM t WHERE x % 1 = 0");
+            }
+
+            execute("DELETE FROM t WHERE x % 1 = 0");
+            drainWalQueue();
+
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n0\n");
+            // Exact survivor set: the table must be truly empty, not just report a zero count.
+            assertQuery("select * from t").timestamp("ts").expectSize().returns("ts\tx\n");
+
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "an arbitrary-predicate delete-all via the survivor path must not suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
         });
     }
 

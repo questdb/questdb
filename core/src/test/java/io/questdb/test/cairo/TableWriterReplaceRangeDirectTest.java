@@ -216,6 +216,75 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
     }
 
     /**
+     * {@code replaceRange}'s survivor path must not assume the incoming cursor already arrives in timestamp
+     * order: it has an internal sort/dispatch/swap branch specifically to reorder a genuinely out-of-order
+     * survivor cursor before committing. Every other direct test in this file - and every DELETE-driven
+     * survivor cursor in production (see {@code OperationExecutor#executeDelete}) - sources its survivor rows
+     * from a plain {@code SELECT * FROM <designated-ts table> WHERE ...}, which always scans in physical
+     * (ascending-ts) order, a QuestDB storage invariant; the reorder branch is reachable in principle but
+     * never actually exercised by those tests.
+     * <p>
+     * This test forces a genuinely descending-ts cursor via an explicit {@code ORDER BY x DESC} (x and ts are
+     * monotonically related by construction, and QuestDB does not eliminate an explicit reverse sort just
+     * because the underlying scan is already ascending) over the exact same predicate and data as
+     * {@link #testReplaceRangeSurvivorsRewritesPartition} - row order is the ONLY difference from that
+     * passing test - and asserts the post-replace partition is nonetheless fully and correctly ts-ordered
+     * against the same NOT-predicate reference. A {@code replaceRange} that trusted cursor order blindly
+     * would either corrupt the partition's physical ts order - caught here because a subsequent scan of a
+     * designated-timestamp table always reads back in physical order, so it would then mismatch {@code ref}
+     * (naturally ascending) in content and/or order - or throw outright.
+     */
+    @Test
+    public void testReplaceRangeSurvivorsFromUnorderedCursorReordersCorrectly() throws Exception {
+        assertMemoryLeak(() -> {
+            // 300 minute-spaced rows, all on 1970-01-01 (x*60s for x in 1..300 -> up to 05:00:00).
+            execute("create table src (ts timestamp, x long, s symbol) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into src select (x*60*1000000L)::timestamp, x, rnd_symbol('a','b','c') from long_sequence(300)");
+            // Survivors of "delete where x % 2 = 0" -> keep the odd-x rows (same reference shape as
+            // testReplaceRangeSurvivorsRewritesPartition).
+            execute("create table ref as (select * from src where not (x % 2 = 0)) timestamp(ts) partition by DAY BYPASS WAL");
+
+            TableToken tt = engine.verifyTableName("src");
+            long partLo = MicrosTimestampDriver.floor("1970-01-01T00:00:00.000000Z");
+            long partHi = MicrosTimestampDriver.floor("1970-01-02T00:00:00.000000Z");
+
+            long removed;
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    // ORDER BY x DESC is the only difference from testReplaceRangeSurvivorsRewritesPartition's
+                    // cursor query: x (and therefore ts) descends, so this cursor is genuinely, fully out of
+                    // the ts order replaceRange must commit in.
+                    RecordCursorFactory factory = compiler.compile(
+                            "select * from src where not (x % 2 = 0) and ts >= " + partLo + " and ts < " + partHi +
+                                    " order by x desc",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final EntityColumnFilter columnFilter = new EntityColumnFilter();
+                columnFilter.of(factory.getMetadata().getColumnCount());
+                try (TableWriter w = getWriter(tt)) {
+                    final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                            new BytecodeAssembler(),
+                            factory.getMetadata(),
+                            w.getMetadata(),
+                            columnFilter,
+                            configuration
+                    );
+                    removed = w.replaceRange(partLo, partHi, cursor, copier, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
+                }
+            }
+
+            // Same predicate/data as testReplaceRangeSurvivorsRewritesPartition -> same counts.
+            Assert.assertEquals(150, removed);
+            // Content AND order: a subsequent scan of src (designated-timestamp table) reads back in physical
+            // order, so this only matches ref (naturally ascending) if replaceRange actually re-sorted the
+            // descending input cursor before committing.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
+        });
+    }
+
+    /**
      * Regression test for a latent NPE: {@code copier.copy(null, record, row)} used to pass a null
      * {@link io.questdb.griffin.SqlExecutionContext} on the survivor-cursor path. That is fine for
      * schema-identical copies of ordinary types, but {@code RecordToRowCopierUtils} has no same-type fast
