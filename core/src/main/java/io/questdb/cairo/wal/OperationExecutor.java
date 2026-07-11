@@ -25,15 +25,22 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
@@ -45,6 +52,8 @@ import java.io.Closeable;
 class OperationExecutor implements Closeable {
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
+    // Sized to all survivor-cursor columns to build a 1:1 SELECT*->writer copier (see executeDelete).
+    private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final WalApplySqlExecutionContext executionContext;
     private final int maxRecompilationAttempts;
     private final Rnd rnd;
@@ -136,8 +145,112 @@ class OperationExecutor implements Closeable {
         }
     }
 
+    /**
+     * Applies a {@code DELETE FROM t WHERE <pred>} that arrived through the WAL as SQL text. Runs on the
+     * {@link ApplyWal2TableJob} thread holding {@code tableWriter} (single-threaded per table, all prior
+     * transactions already applied), so the survivor cursor may freely read the same table the replace
+     * then overwrites (as {@code executeUpdate} does).
+     * <p>
+     * Recompiles the DELETE under this apply context ({@code isWalApplication()==true}); the compiler
+     * negates the predicate and hands back a schema-identical {@code SELECT * FROM t WHERE NOT(pred)}
+     * survivor factory (see {@link io.questdb.griffin.SqlCompilerImpl#generateDelete}). The survivors
+     * replace the whole populated timestamp range via {@link TableWriter#replaceRange}: matched rows drop,
+     * unmatched rows are rewritten, and a fully-emptied table truncates.
+     *
+     * @return number of rows removed
+     */
     public long executeDelete(TableWriter tableWriter, CharSequence deleteSql, long seqTxn) throws SqlException {
-        throw new UnsupportedOperationException("executeDelete not implemented yet");
+        final TableToken tableToken = tableWriter.getTableToken();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            executionContext.remapTableNameResolutionTo(tableToken);
+            CompiledQuery compiledQuery;
+            int stallCount = 0;
+            while (true) {
+                try {
+                    compiledQuery = compiler.compile(deleteSql, executionContext);
+                    break;
+                } catch (TableReferenceOutOfDateException ex) {
+                    // The table was renamed in the registry between apply and this recompile; re-point and
+                    // retry (mirrors executeAlter). Bounded to avoid a live lock on a rename/rename-back.
+                    TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                    if (updatedToken != null && !updatedToken.equals(tableToken)) {
+                        tableWriter.updateTableToken(updatedToken);
+                        executionContext.remapTableNameResolutionTo(updatedToken);
+                    } else if (stallCount++ > maxRecompilationAttempts) {
+                        throw ex;
+                    }
+                }
+            }
+            try (DeleteOperation deleteOp = compiledQuery.getDeleteOperation()) {
+                // Advance the sequencer txn exactly as TableWriter.apply(op, seqTxn) does. setSeqTxn before
+                // the mutation so the replace commit persists THIS seqTxn; if no data txn was written
+                // (empty table, or an identical-data no-op replace), force a seqTxn commit. Without this the
+                // writer's persisted seqTxn never reaches this txn and ApplyWal2TableJob re-runs the DELETE
+                // forever. On error, rollback and mirror apply()'s WAL-tolerable / retry handling.
+                tableWriter.setSeqTxn(seqTxn);
+                try {
+                    final long txnBefore = tableWriter.getTxn();
+                    final long deleted = replaceWithSurvivors(compiler, tableWriter, deleteOp);
+                    if (tableWriter.getTxn() == txnBefore) {
+                        tableWriter.commitSeqTxn(seqTxn);
+                    }
+                    return deleted;
+                } catch (CairoException ex) {
+                    tableWriter.rollback();
+                    if (ex.isWALTolerable()) {
+                        // Mark this txn applied and skip it (mirrors TableWriter.apply).
+                        tableWriter.commitSeqTxn(seqTxn);
+                        return 0;
+                    }
+                    // Mark as not applied so the apply job can retry.
+                    tableWriter.setSeqTxn(seqTxn - 1);
+                    throw ex;
+                }
+            }
+        }
+        // Do not catch SqlException from compile / mark the txn committed: like executeUpdate, a compile
+        // failure here can be transient (e.g. table busy) and must be retried by the apply job.
+    }
+
+    /**
+     * Whole-range survivor replace: overwrites the table's whole populated timestamp range
+     * {@code [minTimestamp, maxTimestamp+1)} with the survivor rows.
+     * <p>
+     * <b>Memory note (deferred to Task 2.1):</b> a single whole-table survivor stage copies every surviving
+     * row into O3 memory at once, which can be heavy for a large table. The per-partition fast path that
+     * bounds the staged set to one partition is Task 2.1; this whole-range version is correct for all
+     * predicates and passes every case.
+     */
+    private long replaceWithSurvivors(SqlCompiler compiler, TableWriter tableWriter, DeleteOperation deleteOp) throws SqlException {
+        final RecordCursorFactory survivorFactory = deleteOp.getSurvivorFactory();
+        assert survivorFactory != null : "survivor factory must be built at WAL apply time (isWalApplication)";
+
+        if (tableWriter.getPartitionCount() == 0) {
+            // Empty table: nothing to delete, nothing to stage.
+            return 0;
+        }
+
+        // The survivor cursor is a schema-identical SELECT * over the table, so its columns line up 1:1 with
+        // the writer's and the designated timestamp sits at the same index. Build the copier over an
+        // EntityColumnFilter covering all columns (mirrors MatViewRefreshJob.getRecordToRowCopier).
+        final int timestampCursorIndex = tableWriter.getMetadata().getTimestampIndex();
+        entityColumnFilter.of(survivorFactory.getMetadata().getColumnCount());
+        final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                compiler.getAsm(),
+                survivorFactory.getMetadata(),
+                tableWriter.getMetadata(),
+                entityColumnFilter,
+                engine.getConfiguration()
+        );
+
+        // hi is EXCLUSIVE, so maxTimestamp+1 keeps the max-timestamp row inside the replaced range. Every
+        // survivor is a subset of the table's rows, so its timestamp is in [minTimestamp, maxTimestamp]
+        // and satisfies replaceRange's [lo, hiExcl) contract.
+        final long loInclusive = tableWriter.getMinTimestamp();
+        final long hiExclusive = tableWriter.getMaxTimestamp() + 1;
+        try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
+            return tableWriter.replaceRange(loInclusive, hiExclusive, survivorCursor, copier, timestampCursorIndex, executionContext);
+        }
     }
 
     public long executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {

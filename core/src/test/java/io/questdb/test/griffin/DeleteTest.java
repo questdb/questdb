@@ -98,4 +98,55 @@ public class DeleteTest extends AbstractCairoTest {
             }
         });
     }
+
+    // ---- end-to-end execution tests (Task 1.10) ----
+
+    @Test
+    public void testDeleteByArbitraryCondition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*60*1000000L)::timestamp ts, x, rnd_symbol('a','b') s " +
+                    "from long_sequence(10)) timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("DELETE FROM t WHERE x % 2 = 0");
+            drainWalQueue();
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n5\n");
+            assertQuery("select * from t where x % 2 = 0").timestamp("ts").returns("ts\tx\ts\n");
+        });
+    }
+
+    @Test
+    public void testDeleteByTimeRangeAcrossPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x " +
+                    "from long_sequence(96)) timestamp(ts) partition by DAY WAL"); // 4 days
+            drainWalQueue();
+            execute("DELETE FROM t WHERE ts < '1970-01-03T00:00:00.000000Z'");
+            drainWalQueue();
+            assertQuery("select min(ts) from t").timestamp("min").expectSize().returns("min\n1970-01-03T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testDeleteNoMatchIsNoOp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*60*1000000L)::timestamp ts, x from long_sequence(10)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("DELETE FROM t WHERE x > 1000");
+            drainWalQueue();
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n10\n");
+        });
+    }
+
+    @Test
+    public void testDeleteEverythingEmptiesTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(48)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("DELETE FROM t WHERE ts >= '1970-01-01T00:00:00.000000Z'");
+            drainWalQueue();
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
 }

@@ -3084,6 +3084,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final IQueryModel deleteQueryModel = (IQueryModel) model;
                 TableToken deleteTableToken = executionContext.getTableToken(deleteQueryModel.getTableName());
                 try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(deleteTableToken)) {
+                    // At WAL apply time OperationExecutor.executeDelete needs the SURVIVOR rows
+                    // (WHERE NOT(pred)) to feed TableWriter.replaceRange, not the matching rows. Negate the
+                    // predicate on the freshly parsed model BEFORE optimisation so the optimiser processes
+                    // NOT(pred) (interval extraction, pushdown, De Morgan) exactly like any other predicate.
+                    // On the first (query-thread) compile isWalApplication() is false: the predicate is left
+                    // as-is and the factory generateDelete builds is used only to validate predicate columns
+                    // before the DELETE is stored as SQL text.
+                    if (executionContext.isWalApplication()) {
+                        negateDeleteWhereClause(deleteQueryModel);
+                    }
                     IQueryModel optimisedNested = optimiser.optimise(deleteQueryModel.getNestedModel(), executionContext, this);
                     deleteQueryModel.setNestedModel(optimisedNested);
                     return model;
@@ -3163,7 +3173,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileUsingModel(executionContext, beginNanos, generateProgressLogger);
         }
         final short type = compiledQuery.getType();
-        if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
+        if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE || type == CompiledQuery.DELETE) && !executionContext.isWalApplication()) {
+            // Capture the SQL text on the first (query-thread) compile so it is stored in the WAL SQL txn
+            // (via DeleteOperation.getSqlText() in WalWriter.applyNonStructural) and can be recompiled at
+            // apply time. Skipped when already applying (isWalApplication). Without this the DELETE is
+            // stored with empty text and the apply-time recompile yields an empty query.
             compiledQuery.withSqlText(Chars.toString(sqlText));
         }
         compiledQuery.withContext(executionContext);
@@ -4878,6 +4892,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } while ((queryModel = queryModel.getNestedModel()) != null && queryModel.isOptimisable());
     }
 
+    // Wraps the DELETE predicate in a logical NOT so that generating the (already SELECT-*) nested model
+    // yields the survivor rows (WHERE NOT(pred)) rather than the matching rows. The parsed model shape
+    // (SqlParser.parseDelete) is:
+    //   deleteQueryModel(DELETE) -> nested = fromModel(SELECT *) -> nested = innerModel(whereClause = pred)
+    // The NOT node is built exactly as the optimiser builds a logical negation (SqlOptimiser: type=OPERATION,
+    // token "not", paramCount 1, rhs = operand). WHERE is mandatory for DELETE (parser-enforced), so the
+    // inner where clause is always non-null here.
+    private void negateDeleteWhereClause(IQueryModel deleteQueryModel) {
+        final IQueryModel innerModel = deleteQueryModel.getNestedModel().getNestedModel();
+        final ExpressionNode pred = innerModel.getWhereClause();
+        final ExpressionNode notPred = sqlNodePool.next();
+        notPred.type = ExpressionNode.OPERATION;
+        notPred.token = "not";
+        notPred.paramCount = 1;
+        notPred.rhs = pred;
+        notPred.position = pred.position;
+        innerModel.setWhereClause(notPred);
+    }
+
     private DeleteOperation generateDelete(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         TableToken tableToken = executionContext.getTableToken(model.getTableName());
         try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -4887,19 +4920,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             checkViewModification(tableToken);
             checkMatViewModification(tableToken);
 
-            // Validate that the WHERE predicate compiles against the table by building (and immediately
-            // discarding) a real factory over the already-optimised nested model (see compileExecutionModel0).
-            // v1 does not need the factory itself: on WAL tables the DELETE is stored as SQL text and the
-            // survivor factory is recompiled by the executor at apply time (Task 1.8+).
-            RecordCursorFactory factory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
-            factory.close();
+            // The nested model is a schema-identical "SELECT * FROM t WHERE <clause>". On the first
+            // (query-thread) compile <clause> is the raw predicate: build then immediately discard the
+            // factory purely to validate that the predicate columns exist/type-check; the DELETE then
+            // travels through the WAL as SQL text with a null survivor factory. At apply time
+            // (isWalApplication) the predicate has been negated in compileExecutionModel0, so this factory
+            // is the SURVIVOR cursor (WHERE NOT(pred)) that OperationExecutor.executeDelete feeds to
+            // TableWriter.replaceRange: keep it and hand ownership to the DeleteOperation.
+            RecordCursorFactory survivorFactory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
+            if (!executionContext.isWalApplication()) {
+                survivorFactory.close();
+                survivorFactory = null;
+            }
 
             return new DeleteOperation(
                     tableToken,
                     metadata.getTableId(),
                     metadata.getMetadataVersion(),
                     model.getModelPosition(),
-                    null
+                    survivorFactory
             );
         }
     }
