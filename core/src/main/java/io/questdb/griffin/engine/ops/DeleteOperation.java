@@ -25,11 +25,14 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.MetadataService;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
@@ -155,6 +158,24 @@ public class DeleteOperation extends AbstractOperation {
     public void serialize(TableWriterTask task) {
         super.serialize(task);
         task.setAsyncWriterCommand(this);
+    }
+
+    // Sets a DELETE window-bound bind variable (WINDOW_LO_BIND / WINDOW_HI_BIND) in the designated-timestamp
+    // column's OWN unit, so the runtime interval bound is interpreted without a micros<->nanos rescale. A
+    // micros-typed bind variable (BindVariableService.setTimestamp) evaluated against a TIMESTAMP_NANO
+    // designated column is rescaled x1000 by NanosTimestampDriver.from(value, TIMESTAMP_MICRO) -
+    // Long.MIN_VALUE+1 / Long.MAX_VALUE (the compiled-in whole-range defaults) then overflow
+    // Math.multiplyExact, the survivor factory's getCursor throws ImplicitCastException, and the WAL apply
+    // job SUSPENDS the table instead of deleting anything (micros tables are unaffected: the driver call is a
+    // no-op rescale). This is the ONE place that sets these bind variables, shared by
+    // SqlCompilerImpl.generateDelete (compile-time whole-range defaults) and OperationExecutor (Task 5,
+    // per-window rebinds), so both paths stay unit-correct together.
+    public static void setWindowBound(BindVariableService bindVariableService, CharSequence name, int timestampColumnType, long value) throws SqlException {
+        if (ColumnType.isTimestampNano(timestampColumnType)) {
+            bindVariableService.setTimestampNano(name, value);
+        } else {
+            bindVariableService.setTimestamp(name, value);
+        }
     }
 
     @Override

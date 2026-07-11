@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -129,6 +130,44 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "expected an interval scan for a designated-ts range predicate, plan was:\n" + plan,
                     Chars.contains(plan, "Interval forward scan")
+            );
+        });
+    }
+
+    // Regression test (CRITICAL fix): on a TIMESTAMP_NS designated-timestamp WAL table, generateDelete used to
+    // set the __del_win_lo/__del_win_hi defaults via BindVariableService.setTimestamp, which is unconditionally
+    // MICROS-typed. At apply time the survivor factory's runtime interval evaluated that bind variable through
+    // NanosTimestampDriver.from(value, TIMESTAMP_MICRO) -> microsToNanos -> Math.multiplyExact, and the
+    // Long.MAX_VALUE default overflowed: ImplicitCastException, WAL apply fails, and the table is SUSPENDED
+    // without deleting anything. DeleteOperation.setWindowBound (used by generateDelete) fixes this by setting
+    // the bind variable in the designated-timestamp column's OWN unit (setTimestampNano for TIMESTAMP_NANO).
+    // Before the fix this test fails with the table suspended; after the fix it deletes exactly the matched
+    // rows and leaves the table healthy.
+    @Test
+    public void testDeleteArbitraryPredicateOnNanosTimestampDoesNotSuspendTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Hourly rows over 4 daily partitions (x=1..96), mirroring createAndPopulate() but in nanos.
+            execute("create table t (ts timestamp_ns, x long) timestamp(ts) partition by DAY WAL");
+            execute("insert into t select timestamp_sequence_ns(0, 60*60*1000000000L), x from long_sequence(96)");
+            drainWalQueue();
+            // Independent oracle snapshot, never touched by the DELETE.
+            execute("create table t_ref as (select * from t)");
+
+            final TableToken tableToken = engine.verifyTableName("t");
+
+            // An arbitrary (non-time-range) predicate forces the whole-range survivor-replace path
+            // (OperationExecutor.replaceWithSurvivors), which is exactly where the bind-variable unit bug bites.
+            execute("delete from t where x % 2 = 0");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "table must not be suspended by a DELETE on a TIMESTAMP_NS designated-timestamp column",
+                    engine.getTableSequencerAPI().isSuspended(tableToken)
+            );
+            // Surviving rows must be exactly the NOT(x % 2 = 0) set (odd x, 1..95), in table order.
+            assertSqlCursors(
+                    "select * from t_ref where not (x % 2 = 0)",
+                    "select * from t"
             );
         });
     }

@@ -5078,9 +5078,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // EMPTY set - that would make the survivor scan return nothing and the DELETE erase the whole
                 // table. Long.MIN_VALUE + 1 is the smallest non-null timestamp and sits below all real data, so
                 // the default interval [MIN+1, MAX) covers every row.
+                // Set both bind variables in the designated-timestamp column's OWN unit (see
+                // DeleteOperation.setWindowBound): a micros-typed bind variable read against a TIMESTAMP_NANO
+                // column is rescaled x1000 by NanosTimestampDriver.from, which overflows on these whole-range
+                // defaults and suspends the table instead of deleting anything.
                 final BindVariableService bindVariableService = executionContext.getBindVariableService();
-                bindVariableService.setTimestamp(DeleteOperation.WINDOW_LO_BIND, Long.MIN_VALUE + 1);
-                bindVariableService.setTimestamp(DeleteOperation.WINDOW_HI_BIND, Long.MAX_VALUE);
+                final int tsColumnType = metadata.getColumnType(metadata.getTimestampIndex());
+                DeleteOperation.setWindowBound(bindVariableService, DeleteOperation.WINDOW_LO_BIND, tsColumnType, Long.MIN_VALUE + 1);
+                DeleteOperation.setWindowBound(bindVariableService, DeleteOperation.WINDOW_HI_BIND, tsColumnType, Long.MAX_VALUE);
                 survivorFactory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
             } else {
                 final RecordCursorFactory validationFactory = generateSelectOneShot(model.getNestedModel(), executionContext, false);
