@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -962,6 +963,164 @@ public class DeleteTest extends AbstractCairoTest {
                     .noRandomAccess().expectSize().returns("count\n0\n");
             assertQuery("select min(ts), max(ts) from t").noRandomAccess().expectSize()
                     .returns("min\tmax\n1970-01-01T01:00:00.000000Z\t1970-01-01T23:00:00.000000Z\n");
+        });
+    }
+
+    // ---- Task 3.2: crash-safety / re-apply-idempotence verification ----
+
+    /**
+     * Task 3.2. A SINGLE DELETE whose one pure-time-range interval simultaneously exercises all three
+     * physical strategies {@link io.questdb.cairo.wal.OperationExecutor#executeDelete} can take within one
+     * commit, across a 5-day table (24 hourly rows/day, no short first day or trailing partial day):
+     * <ul>
+     *   <li>1970-01-02: NATIVE, only the interval's LOW edge falls inside it -&gt; boundary trim.</li>
+     *   <li>1970-01-03: NATIVE, wholly inside the interval -&gt; whole-partition drop (fully covered).</li>
+     *   <li>1970-01-04: converted to PARQUET before the delete, only the interval's HIGH edge falls inside
+     *       it (a partial, not full, cover) -&gt; Task 3.1 convert-fallback (un-tier to native, then trim;
+     *       contrast {@link #testDeleteInteriorParquetPartitionsByTimeRange}, where FULL cover means an
+     *       inline drop instead - no convert).</li>
+     * </ul>
+     * 1970-01-01 (wholly below the interval) and 1970-01-05 (wholly at/above it) are untouched controls on
+     * either side, proving neither boundary leaks into a neighbour.
+     * <p>
+     * Per {@code executeDelete}'s crash-safety argument, the convert pre-pass (commit #1) persists the
+     * PRIOR seqTxn {@code S-1}; only the replace (commit #2) advances to {@code S} - a single seqTxn
+     * advance for the whole mixed-strategy commit, however many physical strategies it mixes. So
+     * re-applying seqTxn {@code S} from a clean reopen (simulating a restart via release+reopen, see
+     * {@code WalAlterTableSqlTest#testReleaseAndReopenWriters}) must be a no-op: no double-delete, no
+     * resurrected rows, and the table must not suspend. A failure here (suspension, or a content
+     * divergence between the two drains) points at an intermediate commit prematurely persisting seqTxn
+     * {@code S} - a real crash-safety bug in {@code executeDelete}, not a test problem.
+     */
+    @Test
+    public void testDeleteMixedStrategyIsAtomicAndReapplyIdempotent() throws Exception {
+        assertMemoryLeak(() -> {
+            // 5 clean DAY partitions, 24 hourly rows each: x=1..120, ts=(x-1) hours from epoch, so x=1 is
+            // 1970-01-01T00:00:00 (unlike the file's usual x*3600... generator, there is no short first day
+            // or trailing 1-row partial day - every day below has exactly 24 rows).
+            execute("create table t as (select ((x-1)*3600*1000000L)::timestamp ts, x from long_sequence(120)) " +
+                    "timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+
+            // Convert the interior day whose delete-interval cover will be PARTIAL (not full), so the
+            // replace must convert-fallback rather than inline-drop it.
+            execute("alter table t convert partition to parquet list '1970-01-04'");
+            drainWalQueue();
+
+            // Single pure-time-range interval [lo, hiExcl): lo lands mid-1970-01-02 (native boundary trim),
+            // hiExcl lands mid-1970-01-04 (Parquet boundary trim -> convert-fallback); 1970-01-03 sits
+            // wholly inside so it is fully covered (native whole-partition drop).
+            final String lo = "1970-01-02T12:00:00.000000Z";
+            final String hiExcl = "1970-01-04T12:00:00.000000Z";
+            execute("DELETE FROM t WHERE ts >= '" + lo + "' AND ts < '" + hiExcl + "'");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "a mixed drop+trim+convert-fallback delete must succeed, not suspend",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+
+            // Independent oracle: survivors are exactly everything NOT in [lo, hiExcl).
+            assertSqlCursors(
+                    "select * from t_ref where not (ts >= '" + lo + "' and ts < '" + hiExcl + "')",
+                    "select * from t"
+            );
+            // Targeted per-day checks pin each of the three strategies individually, not just their sum.
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n72\n");
+            assertQuery("select count(*) from t where ts < '1970-01-02T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n24\n"); // untouched control (below lo)
+            assertQuery("select count(*) from t where ts >= '1970-01-02T00:00:00.000000Z' and ts < '1970-01-03T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n12\n"); // native boundary trim: 12 of 24 survive
+            assertQuery("select count(*) from t where ts >= '1970-01-03T00:00:00.000000Z' and ts < '1970-01-04T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n0\n"); // native whole-partition drop: none survive
+            assertQuery("select count(*) from t where ts >= '1970-01-04T00:00:00.000000Z' and ts < '1970-01-05T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n12\n"); // parquet convert-fallback trim: 12 of 24 survive
+            assertQuery("select count(*) from t where ts >= '1970-01-05T00:00:00.000000Z'")
+                    .noRandomAccess().expectSize().returns("count\n24\n"); // untouched control (at/above hiExcl)
+            // The converted boundary day ended up native, not Parquet.
+            assertQuery("select isParquet from table_partitions('t') where name = '1970-01-04'")
+                    .noRandomAccess().returns("isParquet\nfalse\n");
+
+            // Re-apply idempotence: release writers/WAL/sequencer (simulates a clean restart, see
+            // WalAlterTableSqlTest#testReleaseAndReopenWriters) and re-drain. Nothing new is queued - the
+            // delete's seqTxn is already durably applied - so this must be a genuine no-op: same row count,
+            // same oracle match, no resurrection, no suspension.
+            engine.releaseInactive();
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "table must not be suspended after release+reopen re-apply",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            assertSqlCursors(
+                    "select * from t_ref where not (ts >= '" + lo + "' and ts < '" + hiExcl + "')",
+                    "select * from t"
+            );
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n72\n");
+        });
+    }
+
+    /**
+     * Targets a specific reviewer concern about the Parquet convert-fallback's two-commit crash window
+     * (see {@link io.questdb.cairo.wal.OperationExecutor#executeDelete}): the convert pre-pass's commit #1
+     * (at seqTxn {@code S-1}) persists the native-format change via a plain {@code TableWriter} commit,
+     * which under a NOSYNC commit mode never fsyncs. Configure a SYNC commit mode (real fsyncs on every
+     * commit, not just NOSYNC's mmap-only durability) so the convert-fallback + replace sequence is
+     * exercised under the STRICTEST durability setting available in this harness, not just the permissive
+     * default every other DeleteTest case runs under - then release+reopen (simulates a clean restart, see
+     * {@code WalAlterTableSqlTest#testReleaseAndReopenWriters}) and re-drain to confirm the re-apply is
+     * still clean: correct contents, no suspension.
+     * <p>
+     * Harness note: there is no fault-injection point strictly between commit #1 and commit #2 here (that
+     * would need a {@code FilesFacade} fault timed to land between
+     * {@code commitPendingParquetToNativeConversions()} and the delete's own {@code replaceRange}/
+     * {@code commitSeqTxn}); the release+reopen below is this codebase's established restart-proxy idiom
+     * (mirroring {@code WalAlterTableSqlTest#testReleaseAndReopenWriters}) run under SYNC durability rather
+     * than a literal mid-window crash.
+     */
+    @Test
+    public void testDeleteParquetConvertFallbackReappliesUnderSyncCommitMode() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        assertMemoryLeak(() -> {
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x from long_sequence(72)) " +
+                    "timestamp(ts) partition by DAY WAL"); // 3 days
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+            execute("alter table t convert partition to parquet list '1970-01-01'");
+            drainWalQueue();
+
+            // Boundary trim on the Parquet day: first half of 1970-01-01 (x=1..11) removed; x=12..23 (and
+            // every later day) survive. Forces the Task 3.1 convert-to-native pre-pass ahead of the
+            // replace, now under SYNC commit mode.
+            execute("DELETE FROM t WHERE ts < '1970-01-01T12:00:00.000000Z'");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            Assert.assertFalse(
+                    "a SYNC-mode Parquet convert-fallback must succeed, not suspend",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            assertSqlCursors(
+                    "select * from t_ref where not (ts < '1970-01-01T12:00:00.000000Z')",
+                    "select * from t"
+            );
+            assertQuery("select isParquet from table_partitions('t') where name = '1970-01-01'")
+                    .noRandomAccess().returns("isParquet\nfalse\n");
+
+            // Re-apply idempotence under SYNC: release writers/WAL/sequencer (simulates a clean restart)
+            // and re-drain. Nothing new is queued - the delete's seqTxn is already durably applied - so
+            // re-apply must be a genuine no-op: no double-delete, no resurrected rows, table still not
+            // suspended.
+            engine.releaseInactive();
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "table must not be suspended after release+reopen re-apply under SYNC commit mode",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            assertSqlCursors(
+                    "select * from t_ref where not (ts < '1970-01-01T12:00:00.000000Z')",
+                    "select * from t"
+            );
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n61\n");
         });
     }
 
