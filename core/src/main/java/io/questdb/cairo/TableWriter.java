@@ -366,6 +366,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
     // set to a "shifted" state and the state has to be cleaned.
     private boolean memColumnShifted;
+    // Row count captured by beginReplaceRange, read by finishReplaceRange to report rows removed across all
+    // windows of a windowed replace. Only meaningful between a begin/finish pair.
+    private long replaceRangeRowsBefore;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private int metaSwapIndex;
@@ -3119,27 +3122,92 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int timestampCursorIndex,
             @Nullable SqlExecutionContext executionContext
     ) {
+        if (replaceRangeLoTs >= replaceRangeHiExclTs) {
+            // Empty or inverted range - nothing to remove. By the replace-range contract every survivor
+            // must fall inside [lo, hiExcl), so an empty range also has nothing to stage. Mirror the
+            // pre-split behaviour: flush pending rows and return without opening a replace transaction.
+            checkDistressed();
+            commit();
+            return 0;
+        }
+        beginReplaceRange();
+        try {
+            applyReplaceRangeWindow(replaceRangeLoTs, replaceRangeHiExclTs, survivorCursor, copier, timestampCursorIndex, executionContext);
+        } catch (Throwable th) {
+            abortReplaceRange();
+            throw th;
+        }
+        return finishReplaceRange();
+    }
+
+    /**
+     * Opens a windowed replace transaction: flushes pending rows and switches the writer into
+     * {@code WAL_DEDUP_MODE_REPLACE_RANGE}. Must be paired with one or more {@link #applyReplaceRangeWindow}
+     * calls - each over a DISJOINT sub-range, applied in ascending timestamp order - and a terminal
+     * {@link #finishReplaceRange} on success or {@link #abortReplaceRange} on failure.
+     * <p>
+     * <b>Crash-safety invariant:</b> no transaction is persisted until {@code finishReplaceRange}'s single
+     * {@code commit00()}. Each {@code applyReplaceRangeWindow} appends partition data + mutates in-memory
+     * {@code txWriter} bookkeeping via {@link #processWalCommitFinishApply}, which never writes {@code _txn}
+     * (that is exclusively {@code commit00} -> {@code txWriter.commit}). So the whole begin/apply.../finish
+     * sequence advances the durable txn (and seqTxn, when driven from WAL apply) exactly once. A crash before
+     * {@code finishReplaceRange} leaves the durable txn at its pre-begin value; the already-applied windows'
+     * on-disk partition data is uncommitted and discarded/overwritten on re-apply, which - because each
+     * finished window then contains only survivor rows - re-applies as a no-op, so a re-run reaches the same
+     * final state (idempotent). Disjoint windows touch disjoint partitions, so their surgeries accumulate in
+     * {@code txWriter} without interfering before the single commit.
+     */
+    public void beginReplaceRange() {
         checkDistressed();
 
         // Commit up front to flush any pending rows, so the replace-apply starts from a fully-committed
         // state with an empty lag (mirrors removePartition).
         commit();
 
-        if (replaceRangeLoTs >= replaceRangeHiExclTs) {
-            // Empty or inverted range - nothing to remove. By the replace-range contract every survivor
-            // must fall inside [lo, hiExcl), so an empty range also has nothing to stage.
-            return 0;
-        }
-
-        final long rowsBefore = txWriter.getRowCount();
-
         assert txWriter.getLagRowCount() == 0;
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
         txWriter.beginPartitionSizeUpdate();
+        replaceRangeRowsBefore = txWriter.getRowCount();
+        dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+    }
 
-        // hi is exclusive on input; the replace apply carries an inclusive max in the tx lag range.
-        final long replaceRangeTsHi = replaceRangeHiExclTs - 1;
+    /**
+     * Applies one window of an open windowed replace (see {@link #beginReplaceRange}): replaces every row in
+     * {@code [loTs, hiExclTs)} with the survivor rows from {@code survivorCursor}, or - when the cursor is
+     * {@code null}/empty - empties that range in place. Stages ONLY this window's survivors into O3 memory and
+     * releases them before returning ({@code finishO3Append}), bounding peak O3 memory to a single window
+     * regardless of table size. Does NOT commit: the surgery accumulates in-memory into the transaction opened
+     * by {@code beginReplaceRange} and is persisted once by {@link #finishReplaceRange}. Windows must be
+     * disjoint and applied in ascending timestamp order.
+     *
+     * @param loTs                 inclusive low timestamp of the window to replace
+     * @param hiExclTs             exclusive high timestamp of the window to replace
+     * @param survivorCursor       survivor rows to write into the window, or {@code null} to empty it
+     * @param copier               copies a survivor record into a table row (cursor path only)
+     * @param timestampCursorIndex designated-timestamp column index in the cursor (cursor path only)
+     * @param executionContext     context forwarded to {@code copier.copy} (cursor path only); required
+     *                             whenever a survivor row contains a DECIMAL column (the generated copier
+     *                             unconditionally dereferences it for DECIMAL8..DECIMAL256 destinations).
+     */
+    public void applyReplaceRangeWindow(
+            long loTs,
+            long hiExclTs,
+            @Nullable RecordCursor survivorCursor,
+            @Nullable RecordToRowCopier copier,
+            int timestampCursorIndex,
+            @Nullable SqlExecutionContext executionContext
+    ) {
+        if (loTs >= hiExclTs) {
+            // Empty or inverted window - nothing to remove, nothing to stage. Skipped so a windowed sweep
+            // over a range with gaps (empty windows) is a cheap no-op.
+            return;
+        }
+
+        // hi is exclusive on input; the replace apply carries an inclusive max in the tx lag range. Refresh
+        // the current-last-partition view per window: an earlier window may have dropped/trimmed partitions,
+        // so this window's apply must see the up-to-date state rather than begin's snapshot.
+        final long replaceRangeTsHi = hiExclTs - 1;
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         if (isLastPartitionClosed() && isEmptyTable()) {
             populateDenseIndexerList();
@@ -3161,85 +3229,96 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // NOT route through o3Commit(); we drive processWalCommitFinishApply directly with the true range,
         // feeding the survivors as the sorted O3 batch.
         try {
-            dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
-            try {
-                // Stage survivors (if any) into O3 memory. Kept inside the try/finally so a mid-drain failure
-                // (cursor IO error, copier cast, distress) is unwound by finishO3Append/clearO3 below rather
-                // than leaking forced-O3 state. dedupMode does not affect the O3 append path.
-                long o3RowCount = 0;
-                if (survivorCursor != null && survivorCursor.hasNext()) {
-                    // Force O3 staging up front so every survivor lands in O3 memory uniformly, whether its
-                    // timestamp is below or at/above the table's current max. Without this a survivor at/after
-                    // maxTimestamp would append in order (into the active partition, not O3 memory) and be
-                    // silently dropped by the O3 sort below - matching how the WAL replace path treats ALL
-                    // replacement rows as O3. o3OpenColumns() also points activeColumns at O3 memory so the
-                    // copier writes there.
-                    o3OpenColumns();
-                    o3InError = false;
-                    // newRowO3 sets o3MasterRef AFTER the first row's newRow bumps masterRef; here we force O3
-                    // before the loop (masterRef un-bumped), so pre-add that bump. getO3RowCount0() =
-                    // (masterRef-o3MasterRef+1)/2 must then read 0 at the first o3TimestampSetter, i.e. the
-                    // stored (timestamp, row-index) entries count 0,1,2,... in lockstep with the physical
-                    // column-append order. Off by one here shifts each survivor's payload one row off its ts.
-                    o3MasterRef = masterRef + 1;
-                    rowAction = ROW_ACTION_O3;
+            // Stage survivors (if any) into O3 memory. Kept inside the try/finally so a mid-drain failure
+            // (cursor IO error, copier cast, distress) is unwound by finishO3Append/clearO3 below rather
+            // than leaking forced-O3 state. dedupMode does not affect the O3 append path.
+            long o3RowCount = 0;
+            if (survivorCursor != null && survivorCursor.hasNext()) {
+                // Force O3 staging up front so every survivor lands in O3 memory uniformly, whether its
+                // timestamp is below or at/above the table's current max. Without this a survivor at/after
+                // maxTimestamp would append in order (into the active partition, not O3 memory) and be
+                // silently dropped by the O3 sort below - matching how the WAL replace path treats ALL
+                // replacement rows as O3. o3OpenColumns() also points activeColumns at O3 memory so the
+                // copier writes there.
+                o3OpenColumns();
+                o3InError = false;
+                // newRowO3 sets o3MasterRef AFTER the first row's newRow bumps masterRef; here we force O3
+                // before the loop (masterRef un-bumped), so pre-add that bump. getO3RowCount0() =
+                // (masterRef-o3MasterRef+1)/2 must then read 0 at the first o3TimestampSetter, i.e. the
+                // stored (timestamp, row-index) entries count 0,1,2,... in lockstep with the physical
+                // column-append order. Off by one here shifts each survivor's payload one row off its ts.
+                o3MasterRef = masterRef + 1;
+                rowAction = ROW_ACTION_O3;
 
-                    final Record record = survivorCursor.getRecord();
-                    do {
-                        final long ts = record.getTimestamp(timestampCursorIndex);
-                        // Guard (mirrors MatViewRefreshJob.insertAsSelect): a survivor outside [lo, hiExcl)
-                        // violates the replace contract (processWalCommitDedupReplace asserts lo <= o3Min,
-                        // hiExcl > o3Max).
-                        assert ts >= replaceRangeLoTs && ts < replaceRangeHiExclTs
-                                : "survivor timestamp out of replace range [ts=" + ts + ", lo=" + replaceRangeLoTs + ", hiExcl=" + replaceRangeHiExclTs + ']';
-                        final Row row = newRow(ts);
-                        // executionContext must be a real context, not null: the generated copier
-                        // unconditionally dereferences it for any DECIMAL8..DECIMAL256 destination column
-                        // (RecordToRowCopierUtils has no same-type fast path for decimals), so a null context
-                        // NPEs even for a schema-identical select* copy when the table has a decimal column.
-                        copier.copy(executionContext, record, row);
-                        row.append();
-                    } while (survivorCursor.hasNext());
+                final Record record = survivorCursor.getRecord();
+                do {
+                    final long ts = record.getTimestamp(timestampCursorIndex);
+                    // Guard (mirrors MatViewRefreshJob.insertAsSelect): a survivor outside [lo, hiExcl)
+                    // violates the replace contract (processWalCommitDedupReplace asserts lo <= o3Min,
+                    // hiExcl > o3Max).
+                    assert ts >= loTs && ts < hiExclTs
+                            : "survivor timestamp out of replace range [ts=" + ts + ", lo=" + loTs + ", hiExcl=" + hiExclTs + ']';
+                    final Row row = newRow(ts);
+                    // executionContext must be a real context, not null: the generated copier
+                    // unconditionally dereferences it for any DECIMAL8..DECIMAL256 destination column
+                    // (RecordToRowCopierUtils has no same-type fast path for decimals), so a null context
+                    // NPEs even for a schema-identical select* copy when the table has a decimal column.
+                    copier.copy(executionContext, record, row);
+                    row.append();
+                } while (survivorCursor.hasNext());
 
-                    o3RowCount = getO3RowCount0();
-                }
+                o3RowCount = getO3RowCount0();
+            }
 
-                txWriter.setLagMinTimestamp(replaceRangeLoTs);
-                txWriter.setLagMaxTimestamp(replaceRangeTsHi);
-                if (o3RowCount > 0) {
-                    // Sort the staged survivors by timestamp and reshuffle their data columns to match,
-                    // mirroring o3Commit()'s sort/dispatch/swap. The O3 timestamp column is a 128-bit
-                    // (timestamp, row-index) merge array (o3TimestampSetter), so UNORDERED survivors are
-                    // handled here - the sort orders them before the apply; the caller need not pre-sort.
-                    final long sortedTimestampsAddr = o3TimestampMem.getAddress();
-                    assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
-                    if (o3RowCount > 600 || !o3QuickSortEnabled) {
-                        o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
-                        Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
-                    } else {
-                        Vect.quickSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
-                    }
-                    dispatchColumnTasks(sortedTimestampsAddr, o3RowCount, IGNORE, IGNORE, IGNORE, cthO3SortColumnRef);
-                    swapO3ColumnsExcept(metadata.getTimestampIndex());
-
-                    // Non-empty O3 batch: sorted survivors + the [lo, hiExcl) range drive the partition
-                    // drop/trim/split and the survivor merge (processWalCommitDedupReplace's rowLo < rowHi
-                    // branch). copiedToMemory/flattenTimestamp = true: the batch is in O3 memory.
-                    processWalCommitFinishApply(0, sortedTimestampsAddr, 0, o3RowCount, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+            txWriter.setLagMinTimestamp(loTs);
+            txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+            if (o3RowCount > 0) {
+                // Sort the staged survivors by timestamp and reshuffle their data columns to match,
+                // mirroring o3Commit()'s sort/dispatch/swap. The O3 timestamp column is a 128-bit
+                // (timestamp, row-index) merge array (o3TimestampSetter), so UNORDERED survivors are
+                // handled here - the sort orders them before the apply; the caller need not pre-sort.
+                final long sortedTimestampsAddr = o3TimestampMem.getAddress();
+                assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+                if (o3RowCount > 600 || !o3QuickSortEnabled) {
+                    o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
+                    Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
                 } else {
-                    // Empty O3 batch: the replace range alone (carried in lag min/max) drives the partition
-                    // drop/trim over [lo, hiExcl). This is processWalCommitDedupReplace's rowLo >= rowHi branch.
-                    processWalCommitFinishApply(0, 0, 0, 0, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+                    Vect.quickSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
                 }
-            } finally {
-                finishO3Append(0);
-                o3Columns = o3MemColumns1;
+                dispatchColumnTasks(sortedTimestampsAddr, o3RowCount, IGNORE, IGNORE, IGNORE, cthO3SortColumnRef);
+                swapO3ColumnsExcept(metadata.getTimestampIndex());
+
+                // Non-empty O3 batch: sorted survivors + the [lo, hiExcl) range drive the partition
+                // drop/trim/split and the survivor merge (processWalCommitDedupReplace's rowLo < rowHi
+                // branch). copiedToMemory/flattenTimestamp = true: the batch is in O3 memory.
+                processWalCommitFinishApply(0, sortedTimestampsAddr, 0, o3RowCount, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
+            } else {
+                // Empty O3 batch: the replace range alone (carried in lag min/max) drives the partition
+                // drop/trim over [lo, hiExcl). This is processWalCommitDedupReplace's rowLo >= rowHi branch.
+                processWalCommitFinishApply(0, 0, 0, 0, TableWriterPressureControl.EMPTY, true, partitionTimestampHi);
             }
         } finally {
-            dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+            finishO3Append(0);
+            o3Columns = o3MemColumns1;
+            // Clear per-window so the next window starts from an unshifted O3 column state - each window is a
+            // self-contained apply. (The single-window path cleared this once at the end; clearing per window
+            // is equivalent there and correct for multiple windows.)
             if (memColumnShifted) {
                 clearMemColumnShifts();
             }
+        }
+    }
+
+    /**
+     * Terminal phase of a windowed replace: resets the dedup mode, persists all accumulated window surgeries
+     * with a single {@code commit00()} (the one and only txn/seqTxn advance of the whole replace), reclaims
+     * fully-dropped partition directories, and shrinks O3 memory. Returns the number of rows removed across
+     * all windows since {@link #beginReplaceRange}.
+     */
+    public long finishReplaceRange() {
+        dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+        if (memColumnShifted) {
+            clearMemColumnShifts();
         }
 
         final long rowsAfter = txWriter.getRowCount();
@@ -3250,7 +3329,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         housekeep(configuration.getMicrosecondClock().getTicks());
         shrinkO3Mem();
 
-        return rowsBefore - rowsAfter;
+        return replaceRangeRowsBefore - rowsAfter;
+    }
+
+    /**
+     * Aborts an open windowed replace after a window failure: resets the dedup mode and any shifted mem
+     * columns WITHOUT committing, so the partial (uncommitted) surgery is not persisted. The caller performs
+     * the transaction-level rollback (as {@code OperationExecutor#executeDelete} does).
+     */
+    public void abortReplaceRange() {
+        dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+        if (memColumnShifted) {
+            clearMemColumnShifts();
+        }
     }
 
     @Override

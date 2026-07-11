@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -337,5 +338,177 @@ public class TableWriterReplaceRangeDirectTest extends AbstractCairoTest {
             Assert.assertEquals(150, removed);
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
         });
+    }
+
+    // ---------------------------------------------------------------------------------------------------
+    // SPIKE: windowed replace (begin / applyReplaceRangeWindow x N / finish). Proves the load-bearing
+    // property for the adaptive-windowed DELETE (spec 2026-07-11): N per-window applies accumulate into a
+    // SINGLE commit (one txn advance), produce a result identical to a whole-range replace, and an
+    // uncommitted-then-rolled-back sequence discards every window (crash-safe re-apply).
+    // ---------------------------------------------------------------------------------------------------
+
+    /**
+     * Two disjoint windows over a four-partition table. Asserts (a) neither window commits (txn frozen across
+     * both applies), (b) finish advances the txn EXACTLY once, (c) the result is byte-identical to the
+     * whole-range NOT-predicate reference.
+     */
+    @Test
+    public void testWindowedReplaceTwoWindowsSingleCommitEqualsWholeRange() throws Exception {
+        assertMemoryLeak(() -> {
+            // 96 hourly rows over four daily partitions (1970-01-01..04), 24 rows each.
+            execute("create table src (ts timestamp, x long, s symbol) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into src select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x, rnd_symbol('a','b','c') from long_sequence(96)");
+            // Pristine copy the survivor cursors read from - snapshot independent of src's in-flight writer state.
+            execute("create table orig as (select * from src) timestamp(ts) partition by DAY BYPASS WAL");
+            // Post-delete reference: keep odd-x rows.
+            execute("create table ref as (select * from src where not (x % 2 = 0)) timestamp(ts) partition by DAY BYPASS WAL");
+
+            TableToken tt = engine.verifyTableName("src");
+            // Two disjoint windows split at the 1970-01-03 boundary: [day1, day3) and [day3, day5).
+            long w1Lo = MicrosTimestampDriver.floor("1970-01-01T00:00:00.000000Z");
+            long w1Hi = MicrosTimestampDriver.floor("1970-01-03T00:00:00.000000Z");
+            long w2Lo = w1Hi;
+            long w2Hi = MicrosTimestampDriver.floor("1970-01-05T00:00:00.000000Z");
+
+            long removed;
+            try (TableWriter w = getWriter(tt)) {
+                w.beginReplaceRange();
+                final long txnAfterBegin = w.getTxn();
+
+                applyWindow(w, "not (x % 2 = 0)", w1Lo, w1Hi);
+                Assert.assertEquals("window 1 must not commit", txnAfterBegin, w.getTxn());
+
+                applyWindow(w, "not (x % 2 = 0)", w2Lo, w2Hi);
+                Assert.assertEquals("window 2 must not commit", txnAfterBegin, w.getTxn());
+
+                removed = w.finishReplaceRange();
+                Assert.assertEquals("finish must advance the txn exactly once", txnAfterBegin + 1, w.getTxn());
+            }
+
+            // 96 rows, even-x deleted -> 48 removed.
+            Assert.assertEquals(48, removed);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
+        });
+    }
+
+    /**
+     * One window per partition (four windows) with survivors in every window. Stresses cross-window
+     * accumulation of {@code processWalCommitFinishApply} surgeries into one commit and confirms correctness.
+     */
+    @Test
+    public void testWindowedReplaceManyWindowsAccumulateIntoOneCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, x long, s symbol) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into src select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x, rnd_symbol('a','b','c') from long_sequence(96)");
+            execute("create table orig as (select * from src) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("create table ref as (select * from src where not (x % 3 = 0)) timestamp(ts) partition by DAY BYPASS WAL");
+
+            TableToken tt = engine.verifyTableName("src");
+            long removed;
+            try (TableWriter w = getWriter(tt)) {
+                w.beginReplaceRange();
+                final long txnAfterBegin = w.getTxn();
+                for (int day = 1; day <= 4; day++) {
+                    long lo = MicrosTimestampDriver.floor("1970-01-0" + day + "T00:00:00.000000Z");
+                    long hi = MicrosTimestampDriver.floor("1970-01-0" + (day + 1) + "T00:00:00.000000Z");
+                    applyWindow(w, "not (x % 3 = 0)", lo, hi);
+                    Assert.assertEquals("no commit mid-sweep (day " + day + ")", txnAfterBegin, w.getTxn());
+                }
+                removed = w.finishReplaceRange();
+                Assert.assertEquals("single commit across all windows", txnAfterBegin + 1, w.getTxn());
+            }
+
+            // 96 rows, x % 3 == 0 deleted -> 32 removed.
+            Assert.assertEquals(32, removed);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
+        });
+    }
+
+    /**
+     * Crash-safety: apply a window, then roll back WITHOUT finishing (models a mid-delete failure / a crash
+     * before the terminal commit - {@code rollback} reloads {@code _txn} exactly as a post-crash reopen does).
+     * The uncommitted window must leave no trace: the durable state is unchanged (a fresh writer reads the
+     * original row count and txn, and src is byte-identical to orig). Re-applying the full delete then reaches
+     * the correct final state - i.e. the delete is idempotent under crash-and-retry.
+     */
+    @Test
+    public void testWindowedReplaceRollbackBeforeFinishDiscardsUncommittedWindows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table src (ts timestamp, x long, s symbol) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("insert into src select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x, rnd_symbol('a','b','c') from long_sequence(96)");
+            execute("create table orig as (select * from src) timestamp(ts) partition by DAY BYPASS WAL");
+            execute("create table ref as (select * from src where not (x % 2 = 0)) timestamp(ts) partition by DAY BYPASS WAL");
+
+            TableToken tt = engine.verifyTableName("src");
+            long w1Lo = MicrosTimestampDriver.floor("1970-01-01T00:00:00.000000Z");
+            long w1Hi = MicrosTimestampDriver.floor("1970-01-03T00:00:00.000000Z");
+
+            final long txnBefore;
+            try (TableWriter w = getWriter(tt)) {
+                txnBefore = w.getTxn();
+                w.beginReplaceRange();
+                applyWindow(w, "not (x % 2 = 0)", w1Lo, w1Hi);
+                // Simulate the crash / mid-delete failure: discard the uncommitted window instead of finishing.
+                w.rollback();
+                Assert.assertEquals("rollback must restore the committed row count", 96, w.getRowCount());
+                Assert.assertEquals("rollback must not advance the txn", txnBefore, w.getTxn());
+            }
+
+            // A fresh writer reads only durable state: the aborted delete never touched _txn.
+            try (TableWriter w = getWriter(tt)) {
+                Assert.assertEquals("durable txn unchanged after aborted delete", txnBefore, w.getTxn());
+                Assert.assertEquals("durable row count unchanged after aborted delete", 96, w.getRowCount());
+            }
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "orig", "src", LOG);
+
+            // Re-apply the whole delete (idempotent retry) and confirm the correct final state.
+            long removed;
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "select * from orig where not (x % 2 = 0)", sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final EntityColumnFilter columnFilter = new EntityColumnFilter();
+                columnFilter.of(factory.getMetadata().getColumnCount());
+                try (TableWriter w = getWriter(tt)) {
+                    final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                            new BytecodeAssembler(), factory.getMetadata(), w.getMetadata(), columnFilter, configuration
+                    );
+                    long lo = MicrosTimestampDriver.floor("1970-01-01T00:00:00.000000Z");
+                    long hi = MicrosTimestampDriver.floor("1970-01-05T00:00:00.000000Z");
+                    removed = w.replaceRange(lo, hi, cursor, copier, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
+                }
+            }
+            Assert.assertEquals(48, removed);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "ref", "src", LOG);
+        });
+    }
+
+    /**
+     * Applies one window of a windowed replace, sourcing survivors from the pristine {@code orig} table so the
+     * cursor's snapshot is independent of the in-flight writer state on the table under {@code w}.
+     */
+    private void applyWindow(TableWriter w, String predicate, long wLo, long wHiExcl) throws SqlException {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(
+                        "select * from orig where " + predicate + " and ts >= " + wLo + " and ts < " + wHiExcl,
+                        sqlExecutionContext
+                ).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final EntityColumnFilter columnFilter = new EntityColumnFilter();
+            columnFilter.of(factory.getMetadata().getColumnCount());
+            final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                    new BytecodeAssembler(),
+                    factory.getMetadata(),
+                    w.getMetadata(),
+                    columnFilter,
+                    configuration
+            );
+            w.applyReplaceRangeWindow(wLo, wHiExcl, cursor, copier, w.getMetadata().getTimestampIndex(), sqlExecutionContext);
+        }
     }
 }
