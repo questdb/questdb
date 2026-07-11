@@ -12224,6 +12224,78 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowArgRebindsSymbolKeyAcrossRefreshCycles() throws Exception {
+        // C4 regression: a window function's arg must rebind to the cursor on every refresh
+        // cycle, not just the first.
+        //
+        // The incremental refresh path skips Function.init on window functions from cycle 2
+        // on, so their accumulators survive the cycle, and rebinds through initPartitionBy
+        // instead. That hook used to rebind only the PARTITION BY expressions, leaving arg
+        // bound to cycle 1's cursor. A symbol comparison inside arg (side = 'BUY') caches the
+        // int key it resolved the constant to at init, and the WAL writer re-assigns symbol
+        // keys per commit, so the cached key goes stale as soon as a later commit keys 'BUY'
+        // differently.
+        //
+        // Cycle 1 below carries no BUY row at all, so 'BUY' resolves to VALUE_NOT_FOUND. It
+        // first appears in cycle 2, where it takes a real key. With arg still bound to cycle
+        // 1, the comparison keeps testing against VALUE_NOT_FOUND, matches no row, and every
+        // BUY row from cycle 2 on contributes 0.0 to the running buy volume: a silently wrong
+        // aggregate, no error, no invalidation. The same predicate written as a WHERE filter
+        // is unaffected - residual filter Functions are re-inited every cycle - which is why
+        // this only surfaces inside a window arg.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, side SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, side, px, " +
+                    "sum(CASE WHEN side = 'BUY' THEN px ELSE 0.0 END) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS buy_vol FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: SELL only, so this commit's symbol table has no key for 'BUY'.
+                execute("INSERT INTO base VALUES " +
+                        "('2026-03-01T00:00:00.000000Z', 'S1', 'SELL', 1.0), " +
+                        "('2026-03-01T00:00:01.000000Z', 'S1', 'SELL', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Cycle 2: 'BUY' appears for the first time and takes a real symbol key.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-03-01T00:00:02.000000Z', 'S1', 'BUY', 10.0), " +
+                        "('2026-03-01T00:00:03.000000Z', 'S1', 'SELL', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Cycle 3: the running total keeps accumulating BUY rows, and only those.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-03-01T00:00:04.000000Z', 'S1', 'BUY', 5.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // buy_vol is the running sum of BUY prices only: 0, 0, 10, 10, 15. Before the fix
+            // the two BUY rows contributed nothing and the column stayed 0.0 throughout.
+            assertQuery("SELECT ts, side, px, buy_vol FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tside\tpx\tbuy_vol\n" +
+                            "2026-03-01T00:00:00.000000Z\tSELL\t1.0\t0.0\n" +
+                            "2026-03-01T00:00:01.000000Z\tSELL\t2.0\t0.0\n" +
+                            "2026-03-01T00:00:02.000000Z\tBUY\t10.0\t10.0\n" +
+                            "2026-03-01T00:00:03.000000Z\tSELL\t3.0\t10.0\n" +
+                            "2026-03-01T00:00:04.000000Z\tBUY\t5.0\t15.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsEmaAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");

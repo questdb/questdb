@@ -47,7 +47,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * DDL-on-base-table behaviour for live views. Focuses on schema changes that are
  * routed through {@code ApplyWal2TableJob}'s structural path and reach
- * {@code CairoEngine.invalidateLiveViewsForBaseSchemaChange}.
+ * {@code CairoEngine.invalidateLiveViewsForBaseSchemaChange}, plus the base
+ * operations that travel the same job's SQL path - notably UPDATE, which rewrites
+ * base rows in place and so invalidates every dependent view.
  * <p>
  * The centrepiece is {@code ALTER COLUMN TYPE} on a referenced column. The refresh
  * path derives each column's stride from the cached compile-time factory metadata,
@@ -160,6 +162,65 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
                             "2026-01-01T00:00:04.000000Z\t40\t4\n");
 
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBaseUpdateInvalidatesLiveView() throws Exception {
+        // An UPDATE on the base rewrites rows in place, and it does so only in the applied
+        // partitions - the WAL segments the refresh worker drains keep the pre-update values.
+        // The drain never sees the change either: an UPDATE commits as a SQL-type WAL txn and
+        // both drain paths walk past non-DATA txns. So the view would go on serving rows
+        // derived from values the base no longer holds, while every recovery path (restart,
+        // O3 replay, refresh failure) recomputes the same range from the applied base and
+        // emits the post-update values - making the view's contents depend on whether a
+        // recovery happened to run. Before the fix it stayed ACTIVE with no
+        // invalidation_reason and diverged permanently. It must invalidate instead, with the
+        // same "update operation" reason mat views already use.
+        //
+        // This is the boundary of the data-removal transparency the other tests here lock in
+        // (DROP / DETACH PARTITION, TTL): those only retire settled data below the view's
+        // replay window and leave its computed rows consistent with the base rows they came
+        // from, whereas an UPDATE mutates those very rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 1.0), " +
+                        "('2026-01-01T00:00:02.000000Z', 'b', 2.0)");
+                driveRefreshToQuiescence(job);
+                assertViewValid();
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+
+                // An UPDATE that matches no row rewrites nothing, so it must leave the view
+                // alone - the invalidation hangs off the same rowsAffected > 0 guard mat
+                // views use, and a no-op UPDATE must not kill a healthy view.
+                execute("UPDATE base SET x = 42.0 WHERE sym = 'nonexistent'");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertFalse(
+                        "an UPDATE affecting no rows must not invalidate the LV",
+                        instance.isInvalid()
+                );
+
+                // Rewrite a base row the view has already consumed and emitted.
+                execute("UPDATE base SET x = 999.0 WHERE ts = '2026-01-01T00:00:01.000000Z'");
+                drainWalQueue();
+                drainJob(job);
+
+                Assert.assertTrue("a base UPDATE must invalidate the LV", instance.isInvalid());
+                Assert.assertTrue(
+                        "wrong invalidation reason [reason=" + instance.getInvalidationReason() + ']',
+                        Chars.contains(instance.getInvalidationReason(), "update operation")
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
         });
     }
 

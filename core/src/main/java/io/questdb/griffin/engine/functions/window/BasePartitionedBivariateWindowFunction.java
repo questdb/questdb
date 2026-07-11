@@ -100,6 +100,7 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
 
     @Override
     public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        super.initPartitionBy(symbolTableSource, executionContext);
         Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
     }
 

@@ -969,6 +969,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             if (rowsAffected > 0) {
                                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                 mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
+                                // Live views must be invalidated too. An UPDATE rewrites base rows in
+                                // place, which the data-removal operations routed through the ALTER
+                                // branch above never do: those only retire settled data below the view's
+                                // replay window, so the view's already-computed rows stay consistent with
+                                // the base rows they came from. An UPDATE instead mutates the very rows a
+                                // live view derives from, and it does so only in the applied partitions -
+                                // the WAL segments the refresh worker drains keep the pre-update values.
+                                // The two sources the view reads then disagree: the forward drain emits
+                                // pre-update rows, while every recovery path (restart, O3 replay, refresh
+                                // failure) recomputes the same range from the applied base and emits
+                                // post-update rows. The view's contents would come to depend on whether a
+                                // recovery happened to run, so invalidate instead and let the operator
+                                // recreate it.
+                                engine.invalidateLiveViewsForBaseTable(
+                                        tableWriter.getTableToken(),
+                                        UpdateOperation.MAT_VIEW_INVALIDATION_REASON
+                                );
                             }
                             return;
                         default:

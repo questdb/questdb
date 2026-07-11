@@ -348,17 +348,21 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Rebinds the partition-by expressions (and any other inner expressions that
-     * depend on the base cursor's per-cursor state) to the new cursor without
-     * resetting the function's accumulated per-partition state.
+     * Rebinds every inner expression that depends on the base cursor's per-cursor state -
+     * the partition-by expressions, the function's {@code arg}, and any extra argument a
+     * subclass carries (lag/lead's {@code defaultValue}, a bivariate function's second
+     * arg) - to the new cursor, without resetting the accumulated per-partition state.
      * <p>
-     * The live-view incremental refresh path skips the regular {@link #init}
-     * call on window functions so their cross-cycle accumulator state survives;
-     * partition-by expressions that resolve SYMBOL columns to STRING still need
-     * a fresh symbol-table binding each cycle, so the refresh path invokes
-     * this entry point instead.
+     * The live-view incremental refresh path skips the regular {@link #init} call on
+     * window functions so their cross-cycle accumulator state survives, and calls this
+     * instead. Every cycle hands the function a fresh WAL-segment-scoped
+     * SymbolTableSource, and the WAL writer re-assigns symbol keys per commit, so any
+     * binding cached against the previous cursor - a SYMBOL column's symbol table, the
+     * int key a symbol comparison resolved its constant to - names the wrong value from
+     * the second cycle on. Miss one and the window silently aggregates the wrong rows.
      * <p>
-     * Default no-op for unpartitioned window functions.
+     * Despite the name, this is not partition-by-only: implementations must rebind every
+     * such expression they own, and overrides must call super.
      */
     default void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
     }
