@@ -836,19 +836,63 @@ git commit -m "test(delete): dedup, O3, symbol/index, concurrency, mat-view inva
 
 ---
 
-## Phase 2 — Whole-partition-drop fast path (cheap + Parquet-safe drops)
+## Phase 2 — Time-range fast path (single-commit empty-replace + Parquet-safe drops)
 
-End state: fully-covered partitions are removed via `removePartition` (O(1), no survivor scan) instead of survivor-replace; this also makes **whole-partition** time-range deletes work on Parquet partitions (drop needs no rewrite).
+> **Design revision (2026-07-11, evidence-backed).** The original Phase 2 proposed a per-partition `removePartition()` loop. A read-only investigation of the apply path proved that **multiple table commits inside one `executeDelete` are crash-unsafe**: every commit persists the sequencer txn `S` to `_txn` (`TxWriter.commit` → `putLong(TX_OFFSET_SEQ_TXN_64, seqTxn)`), `getAppliedSeqTxn()` reads it, and `ApplyWal2TableJob` resumes at `S+1` — so a crash mid-loop marks a **partial** delete permanently applied. UPDATE deliberately does exactly one commit per WAL txn; the recovery model relies on this one-atomic-commit-per-WAL-txn invariant. Phase 2 therefore stays **single-commit**: a pure time-range delete becomes **one empty `replaceRange`** over the deleted interval (drops covered partitions + trims the boundary in a single commit — already built and tested in Task 1.8), and Parquet whole-partition drops are enabled by refining the replace-path guard, not by a `removePartition` loop.
 
-### Task 2.1: Fast-path fully-covered partitions in `executeDelete`
+End state: a `DELETE` whose predicate is a single designated-timestamp interval is applied as one empty-replace over the *deleted* interval — O(deleted), no survivor staging — and fully-covered Parquet partitions in that interval are dropped inline (no rewrite). Arbitrary-predicate deletes keep Phase 1's single whole-range survivor-replace unchanged.
+
+### Task 2.1: Route time-range deletes to a single empty-replace over the deleted interval
 
 **Files:**
-- Modify: `core/src/main/java/io/questdb/cairo/wal/OperationExecutor.java` (`executeDelete`)
+- Modify: `core/src/main/java/io/questdb/cairo/wal/OperationExecutor.java` (`executeDelete` / add a time-range detection + empty-replace branch)
+- Modify (maybe): `core/src/main/java/io/questdb/griffin/SqlCompilerImpl.java` (expose the parsed model's designated-timestamp interval + residual-filter state to the executor, if not already reachable)
 - Test: `core/src/test/java/io/questdb/test/griffin/DeleteTest.java`
 
-- [ ] **Step 1: Write the failing/asserting tests.**
-  - Parquet full drop works: create WAL table across ≥2 days, `ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '<day1>'`, drain; `DELETE FROM t WHERE ts < '<day2>'`; drain; assert day1 gone and no "not supported for Parquet" error. (Mirror `ParquetRowGroupPruningTest`'s convert usage + `WalAlterTableSqlTest` drain.)
-  - A "covered-partition uses drop not rewrite" behavioral check: delete a full partition and assert the result equals a NOT-BETWEEN reference (functional equivalence; the optimization itself is validated by the Parquet case passing without the guard firing).
+**Interfaces:**
+- Consumes: `TableWriter.replaceRange(lo, hiExcl, null, null, tsIdx, ctx)` (the empty-survivor path from Task 1.8), the parsed DELETE model's designated-timestamp interval model (QuestDB's `IntrinsicModel`/where-clause interval extraction, as used for interval scans).
+- Produces: time-range deletes applied as one empty-replace; arbitrary deletes unchanged.
+
+- [ ] **Step 1: Write the asserting tests** (native tables only — Parquet is Task 2.2). Follow the existing `DeleteTest` style (WAL, `drainWalQueue`, fluent `assertQuery`).
+  - `testDeleteOpenEndedTimeRangeDropsOldPartitions`: 4-day table; `DELETE FROM t WHERE ts < '<day3>'`; assert `min(ts)` = day3 start and exact survivor set (days 3-4). (Functional; correctness must match Phase 1.)
+  - `testDeleteBoundedTimeRangeTrimsAndDrops`: `DELETE FROM t WHERE ts >= '<day2>' AND ts < '<day3>'`; assert day2 gone, days 1/3/4 intact (interval covers a full middle partition).
+  - `testDeleteTimeRangeBoundarySplitsPartition`: delete a sub-day band inside a single partition; assert exact survivors via a `WHERE ts NOT BETWEEN lo AND hi` reference (boundary trim, no drop).
+  - Regression: the whole existing `DeleteTest` (arbitrary predicates, NULL, dedup, O3, symbol, concurrency, mat-view) must stay green — arbitrary predicates must NOT be routed to the empty-replace path.
+
+- [ ] **Step 2: Run, verify the new tests fail or the routing is absent**, then implement.
+
+Run: `mvn -q -pl core test -Dtest=DeleteTest`
+
+- [ ] **Step 3: Implement the time-range detection + empty-replace branch.** In `executeDelete` (before the whole-range survivor-replace), determine whether the DELETE predicate reduces to a **single** designated-timestamp interval with **no residual filter** (i.e. the where clause is purely a function of the designated timestamp — reuse QuestDB's interval extraction, the same machinery an interval scan uses; a `null`/empty residual filter and exactly one interval on the designated-timestamp column). If so:
+  - Compute the DELETED interval `[dLo, dHiExcl)`, clamped to the table's populated range (`dLo = max(interval.lo, minTimestamp)`, `dHiExcl = min(interval.hiExclusive, maxTimestamp+1)`).
+  - If `dLo >= dHiExcl` → nothing to delete (no-op; still advance seqTxn as the empty-table path does).
+  - Otherwise call `tableWriter.replaceRange(dLo, dHiExcl, null, null, tsIdx, executionContext)` — the empty path — and return its deleted count. **One commit.**
+  - Anything else (arbitrary predicate, multi-interval `ts<a OR ts>b`, any residual non-timestamp filter) falls through to the existing whole-range survivor-replace (`replaceWithSurvivors`) unchanged.
+  Keep the `setSeqTxn(seqTxn)` / rollback-on-Throwable scaffolding around whichever branch runs — the empty-replace path is a single commit exactly like the survivor path, so the existing seqTxn handling applies as-is.
+
+- [ ] **Step 4: Run, verify pass** (new time-range tests + all prior `DeleteTest` green, pristine).
+
+Run: `mvn -q -pl core test -Dtest=DeleteTest`
+Expected: PASS.
+
+- [ ] **Step 5: Commit.**
+
+```bash
+git add core/src/main/java/io/questdb/cairo/wal/OperationExecutor.java core/src/test/java/io/questdb/test/griffin/DeleteTest.java
+git commit -m "feat(delete): route time-range deletes to single empty-replace over deleted interval"
+```
+
+### Task 2.2: Refine the replace-path Parquet guard to allow fully-covered-partition drops
+
+**Files:**
+- Modify: `core/src/main/java/io/questdb/cairo/TableWriter.java` (the `isCommitReplaceMode()` + `isParquet` guard at ~line 9924, inside `processO3Block`)
+- Test: `core/src/test/java/io/questdb/test/griffin/DeleteTest.java`
+
+**Interfaces:**
+- Consumes: the replace range bounds already in scope at the guard (`o3TimestampMin`/`o3TimestampMax`), the partition's `[floor, currentPartitionMaxTimestamp]`, and the existing drop primitives used downstream at ~8605-8607 (`txWriter.removeAttachedPartitions`, `columnVersionWriter.removePartition`, `partitionRemoveCandidates.add`).
+- Produces: a fully-covered Parquet partition is dropped inline during a replace apply; boundary-trim/arbitrary-rewrite of a Parquet partition still throws (that is Phase 3 / Task 3.1).
+
+- [ ] **Step 1: Write the failing Parquet-drop test.**
 
 ```java
     @Test
@@ -865,25 +909,28 @@ End state: fully-covered partitions are removed via `removePartition` (O(1), no 
         });
     }
 ```
+Also add `testDeleteParquetBoundaryTrimStillRejected` (or explicitly assert the Phase-3-deferred behavior): a bounded delete that only PARTIALLY covers a Parquet partition should still fail with the "not supported for Parquet" error until Task 3.1 — pin the current boundary until Phase 3.
 
-- [ ] **Step 2: Run, verify the Parquet test fails** with "commit replace mode is not supported for Parquet partitions" (Phase 1 routed it through replaceRange).
+- [ ] **Step 2: Run, verify the drop test fails** with "commit replace mode is not supported for Parquet partitions".
 
 Run: `mvn -q -pl core test -Dtest=DeleteTest#testDeleteWholeParquetPartitionByTimeRange`
-Expected: FAIL (Parquet guard).
+Expected: FAIL (Parquet guard at TableWriter ~9924).
 
-- [ ] **Step 3: Implement the fast path.** In `executeDelete`, before the survivor-replace branch, detect a **fully-covered** partition — i.e. the delete predicate reduces to a designated-timestamp interval and the partition's `[minTs, maxTs] ⊆ interval` (or, generally, the survivor query over the partition would return zero rows). For fully-covered partitions call `tableWriter.removePartition(partitionTimestamp)` and add the partition's row count to the deleted total, instead of `replaceRange`. Only fall through to survivor-replace for partial/arbitrary partitions.
+- [ ] **Step 3: Refine the guard.** At the `if (isCommitReplaceMode()) { if (isParquet) { throw ... } }` site (~9924), before throwing, detect **full coverage** of this partition by the replace range: the partition `[partitionFloor, currentPartitionMaxTimestamp] ⊆ [o3TimestampMin, o3TimestampMax]` (both range bounds are already in scope in `processO3Block`). When fully covered, do NOT dispatch the (Parquet-unsupported) async O3 rewrite — instead drop the partition directly by reusing the existing drop primitives (`removeAttachedPartitions` + `columnVersionWriter.removePartition` + `partitionRemoveCandidates.add`, mirroring the `srcDataNewPartitionSize == 0` path at ~8605-8607), decrement the in-flight/latch counters consistently with the throw path, and continue the partition loop. Keep the `throw` for the not-fully-covered Parquet case (boundary trim / arbitrary rewrite — Task 3.1). Add a clear comment: covered drops need no data rewrite, so they are Parquet-safe; trims/rewrites still require convert-to-native (Phase 3).
 
-- [ ] **Step 4: Run, verify pass** (Parquet whole-drop works now; all prior `DeleteTest` still green).
+- [ ] **Step 4: Run, verify pass** (`testDeleteWholeParquetPartitionByTimeRange` green; the boundary-trim-rejected test still red-until-3.1 pinned; all prior `DeleteTest` + `TableWriterReplaceRangeDirectTest` + `WalWriterReplaceRangeTest` green).
 
-Run: `mvn -q -pl core test -Dtest=DeleteTest`
+Run: `mvn -q -pl core test -Dtest=DeleteTest,TableWriterReplaceRangeDirectTest,WalWriterReplaceRangeTest`
 Expected: PASS.
 
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add core/src/main/java/io/questdb/cairo/wal/OperationExecutor.java core/src/test/java/io/questdb/test/griffin/DeleteTest.java
-git commit -m "feat(delete): whole-partition-drop fast path (Parquet-safe time-range drops)"
+git add core/src/main/java/io/questdb/cairo/TableWriter.java core/src/test/java/io/questdb/test/griffin/DeleteTest.java
+git commit -m "feat(delete): drop fully-covered Parquet partitions inline in replace apply"
 ```
+
+> **Deferred to Phase 3 / beyond (recorded here so the whole-branch review tracks it):** arbitrary-predicate deletes still use one whole-range survivor-replace and stage all survivors — per-partition memory bounding is genuinely blocked on a crash-safe multi-commit mechanism (see the Phase 2 design-revision note above) and is coupled to Task 3.2 (crash-safety). Multi-interval time-range predicates (`ts<a OR ts>b`) also fall back to whole-range survivor-replace.
 
 ---
 
