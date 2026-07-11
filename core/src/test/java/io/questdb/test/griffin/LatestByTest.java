@@ -721,6 +721,59 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByOverGenerateSeries() throws Exception {
+        // A table function leaf holds the LATEST ON nodes itself and has no nested model, so
+        // generateLatestBy() used to trip 'assert nested != null' (an NPE with assertions off).
+        assertMemoryLeak(() -> assertQuery(
+                """
+                        SELECT * FROM generate_series(
+                          '2021-01-01T00:00:00.000000Z'::timestamp,
+                          '2021-01-01T00:00:03.000000Z'::timestamp,
+                          1_000_000L)
+                        LATEST ON generate_series PARTITION BY generate_series"""
+        ).expectSize().returns("""
+                generate_series
+                2021-01-01T00:00:00.000000Z
+                2021-01-01T00:00:01.000000Z
+                2021-01-01T00:00:02.000000Z
+                2021-01-01T00:00:03.000000Z
+                """));
+    }
+
+    @Test
+    public void testLatestByOverGenerateSeriesConstantFalseFilter() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                """
+                        SELECT * FROM generate_series(
+                          '2021-01-01T00:00:00.000000Z'::timestamp,
+                          '2021-01-01T00:00:03.000000Z'::timestamp,
+                          1_000_000L)
+                        WHERE 1 > 2
+                        LATEST ON generate_series PARTITION BY generate_series"""
+        ).returns("generate_series\n"));
+    }
+
+    @Test
+    public void testLatestByOverGenerateSeriesDescending() throws Exception {
+        // A negative step makes the base scan descend, so the cursor must compare timestamps
+        // rather than trust the scan order.
+        assertMemoryLeak(() -> assertQuery(
+                """
+                        SELECT * FROM generate_series(
+                          '2021-01-01T00:00:03.000000Z'::timestamp,
+                          '2021-01-01T00:00:00.000000Z'::timestamp,
+                          -1_000_000L)
+                        LATEST ON generate_series PARTITION BY generate_series"""
+        ).expectSize().returns("""
+                generate_series
+                2021-01-01T00:00:03.000000Z
+                2021-01-01T00:00:02.000000Z
+                2021-01-01T00:00:01.000000Z
+                2021-01-01T00:00:00.000000Z
+                """));
+    }
+
+    @Test
     public void testLatestByOverSubQueryFilterLimitNotPushedDown() throws Exception {
         // A LATEST ON over a sub-query with a residual WHERE and a LIMIT used to push the limit
         // advice into the base async filter, truncating it to the first N rows. LATEST ON then saw

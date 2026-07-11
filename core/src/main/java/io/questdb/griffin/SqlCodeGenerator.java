@@ -6453,16 +6453,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             boolean orderedByTimestampAsc = false;
+            // A table function leaf (e.g. LATEST ON over generate_series()) holds the latest-by nodes
+            // itself and has no nested model, so there is no ORDER BY to inspect. Leave the flag unset:
+            // the cursor then stores and compares timestamps instead of trusting the base scan order,
+            // which is correct for any scan direction (generate_series() with a negative step descends).
             final IQueryModel nested = model.getNestedModel();
-            assert nested != null;
-            final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
-            CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
-            if (orderBy.get(timestampColumn) == IQueryModel.ORDER_DIRECTION_ASCENDING) {
-                // ORDER BY the timestamp column case.
-                orderedByTimestampAsc = true;
-            } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {
-                // Empty ORDER BY, but the timestamp column in the designated timestamp.
-                orderedByTimestampAsc = true;
+            if (nested != null) {
+                final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
+                CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
+                if (orderBy.get(timestampColumn) == IQueryModel.ORDER_DIRECTION_ASCENDING) {
+                    // ORDER BY the timestamp column case.
+                    orderedByTimestampAsc = true;
+                } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {
+                    // Empty ORDER BY, but the timestamp column in the designated timestamp.
+                    orderedByTimestampAsc = true;
+                }
             }
 
             // LatestByLightRecordCursorFactory's constructor does not free the base on failure, so the
