@@ -162,6 +162,13 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // Per-constant chance, in percent, of substituting a bindable literal
     // with a bind variable inside the bind variant.
     private static final int CONSTANT_BIND_PROBABILITY_PCT = 50;
+    // Fault-injected queries a run needs before runFuzz asserts that at least one
+    // fault actually fired. Below this count a zero-fire run is a small-sample
+    // artifact (a fault arms at a random trigger point and a short query can run
+    // fewer ops than the trigger, so it never bites); at or above it, zero fired
+    // means the injector is disarmed. A default run injects ~15 (100 queries at a
+    // 15% fault probability), so the floor holds for every unshrunk run.
+    private static final int MIN_FAULT_QUERIES_FOR_FIRE_FLOOR = 5;
     // Per-query chance, in percent, of generating a bind-variable variant.
     private static final int QUERY_BIND_PROBABILITY_PCT = 20;
     // Name of the query (SQL) worker pool. Its worker threads are named
@@ -765,6 +772,17 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
         if (failures.size() > 0) {
             throw buildFailure(failures);
+        }
+        // Guard the fault injector against a silent disarm. It has several ways to
+        // stop biting while the run stays green and tests nothing but the happy path:
+        // dev mode off (test_fault() folds to the constant true), the FailureFileFacade
+        // not installed on the engine, or the MALLOC RSS ceiling armed above what the
+        // query allocates. Each one shows up here as "armed N, fired 0".
+        if (faultGen >= MIN_FAULT_QUERIES_FOR_FIRE_FLOOR) {
+            Assert.assertTrue(
+                    "fault injection ran on " + faultGen + " queries but no fault fired; the injector looks disarmed",
+                    runner.getFaultsFired() > 0
+            );
         }
     }
 }
