@@ -77,8 +77,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
-import io.questdb.std.Decimal128;
-import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -206,17 +204,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // head-hit paths.
     private final RestoredHeadState restoredHeadState = new RestoredHeadState();
     // Reusable ARRAY read flyweight for the O3-rebuild disk stager
-    // (copyReaderRowToStaging): binds a view over the LV table reader's (data, aux)
+    // (copyReaderRowsToStaging): binds a view over the LV table reader's (data, aux)
     // column memory for one row, which is immediately re-appended into the staging
     // buffer, so a single instance is safe to reuse across rows and columns. Holds
     // no native memory of its own.
     private final BorrowedArray stagingArrayView = new BorrowedArray();
-    // Reusable wide-decimal read sinks for the O3-rebuild disk stager
-    // (copyReaderRowToStaging): each holds one DECIMAL128 / DECIMAL256 value decoded
-    // from the LV table reader column, immediately re-written into the staging
-    // buffer, so a single instance is safe to reuse across rows and columns.
-    private final Decimal128 stagingDecimal128 = new Decimal128();
-    private final Decimal256 stagingDecimal256 = new Decimal256();
     // Per-worker staging buffer reused across cycles. Allocated lazily on the
     // first refresh of an LV whose output schema is fully supported by the
     // in-mem tier; reshaped (freed + reallocated) if the next LV's schema
@@ -2054,11 +2046,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
-        // applyWalDirect never propagates: ApplyWal2TableJob.applyWal suspends the table
-        // via handleWalApplyFailure and returns. A failed inline apply thus leaves the
-        // block committed-but-unapplied yet still runs the trailing setLeadRowCount(0),
-        // so the next flush cannot re-materialise the slot rows; the view serves disk-only
-        // behind the seqTxn fence until the suspended apply resumes and the block lands once.
+        // applyWalDirect never propagates: ApplyWal2TableJob.applyWal suspends the table via
+        // handleWalApplyFailure and returns, and it can also no-op silently (the LV writer is
+        // busy, or the table backed off under memory pressure). A failed inline apply thus
+        // leaves the block committed-but-unapplied yet still runs the trailing
+        // setLeadRowCount(0), so the next flush cannot re-materialise the slot rows; the view
+        // serves disk-only behind the seqTxn fence, under-reporting the committed rows, until
+        // the block lands once. Nothing else applies it - ApplyWal2TableJob.doRun drops
+        // live-view notifications while refresh is enabled - so scanForLaggingViews re-drives
+        // it (hasPendingLiveViewApply / retryPendingLiveViewApply) rather than leaving the view
+        // stale until the next base commit happens to flush again.
         // See LiveViewSmokeTest.testFlushLeadInlineApplyFailureRecoversWithoutDuplication.
         applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
         // Read the applied LV-table seqTxn only AFTER applyWalDirect: restampSlotAfterFlush
@@ -4559,151 +4556,89 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             // Rows within a partition are ts-ascending: find the first one at or
             // above the threshold, then copy the suffix.
-            for (long r = firstRowAtOrAbove(tsCol, size, retainThreshold); r < size; r++) {
-                if (seamTs == Numbers.LONG_NULL) {
-                    seamTs = tsCol.getLong(r << 3);
-                }
-                copyReaderRowToStaging(lvReader, columnBase, r, dstRow);
-                dstRow++;
+            final long rowLo = firstRowAtOrAbove(tsCol, size, retainThreshold);
+            if (rowLo >= size) {
+                continue;
             }
+            if (seamTs == Numbers.LONG_NULL) {
+                seamTs = tsCol.getLong(rowLo << 3);
+            }
+            copyReaderRowsToStaging(lvReader, columnBase, rowLo, size, dstRow);
+            dstRow += size - rowLo;
         }
         stagingBuffer.setRowCount(dstRow);
         stagingBuffer.setSeamTs(seamTs);
     }
 
     /**
-     * Copies one LV-table row into {@code stagingBuffer} at {@code dstRow}, reading
-     * directly from the reader's mapped column memory. Dispatches by the staging
-     * buffer's column type (which equals the LV output schema, 1:1 with the LV table
-     * column order). Handles every type the in-mem tier stores: fixed-width / SYMBOL
-     * write in place via {@code putXxx}; the variable-length STRING / BINARY / VARCHAR
-     * / ARRAY columns decode the value from the reader's (data, aux) column pair and
-     * re-append it into the staging buffer (which must therefore be filled in dense
-     * row order - it is, since the caller walks the window suffix ascending). The
-     * decoded var-length value is copied into {@code stagingBuffer} before the next
-     * read reuses the reader's flyweight, so reusing one {@link #stagingArrayView} is
-     * safe.
+     * Copies the LV-table row range {@code [rowLo, rowHi)} of one partition into
+     * {@code stagingBuffer} starting at {@code dstRow}, reading directly from the reader's
+     * mapped column memory. Walks column-major, mirroring
+     * {@link LiveViewInMemoryBuffer#copyRowsFrom}: a fixed-width / SYMBOL column moves its
+     * whole row range with a single {@code Vect.memcpy} - a native column file stores its
+     * values at the same {@code row * size} offsets the staging buffer writes them to, for
+     * every fixed-width type the tier stores - which hoists the per-cell type switch and the
+     * per-cell column lookup out of the row loop. A variable-length column (STRING / BINARY /
+     * VARCHAR / ARRAY) still decodes each row from the reader's (data, aux) column pair and
+     * re-appends it, because its aux offsets are relative to the staging buffer's own payload
+     * cursor. Those appends make the buffer fill in dense row order, which the caller
+     * satisfies by walking the window suffix ascending. The decoded var-length value is
+     * copied into {@code stagingBuffer} before the next read reuses the reader's flyweight,
+     * so reusing one {@link #stagingArrayView} is safe.
      */
-    private void copyReaderRowToStaging(TableReader reader, int columnBase, long partitionRow, long dstRow) {
+    private void copyReaderRowsToStaging(TableReader reader, int columnBase, long rowLo, long rowHi, long dstRow) {
+        final long count = rowHi - rowLo;
         for (int c = 0, n = stagingColumnTypes.size(); c < n; c++) {
-            final int type = ColumnType.tagOf(stagingColumnTypes.getQuick(c));
-            final MemoryCR col = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c));
-            switch (type) {
-                case ColumnType.LONG:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                case ColumnType.GEOLONG:
-                    stagingBuffer.putLong(dstRow, c, col.getLong(partitionRow << 3));
-                    break;
-                case ColumnType.INT:
-                case ColumnType.SYMBOL:
-                case ColumnType.GEOINT:
-                case ColumnType.IPv4:
-                    stagingBuffer.putInt(dstRow, c, col.getInt(partitionRow << 2));
-                    break;
-                case ColumnType.DOUBLE:
-                    stagingBuffer.putDouble(dstRow, c, col.getDouble(partitionRow << 3));
-                    break;
-                case ColumnType.FLOAT:
-                    stagingBuffer.putFloat(dstRow, c, col.getFloat(partitionRow << 2));
-                    break;
-                case ColumnType.SHORT:
-                case ColumnType.GEOSHORT:
-                    stagingBuffer.putShort(dstRow, c, col.getShort(partitionRow << 1));
-                    break;
-                case ColumnType.CHAR:
-                    stagingBuffer.putShort(dstRow, c, (short) col.getChar(partitionRow << 1));
-                    break;
-                case ColumnType.BYTE:
-                case ColumnType.GEOBYTE:
-                    stagingBuffer.putByte(dstRow, c, col.getByte(partitionRow));
-                    break;
-                case ColumnType.BOOLEAN:
-                    stagingBuffer.putBool(dstRow, c, col.getBool(partitionRow));
-                    break;
-                case ColumnType.LONG256:
-                    // 32-byte fixed-width: getLong256A returns the reader column's own
-                    // flyweight, copied into the staging buffer before the next read.
-                    stagingBuffer.putLong256(dstRow, c, col.getLong256A(partitionRow << 5));
-                    break;
-                case ColumnType.LONG128:
-                case ColumnType.UUID:
-                    // 16-byte fixed-width: lo at row << 4, hi at + 8.
-                    stagingBuffer.putLong128(
-                            dstRow,
-                            c,
-                            col.getLong(partitionRow << 4),
-                            col.getLong((partitionRow << 4) + Long.BYTES)
-                    );
-                    break;
-                case ColumnType.DECIMAL8:
-                    stagingBuffer.putByte(dstRow, c, col.getByte(partitionRow));
-                    break;
-                case ColumnType.DECIMAL16:
-                    stagingBuffer.putShort(dstRow, c, col.getShort(partitionRow << 1));
-                    break;
-                case ColumnType.DECIMAL32:
-                    stagingBuffer.putInt(dstRow, c, col.getInt(partitionRow << 2));
-                    break;
-                case ColumnType.DECIMAL64:
-                    stagingBuffer.putLong(dstRow, c, col.getLong(partitionRow << 3));
-                    break;
-                case ColumnType.DECIMAL128:
-                    // 16-byte fixed-width: high 64 bits at row << 4, low at + 8. Decode
-                    // into the reusable sink, copied into the staging buffer before the
-                    // next read.
-                    col.getDecimal128(partitionRow << 4, stagingDecimal128);
-                    stagingBuffer.putDecimal128(dstRow, c, stagingDecimal128);
-                    break;
-                case ColumnType.DECIMAL256:
-                    // 32-byte fixed-width: four 64-bit limbs at row << 5. Decode into
-                    // the reusable sink, copied into the staging buffer before the next
-                    // read.
-                    col.getDecimal256(partitionRow << 5, stagingDecimal256);
-                    stagingBuffer.putDecimal256(dstRow, c, stagingDecimal256);
-                    break;
-                case ColumnType.STRING: {
-                    // STRING .d/.i layout: aux holds the per-row 8-byte start offset
-                    // into the data payload. getStrA returns null for a null marker.
-                    final MemoryCR aux = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c) + 1);
-                    stagingBuffer.appendStr(c, dstRow, col.getStrA(aux.getLong(partitionRow << 3)));
-                    break;
+            final int columnType = stagingColumnTypes.getQuick(c);
+            final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, c);
+            final MemoryCR data = reader.getColumn(primaryIndex);
+            if (!ColumnType.isVarSize(columnType)) {
+                // Fixed-width / SYMBOL column: one memcpy over the contiguous byte range. The
+                // staging buffer owns the stride, so the source offset cannot drift from it.
+                // ensureStagingAndTier admits only tier-supported types, and every fixed-width
+                // one of those reads back byte-identically from this layout.
+                stagingBuffer.copyFixedColumnFrom(c, data.addressOf(0), rowLo, count, dstRow);
+                continue;
+            }
+            final MemoryCR aux = reader.getColumn(primaryIndex + 1);
+            long dstRowInBuffer = dstRow;
+            for (long r = rowLo; r < rowHi; r++, dstRowInBuffer++) {
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.STRING:
+                        // STRING .d/.i layout: aux holds the per-row 8-byte start offset into
+                        // the data payload. getStrA returns null for a null marker.
+                        stagingBuffer.appendStr(c, dstRowInBuffer, data.getStrA(aux.getLong(r << 3)));
+                        break;
+                    case ColumnType.BINARY:
+                        // BINARY .d/.i layout: aux holds the per-row 8-byte start offset.
+                        // getBin returns null for a null marker; len == 0 is a real empty.
+                        stagingBuffer.appendBin(c, dstRowInBuffer, data.getBin(aux.getLong(r << 3)));
+                        break;
+                    case ColumnType.VARCHAR:
+                        // VARCHAR (aux header + split data) decoded by VarcharTypeDriver;
+                        // getSplitValue returns null for a null marker and carries the ascii
+                        // flag.
+                        stagingBuffer.appendVarchar(c, dstRowInBuffer, VarcharTypeDriver.getSplitValue(aux, data, r, 1));
+                        break;
+                    case ColumnType.ARRAY:
+                        // ARRAY (aux header + shape/payload data) bound by BorrowedArray over
+                        // the reader's column pair, mirroring PageFrameMemoryRecord; a
+                        // zero-size aux entry decodes to a null ArrayView.
+                        stagingArrayView.of(
+                                columnType,
+                                aux.addressOf(0),
+                                aux.addressOf(0) + aux.size(),
+                                data.addressOf(0),
+                                data.addressOf(0) + data.size(),
+                                r
+                        );
+                        stagingBuffer.appendArray(c, dstRowInBuffer, stagingArrayView);
+                        break;
+                    default:
+                        throw new UnsupportedOperationException(
+                                "live view in-memory tier does not support column type: "
+                                        + ColumnType.nameOf(columnType));
                 }
-                case ColumnType.BINARY: {
-                    // BINARY .d/.i layout: aux holds the per-row 8-byte start offset.
-                    // getBin returns null for a null marker; len == 0 is a real empty.
-                    final MemoryCR aux = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c) + 1);
-                    stagingBuffer.appendBin(c, dstRow, col.getBin(aux.getLong(partitionRow << 3)));
-                    break;
-                }
-                case ColumnType.VARCHAR: {
-                    // VARCHAR (aux header + split data) decoded by VarcharTypeDriver;
-                    // getSplitValue returns null for a null marker and carries the
-                    // ascii flag.
-                    final MemoryCR aux = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c) + 1);
-                    stagingBuffer.appendVarchar(c, dstRow, VarcharTypeDriver.getSplitValue(aux, col, partitionRow, 1));
-                    break;
-                }
-                case ColumnType.ARRAY: {
-                    // ARRAY (aux header + shape/payload data) bound by BorrowedArray
-                    // over the reader's column pair, mirroring PageFrameMemoryRecord;
-                    // a zero-size aux entry decodes to a null ArrayView.
-                    final MemoryCR aux = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, c) + 1);
-                    stagingArrayView.of(
-                            stagingColumnTypes.getQuick(c),
-                            aux.addressOf(0),
-                            aux.addressOf(0) + aux.size(),
-                            col.addressOf(0),
-                            col.addressOf(0) + col.size(),
-                            partitionRow
-                    );
-                    stagingBuffer.appendArray(c, dstRow, stagingArrayView);
-                    break;
-                }
-                default:
-                    throw new UnsupportedOperationException(
-                            "live view in-memory tier does not support column type: "
-                                    + ColumnType.nameOf(stagingColumnTypes.getQuick(c)));
             }
         }
     }
@@ -4908,6 +4843,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     continue;
                 }
             }
+            // Primary-only: re-drive an LV WAL block whose inline apply never landed. On a
+            // primary the refresh worker owns the LV's TableWriter, so ApplyWal2TableJob.doRun
+            // drops every live-view notification and flushLead's inline applyWalDirect is the
+            // view's ONLY applier. When that apply silently no-ops (the LV writer was busy, or
+            // its memory-pressure control backed off) or fails and suspends the table, the
+            // republish it falls back on goes nowhere: the committed rows stay off disk, and
+            // the flush already re-stamped the slot with a zero lead, so neither tier serves
+            // them - the view under-reports until a later base commit drives another flush. On
+            // a quiescent base that never comes. Retry the apply here instead; it is idempotent
+            // (the block is committed, so it lands each row exactly once) and it is what lets
+            // ALTER TABLE ... RESUME WAL on a suspended live view take effect without waiting
+            // for the base to move.
+            if (!leadOnly && hasPendingLiveViewApply(instance)) {
+                didWork |= retryPendingLiveViewApply(instance);
+            }
             long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
             // The 2a.7 restart-restore runs inside refreshInstance on the
             // first cycle for any LV with a stamped head .cp - even when
@@ -4949,6 +4899,90 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
         return didWork;
+    }
+
+    /**
+     * True when the live view's own WAL carries transactions its inline apply never landed
+     * ({@code seqTxn > writerTxn}) and a retry can make progress. Excludes the states a retry
+     * cannot move: a suspended table (only an operator RESUME clears it), a memory-pressure
+     * back-off ({@code applyWal} returns at its own readiness gate without advancing), and a
+     * view whose tracker is not initialised yet. Excludes a view with an un-flushed lead too -
+     * its next FLUSH EVERY tick calls {@code flushLead}, whose {@code applyWalDirect} re-drives
+     * the outstanding block anyway, so only a view the scan would otherwise leave idle needs
+     * the retry.
+     */
+    private boolean hasPendingLiveViewApply(LiveViewInstance instance) {
+        if (instance.getLeadRowCount() > 0) {
+            return false;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken());
+        return tracker.isInitialised()
+                && !tracker.isSuspended()
+                && tracker.getMemPressureControl().isReadyToProcess()
+                && tracker.getSeqTxn() > tracker.getWriterTxn();
+    }
+
+    /**
+     * Re-drives the live view's own WAL apply for a block {@code flushLead} committed but could
+     * not apply inline, then repairs the in-mem tier's stamp so reads regain seam routing
+     * instead of staying disk-only. Runs under the refresh latch: the apply advances the LV's
+     * on-disk tier, which neither a concurrent refresh cycle nor the checkpoint agent's freeze
+     * may race. Returns {@code true} only when the applied seqTxn actually advanced, so a retry
+     * that no-ops again reports no work and lets the worker idle rather than spin.
+     */
+    private boolean retryPendingLiveViewApply(LiveViewInstance instance) {
+        if (!instance.tryLockForRefresh()) {
+            return false;
+        }
+        try {
+            // Re-check under the latch: a concurrent flush may have applied the block already,
+            // and a stub / dropped / invalid / frozen view must never advance its disk tier.
+            if (instance.isStub()
+                    || instance.isDropped()
+                    || instance.isInvalid()
+                    || instance.isFreezeInProgress()
+                    || !hasPendingLiveViewApply(instance)) {
+                return false;
+            }
+            final TableToken token = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long appliedBefore = tracker.getWriterTxn();
+            LOG.info().$("live view has committed but unapplied WAL, retrying apply [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", appliedSeqTxn=").$(appliedBefore)
+                    .$(", committedSeqTxn=").$(tracker.getSeqTxn()).I$();
+            applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+            final long appliedAfter = tracker.getWriterTxn();
+            if (appliedAfter <= appliedBefore) {
+                // The apply no-opped again (the LV writer is busy) or failed and suspended the
+                // table. Reads stay correct - the fence routes them to disk, which simply lacks
+                // the committed rows - and the next tick retries a transient block. A suspend
+                // waits for the operator; hasPendingLiveViewApply skips it meanwhile.
+                return false;
+            }
+            if (instance.isTierStale()) {
+                // The slot is an incomplete subset of the now-current disk (an emergency flush
+                // left it un-published). Rebuild it from disk rather than re-stamping content
+                // that never received the flushed rows.
+                rebuildInMemoryTier(instance);
+            } else {
+                // The flushed rows reached disk and are still in the slot, which is a complete
+                // subset of it again. Re-stamp so the seam routes reads back through RAM.
+                restampSlotAfterFlush(instance, appliedAfter);
+            }
+            return true;
+        } catch (Throwable t) {
+            // A tier rebuild / re-stamp failure is not fatal and must not invalidate the view:
+            // the apply landed, and the seqTxn fence keeps reads correct (disk-only) until the
+            // next refresh rebuilds the slot.
+            LOG.error().$("live view apply retry failed [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(t).I$();
+            return false;
+        } finally {
+            instance.unlockAfterRefresh();
+            instance.tryCloseIfDropped();
+        }
     }
 
     /**

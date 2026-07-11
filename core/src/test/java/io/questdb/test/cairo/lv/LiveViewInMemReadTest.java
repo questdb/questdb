@@ -1433,6 +1433,62 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3ReplayRebuildStagesEveryTierColumnType() throws Exception {
+        // rebuildInMemoryTier -> stageInMemoryWindowFromDisk copies the LV table's IN MEMORY
+        // window back into the staging buffer column-major: one memcpy per fixed-width column
+        // over the partition's whole row range, and a per-row re-append for the var-size ones.
+        // The memcpy is sound only because a native column file and the staging buffer place a
+        // fixed-width value at the same row * size offset - for EVERY type the tier stores,
+        // including the wide ones (LONG256 / DECIMAL256 at row << 5, UUID / DECIMAL128 at
+        // row << 4) and the sub-int ones (CHAR at row << 1, BOOLEAN / BYTE / DECIMAL8 at row).
+        // Project all of them through one view and force an O3 replay so the rebuild stages
+        // every column from disk. A stride or byte-order mismatch in any single column shows up
+        // as the tier read diverging from the disk-only read, or from a from-scratch recompute.
+        assertMemoryLeak(() -> {
+            // Derive the base schema from the rnd_* outputs themselves (an empty CTAS), so the
+            // column types cannot drift from the values the INSERT below generates.
+            execute("CREATE TABLE base AS (" + everyTierTypeSelect(0, 0) + ") " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Pin the CREATE clock below the data so the non-backfill floor admits every row,
+            // including the back-dated O3 row.
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+                    "SELECT *, row_number() OVER () AS rn FROM base");
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Cycle 1: four in-order rows, forward-appended; the tier is populated and the
+                // O3 watermark advances to the newest ts.
+                execute("INSERT INTO base " + everyTierTypeSelect(1_000_000L, 4));
+                drainWalQueue();
+                setCurrentMicros(250_000L);
+                drainJob(job);
+                drainWalQueue();
+
+                // Cycle 2: two back-dated rows below the watermark force an O3 replay, which
+                // rewrites the LV table via REPLACE_RANGE and rebuilds the in-mem tier from
+                // disk - the stager under test.
+                instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base " + everyTierTypeSelect(0L, 2));
+                drainWalQueue();
+                setCurrentMicros(500_000L);
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // The rebuilt tier must serve the whole window (all six rows fit IN MEMORY 30m)
+            // and agree with disk column for column.
+            InnerRead modeB = readInner("SELECT * FROM lv");
+            Assert.assertTrue("post-O3 cursor must regain Mode B", modeB.routingEligible);
+            Assert.assertEquals("rebuilt tier serves the whole window", 6, modeB.inMemRowsServed);
+            assertModeBMatchesDiskOnly("SELECT * FROM lv");
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT *, row_number() OVER () AS rn FROM base");
+        });
+    }
+
+    @Test
     public void testDedupOverlapRebuildUsesOwnSchemaNotSiblingViews() throws Exception {
         // C2 regression. The staging buffer (stagingBuffer / stagingColumnTypes in
         // LiveViewRefreshJob) is a per-WORKER field shared across every view a
@@ -3254,6 +3310,45 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             any = true;
         }
         return any;
+    }
+
+    // A SELECT of rowCount rows carrying one column of every type the in-mem tier stores: each
+    // fixed-width width (1 / 2 / 4 / 8 / 16 / 32 bytes, across the plain, GEOHASH and DECIMAL
+    // families), SYMBOL, and all four var-size types. Non-zero null rates keep the per-type NULL
+    // sentinels in the data - a fixed-width NULL is just a byte pattern the tier's memcpy has to
+    // carry through verbatim. Doubles as the empty-CTAS schema source (rowCount 0), so the
+    // declared column types cannot drift from the values inserted into them.
+    private static String everyTierTypeSelect(long startMicros, long rowCount) {
+        return "SELECT" +
+                " rnd_boolean() a_boolean," +
+                " rnd_byte() a_byte," +
+                " rnd_short() a_short," +
+                " rnd_char() a_char," +
+                " rnd_int(-1000, 1000, 3) an_int," +
+                " rnd_long(-1000, 1000, 3) a_long," +
+                " rnd_float(3) a_float," +
+                " rnd_double(3) a_double," +
+                " rnd_symbol(4, 1, 8, 3) a_symbol," +
+                " rnd_ipv4() an_ipv4," +
+                " rnd_uuid4() a_uuid," +
+                " rnd_long256() a_long256," +
+                " rnd_geohash(4) a_geo_byte," +
+                " rnd_geohash(12) a_geo_short," +
+                " rnd_geohash(24) a_geo_int," +
+                " rnd_geohash(40) a_geo_long," +
+                " rnd_decimal(2, 1, 3) a_decimal8," +
+                " rnd_decimal(4, 2, 3) a_decimal16," +
+                " rnd_decimal(9, 2, 3) a_decimal32," +
+                " rnd_decimal(18, 3, 3) a_decimal64," +
+                " rnd_decimal(38, 7, 3) a_decimal128," +
+                " rnd_decimal(76, 10, 3) a_decimal256," +
+                " rnd_str(1, 8, 3) a_string," +
+                " rnd_varchar(1, 12, 3) a_varchar," +
+                " rnd_bin(4, 16, 3) a_bin," +
+                " rnd_double_array(1) an_array," +
+                " CAST(timestamp_sequence(" + startMicros + ", 100_000) AS DATE) a_date," +
+                " timestamp_sequence(" + startMicros + ", 100_000) ts" +
+                " FROM long_sequence(" + rowCount + ")";
     }
 
     // Maps a slot stamp to a value the disk reader can never report, forcing the

@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointBlockType;
@@ -58,6 +60,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.QueryProgress;
@@ -6184,6 +6187,75 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                                 "2026-04-01T00:00:00.000000Z\t1\t1\n" +
                                 "2026-04-02T00:00:00.000000Z\t2\t2\n" +
                                 "2026-04-02T00:00:01.000000Z\t3\t3\n");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushLeadUnappliedBlockIsRetriedOnQuiescentBase() throws Exception {
+        // On a primary the refresh worker owns the LV's TableWriter, so
+        // ApplyWal2TableJob.doRun drops every live-view WAL notification and flushLead's
+        // inline applyWalDirect is the view's ONLY applier. When that apply no-ops - here
+        // because another owner holds the LV TableWriter, so applyWal returns on
+        // EntryUnavailableException without advancing anything - the committed block stays
+        // off disk while the flush has already zeroed the lead and re-stamped the slot with
+        // the pre-apply seqTxn. Neither tier then serves those rows: the view silently
+        // under-reports, with no suspension to signal it. Nothing republishes an LV
+        // notification, so before the fix only a later base commit (driving another flush)
+        // could land the block - on a quiescent base, never. scanForLaggingViews must retry
+        // the apply itself.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final TableToken lvToken = engine.verifyTableName("lv");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Baseline clean flush: applies inline and initialises the LV's applied seqTxn.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n1\n");
+
+                // Second row: hold the LV TableWriter across the flush so its inline apply
+                // hits EntryUnavailableException and returns without applying. Use the WAL
+                // apply lock reason, which applyWal treats as a legitimate concurrent holder
+                // (isUnsolicitedTableLock) rather than a lock leak.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                drainWalQueue();
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    drainJob(job);
+                }
+
+                // The block is committed but unapplied, and no suspension flags it. The row is
+                // invisible: the flush zeroed the lead, and disk never received it.
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+                Assert.assertTrue("the busy-writer apply must leave the block unapplied",
+                        tracker.getSeqTxn() > tracker.getWriterTxn());
+                Assert.assertFalse("a busy writer must not suspend the LV table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n1\n");
+
+                // The base is now quiescent - no new commits, so no flush would ever run again.
+                // The scan must still notice the unapplied block and re-drive the apply itself.
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals("the retried apply must catch the LV table up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n2\n");
+                assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                                "2026-04-01T00:00:01.000000Z\t2\t2\n");
             }
 
             execute("DROP LIVE VIEW lv");

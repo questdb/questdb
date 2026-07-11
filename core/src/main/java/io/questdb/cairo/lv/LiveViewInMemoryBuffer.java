@@ -316,6 +316,23 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         VarcharTypeDriver.appendValue(aux, data, value);
     }
 
+    // Bulk-copies a fixed-width / SYMBOL column's contiguous row range from a source column
+    // memory into this buffer at dstRow: the raw-address counterpart to the memcpy branch of
+    // copyRowsFrom, for a source that is not a sibling buffer. srcColAddr is the source
+    // column's base address (its row 0) and srcRowLo the first row to copy. The stride is
+    // this buffer's own columnTypeSizes entry, which every fixed-width source the tier reads
+    // shares - a native column file stores its values at the same row * size offsets.
+    // appendAddressFor(offset, bytes) extends the destination in place and returns the
+    // absolute write address without advancing its append cursor, matching the absolute-offset
+    // writes putXxx does per cell.
+    void copyFixedColumnFrom(int col, long srcColAddr, long srcRowLo, long rowCount, long dstRow) {
+        final int size = columnTypeSizes.getQuick(col);
+        assert size > 0;
+        final long bytes = rowCount * size;
+        final MemoryCARWImpl data = dataMem.getQuick(col);
+        Vect.memcpy(data.appendAddressFor(dstRow * size, bytes), srcColAddr + srcRowLo * size, bytes);
+    }
+
     // Lazily allocates and caches the per-column ARRAY read flyweight, mirroring
     // PageFrameMemoryRecord.borrowedArray. Only ever called for ARRAY columns.
     private BorrowedArray borrowedArray(int col) {
