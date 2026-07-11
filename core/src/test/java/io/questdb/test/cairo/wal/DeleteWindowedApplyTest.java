@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -49,6 +50,13 @@ import org.junit.Test;
  * executes as an INTERVAL SCAN (so N windows sum to one table pass rather than N full scans), and that the
  * SAME factory is rebindable window by window. This is the linchpin: OperationExecutor (Task 5) drives this
  * one factory per window, re-running getCursor with new bounds.
+ * <p>
+ * Task 7 adds end-to-end integration coverage on top of the spike: each test below drives a REAL
+ * {@code execute("delete ...")} through {@code drainWalQueue()} under a tiny
+ * {@code cairo.wal.delete.rows.per.step} (Task 5's windowed {@code OperationExecutor.replaceWithSurvivors}
+ * loop) to force many windows, and checks the result against an exact pre-delete {@code ref} snapshot table
+ * (never a second, independently-reseeded {@code rnd_*} statement) plus a {@code wal_tables()} not-suspended
+ * check.
  */
 public class DeleteWindowedApplyTest extends AbstractCairoTest {
 
@@ -169,6 +177,207 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
                     "select * from t_ref where not (x % 2 = 0)",
                     "select * from t"
             );
+        });
+    }
+
+    // ------------------------------------------------------------------------------------------------------
+    // Task 7: end-to-end windowed DELETE integration tests. All force MANY windows via
+    // cairo.wal.delete.rows.per.step, drive the delete through a real execute()+drainWalQueue(), and compare
+    // against an EXACT oracle: a `ref` table snapshotted from `t` BEFORE the delete runs (never a re-evaluated
+    // rnd_* expression), plus a wal_tables() not-suspended check.
+    // ------------------------------------------------------------------------------------------------------
+
+    /**
+     * (1) Single-window equivalence: a rows-per-step far larger than the table collapses the windowed loop to
+     * exactly ONE window (the whole populated range in a single {@code applyReplaceRangeWindow} call), so the
+     * windowed path must produce the identical result a plain whole-range delete would.
+     */
+    @Test
+    public void testSingleWindowEqualsWholeRange() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "100000000"); // >> table size -> one window
+        assertMemoryLeak(() -> {
+            createAndPopulate();
+            execute("create table ref as (select * from t where not (x % 2 = 0))");
+
+            execute("delete from t where x % 2 = 0");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertSqlCursors("select * from ref", "select * from t");
+        });
+    }
+
+    /**
+     * (2) Idempotent re-apply / crash-safety proxy: a tiny rows-per-step forces many windows. Once the delete
+     * is fully applied, {@code engine.releaseInactive()} drops every cached reader/writer (simulating a clean
+     * restart) and {@code drainWalQueue()} runs again with nothing new enqueued (the delete's seqTxn is
+     * already durably applied). Re-applying must be a genuine no-op: identical content, table still healthy.
+     */
+    @Test
+    public void testWindowedDeleteReappliesIdempotently() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // ~1 row/window -> many windows
+        assertMemoryLeak(() -> {
+            createAndPopulate();
+            execute("create table ref as (select * from t where not (x % 2 = 0))");
+
+            execute("delete from t where x % 2 = 0");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertSqlCursors("select * from ref", "select * from t");
+
+            // Simulate a restart (drop every cached reader/writer) and re-drain with nothing new queued.
+            engine.releaseInactive();
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertSqlCursors("select * from ref", "select * from t");
+        });
+    }
+
+    /**
+     * (3) Zero-match delete over many windows: {@code x < 0} matches nothing, so every window's survivor
+     * cursor returns its whole slice unchanged. The windowed loop must be a full no-op: identical row count
+     * and content, table still healthy.
+     */
+    @Test
+    public void testWindowedZeroMatchDeleteIsNoOp() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");
+        assertMemoryLeak(() -> {
+            createAndPopulate();
+            execute("create table ref as (select * from t)"); // nothing will match; ref == whole table
+
+            execute("delete from t where x < 0");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n96\n");
+            assertSqlCursors("select * from ref", "select * from t");
+        });
+    }
+
+    /**
+     * (4) All-match interior window(s): a residual (non-time-range) predicate matches every row of day 2
+     * (x=25..48), an INTERIOR day - neither the table's first nor its last partition - with a tiny
+     * rows-per-step so that day is covered by several small windows, all with an entirely empty survivor
+     * cursor. Days 1, 3 and 4's windows are untouched (their survivor cursors return every row), so this
+     * exercises a run of interior all-empty windows sandwiched between normal ones. The predicate is
+     * deliberately expressed on {@code x}, not {@code ts}: a time-range predicate would be classified
+     * {@code isPureTimeRange()} and take the single-shot fast path instead of this windowed loop.
+     */
+    @Test
+    public void testWindowedDeleteEmptiesInteriorWindow() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");
+        assertMemoryLeak(() -> {
+            createAndPopulate();
+            // Day 2 is rows x=25..48 (see DAY2_LO/DAY3_LO above): the whole day, nothing else.
+            execute("create table ref as (select * from t where not (x >= 25 and x <= 48))");
+
+            execute("delete from t where x >= 25 and x <= 48");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertSqlCursors("select * from ref", "select * from t");
+        });
+    }
+
+    /**
+     * (5) Single-partition table windowed purely by row density: no partition boundary is ever in play, so
+     * every window boundary is exactly where {@code deleteWindowStep}'s row-density estimate puts it.
+     * <p>
+     * NOTE ON DEVIATION FROM THE BRIEF: a literal {@code PARTITION BY NONE ... WAL} table cannot be created -
+     * WAL write mode is rejected on a non-partitioned table ("WAL Write Mode can only be used on partitioned
+     * tables", see {@code AlterTableWalEnabledTest#testWalEnabledNonPartitionedTable}; also asserted in
+     * {@code CairoEngine.createTable}: {@code !isWalEnabled() || PartitionBy.isPartitioned(...)}), and the
+     * windowed DELETE path only runs at WAL-apply time. Using {@code PARTITION BY DAY WAL} with every row
+     * confined to a single calendar day gives the same property a NONE table would have (exactly one
+     * physical partition, confirmed below), which is what this test actually needs to exercise.
+     */
+    @Test
+    public void testWindowedDeletePartitionByNone() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            // 300 one-minute rows = 5 hours, all inside 1970-01-01: exactly one physical partition.
+            execute("insert into t select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*1000000L), x from long_sequence(300)");
+            drainWalQueue();
+            assertQuery("select count(*) from table_partitions('t')")
+                    .noRandomAccess().expectSize().returns("count\n1\n");
+            execute("create table ref as (select * from t where not (x % 3 = 0))");
+
+            execute("delete from t where x % 3 = 0");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertSqlCursors("select * from ref", "select * from t");
+        });
+    }
+
+    /**
+     * Task 7 Step 2 (memory-shape proxy): a 50k-row table with rows-per-step=1000 tiles into roughly 50
+     * windows. This doesn't assert RSS directly (out of scope for a JUnit test), but proves correctness at a
+     * scale where the windowed loop is genuinely exercised many times over - not collapsed to one window as
+     * in {@link #testSingleWindowEqualsWholeRange} - the observable proxy for "peak memory bounded to ~one
+     * window" that Task 5's windowed rewrite targets.
+     */
+    @Test
+    public void testLargeTableProducesManyWindows() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1000");
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            execute("insert into t select (x*1000000L)::timestamp, x from long_sequence(50000)"); // 50k rows
+            drainWalQueue();
+            execute("create table ref as (select * from t where not (x % 2 = 0))");
+
+            execute("delete from t where x % 2 = 0");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertSqlCursors("select ts, x from ref order by ts", "select ts, x from t order by ts");
+        });
+    }
+
+    /**
+     * Task 7 (extra - folds in a Task 5 review coverage gap): deletes EVERY row of the table's LAST partition
+     * (day 4, x=73..96) with a tiny rows-per-step, so that single partition spans MANY windows (rows.per.step
+     * of 1 over a 4-day/96-row table puts roughly 20+ windows inside one day). Because the last window of the
+     * whole loop is always the one that reaches the table's chronologically-last partition, this is the shape
+     * that exercises {@code TableWriter}'s "partition fully removed by a windowed replace" guard
+     * ({@code o3ConsumePartitionUpdateSink}, ~{@code TableWriter.java:8710}: skip queuing a same-bracket
+     * {@code srcNameTxn} as a removal candidate) in a way that would actually surface a regression - per the
+     * Task 5 report, a fully-emptied INTERIOR partition's spurious candidate is silently cleared by the next
+     * window before it is ever drained, while the last partition's candidate list is the one that survives
+     * uncleared to {@code finishReplaceRange}'s trailing housekeep. The existing {@code DeleteTest} windowed
+     * cases only mutate partitions in place ({@code x % 7 = 0} never empties a whole partition) and never
+     * reach this branch at all.
+     * <p>
+     * Asserts day 4's rows are gone AND its partition directory itself is physically removed (not just zero
+     * matching rows), days 1-3 are exactly intact against {@code ref}, and the table is not suspended.
+     */
+    @Test
+    public void testWindowedDeleteEmptiesWholeMultiWindowPartition() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // ~1 row/window -> day 4 spans many windows
+        assertMemoryLeak(() -> {
+            createAndPopulate();
+            // Day 4 is rows x=73..96 (see DAY4_LO above): the WHOLE last day, nothing else.
+            execute("create table ref as (select * from t where not (x >= 73))");
+
+            execute("delete from t where x >= 73");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            // The partition itself must be physically removed, not just empty of matching rows.
+            assertQuery("select count(*) from table_partitions('t') where name = '1970-01-04'")
+                    .noRandomAccess().expectSize().returns("count\n0\n");
+            assertSqlCursors("select * from ref", "select * from t");
         });
     }
 
