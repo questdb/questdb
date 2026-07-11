@@ -57,6 +57,32 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatingPointPairAgreesBetweenConstantAndColumn() throws Exception {
+        // A floating-point constant pair used to regroup: (dblCol * 1e300) * 1e-300 became
+        // dblCol * (1e300 * 1e-300) = dblCol * 1.0. IEEE-754 * is not associative - the
+        // un-regrouped form overflows to Infinity at the intermediate and stays there - and
+        // reassociateConstants never regroups the all-literal form, so only the column form
+        // moved and the two diverged. Neither form regroups now, so both overflow alike.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (d DOUBLE, f FLOAT)");
+            execute("INSERT INTO u VALUES (1e10, 1e10)");
+
+            // multiplication: the intermediate overflows to Infinity, which prints as null
+            assertQuery("SELECT 1e10 * 1e300 * 1e-300 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT d * 1e300 * 1e-300 AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+
+            // addition: 1e16 + 1.0 rounds back to 1e16 (ulp is 2), so the left-associative form
+            // yields 1.0000000000000002E16, while regrouping to d + 3.0 would yield ...04E16
+            assertQuery("SELECT 1e16 + 1.0 + 2.0 AS v").noLeakCheck().expectSize().returns("v\n1.0000000000000002E16\n");
+            assertQuery("SELECT (d * 1e6) + 1.0 + 2.0 AS v FROM u").noLeakCheck().expectSize().returns("v\n1.0000000000000002E16\n");
+
+            // a FLOAT pair diverges the same way: 1e10f * 1e30f overflows the float range
+            assertQuery("SELECT 1e10f * 1e30f * 1e-30f AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT f * 1e30f * 1e-30f AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+        });
+    }
+
+    @Test
     public void testImplicitDoublePromotionWrapsLikeConstantAndColumn() throws Exception {
         // (intCol + intConst) + floatConst: the constant-reassociation pass used to
         // regroup the column form into intCol + (intConst + floatConst), folding the
@@ -65,7 +91,8 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
         // literal form folds the inner INT arithmetic first (wrapping) and never
         // regroups, so the two diverged. The reassociation now leaves an integer/
         // floating-point constant pair un-regrouped, so both paths wrap alike. An
-        // explicit cast still widens, and a LONG constant still widens on both paths.
+        // explicit ::LONG cast (and a LONG constant) still widens on both paths, while
+        // an explicit ::DOUBLE cast wraps like the implicit promotion it must agree with.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE u (y INT, a INT)");
             execute("INSERT INTO u VALUES (2147483647, 100000)");
@@ -88,9 +115,13 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             assertQuery("SELECT (100000 * 100000) * 2.0 AS v").noLeakCheck().expectSize().returns("v\n2.820130816E9\n");
             assertQuery("SELECT (a * 100000) * 2.0 AS v FROM u").noLeakCheck().expectSize().returns("v\n2.820130816E9\n");
 
-            // an explicit wider cast still widens on both paths (unchanged)
-            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
-            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
+            // an explicit ::LONG cast widens on both paths, matching an implicit LONG read
+            assertQuery("SELECT (2147483647 + 3)::LONG AS v").noLeakCheck().expectSize().returns("v\n2147483650\n");
+            assertQuery("SELECT (y + 3)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n2147483650\n");
+
+            // an explicit ::DOUBLE cast wraps, matching the implicit DOUBLE promotion above
+            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
 
             // a LONG constant still combines and widens identically on both paths
             assertQuery("SELECT (2147483647 + 3) + 0L AS v").noLeakCheck().expectSize().returns("v\n2147483650\n");
@@ -315,29 +346,139 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWiderCastsAgreeWhenValueIsExactlyIntNull() throws Exception {
+        // Sibling of testWiderCastsWidenWhenProductWrapsToIntNull: there getInt()
+        // wraps to -2^31 while getLong() holds a different value; here the genuine
+        // full-width value IS exactly -2^31, so getInt() == getLong() == INT_NULL.
+        // Before the fix the intConst == longConst disjunct folded the literal to
+        // IntConstant.NULL, so a ::LONG cast read LONG_NULL while the column path
+        // widened to -2147483648. The fold now folds only when both getters agree
+        // AND the value is not the sentinel, so the literal and column paths agree
+        // for every cast target.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (y INT, m INT, p INT, q INT)");
+            // y=2147483647 for ~y; m=-1073741824 for m*2; p&q = 0x80000001 & 0xFFFFFFFE = -2^31
+            execute("INSERT INTO u VALUES (2147483647, -1073741824, -2147483647, -2)");
+
+            // ~2147483647 = -2147483648 exactly: full 5-cast matrix, literal vs column
+            assertQuery("SELECT (~2147483647)::LONG AS v").noLeakCheck().expectSize().returns("v\n-2147483648\n");
+            assertQuery("SELECT (~y)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483648\n");
+
+            assertQuery("SELECT (~2147483647)::TIMESTAMP AS v").noLeakCheck().expectSize().returns("v\n1969-12-31T23:24:12.516352Z\n");
+            assertQuery("SELECT (~y)::TIMESTAMP AS v FROM u").noLeakCheck().expectSize().returns("v\n1969-12-31T23:24:12.516352Z\n");
+
+            // ::DOUBLE / ::FLOAT / ::DATE read getInt(), which returns the value itself - and
+            // that value IS the INT_NULL sentinel, so they read it as NULL. They agree with the
+            // plain INT projection below and with an implicit DOUBLE promotion, which is the
+            // point: a cast never disagrees with the implicit read of the same expression.
+            assertQuery("SELECT (~2147483647)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT (~y)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT (~y) + 0.0 AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+
+            assertQuery("SELECT CAST(~2147483647 AS FLOAT) AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT CAST(~y AS FLOAT) AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+
+            assertQuery("SELECT (~2147483647)::DATE AS v").noLeakCheck().expectSize().returns("v\n\n");
+            assertQuery("SELECT (~y)::DATE AS v FROM u").noLeakCheck().expectSize().returns("v\n\n");
+
+            // -1073741824 * 2 = -2147483648 exactly (no overflow, exact product)
+            assertQuery("SELECT (-1073741824 * 2)::LONG AS v").noLeakCheck().expectSize().returns("v\n-2147483648\n");
+            assertQuery("SELECT (m * 2)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483648\n");
+            assertQuery("SELECT (-1073741824 * 2)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT (m * 2)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+
+            // bitwise AND landing exactly on 0x80000000: -2147483647 & -2 = -2147483648
+            assertQuery("SELECT (-2147483647 & -2)::LONG AS v").noLeakCheck().expectSize().returns("v\n-2147483648\n");
+            assertQuery("SELECT (p & q)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483648\n");
+            assertQuery("SELECT (-2147483647 & -2)::TIMESTAMP AS v").noLeakCheck().expectSize().returns("v\n1969-12-31T23:24:12.516352Z\n");
+            assertQuery("SELECT (p & q)::TIMESTAMP AS v FROM u").noLeakCheck().expectSize().returns("v\n1969-12-31T23:24:12.516352Z\n");
+
+            // control: the plain INT projection displays as null on both paths (getInt() == INT_NULL)
+            assertQuery("SELECT ~2147483647 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT ~y AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT -1073741824 * 2 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT m * 2 AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT -2147483647 & -2 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT p & q AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
+        });
+    }
+
+    @Test
+    public void testWiderCastsAgreeWithImplicitReadsOnBothPaths() throws Exception {
+        // Each INT cast reads the same getter its IntFunction counterpart reads, so an
+        // explicit cast never disagrees with an implicit read of the same expression:
+        // getLong() / getTimestamp() widen, getDouble() / getFloat() / getDate() wrap.
+        // A cast that widened where the implicit read wraps would make (y * z)::DOUBLE
+        // and (y * z) + 0.0 - and round(), and ::DECIMAL - return different values for
+        // the same overflowing product.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (y INT, z INT)");
+            execute("INSERT INTO u VALUES (1000000, 1000000)");
+
+            // 1000000 * 1000000 = 10^12, which wraps to -727379968 at INT width
+            assertQuery("SELECT 1000000 * 1000000 AS v").noLeakCheck().expectSize().returns("v\n-727379968\n");
+            assertQuery("SELECT y * z AS v FROM u").noLeakCheck().expectSize().returns("v\n-727379968\n");
+
+            // ::DOUBLE wraps, and agrees with the implicit DOUBLE reads (+ 0.0, round())
+            assertQuery("SELECT (1000000 * 1000000)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n-7.27379968E8\n");
+            assertQuery("SELECT (y * z)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n-7.27379968E8\n");
+            assertQuery("SELECT (y * z)::DOUBLE = (y * z) + 0.0 AS v FROM u").noLeakCheck().expectSize().returns("v\ntrue\n");
+            assertQuery("SELECT (y * z)::DOUBLE = round(y * z, 0) AS v FROM u").noLeakCheck().expectSize().returns("v\ntrue\n");
+
+            // ::DECIMAL keeps INT width too, so ::DOUBLE must not disagree with it
+            assertQuery("SELECT (y * z)::DECIMAL(20,0)::DOUBLE = (y * z)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\ntrue\n");
+
+            // the FLOAT cast wraps, and agrees with the implicit FLOAT read. CAST(x AS FLOAT),
+            // not x::FLOAT: the :: form resolves FLOAT to DOUBLE and would not reach
+            // CastIntToFloatFunctionFactory at all.
+            assertQuery("SELECT CAST(1000000 * 1000000 AS FLOAT) AS v").noLeakCheck().expectSize().returns("v\n-7.2738E8\n");
+            assertQuery("SELECT CAST(y * z AS FLOAT) AS v FROM u").noLeakCheck().expectSize().returns("v\n-7.2738E8\n");
+            assertQuery("SELECT CAST(y * z AS FLOAT) = (y * z) + 0.0f AS v FROM u").noLeakCheck().expectSize().returns("v\ntrue\n");
+
+            // ::DATE wraps: -727379968 ms before the epoch
+            assertQuery("SELECT (1000000 * 1000000)::DATE AS v").noLeakCheck().expectSize().returns("v\n1969-12-23T13:57:00.032Z\n");
+            assertQuery("SELECT (y * z)::DATE AS v FROM u").noLeakCheck().expectSize().returns("v\n1969-12-23T13:57:00.032Z\n");
+
+            // ::LONG and ::TIMESTAMP widen, matching IntFunction.getLong() / getTimestamp()
+            assertQuery("SELECT (1000000 * 1000000)::LONG AS v").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+            assertQuery("SELECT (y * z)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n1000000000000\n");
+            assertQuery("SELECT (y * z)::LONG = (y * z) + 0L AS v FROM u").noLeakCheck().expectSize().returns("v\ntrue\n");
+
+            assertQuery("SELECT (1000000 * 1000000)::TIMESTAMP AS v").noLeakCheck().expectSize().returns("v\n1970-01-12T13:46:40.000000Z\n");
+            assertQuery("SELECT (y * z)::TIMESTAMP AS v FROM u").noLeakCheck().expectSize().returns("v\n1970-01-12T13:46:40.000000Z\n");
+
+            // a WHERE clause sees the same wrapped value through the cast as without it,
+            // so a bound above the wrapped product filters both forms out alike
+            assertQuery("SELECT y FROM u WHERE (y * z)::DOUBLE > 5e11").noLeakCheck().returns("y\n");
+            assertQuery("SELECT y FROM u WHERE (y * z) > 5e11").noLeakCheck().returns("y\n");
+        });
+    }
+
+    @Test
     public void testWiderCastsWidenOnBothPaths() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE u (y INT)");
             execute("INSERT INTO u VALUES (2147483647)");
 
-            // LONG / DOUBLE / DATE / TIMESTAMP targets hold the un-wrapped value, constant and column alike
+            // LONG / TIMESTAMP targets hold the un-wrapped value, constant and column alike
             assertQuery("SELECT (2147483647 + 3)::LONG AS v").noLeakCheck().expectSize().returns("v\n2147483650\n");
             assertQuery("SELECT (y + 3)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n2147483650\n");
-
-            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
-            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
-
-            assertQuery("SELECT (2147483647 + 3)::DATE AS v").noLeakCheck().expectSize().returns("v\n1970-01-25T20:31:23.650Z\n");
-            assertQuery("SELECT (y + 3)::DATE AS v FROM u").noLeakCheck().expectSize().returns("v\n1970-01-25T20:31:23.650Z\n");
 
             // TIMESTAMP (micros) widens directly, not only via to_utc()
             assertQuery("SELECT (2147483647 + 3)::TIMESTAMP AS v").noLeakCheck().expectSize().returns("v\n1970-01-01T00:35:47.483650Z\n");
             assertQuery("SELECT (y + 3)::TIMESTAMP AS v FROM u").noLeakCheck().expectSize().returns("v\n1970-01-01T00:35:47.483650Z\n");
 
-            // FLOAT widens too: the wrapped INT (-2147483646) would print negative; the widened
-            // value (2147483650) rounds to the nearest float, +2.14748365E9.
-            assertQuery("SELECT (2147483647 + 3)::FLOAT AS v").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
-            assertQuery("SELECT (y + 3)::FLOAT AS v FROM u").noLeakCheck().expectSize().returns("v\n2.14748365E9\n");
+            // DOUBLE / FLOAT / DATE keep INT width and wrap, on both paths alike: they must
+            // agree with IntFunction.getDouble() / getFloat() / getDate(), which read getInt().
+            // See testWiderCastsAgreeWithImplicitReadsOnBothPaths.
+            assertQuery("SELECT (2147483647 + 3)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
+            assertQuery("SELECT (y + 3)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.147483646E9\n");
+
+            assertQuery("SELECT CAST(2147483647 + 3 AS FLOAT) AS v").noLeakCheck().expectSize().returns("v\n-2.1474836E9\n");
+            assertQuery("SELECT CAST(y + 3 AS FLOAT) AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.1474836E9\n");
+
+            assertQuery("SELECT (2147483647 + 3)::DATE AS v").noLeakCheck().expectSize().returns("v\n1969-12-07T03:28:36.354Z\n");
+            assertQuery("SELECT (y + 3)::DATE AS v FROM u").noLeakCheck().expectSize().returns("v\n1969-12-07T03:28:36.354Z\n");
         });
     }
 
@@ -412,58 +553,6 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
             // The plain INT projection still wraps mod 2^32 on both paths.
             assertQuery("SELECT 2147483647 + 1 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
             assertQuery("SELECT y + 1 AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
-        });
-    }
-
-    @Test
-    public void testWiderCastsWidenWhenValueIsExactlyIntNull() throws Exception {
-        // Sibling of testWiderCastsWidenWhenProductWrapsToIntNull: there getInt()
-        // wraps to -2^31 while getLong() holds a different value; here the genuine
-        // full-width value IS exactly -2^31, so getInt() == getLong() == INT_NULL.
-        // Before the fix the intConst == longConst disjunct folded the literal to
-        // IntConstant.NULL, so a wider cast read LONG_NULL while the column path
-        // widened to -2147483648. The fold now folds only when both getters agree
-        // AND the value is not the sentinel, so both paths widen alike.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE u (y INT, m INT, p INT, q INT)");
-            // y=2147483647 for ~y; m=-1073741824 for m*2; p&q = 0x80000001 & 0xFFFFFFFE = -2^31
-            execute("INSERT INTO u VALUES (2147483647, -1073741824, -2147483647, -2)");
-
-            // ~2147483647 = -2147483648 exactly: full 5-cast matrix, literal vs column
-            assertQuery("SELECT (~2147483647)::LONG AS v").noLeakCheck().expectSize().returns("v\n-2147483648\n");
-            assertQuery("SELECT (~y)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483648\n");
-
-            assertQuery("SELECT (~2147483647)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n-2.147483648E9\n");
-            assertQuery("SELECT (~y)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.147483648E9\n");
-
-            assertQuery("SELECT (~2147483647)::FLOAT AS v").noLeakCheck().expectSize().returns("v\n-2.147483648E9\n");
-            assertQuery("SELECT (~y)::FLOAT AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.147483648E9\n");
-
-            assertQuery("SELECT (~2147483647)::DATE AS v").noLeakCheck().expectSize().returns("v\n1969-12-07T03:28:36.352Z\n");
-            assertQuery("SELECT (~y)::DATE AS v FROM u").noLeakCheck().expectSize().returns("v\n1969-12-07T03:28:36.352Z\n");
-
-            assertQuery("SELECT (~2147483647)::TIMESTAMP AS v").noLeakCheck().expectSize().returns("v\n1969-12-31T23:24:12.516352Z\n");
-            assertQuery("SELECT (~y)::TIMESTAMP AS v FROM u").noLeakCheck().expectSize().returns("v\n1969-12-31T23:24:12.516352Z\n");
-
-            // -1073741824 * 2 = -2147483648 exactly (no overflow, exact product)
-            assertQuery("SELECT (-1073741824 * 2)::LONG AS v").noLeakCheck().expectSize().returns("v\n-2147483648\n");
-            assertQuery("SELECT (m * 2)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483648\n");
-            assertQuery("SELECT (-1073741824 * 2)::DOUBLE AS v").noLeakCheck().expectSize().returns("v\n-2.147483648E9\n");
-            assertQuery("SELECT (m * 2)::DOUBLE AS v FROM u").noLeakCheck().expectSize().returns("v\n-2.147483648E9\n");
-
-            // bitwise AND landing exactly on 0x80000000: -2147483647 & -2 = -2147483648
-            assertQuery("SELECT (-2147483647 & -2)::LONG AS v").noLeakCheck().expectSize().returns("v\n-2147483648\n");
-            assertQuery("SELECT (p & q)::LONG AS v FROM u").noLeakCheck().expectSize().returns("v\n-2147483648\n");
-            assertQuery("SELECT (-2147483647 & -2)::TIMESTAMP AS v").noLeakCheck().expectSize().returns("v\n1969-12-31T23:24:12.516352Z\n");
-            assertQuery("SELECT (p & q)::TIMESTAMP AS v FROM u").noLeakCheck().expectSize().returns("v\n1969-12-31T23:24:12.516352Z\n");
-
-            // control: the plain INT projection displays as null on both paths (getInt() == INT_NULL)
-            assertQuery("SELECT ~2147483647 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
-            assertQuery("SELECT ~y AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
-            assertQuery("SELECT -1073741824 * 2 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
-            assertQuery("SELECT m * 2 AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
-            assertQuery("SELECT -2147483647 & -2 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
-            assertQuery("SELECT p & q AS v FROM u").noLeakCheck().expectSize().returns("v\nnull\n");
         });
     }
 }

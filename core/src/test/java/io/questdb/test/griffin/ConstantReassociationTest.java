@@ -84,6 +84,24 @@ public class ConstantReassociationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatingPointPairIsNotReassociated() throws Exception {
+        // IEEE-754 + and * are not associative under rounding, overflow and underflow, and
+        // reassociateConstants never regroups the all-literal form (it returns early once both
+        // sides are constant, so the fold runs left-associatively). Regrouping the column form
+        // would therefore make it diverge from the literal one - see
+        // IntArithmeticOverflowFoldingTest.testFloatingPointPairAgreesBetweenConstantAndColumn.
+        assertReassociationNoOp("d + 1.0 + 2.0");
+        assertReassociationNoOp("d + 1.0 + 2.0f");
+        assertReassociationNoOp("d * 1e300 * 1e-300");
+        // Pattern B (commutative): (C1 op col) op floatConst
+        assertReassociationNoOp("(1.0 + d) + 2.0");
+        // Mirror A (commutative): floatConst op (col op C1)
+        assertReassociationNoOp("2.0 + (d + 1.0)");
+        // Mirror B (associative): floatConst op (C1 op col)
+        assertReassociationNoOp("2.0 + (1.0 + d)");
+    }
+
+    @Test
     public void testIntegerDecimalMixIsNotReassociated() throws Exception {
         // Regrouping an integer constant with a DECIMAL one widens the inner operation to
         // DECIMAL. For an INT column that overflows, (col + intConst) wraps mod 2^32, but
@@ -99,9 +117,10 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // Mirror B (associative): decimalConst op (C1 op col)
         assertReassociationNoOp("1.5m + (3 + d)");
 
-        // Same-category DECIMAL pairs still regroup; a DECIMAL evaluates at DECIMAL width
-        // regardless of grouping.
-        assertReassociation("d + 1.5m + 2.5m", "d + (1.5m + 2.5m)");
+        // A same-category DECIMAL pair does not regroup either: a DECIMAL fold carries
+        // precision and scale, which regrouping shifts, and the all-literal form is never
+        // regrouped - so regrouping only the column form makes the two diverge.
+        assertReassociationNoOp("d + 1.5m + 2.5m");
     }
 
     @Test
@@ -122,15 +141,12 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // Mirror B (associative): floatConst op (C1 op col)
         assertReassociation("0.0 + (3 + d)", "0.0 + (3 + d)");
 
-        // Same-category pairs still regroup. Integer addition is associative modulo 2^32 in
-        // the absence of the INT_NULL sentinel, and floating pairs evaluate at floating point
-        // regardless of grouping. (Integer-pair regrouping is not fully safe - an intermediate
+        // A same-category integer pair still regroups: integer addition is associative modulo
+        // 2^32 in the absence of the INT_NULL sentinel. (Not fully safe - an intermediate
         // col op C1 can still wrap onto the sentinel for a particular column value; see
         // testIntegerPairWrappingToIntNullIsNotReassociated for that known limitation.)
         assertReassociation("d + 3 + 4", "d + (3 + 4)");
         assertReassociation("d + 3 + 4L", "d + (3 + 4L)");
-        assertReassociation("d + 1.0 + 2.0", "d + (1.0 + 2.0)");
-        assertReassociation("d + 1.0 + 2.0f", "d + (1.0 + 2.0f)");
     }
 
     @Test

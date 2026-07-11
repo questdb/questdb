@@ -58,9 +58,8 @@ public class CastIntToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            // getLong() widens: NULL-safe for a plain INT, un-wrapped for overflowing
-            // INT arithmetic, so the timestamp holds the full-width result (e.g.
-            // to_utc(<seconds> * 1_000_000)).
+            // IntFunction.getTimestamp() delegates to getLong() and widens, so this cast widens
+            // too and holds the full-width result (e.g. to_utc(<seconds> * 1_000_000)).
             return arg.getLong(rec);
         }
     }

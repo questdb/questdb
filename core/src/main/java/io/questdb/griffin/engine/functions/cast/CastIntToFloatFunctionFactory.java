@@ -51,10 +51,9 @@ public class CastIntToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            // getLong() widens: NULL-safe for a plain INT, un-wrapped for overflowing
-            // INT arithmetic, so the wider target holds the full-width result.
-            final long value = arg.getLong(rec);
-            return value != Numbers.LONG_NULL ? value : Float.NaN;
+            // IntFunction.getFloat() reads getInt(), so this cast wraps too. See CastIntToDouble.
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NULL ? value : Float.NaN;
         }
     }
 }

@@ -392,18 +392,19 @@ public class ExpressionNode implements Mutable, Sinkable {
      * <p>The rewrite is purely structural: it relinks existing {@link ExpressionNode}
      * instances without allocating new nodes.</p>
      *
-     * <p>Two numeric guards apply (see {@link #isReassociationSafe}). First, a constant
-     * pair is not regrouped when one constant is integer-typed and the other widens the
-     * operation (floating-point or DECIMAL). Combining them (e.g. {@code 3 + 0.0 -> 3.0})
-     * widens the inner operation, so {@code (intCol + 3) + 0.0} would become
-     * {@code intCol + 3.0} and evaluate {@code intCol + 3} at double width - silently
-     * dropping the INT overflow wrap the un-regrouped form (and the constant-folded
-     * literal) produces. Second, an integer pair is not regrouped when its fold lands
-     * exactly on an integer NULL sentinel - INT_NULL (-2^31) for an INT-typed pair,
-     * LONG_NULL (-2^63) for a LONG-typed one: {@code col + (const1 + const2)} would then
-     * read that sentinel and poison every row to NULL, while the left-associative form
-     * keeps the real wrapped value. Floating pairs are already evaluated at floating-point
-     * width and carry no integer NULL sentinel.</p>
+     * <p>Two numeric guards apply (see {@link #isReassociationSafe}). First, a constant pair
+     * is not regrouped when either constant widens the operation (floating-point or DECIMAL).
+     * Combining a widening constant with an integer one (e.g. {@code 3 + 0.0 -> 3.0}) widens
+     * the inner operation, so {@code (intCol + 3) + 0.0} would become {@code intCol + 3.0} and
+     * evaluate {@code intCol + 3} at double width - silently dropping the INT overflow wrap the
+     * un-regrouped form (and the constant-folded literal) produces. Combining two widening
+     * constants is unsafe as well: IEEE-754 {@code +} and {@code *} are not associative, so
+     * {@code (dblCol * 1e300) * 1e-300} overflows to Infinity while the regrouped
+     * {@code dblCol * (1e300 * 1e-300)} returns {@code dblCol}. Second, an integer pair is not
+     * regrouped when its fold lands exactly on an integer NULL sentinel - INT_NULL (-2^31) for
+     * an INT-typed pair, LONG_NULL (-2^63) for a LONG-typed one: {@code col + (const1 + const2)}
+     * would then read that sentinel and poison every row to NULL, while the left-associative
+     * form keeps the real wrapped value.</p>
      *
      * <p><b>Known limitation.</b> Both guards inspect only the constant pair, so they
      * cannot see a poison introduced by the left-associative <em>intermediate</em>
@@ -835,9 +836,15 @@ public class ExpressionNode implements Mutable, Sinkable {
      * Reports whether regrouping the constant pair {@code (a OP b)} is value-preserving,
      * so {@link #reassociateConstants} may combine them. Two hazards block it:
      * <ul>
-     *   <li>mixing an integer constant with a widening (floating-point or DECIMAL) one
-     *   (see {@link #mixesIntegerAndWidening}), which would widen an INT operation to
-     *   floating point / DECIMAL and drop its overflow wrap;</li>
+     *   <li>a widening (floating-point or DECIMAL) constant on either side. Mixing one with
+     *   an integer constant widens an INT operation to floating point / DECIMAL and drops its
+     *   overflow wrap. A pair of widening constants is no safer: IEEE-754 {@code +} and
+     *   {@code *} are not associative under rounding, overflow and underflow, so
+     *   {@code (col * 1e300) * 1e-300} (which overflows to Infinity at the intermediate and
+     *   stays there) and {@code col * (1e300 * 1e-300)} (which is {@code col * 1.0}) disagree -
+     *   and {@code reassociateConstants} never regroups the all-literal form, which evaluates
+     *   left-associatively, so the regroup makes the column form diverge from the literal one.
+     *   A DECIMAL fold carries precision and scale, which regrouping shifts the same way;</li>
      *   <li>an integer pair whose fold lands exactly on an integer NULL sentinel - the
      *   INT_NULL (-2^31) sentinel for an INT-typed pair, or the LONG_NULL (-2^63) sentinel
      *   for a LONG-typed one. The regrouped {@code col OP (a OP b)} would then read that
@@ -845,14 +852,16 @@ public class ExpressionNode implements Mutable, Sinkable {
      *   the matching NULL on a NULL operand), while the left-associative literal /
      *   un-regrouped form keeps the real wrapped value.</li>
      * </ul>
-     * <p>Both checks see only the constant pair, not the column, so a "safe" verdict here
-     * still permits an integer-pair regroup whose left-associative intermediate
-     * {@code col OP a} wraps onto the sentinel for some column value (see the "Known
-     * limitation" note on {@link #reassociateConstants}). The method reports value-preserving
-     * for the pair, not for every column value.</p>
+     * <p>Only an integer pair is left to regroup, and both checks see only that pair, not the
+     * column, so a "safe" verdict here still permits a regroup whose left-associative
+     * intermediate {@code col OP a} wraps onto the sentinel for some column value (see the
+     * "Known limitation" note on {@link #reassociateConstants}). The method reports
+     * value-preserving for the pair, not for every column value.</p>
      */
     private static boolean isReassociationSafe(ExpressionNode a, ExpressionNode b, CharSequence opToken) {
-        return !mixesIntegerAndWidening(a, b) && !integerPairFoldsToNull(a, b, opToken);
+        return !a.isConstFoldWidening
+                && !b.isConstFoldWidening
+                && !integerPairFoldsToNull(a, b, opToken);
     }
 
     /**
@@ -889,17 +898,6 @@ public class ExpressionNode implements Mutable, Sinkable {
         } catch (NumericException notFloat) {
             return false;
         }
-    }
-
-    /**
-     * Reports whether exactly one of the two constants widens an INT operation (is
-     * floating-point or DECIMAL) and the other is integer, reading each side's cached
-     * {@code isConstFoldWidening} flag (populated by {@link #cacheConstantFold}).
-     * Regrouping such a pair would widen an integer operation and drop an INT overflow
-     * wrap; see {@link #reassociateConstants}.
-     */
-    private static boolean mixesIntegerAndWidening(ExpressionNode a, ExpressionNode b) {
-        return a.isConstFoldWidening != b.isConstFoldWidening;
     }
 
     private static void toSink(CharSink<?> sink, ExpressionNode e) {

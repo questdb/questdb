@@ -50,8 +50,8 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            // getLong() widens: NULL-safe for a plain INT, un-wrapped for overflowing
-            // INT arithmetic, so the wider target holds the full-width result.
+            // IntFunction.getLong() widens, so this cast widens too: NULL-safe for a plain INT,
+            // un-wrapped for overflowing INT arithmetic. See CastIntToDouble for the invariant.
             return arg.getLong(rec);
         }
     }
