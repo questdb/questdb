@@ -8707,7 +8707,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             txWriter.removeAttachedPartitions(partitionTimestamp);
                             columnVersionWriter.removePartition(partitionTimestamp);
-                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            if (srcNameTxn != txWriter.txn) {
+                                // srcNameTxn == txWriter.txn means this partition's on-disk version was
+                                // already stamped by an EARLIER window of the SAME open windowed replace
+                                // (TableWriter#beginReplaceRange / #applyReplaceRangeWindow / #finishReplaceRange):
+                                // txWriter.txn does not advance until finishReplaceRange's commit00(), so two
+                                // windows touching the same partition within one bracket compute the identical
+                                // "new" nameTxn. Queuing srcNameTxn here would self-referentially mark that
+                                // live, just-written version as a removal candidate; processPartitionRemoveCandidates0
+                                // treats any candidate with txn >= lastCommittedTxn as a safe-to-delete rollback
+                                // orphan (a version stamped but never committed) and cannot tell that apart from
+                                // this same-bracket repeat touch, so it would delete the only copy of the rows an
+                                // earlier window just wrote. Only queue a genuinely prior (pre-bracket) version.
+                                partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            }
                         } else {
                             // Set partition size to 0 and process all 0 size partitions at the end of the method.
                             // It will be removed if there are no readers on the previous partition.
@@ -8749,7 +8762,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                             txWriter.resetPartitionParquetGeneratedByRawIndex(partitionIndexRaw);
-                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            if (srcNameTxn != txWriter.txn) {
+                                // See the identical guard + comment on the other partitionRemoveCandidates.add
+                                // call above in this method (the "fully removed" branch): srcNameTxn == txWriter.txn
+                                // means an earlier window of this SAME open windowed replace already stamped this
+                                // partition at the current in-progress txn, so there is no genuinely-stale prior
+                                // version to queue - only remove versions that predate this bracket.
+                                partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            }
                         }
                         txWriter.bumpPartitionTableVersion();
                     }
