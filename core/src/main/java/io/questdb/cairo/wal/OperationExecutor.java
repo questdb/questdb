@@ -194,6 +194,23 @@ public class OperationExecutor implements Closeable {
             }
             try (DeleteOperation deleteOp = compiledQuery.getDeleteOperation()) {
                 try {
+                    // Opt-in non-atomic disk-bounded route (H1, cairo.wal.delete.disk.bounded): only for the
+                    // arbitrary (non-time-range) survivor-replace on a table that actually has Parquet
+                    // partitions to convert. It manages its OWN seqTxn: each window is its own commit at the
+                    // still-current durable seqTxn S-1 (progressively deleting, visible to concurrent readers),
+                    // and one final commitSeqTxn(seqTxn) advances S-1 -> S. So it must NOT run the up-front
+                    // convert pre-pass (each window converts only its own overlapping Parquet partitions) and
+                    // must NOT setSeqTxn(seqTxn) up front. It bounds transient Parquet-convert disk to one
+                    // window at the cost of atomicity: a concurrent reader may observe a partial delete during
+                    // apply. Still crash-safe: a crash mid-loop leaves durable S-1, the whole delete re-applies,
+                    // finished windows re-apply as no-ops (survivors-of-survivors) and already-native partitions
+                    // re-convert as no-ops.
+                    if (!deleteOp.isPureTimeRange()
+                            && engine.getConfiguration().getWalDeleteDiskBounded()
+                            && tableWriterHasParquet(tableWriter)) {
+                        return replaceWithSurvivorsDiskBounded(compiler, tableWriter, deleteOp, seqTxn);
+                    }
+
                     // Task 3.1 Parquet convert-to-native fallback. Any Parquet partition the replace below would
                     // REWRITE (a boundary trim on the time-range route, or an arbitrary-condition rewrite) is
                     // converted to native FIRST, because the replace path cannot rewrite Parquet in place. That
@@ -475,6 +492,135 @@ public class OperationExecutor implements Closeable {
                 tableWriter.abortReplaceRange(); // executeDelete's catch performs the txn rollback + setSeqTxn(S-1)
             }
         }
+    }
+
+    /**
+     * Opt-in non-atomic, disk-bounded arbitrary-DELETE survivor replace (H1, {@code cairo.wal.delete.disk.bounded}).
+     * Overwrites the table's whole populated range {@code [minTimestamp, maxTimestamp+1)} with the survivor rows,
+     * tiled into ~{@code rowsPerStep}-sized windows exactly like {@link #replaceWithSurvivors}, but with two
+     * differences that bound BOTH staged O3 memory AND transient Parquet-convert disk to a single window (the
+     * atomic path instead un-tiers ALL Parquet partitions up front, which can transiently double table disk):
+     * <ul>
+     *   <li>Each window converts only its OWN overlapping Parquet partitions to native (
+     *       {@link #convertParquetPartitionsForDeleteWindow}) - so at most one window's partitions are transiently
+     *       native - and applies via the SINGLE-CALL {@link TableWriter#replaceRange} (begin+apply+finish = one
+     *       commit) rather than the atomic path's one begin/apply.../finish bracket. So every window is its OWN
+     *       commit.</li>
+     *   <li>Those per-window commits happen at the still-current durable seqTxn {@code S-1} (this method does NOT
+     *       {@code setSeqTxn(seqTxn)} up front - see {@code executeDelete}), progressively deleting; after the last
+     *       window one final {@link TableWriter#commitSeqTxn(long)} advances the durable seqTxn {@code S-1 -> S}.</li>
+     * </ul>
+     * <b>Non-atomic:</b> a concurrent reader may observe a partially-applied delete while this loop runs (each
+     * window is visible as soon as it commits). <b>Crash-safe:</b> a crash mid-loop leaves the durable seqTxn at
+     * {@code S-1} (the final {@code commitSeqTxn(S)} never ran), so {@code ApplyWal2TableJob} re-runs the WHOLE
+     * delete for txn {@code S}; the finished windows re-apply as no-ops (their survivor cursor now returns only
+     * survivors-of-survivors = the same survivor rows already on disk) and their already-native partitions
+     * re-convert as no-ops, so the final state is identical (idempotent). A throw mid-loop propagates to
+     * {@code executeDelete}'s catch, which rolls back the in-flight window and {@code setSeqTxn(seqTxn - 1)} so the
+     * apply job retries the whole delete over the partially-committed (still at {@code S-1}) table - the same
+     * re-apply a crash triggers.
+     * <p>
+     * Because each window is its own commit here, {@code txWriter.txn} advances every window, so Task 5's
+     * same-bracket corruption guard (which only fires when {@code srcNameTxn == txWriter.txn} within a single
+     * frozen-txn bracket) is inherently a no-op on this path - safe.
+     */
+    private long replaceWithSurvivorsDiskBounded(SqlCompiler compiler, TableWriter tableWriter, DeleteOperation deleteOp, long seqTxn) throws SqlException {
+        final RecordCursorFactory survivorFactory = deleteOp.getSurvivorFactory();
+        assert survivorFactory != null : "survivor factory must be built at WAL apply time (isWalApplication)";
+        if (tableWriter.getPartitionCount() == 0) {
+            // Empty table: nothing to delete, but still advance the durable seqTxn S-1 -> S so the apply job
+            // does not re-run this txn forever.
+            tableWriter.commitSeqTxn(seqTxn);
+            return 0;
+        }
+
+        // The survivor cursor is a schema-identical SELECT * over the table, so its columns line up 1:1 with the
+        // writer's and the designated timestamp sits at the same index (mirrors replaceWithSurvivors).
+        final int timestampCursorIndex = tableWriter.getMetadata().getTimestampIndex();
+        entityColumnFilter.of(survivorFactory.getMetadata().getColumnCount());
+        final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                compiler.getAsm(),
+                survivorFactory.getMetadata(),
+                tableWriter.getMetadata(),
+                entityColumnFilter,
+                engine.getConfiguration()
+        );
+
+        final long minTs = tableWriter.getMinTimestamp();
+        final long maxTs = tableWriter.getMaxTimestamp();
+        final long rowsPerStep = engine.getConfiguration().getWalDeleteRowsPerStep();
+        final long step = deleteWindowStep(minTs, maxTs, tableWriter.size(), rowsPerStep);
+        final BindVariableService bind = executionContext.getBindVariableService();
+        // Designated-ts column type (TIMESTAMP_MICRO or TIMESTAMP_NANO): the window bounds MUST be set in this
+        // unit via DeleteOperation.setWindowBound, never a raw bind.setTimestamp (micros-only -> overflow/suspend
+        // on a nanos table). See replaceWithSurvivors' identical field comment.
+        final int tsColType = tableWriter.getMetadata().getColumnType(timestampCursorIndex);
+
+        long removed = 0;
+        long wLo = minTs;
+        while (wLo <= maxTs) {
+            // hiExcl = min(wLo + step, maxTs + 1), overflow-safe: if step covers the rest, this is the last window.
+            final long remaining = maxTs - wLo + 1; // >= 1
+            final long wHiExcl = (step >= remaining) ? (maxTs + 1) : (wLo + step);
+            // Convert only THIS window's overlapping Parquet partitions to native (its own commit at S-1), so at
+            // most one window's partitions are transiently native.
+            convertParquetPartitionsForDeleteWindow(tableWriter, wLo, wHiExcl);
+            DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_LO_BIND, tsColType, wLo);
+            DeleteOperation.setWindowBound(bind, DeleteOperation.WINDOW_HI_BIND, tsColType, wHiExcl);
+            try (RecordCursor survivorCursor = survivorFactory.getCursor(executionContext)) {
+                // Single-call replaceRange => this window is its own commit (still at durable seqTxn S-1).
+                removed += tableWriter.replaceRange(wLo, wHiExcl, survivorCursor, copier, timestampCursorIndex, executionContext);
+            }
+            wLo = wHiExcl;
+        }
+        tableWriter.commitSeqTxn(seqTxn); // FINAL: advance durable seqTxn S-1 -> S (one small commit)
+        return removed;
+    }
+
+    /**
+     * Converts to native every Parquet partition that OVERLAPS the window {@code [wLo, wHiExcl)} - the only
+     * partitions this window's {@link TableWriter#replaceRange} would rewrite (the replace path cannot rewrite a
+     * Parquet partition in place). Its own physical commit (
+     * {@link TableWriter#commitPendingParquetToNativeConversions()}), which is correct here because the
+     * disk-bounded path is intentionally multi-commit (each window commits at seqTxn {@code S-1}). Bounds transient
+     * native-format disk to one window's partitions. On WAL re-apply after a crash, an already-native partition is
+     * skipped (format gate) and a re-issued {@code convertPartitionParquetToNative(false)} is an idempotent no-op.
+     */
+    private void convertParquetPartitionsForDeleteWindow(TableWriter tableWriter, long wLo, long wHiExcl) {
+        final int partitionCount = tableWriter.getPartitionCount();
+        int converted = 0;
+        for (int i = 0; i < partitionCount; i++) {
+            if (tableWriter.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                continue;
+            }
+            final long floor = tableWriter.getPartitionTimestamp(i);
+            // Physical next floor is a sound UPPER bound on this partition's data extent; the last partition can
+            // never be Parquet (the active partition is never converted), so getMaxTimestamp()+1 is only a
+            // defensive fallback here.
+            final long nextFloor = (i == partitionCount - 1) ? (tableWriter.getMaxTimestamp() + 1) : tableWriter.getPartitionTimestamp(i + 1);
+            if (floor < wHiExcl && nextFloor > wLo) { // partition [floor, nextFloor) overlaps window [wLo, wHiExcl)
+                tableWriter.convertPartitionParquetToNative(floor, false);
+                converted++;
+            }
+        }
+        if (converted > 0) {
+            tableWriter.commitPendingParquetToNativeConversions();
+        }
+    }
+
+    /**
+     * True when the table has at least one Parquet partition - the gate for the disk-bounded route (which only
+     * differs from the atomic path in how it bounds Parquet-convert disk; on an all-native table there is nothing
+     * to convert, so the atomic path already bounds everything and is preferred).
+     */
+    private static boolean tableWriterHasParquet(TableWriter tableWriter) {
+        final int partitionCount = tableWriter.getPartitionCount();
+        for (int i = 0; i < partitionCount; i++) {
+            if (tableWriter.getPartitionFormat(i) == PartitionFormat.PARQUET) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
