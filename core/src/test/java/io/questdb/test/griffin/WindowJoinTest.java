@@ -4973,6 +4973,100 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinKeyedIndexReuseWhenSlaveExhausted() throws Exception {
+        // The single-threaded keyed (fast) factory rebuilds its per-symbol index whenever the
+        // window reaches past the last slave row it has indexed. Two shapes used to defeat that
+        // gate and rebuild the index for every master row:
+        //   - the master runs past the end of the slave table, so the index scan runs out of slave
+        //     rows and the last indexed timestamp stops advancing (the whole windowHi-wide tail);
+        //   - the window holds no slave row at all - a master row before the slave's first row, or
+        //     a window inside a slave gap - so the vectorized cursor, which looked no further than
+        //     the window's own upper bound, indexed nothing.
+        // Both now index everything up to the index horizon and mark the index complete once the
+        // slave runs out, so the index is reused instead. The master here starts 6 h before the
+        // slave's first row, crosses a 4 h slave gap and ends 5 h past the slave's last row, so it
+        // exercises both shapes plus the gap the index scan must not mistake for the end of the
+        // slave. Results must not move: cross-check against a plain LEFT JOIN oracle (EXCLUDE
+        // PREVAILING semantics) and, for INCLUDE PREVAILING, against the parallel path, for native
+        // and parquet slaves.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, m LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices_pq (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Master rows every 5 min over 41 h. Slave rows every minute over 06:00-22:00 on day 1
+            // and 02:00-12:00 on day 2: the 4 h gap straddles the partition boundary, so the index
+            // scan also stops on "the next frame starts past the index horizon" - which does NOT
+            // complete the index, and drops the whole second partition from the aggregates if it is
+            // mistaken for the slave running out of rows.
+            // Integer x keeps sum() order-independent so the oracle compares exactly.
+            execute("INSERT INTO trades SELECT rnd_symbol('a','b','c'), rnd_long(0, 10, 0), " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 5 * 60 * 1_000_000L) FROM long_sequence(500)");
+            execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
+                    "timestamp_sequence('2024-01-01T06:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(961)");
+            execute("INSERT INTO prices SELECT rnd_symbol('a','b','c'), rnd_long(0, 1000, 0), " +
+                    "timestamp_sequence('2024-01-02T02:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(601)");
+            execute("INSERT INTO prices_pq SELECT * FROM prices");
+            execute("ALTER TABLE prices_pq CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+
+            // window clause, and the slave interval it selects, for the LEFT JOIN oracle
+            final String[][] windows = {
+                    {"RANGE BETWEEN CURRENT ROW AND 4 HOURS FOLLOWING", "p.ts >= t.ts AND p.ts <= dateadd('h', 4, t.ts)"},
+                    {"RANGE BETWEEN 4 HOURS PRECEDING AND 4 HOURS FOLLOWING", "p.ts >= dateadd('h', -4, t.ts) AND p.ts <= dateadd('h', 4, t.ts)"},
+                    {"RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING", "p.ts >= dateadd('h', -4, t.ts) AND p.ts <= dateadd('h', -2, t.ts)"},
+            };
+            // Aggregate and join filter, chosen to route through each of the four keyed cursors:
+            // sum(p.x) is batch-computable, so it takes the vectorized cursor; sum(p.x + t.m) reads
+            // a master column, which the vectorized path cannot batch; a join filter (always true
+            // here, so the oracle holds) forces the join-filter cursors.
+            final String[][] shapes = {
+                    {"sum(p.x)", ""},
+                    {"sum(p.x + t.m)", ""},
+                    {"sum(p.x)", " AND p.x > -1"},
+            };
+            for (String[] window : windows) {
+                for (String[] shape : shapes) {
+                    sink.clear();
+                    printSql("SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
+                            "FROM trades t LEFT JOIN prices p " +
+                            "ON t.sym = p.sym AND " + window[1] + shape[1] + " " +
+                            "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
+                    final String expected = sink.toString();
+
+                    final String prefix = window[0] + " " + shape[0] + shape[1];
+                    for (String slave : new String[]{"prices", "prices_pq"}) {
+                        for (boolean parallel : new boolean[]{false, true}) {
+                            sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
+                            sink.clear();
+                            printSql("SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
+                                    "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym)" + shape[1] + " " +
+                                    window[0] + " EXCLUDE PREVAILING ORDER BY t.sym, t.ts", sink);
+                            TestUtils.assertEquals(prefix + " parallel=" + parallel + " slave=" + slave, expected, sink);
+                        }
+
+                        // INCLUDE PREVAILING has no simple plain-SQL oracle; cross-check the
+                        // single-threaded and parallel keyed paths against each other. Only the
+                        // former rebuilds the index per master row, so they diverge if the index is
+                        // marked complete too early.
+                        final String incl = "SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
+                                "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym)" + shape[1] + " " +
+                                window[0] + " INCLUDE PREVAILING ORDER BY t.sym, t.ts";
+                        sqlExecutionContext.setParallelWindowJoinEnabled(false);
+                        sink.clear();
+                        printSql(incl, sink);
+                        final String single = sink.toString();
+                        sqlExecutionContext.setParallelWindowJoinEnabled(true);
+                        sink.clear();
+                        printSql(incl, sink);
+                        TestUtils.assertEquals(prefix + " include prevailing slave=" + slave, single, sink);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinMasterTimestampMultiIntervalWhere() throws Exception {
         // A master designated-timestamp predicate that extracts to MULTIPLE disjoint intervals
         // (t.ts != literal, NOT BETWEEN, OR of ranges) must not collapse the slave page-frame scan

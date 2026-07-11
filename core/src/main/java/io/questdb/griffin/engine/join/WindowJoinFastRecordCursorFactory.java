@@ -81,6 +81,18 @@ import static io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFact
  * @see AsyncWindowJoinFastRecordCursorFactory for the multi-threaded variant
  */
 public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * {@code lastSlaveTimestamp} value that marks the per-symbol index complete: the index scan ran
+     * out of slave rows, so the index holds every slave row from its lower bound onwards.
+     * <p>
+     * Master rows arrive in timestamp order, so the window's lower bound only moves forward: once
+     * the slave is exhausted, no later master row can want a row the index doesn't already hold.
+     * Parking the last indexed timestamp at {@link Long#MAX_VALUE} keeps the rebuild gate shut for
+     * the rest of the scan. Without it every master row whose window reaches past the last slave
+     * row - {@code windowHi} worth of them - rebuilds the index over its whole window and finds
+     * nothing new.
+     */
+    private static final long INDEX_COMPLETE = Long.MAX_VALUE;
     // Index lookahead multiplier. Defines the size of the time interval used to build per-symbol
     // in-memory index with row ids/timestamps to be used by aggregation. Aimed to improve performance
     // for the dense master row timestamps case by not having to rebuild the index for each unique
@@ -549,6 +561,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi);
+                // The lookup walks past the last frame only when it finds no row, so this stays false
+                // whenever the scan below runs; the scan then has the final say.
+                boolean isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                 if (slaveRowIndex != Long.MIN_VALUE) {
                     long baseSlaveRowId = Rows.toRowID(slaveTimeFrameHelper.getTimeFrameIndex(), 0);
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
@@ -575,6 +590,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                // Either the slave ran out of rows, which completes the index, or the
+                                // next frame starts past the index horizon, which does not.
+                                isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
@@ -583,6 +601,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
                     }
+                }
+                if (isIndexComplete) {
+                    lastSlaveTimestamp = INDEX_COMPLETE;
                 }
             }
 
@@ -831,7 +852,10 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
-                long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, masterTimestampHi, includePrevailing);
+                long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, includePrevailing);
+                // The lookup walks past the last frame only when it finds no row, so this stays false
+                // whenever the scan below runs; the scan then has the final say.
+                boolean isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
@@ -874,6 +898,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                // Either the slave ran out of rows, which completes the index, or the
+                                // next frame starts past the index horizon, which does not.
+                                isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
@@ -882,6 +909,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
                     }
+                }
+                if (isIndexComplete) {
+                    lastSlaveTimestamp = INDEX_COMPLETE;
                 }
             }
 
@@ -1077,6 +1107,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 final Record slaveRecord = slaveTimeFrameHelper.getRecord();
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
+                // The lookup walks past the last frame only when it finds no row, so this stays false
+                // whenever the scan below runs; the scan then has the final say.
+                boolean isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                 prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 if (slaveRowIndex != Long.MIN_VALUE) {
@@ -1105,6 +1138,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                // Either the slave ran out of rows, which completes the index, or the
+                                // next frame starts past the index horizon, which does not.
+                                isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
@@ -1113,6 +1149,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
                     }
+                }
+                if (isIndexComplete) {
+                    lastSlaveTimestamp = INDEX_COMPLETE;
                 }
             }
 
@@ -1312,6 +1351,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
                 long slaveRowIndex = slaveTimeFrameHelper.findRowLo(slaveTimestampLo, slaveTimestampHi, true);
+                // The lookup walks past the last frame only when it finds no row, so this stays false
+                // whenever the scan below runs; the scan then has the final say.
+                boolean isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                 final int prevailingFrameIndex = slaveTimeFrameHelper.getPrevailingFrameIndex();
                 final long prevailingRowIndex = slaveTimeFrameHelper.getPrevailingRowIndex();
                 prevailingCache.of(prevailingFrameIndex, prevailingRowIndex);
@@ -1342,6 +1384,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
 
                         if (++slaveRowIndex >= slaveTimeFrameHelper.getTimeFrameRowHi()) {
                             if (!slaveTimeFrameHelper.nextFrame(slaveTimestampHi)) {
+                                // Either the slave ran out of rows, which completes the index, or the
+                                // next frame starts past the index horizon, which does not.
+                                isIndexComplete = slaveTimeFrameHelper.isFrameCursorExhausted();
                                 break;
                             }
                             slaveRowIndex = slaveTimeFrameHelper.getTimeFrameRowLo();
@@ -1350,6 +1395,9 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                             slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                         }
                     }
+                }
+                if (isIndexComplete) {
+                    lastSlaveTimestamp = INDEX_COMPLETE;
                 }
             }
 
