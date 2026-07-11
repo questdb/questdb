@@ -133,6 +133,42 @@ public class WriteFenceEntryPointMatrixTest extends AbstractCairoTest {
     }
 
     /**
+     * Drives a real WAL DELETE through {@code engine.execute()} on an engine whose read-only flag flips
+     * after the table is created -- exercising the DELETE dispatcher fence for real, not merely the
+     * classification map above. Per the http/pg-wire classification, DELETE funnels through the identical
+     * {@code executeDelete -> cq.execute() -> OperationDispatcher.execute} path as UPDATE, and
+     * {@code SqlCompilerImpl.generateDelete} mints no WAL txn at compile time (unlike the parse-time
+     * TRUNCATE mint), so compiling a DELETE against a read-only engine succeeds; the refusal is entirely
+     * {@code OperationDispatcher.applyFenced}'s in-lock {@code isReadOnlyMode()} re-check -- the same
+     * dispatcher fence {@link #testAsyncEnqueueBranchDrivesRealWriteAndIsFenced} drives for the
+     * async-enqueue fallback arm, driven here for the inline-apply success arm through real SQL text,
+     * mirroring {@link #testParseTimeTruncateDrivesRealWriteAndIsFenced}'s toggle-read-only-after-create
+     * structure.
+     */
+    @Test
+    public void testDeleteIsRefusedUnderWriteFence() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean readOnly = new AtomicBoolean(false);
+            try (CairoEngine flipEngine = flipReadOnlyEngine(readOnly)) {
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(flipEngine);
+                flipEngine.execute(
+                        "CREATE TABLE matrix_del (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                        ctx
+                );
+                // Flip read-only after the table exists: the delete's WAL externalization must be
+                // refused by the dispatcher's in-lock re-check before it mints a sequencer txn.
+                readOnly.set(true);
+                try {
+                    flipEngine.execute("DELETE FROM matrix_del WHERE x > 0", ctx);
+                    Assert.fail("a DELETE must be refused on a read-only node");
+                } catch (CairoException e) {
+                    assertReadOnlyRefusal(e);
+                }
+            }
+        });
+    }
+
+    /**
      * A WAL DROP is a SINGLE CompiledQuery type (DROP) but FOUR distinct statement shapes -- DROP TABLE,
      * DROP VIEW, DROP MATERIALIZED VIEW, DROP ALL TABLES -- and all four converge on the one engine entry
      * point CairoEngine.dropTableOrViewOrMatView, which mints the replicated drop (tableSequencerAPI.dropTable)
