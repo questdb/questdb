@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- **Single seqTxn advance per WAL txn.** The whole DELETE persists the sequencer txn exactly once — in `finishReplaceRange`'s `commit00()`. Never add an intermediate commit inside the window loop. (Proven for the primitive; the loop must preserve it.)
+- **Single seqTxn advance per WAL txn** (default / atomic path). The DELETE persists the sequencer txn exactly once — in `finishReplaceRange`'s `commit00()`. Never add an intermediate commit inside the atomic window loop.
+- **Atomicity is opt-out, not gone.** The default path (`cairo.wal.delete.disk.bounded=false`) is atomic: readers see the DELETE fully applied or not at all. The opt-in disk-bounded path (Task 6, `=true`) commits per window at seqTxn S-1 and is therefore **NON-atomic** — concurrent readers may observe a large DELETE partially applied during WAL apply — but remains crash-safe (a crash leaves durable seqTxn S-1; re-apply redoes the whole DELETE, finished windows idempotent as survivors-of-survivors) and reaches the same final state. Only the disk-bounded path relaxes atomicity; C1 (memory) is fixed on both paths.
 - **Correctness identical to whole-range delete.** The surviving row set is exactly `NOT(pred)`, byte-identical to the current whole-range implementation, for any window count. Windows must *tile* `[minTs, maxTs+1)` contiguously (window K's `hiExcl` == window K+1's `lo`) so deleted rows in inter-survivor gaps are covered by exactly one window.
 - **Per-window cursor MUST be an interval scan**, not a filtered full scan. N windows must sum to ONE pass over the table (O(tableRows) read), not O(N·tableRows). This is a hard performance gate (Task 4 spike).
 - **Time-range (empty-replace) path unchanged.** `deleteOp.isPureTimeRange()` → `deleteTimeRange` is already O(deleted); windowing applies ONLY to the arbitrary survivor path.
@@ -477,57 +478,96 @@ git commit -m "feat(delete): windowed survivor-replace bounds arbitrary-DELETE m
 
 ---
 
-## Task 6: per-window Parquet convert (H1)
+## Task 6: opt-in non-atomic disk-bounded delete (H1) — SPIKE-GATED
+
+**Decision (user, 2026-07-11):** bound transient Parquet disk even in the worst case, accepting non-atomicity. Made **opt-in** via `cairo.wal.delete.disk.bounded` (default `false`): default stays the atomic Task-5 path (C1 fixed, disk unchanged); `=true` switches the arbitrary route to per-window convert+replace+commit — memory AND transient-disk bounded, but **non-atomic** (readers may observe a partial delete during apply) and partitions the delete rewrites still end native (inherent). Crash-safe on both paths.
+
+**Design (disk-bounded path):** do NOT `setSeqTxn(seqTxn)` up front. Loop windows; per window: convert that window's Parquet partitions (up to native, its own commit) then `replaceRange(window)` (its own commit) — every window commits at the still-current durable seqTxn `S-1`, progressively deleting. After the last window, one final `commitSeqTxn(seqTxn)` advances the durable seqTxn to `S`. A crash mid-loop leaves durable seqTxn `S-1`; ApplyWal2TableJob re-runs the whole DELETE; already-deleted windows re-apply as no-ops (their survivor cursor now returns only survivors = survivors-of-survivors) and already-native partitions re-convert as no-ops. Final state identical.
 
 **Files:**
-- Modify: `core/src/main/java/io/questdb/cairo/wal/OperationExecutor.java` (`convertParquetPartitionsForDelete` arbitrary route → per-window; `replaceWithSurvivors` calls it inside the loop)
-- Test: `core/src/test/java/io/questdb/test/griffin/DeleteTest.java` (arbitrary delete over a multi-Parquet-partition table stays correct + not suspended)
+- Modify: `core/src/main/java/io/questdb/PropertyKey.java`, `CairoConfiguration.java`, `DefaultCairoConfiguration.java`, `PropServerConfiguration.java` (the `getWalDeleteDiskBounded()` boolean knob — mirror Task 2's plumbing exactly, default `false`)
+- Modify: `core/src/main/java/io/questdb/cairo/wal/OperationExecutor.java` (`executeDelete` branch on the knob; new `replaceWithSurvivorsDiskBounded`; a window-scoped Parquet convert)
+- Test: `core/src/test/java/io/questdb/test/cairo/wal/DeleteDiskBoundedApplyTest.java` (new — spike + integration)
 
 **Interfaces:**
-- Consumes: Task 5's window loop.
-- Produces: peak transient native-conversion disk bounded to one window's Parquet partitions instead of the whole table. The time-range route in `convertParquetPartitionsForDelete` is unchanged.
+- Consumes: `deleteWindowStep` (Task 3), the per-window survivor bind vars (Task 4).
+- Produces: `boolean CairoConfiguration.getWalDeleteDiskBounded()`; when true, the arbitrary DELETE apply bounds transient Parquet-convert disk to one window.
 
-- [ ] **Step 1: Write the failing test.** In `DeleteTest.java` (force multiple windows so per-window convert is exercised):
+- [ ] **Step 1: SPIKE — prove per-window-commit crash-safety FIRST.** Before wiring, prove the S-1-loop-then-commitSeqTxn(S) scheme is crash-safe and idempotent, on a real WAL table, using a direct `OperationExecutor`-style driver or a fault point. Write `DeleteDiskBoundedApplyTest.testPerWindowCommitReappliesIdempotentlyAfterMidLoopCrash`:
 
 ```java
-@Test
-public void testArbitraryDeleteOverParquetPartitionsWindowedStaysCorrect() throws Exception {
-    setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "10");
-    assertMemoryLeak(() -> {
-        execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
-        execute("insert into t select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x from long_sequence(96)");
-        drainWalQueue();
-        execute("create table ref as (select * from t where not (x % 5 = 0))");
-        execute("alter table t convert partition to parquet where ts >= 0"); // all 4 daily partitions -> parquet
-        drainWalQueue();
-        execute("delete from t where x % 5 = 0");
-        drainWalQueue();
-        assertSql("suspended\nfalse\n", "select suspended from wal_tables() where name = 't'");
-        assertSqlCursors("select ts, x from t order by ts", "select ts, x from ref order by ts");
-    });
+// Multi-window arbitrary delete over a Parquet table with disk.bounded=true. Force a crash after an
+// intermediate window commits (release the writer / stop draining mid-apply), then re-drain, and assert:
+//   - final table == NOT-predicate oracle (idempotent),
+//   - table not suspended,
+//   - durable seqTxn advanced by exactly 1 for the DELETE (read from wal_tables()/sequencer).
+// The crash injection uses the harness's existing fault hooks (grep test hooks for a way to interrupt
+// ApplyWal2TableJob mid-txn; if none, model the crash by applying window-by-window via a test-visible
+// entry point and releasing+reopening the writer between windows, as TableWriterReplaceRangeDirectTest's
+// rollback test models a crash with rollback()).
+```
+
+Run: `mvn -q -pl core test -Dtest=DeleteDiskBoundedApplyTest#testPerWindowCommitReappliesIdempotentlyAfterMidLoopCrash -DfailIfNoTests=false`. **If the re-apply is not idempotent (wrong rows, suspended, or seqTxn wrong), STOP and escalate** — the disk-bounded scheme is not viable and the default atomic path is the only shippable one. This is the gate; do not wire Step 3 until it is green.
+
+- [ ] **Step 2: Add the `disk.bounded` config knob.** Mirror Task 2 exactly for a boolean: `CAIRO_WAL_DELETE_DISK_BOUNDED("cairo.wal.delete.disk.bounded")`, `boolean getWalDeleteDiskBounded()` (default `false` in `DefaultCairoConfiguration`), `getBoolean(properties, env, PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, false)` in `PropServerConfiguration`, + the accessor. Add default + override tests beside Task 2's.
+
+- [ ] **Step 3: Implement the disk-bounded apply path.** In `executeDelete`, branch: when `!deleteOp.isPureTimeRange() && engine.getConfiguration().getWalDeleteDiskBounded() && tableWriterHasParquet(tableWriter)`, call `replaceWithSurvivorsDiskBounded(...)` and DO NOT `setSeqTxn(seqTxn)` up front (that path manages seqTxn itself); otherwise keep the current flow (up-front `convertParquetPartitionsForDelete` + `setSeqTxn(seqTxn)` + `replaceWithSurvivors`/`deleteTimeRange`). Implement:
+
+```java
+// Non-atomic, disk-bounded arbitrary delete. Each window is its own commit at seqTxn S-1; a final
+// commitSeqTxn(seqTxn) advances to S. Bounds BOTH staged O3 memory and transient Parquet-convert disk to
+// one window. NON-ATOMIC: a concurrent reader may observe a partially-applied delete during apply. Crash
+// mid-loop -> durable S-1 -> whole delete re-applied, finished windows idempotent (survivors-of-survivors),
+// already-native partitions re-convert as no-ops.
+private long replaceWithSurvivorsDiskBounded(SqlCompiler compiler, TableWriter tableWriter, DeleteOperation deleteOp, long seqTxn) throws SqlException {
+    final RecordCursorFactory survivorFactory = deleteOp.getSurvivorFactory();
+    assert survivorFactory != null;
+    if (tableWriter.getPartitionCount() == 0) {
+        tableWriter.commitSeqTxn(seqTxn); // empty table: still advance seqTxn
+        return 0;
+    }
+    final int timestampCursorIndex = tableWriter.getMetadata().getTimestampIndex();
+    entityColumnFilter.of(survivorFactory.getMetadata().getColumnCount());
+    final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+            compiler.getAsm(), survivorFactory.getMetadata(), tableWriter.getMetadata(), entityColumnFilter, engine.getConfiguration());
+
+    final long minTs = tableWriter.getMinTimestamp();
+    final long maxTs = tableWriter.getMaxTimestamp();
+    final long step = deleteWindowStep(minTs, maxTs, tableWriter.size(), engine.getConfiguration().getWalDeleteRowsPerStep());
+    final BindVariableService bind = executionContext.getBindVariableService();
+
+    long removed = 0;
+    long wLo = minTs;
+    while (wLo <= maxTs) {
+        final long remaining = maxTs - wLo + 1;
+        final long wHiExcl = (step >= remaining) ? (maxTs + 1) : (wLo + step);
+        // Convert only THIS window's Parquet partitions to native (its own commit at S-1), so at most one
+        // window's partitions are transiently native.
+        convertParquetPartitionsForDeleteWindow(tableWriter, wLo, wHiExcl);
+        bind.setTimestamp(DeleteOperation.WINDOW_LO_BIND, wLo);
+        bind.setTimestamp(DeleteOperation.WINDOW_HI_BIND, wHiExcl);
+        try (RecordCursor c = survivorFactory.getCursor(executionContext)) {
+            // Single-call replaceRange => this window is its own commit (still at durable seqTxn S-1).
+            removed += tableWriter.replaceRange(wLo, wHiExcl, c, copier, timestampCursorIndex, executionContext);
+        }
+        wLo = wHiExcl;
+    }
+    tableWriter.commitSeqTxn(seqTxn); // FINAL: advance durable seqTxn S-1 -> S (one small commit)
+    return removed;
 }
 ```
 
-> Use the exact `convert partition to parquet` syntax the existing DELETE-over-Parquet tests use (grep `convert partition to parquet` in `core/src/test`). Confirm the predicate is arbitrary (`x % 5 = 0`), not a pure time range, so the arbitrary route runs.
-
-- [ ] **Step 2: Run to verify it fails or over-converts.** `mvn -q -pl core test -Dtest=DeleteTest#testArbitraryDeleteOverParquetPartitionsWindowedStaysCorrect -DfailIfNoTests=false`. Before the change it passes but converts ALL partitions up-front (H1). The behavioural assertion (correct + not suspended) will already pass; this test's role is to lock correctness while Step 3 moves conversion per-window. Add a temporary assertion or log check only if a partition-format probe is available; otherwise this test guards correctness and the disk-bound improvement is validated by inspection + Task 7's note.
-
-- [ ] **Step 3: Implement per-window convert.** Extract the arbitrary-route conversion into a window-scoped helper and call it from the loop:
+with the window-scoped convert (its own commit — correct here because this path is intentionally multi-commit):
 
 ```java
-// New helper: convert only the Parquet partitions overlapping [wLo, wHiExcl). doCommit=false batches;
-// the caller commits once before the window's replace (a convert must precede the replace of that window).
 private void convertParquetPartitionsForDeleteWindow(TableWriter tableWriter, long wLo, long wHiExcl) {
     final int partitionCount = tableWriter.getPartitionCount();
     int converted = 0;
     for (int i = 0; i < partitionCount; i++) {
-        if (tableWriter.getPartitionFormat(i) != PartitionFormat.PARQUET) {
-            continue;
-        }
+        if (tableWriter.getPartitionFormat(i) != PartitionFormat.PARQUET) continue;
         final long floor = tableWriter.getPartitionTimestamp(i);
         final long nextFloor = (i == partitionCount - 1) ? (tableWriter.getMaxTimestamp() + 1) : tableWriter.getPartitionTimestamp(i + 1);
-        // Overlaps the window? (partition data extent [floor, nextFloor) intersects [wLo, wHiExcl))
-        if (floor < wHiExcl && nextFloor > wLo) {
+        if (floor < wHiExcl && nextFloor > wLo) { // partition [floor,nextFloor) overlaps window
             tableWriter.convertPartitionParquetToNative(floor, false);
             converted++;
         }
@@ -538,28 +578,25 @@ private void convertParquetPartitionsForDeleteWindow(TableWriter tableWriter, lo
 }
 ```
 
-In `replaceWithSurvivors`'s loop, immediately before `applyReplaceRangeWindow`, call `convertParquetPartitionsForDeleteWindow(tableWriter, wLo, wHiExcl);`. Then in `executeDelete`, the up-front `convertParquetPartitionsForDelete` must SKIP the arbitrary route (it is now per-window) while keeping the time-range route as-is:
+Add a small `tableWriterHasParquet(TableWriter)` helper (loop `getPartitionFormat(i) == PARQUET`). Note `commitSeqTxn(long)` already exists (`TableWriter.java:1548`: `setSeqTxn` + `commitTxWriter`). The `executeDelete` catch path is unchanged: a throw mid-loop rolls back the current window and `setSeqTxn(seqTxn - 1)` so the apply job retries the whole delete.
 
-```java
-// executeDelete: only the time-range route converts up-front (bounded to <=2 boundary partitions); the
-// arbitrary route converts per-window inside replaceWithSurvivors (Task 6), so it is not done here.
-if (deleteOp.isPureTimeRange()) {
-    convertParquetPartitionsForDelete(tableWriter, deleteOp);
-}
-```
+- [ ] **Step 4: Add correctness + non-atomicity integration tests.** In `DeleteDiskBoundedApplyTest` (all with `setProperty(PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, "true")`):
+  - arbitrary delete over an all-Parquet multi-partition table, small rows-per-step → many windows → result == NOT-predicate `ref`, not suspended;
+  - no-match delete → nothing removed, not suspended;
+  - the same delete with `disk.bounded=false` → identical final result (proves the two paths agree on the end state);
+  - single-window (huge rows-per-step) → identical to `ref`.
+  Use `ref`-table oracles as in Task 5.
 
-Then delete the arbitrary `else` branch from `convertParquetPartitionsForDelete` (it now only handles the time-range route; update its javadoc accordingly).
+- [ ] **Step 5: Run.** `mvn -q -pl core test -Dtest='DeleteDiskBoundedApplyTest,DeleteTest' -DfailIfNoTests=false` → all green.
 
-> **Crash-safety note (must preserve):** per-window converts each call `commitPendingParquetToNativeConversions()`, which is a physical commit. Today the single up-front convert is "commit #1 at S-1" (before `setSeqTxn(seqTxn)`). Per-window converts run AFTER `setSeqTxn(seqTxn)` (inside `replaceWithSurvivors`), so they would commit at S — **breaking the single-seqTxn invariant**. Two options, pick during implementation and record it: (A) keep ALL Parquet conversion up-front and bounded — convert only the Parquet partitions overlapping the FULL deleted range once before `setSeqTxn`, accepting that a whole-table arbitrary delete still converts all Parquet (disk not bounded, but memory IS bounded by Task 5 — H1 partially deferred); or (B) prove `commitPendingParquetToNativeConversions` inside the replace txn does NOT advance seqTxn (it advances the table txn, not seqTxn, and seqTxn is only persisted by the replace's `commit00` → but a mid-loop physical commit that persists the table txn at S is exactly the multi-commit hazard the primitive avoids). **Default to (A) for v1** unless a spike proves (B) is seqTxn-safe: (A) fully fixes C1 (the OOM) and leaves H1 (disk) as the documented, memory-safe residual — a strictly smaller problem than today. If (A), this task reduces to: keep the up-front convert, and REMOVE the per-window convert; the test above still guards correctness. Escalate the A/B choice with the finding.
-
-- [ ] **Step 4: Run to verify pass.** `mvn -q -pl core test -Dtest=DeleteTest -DfailIfNoTests=false` → all green. If option (A) chosen, the arbitrary Parquet route is unchanged from today and this test simply confirms no regression.
-
-- [ ] **Step 5: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
-git add core/src/main/java/io/questdb/cairo/wal/OperationExecutor.java core/src/test/java/io/questdb/test/griffin/DeleteTest.java
-git commit -m "feat(delete): bound Parquet convert to the deleted range for windowed survivor-replace (H1)"
+git add core/src/main/java/io/questdb/PropertyKey.java core/src/main/java/io/questdb/cairo/CairoConfiguration.java core/src/main/java/io/questdb/cairo/DefaultCairoConfiguration.java core/src/main/java/io/questdb/PropServerConfiguration.java core/src/main/java/io/questdb/cairo/wal/OperationExecutor.java core/src/test/java/io/questdb/test/cairo/wal/DeleteDiskBoundedApplyTest.java
+git commit -m "feat(delete): opt-in non-atomic disk-bounded arbitrary delete (H1, cairo.wal.delete.disk.bounded)"
 ```
+
+> **Task 9 doc dependency:** the RESUME-WAL note MUST also document that with `cairo.wal.delete.disk.bounded=true` a DELETE is non-atomic — a concurrent reader may observe it partially applied while WAL apply is in progress — and that it is still crash-safe (a crash re-applies the whole delete).
 
 ---
 
@@ -761,7 +798,7 @@ git -C ~/claude/wt/ent/delete-statement commit -m "test(delete): PGWire GRANT/RE
 - §5 replaceRange begin/apply/finish → Task 1 (done). ✅
 - §6 crash-safety → preserved by Global Constraints + Task 5's single begin/finish + Task 7(2) idempotence test. ✅
 - §6a gate → Task 1 (proven). ✅
-- §7 Parquet per-window → Task 6 (with the seqTxn-safety A/B decision — the one place the spec's "per-window convert" meets the single-seqTxn invariant; default (A) keeps the invariant and still fixes C1). ✅ (residual H1 documented)
+- §7 Parquet / H1 → Task 6, redesigned per the user's 2026-07-11 decision as an **opt-in non-atomic disk-bounded path** (`cairo.wal.delete.disk.bounded`, default false): per-window convert+replace+commit at S-1 then final `commitSeqTxn(S)`. Bounds transient disk in all cases at the cost of atomicity; default path stays atomic. Spike-gated on per-window-commit crash-safety. ✅ (non-atomicity documented in Task 9)
 - §8 config → Task 2. ✅
 - §9 M1/M2 → Tasks 8, 9. ✅
 - §10 Enterprise ENT-3 → Task 11. ✅
@@ -773,4 +810,6 @@ git -C ~/claude/wt/ent/delete-statement commit -m "test(delete): PGWire GRANT/RE
 
 **Type consistency:** `deleteWindowStep(minTs, maxTs, tableRows, rowsPerStep)` (Task 3) is consumed with those exact args in Task 5. `DeleteOperation.WINDOW_LO_BIND`/`WINDOW_HI_BIND` (Task 4) are the exact names bound in Task 5. `getWalDeleteRowsPerStep()` (Task 2) is read in Tasks 5/8. `beginReplaceRange`/`applyReplaceRangeWindow`/`finishReplaceRange`/`abortReplaceRange` (Task 1) are called with the signatures listed. Consistent.
 
-**Known risks carried into execution:** (1) Task 4 interval-scan property — gated by an embedded spike, escalate on failure; (2) Task 6 per-window convert vs single-seqTxn — default (A), escalate the A/B choice. Both are flagged for the human at the point of decision, per the plan contradiction rule.
+**Known risks carried into execution:** (1) Task 4 interval-scan property — gated by an embedded spike, escalate on failure; (2) Task 6 per-window-commit crash-safety for the opt-in disk-bounded path — gated by the Step 1 spike, escalate if re-apply is not idempotent (then only the default atomic path ships). Both are proven before wiring, matching Task 1's methodology.
+
+**Task ordering note:** Task 6 depends on Tasks 2–5 (config plumbing, step helper, bind-var cursor, the window loop) and reuses Task 4's per-window survivor bind vars, so it runs after Task 5. Tasks 8–11 are independent of Task 6.
