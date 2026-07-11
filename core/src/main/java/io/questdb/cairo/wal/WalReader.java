@@ -137,6 +137,19 @@ public class WalReader implements Closeable {
     }
 
     /**
+     * Returns the number of symbol keys accumulated for column {@code col} in the open
+     * segment, or 0 when the column has no symbol map. {@link #openSymbolMaps} seeds the
+     * map with the base table's clean dictionary keys {@code [0, cleanSymbolCount)} and
+     * then applies every data transaction's diff entries, whose keys continue from
+     * {@code cleanSymbolCount}. The resulting key space is therefore dense, so the count
+     * doubles as an exclusive upper bound for a {@code 0..count-1} enumeration.
+     */
+    public int getSymbolCount(int col) {
+        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        return symbolMap != null ? symbolMap.size() : 0;
+    }
+
+    /**
      * Returns the int key whose stored value equals {@code value} in column {@code col},
      * or {@link SymbolTable#VALUE_NOT_FOUND} if no such entry exists. The cumulative
      * symbol map is populated via {@link DirectSymbolMap#put(int, CharSequence)} which

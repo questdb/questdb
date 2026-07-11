@@ -420,24 +420,38 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
 
         @Override
         public boolean containsNullValue() {
-            // Sentinel, like getSymbolCount below: this table cannot answer the
-            // question without walking the backing store. Both are safe only
-            // because the live view refresh path consumes the symbol table purely
-            // for key->value resolution - it never enumerates keys by count, and
-            // nothing on the path branches on containsNullValue. A future LV query
-            // shape that plans off either (a symbol filter that pre-checks for a
-            // null key, a cursor that iterates 0..getSymbolCount()) would read
-            // these answers as fact and be wrong: a WAL segment can carry nulls,
-            // and the real key count is finite. Compute them properly before
-            // widening what the LV path asks of this table.
+            // Sentinel: this table cannot answer the question without walking the
+            // backing store. It is safe only because every consumer that branches on
+            // containsNullValue (joins, LATEST BY, the excluded-values filter) sits
+            // behind a factory shape CairoEngine.validateLiveViewFactory already
+            // rejects, so nothing on the refresh path reads it. A future LV query
+            // shape that plans off it would read this answer as fact and be wrong: a
+            // WAL segment can carry null symbols. Compute it properly before widening
+            // what the LV path asks of this table.
             return false;
         }
 
         @Override
         public int getSymbolCount() {
-            // Upper-bound sentinel - see containsNullValue for the contract this
-            // relies on.
-            return Integer.MAX_VALUE;
+            // Must be the real, finite count: a residual symbol filter enumerates
+            // 0..getSymbolCount()-1 at every filter init to pre-resolve its matching
+            // keys (LIKE/ILIKE/~ on a SYMBOL column - see
+            // AbstractLikeSymbolFunctionFactory and MatchSymbolFunctionFactory). An
+            // Integer.MAX_VALUE upper-bound sentinel used to send those loops past the
+            // real keys, where valueOf returns null: the contains/regex variants NPE'd
+            // and bricked the view, while the null-safe startsWith/endsWith variants
+            // spun 2^31 iterations per commit and pinned the refresh worker.
+            //
+            // The reader's key space is dense from 0 (clean dictionary keys, then each
+            // txn's diff keys), and the per-txn overlay re-keys that same band, so the
+            // reader's count already covers the overlay. Take the max regardless: the
+            // count must never cut the current txn's band short, or a filter would drop
+            // rows whose symbol key sits past it.
+            int count = reader.getSymbolCount(walColumnIndex);
+            if (txnDiff != null) {
+                count = Math.max(count, cleanSymbolCount + txnDiff.size());
+            }
+            return count;
         }
 
         // Resolves a constant string to the int key in this segment's symbol space.

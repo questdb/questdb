@@ -556,6 +556,105 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshWithPatternFilterOnSymbol() throws Exception {
+        // C2 regression. LIKE/ILIKE/~ on a SYMBOL column compiles to a residual filter that
+        // pre-resolves its matching keys by enumerating 0..getSymbolCount()-1 at every filter
+        // init - and the refresh re-inits the filter once per commit. WalSymbolTable used to
+        // answer getSymbolCount() with an Integer.MAX_VALUE upper-bound sentinel, which sent
+        // those loops far past the real keys, where valueOf returns null: the contains and
+        // regex variants NPE'd (bricking the view as "flush retry budget exhausted" once the
+        // retry budget ran out), while the null-safe startsWith/endsWith variants ran 2^31
+        // iterations per commit and pinned the shared refresh worker. Both shapes passed
+        // CREATE, since validateLiveViewFactory never inspects the residual filter Function.
+        //
+        // The symbol table now reports its real, finite count, so every shape resolves the
+        // keys it actually has. The three commits below are the case that count has to get
+        // right: commit 1 is applied first, so its symbols become the base's clean dictionary,
+        // and commits 2 and 3 then stay un-applied - the WAL writer restarts local symbol ids
+        // at cleanSymbolCount for each commit, so 'xax' and 'zzz' are handed the same key and
+        // only the per-txn overlay tells them apart. A count that cut either band short would
+        // silently drop the rows keyed past it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            // One view per residual-filter shape: contains, startsWith and endsWith are
+            // distinct functions with distinct loops, and the '_' wildcard and ~ take the
+            // java.util.regex Matcher path, which NPEs on a null value rather than skipping it.
+            execute("CREATE LIVE VIEW lv_contains FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym LIKE '%a%'");
+            execute("CREATE LIVE VIEW lv_starts FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym LIKE 'a%'");
+            execute("CREATE LIVE VIEW lv_ends FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym LIKE '%a'");
+            execute("CREATE LIVE VIEW lv_ilike FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym ILIKE '%A%'");
+            execute("CREATE LIVE VIEW lv_wildcard FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym LIKE 'x_x'");
+            execute("CREATE LIVE VIEW lv_regex FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym ~ 'a'");
+
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('aaa', 1, '2026-01-01T00:00:00.000000Z'), " +
+                    "('bbb', 2, '2026-01-01T00:01:00.000000Z')");
+            drainWalQueue();
+            // Commits 2 and 3 are both written while the base dictionary still holds only
+            // commit 1's symbols, so each restarts its local ids at cleanSymbolCount=2 and
+            // 'xax' and 'zzz' are handed the very same key - a collision baked into the
+            // segment at write time, which only the per-txn overlay can tell apart.
+            execute("INSERT INTO base (sym, val, ts) VALUES ('xax', 3, '2026-01-01T00:02:00.000000Z')");
+            // A null symbol shares the commit with the colliding key: null resolves to no key
+            // at all, so an enumeration that walks past the real count meets it as a hole.
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('zzz', 4, '2026-01-01T00:03:00.000000Z'), " +
+                    "('aaa', 5, '2026-01-01T00:04:00.000000Z'), " +
+                    "(NULL, 6, '2026-01-01T00:05:00.000000Z')");
+            drainWalQueue();
+            // All three commits are written before the first refresh, so the collision above is
+            // already baked into the segment. Each refresh cycle then flushes at most one batch
+            // (FLUSH EVERY 1s against the pinned clock), so step the clock past the rate limit
+            // until every batch has drained.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int i = 1; i <= 4; i++) {
+                    drainJob(job);
+                    drainWalQueue();
+                    setCurrentMicros(i * 2_000_000L);
+                }
+            }
+            drainWalQueue();
+
+            // rn advances only for survivors, so a leaked or dropped row perturbs it too.
+            assertQuery("SELECT sym, val, rn FROM lv_contains ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\trn\n" +
+                    "aaa\t1\t1\n" +
+                    "xax\t3\t2\n" +
+                    "aaa\t5\t3\n");
+            assertQuery("SELECT sym, val, rn FROM lv_starts ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\trn\n" +
+                    "aaa\t1\t1\n" +
+                    "aaa\t5\t2\n");
+            assertQuery("SELECT sym, val, rn FROM lv_ends ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\trn\n" +
+                    "aaa\t1\t1\n" +
+                    "aaa\t5\t2\n");
+            assertQuery("SELECT sym, val, rn FROM lv_ilike ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\trn\n" +
+                    "aaa\t1\t1\n" +
+                    "xax\t3\t2\n" +
+                    "aaa\t5\t3\n");
+            assertQuery("SELECT sym, val, rn FROM lv_wildcard ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\trn\n" +
+                    "xax\t3\t1\n");
+            assertQuery("SELECT sym, val, rn FROM lv_regex ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\trn\n" +
+                    "aaa\t1\t1\n" +
+                    "xax\t3\t2\n" +
+                    "aaa\t5\t3\n");
+            // Every view stayed healthy: the NPE shapes used to land here as INVALID.
+            assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+
+            execute("DROP LIVE VIEW lv_contains");
+            execute("DROP LIVE VIEW lv_starts");
+            execute("DROP LIVE VIEW lv_ends");
+            execute("DROP LIVE VIEW lv_ilike");
+            execute("DROP LIVE VIEW lv_wildcard");
+            execute("DROP LIVE VIEW lv_regex");
+        });
+    }
+
+    @Test
     public void testRejectWhereOnDesignatedTimestamp() throws Exception {
         // C1 regression (interval half). A WHERE on the designated timestamp compiles into an
         // interval scan whose predicate lives in the frame cursor, not a residual filter Function,
