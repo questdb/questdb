@@ -24,9 +24,11 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -37,12 +39,10 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -61,7 +61,7 @@ import org.junit.Test;
  *     timestamp designation.</li>
  * </ul>
  */
-public class LiveViewTest extends AbstractCairoTest {
+public class LiveViewTest extends AbstractLiveViewTest {
 
     // Pin the test clock below all test data before each test. A non-BACKFILL
     // view's lower bound is the CREATE wall-clock moment, and the forward-append
@@ -73,14 +73,6 @@ public class LiveViewTest extends AbstractCairoTest {
     @Before
     public void pinClockBelowTestData() {
         setCurrentMicros(0L);
-    }
-
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
     }
 
     private void assertMutationRejected(String sql, String expectedMessageFragment) throws Exception {
@@ -97,6 +89,83 @@ public class LiveViewTest extends AbstractCairoTest {
                         e.getMessage().contains(expectedMessageFragment)
                 );
             }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    // Refreshes a live view whose residual filter is a SYMBOL equality, over commits that put the
+    // filtered symbol's segment key out of step with the base table's global key for it.
+    //
+    // 'bbb' is in the base dictionary before the view is created, so an ordinary compile can resolve
+    // it to a global key. The post-CREATE commits then land un-applied and back to back, so each one
+    // restarts its local ids at the same stale cleanSymbolCount: 'ccc' and 'ddd' are handed the very
+    // same segment key, and the segment key space no longer lines up with the base's. Whatever key a
+    // filter baked in at compile time cannot be trusted against these segments.
+    // Asserts CREATE LIVE VIEW refuses the given TWO_PASS window expression. These compile to a
+    // CachedWindowRecordCursorFactory, so the factory-level reject fires - pin its multi-pass tail,
+    // not just the shared prefix, so the two distinct reject messages stay distinguishable across
+    // refactors. Assumes the caller already created the `base` table.
+    private void assertTwoPassWindowFunctionRejected(String windowExpr) throws SqlException {
+        try {
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT val, ts, " + windowExpr + " OVER w AS a FROM base " +
+                    "WINDOW w AS (PARTITION BY val ORDER BY ts ANCHOR DAILY '00:00')");
+            Assert.fail("expected SqlException for TWO_PASS window function " + windowExpr);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    windowExpr + ": " + e.getMessage(),
+                    e.getMessage().contains(
+                            "live view select may only use window functions that support incremental refresh; "
+                                    + "this query requires caching or multi-pass evaluation")
+            );
+        }
+    }
+
+    private void assertSymbolEqualityFilterRefreshes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            // Applied before the view exists, so 'aaa'/'bbb' are the base's clean dictionary.
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('aaa', 1, '2026-01-01T00:00:00.000000Z'), " +
+                    "('bbb', 2, '2026-01-01T00:01:00.000000Z')");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base WHERE sym = 'bbb'");
+
+            // Two commits written before either is applied: both see cleanSymbolCount=2, so 'ccc' and
+            // 'ddd' collide on the same local key, and every 'bbb' row here has to be matched through
+            // the segment's own symbol space rather than a key resolved once against the base.
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('ccc', 3, '2026-01-01T00:02:00.000000Z'), " +
+                    "('bbb', 4, '2026-01-01T00:03:00.000000Z')");
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('ddd', 5, '2026-01-01T00:04:00.000000Z'), " +
+                    "('bbb', 6, '2026-01-01T00:05:00.000000Z'), " +
+                    "('aaa', 7, '2026-01-01T00:06:00.000000Z'), " +
+                    "(NULL, 8, '2026-01-01T00:07:00.000000Z')");
+            drainWalQueue();
+
+            // FLUSH EVERY 1s against the pinned clock means one batch per cycle; step the clock past
+            // the rate limit until every batch has drained.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int i = 1; i <= 4; i++) {
+                    drainJob(job);
+                    drainWalQueue();
+                    setCurrentMicros(i * 2_000_000L);
+                }
+            }
+            drainWalQueue();
+
+            // rn advances only for survivors, so a leaked or dropped row perturbs it too. A filter
+            // matching on a stale key would either drop the post-CREATE 'bbb' rows or admit the 'ccc'
+            // / 'ddd' rows that collide with them in the segment's key space.
+            assertQuery("SELECT sym, val, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("sym\tval\trn\n" +
+                    "bbb\t4\t1\n" +
+                    "bbb\t6\t2\n");
+            assertQuery("SELECT count() FROM lv WHERE sym <> 'bbb'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -524,27 +593,16 @@ public class LiveViewTest extends AbstractCairoTest {
 
     @Test
     public void testRejectTwoPassWindowFunction() throws Exception {
-        // ntile() is a TWO_PASS window function — incremental refresh cannot drive it
-        // because the second pass needs the partition's total row count up front.
+        // TWO_PASS window functions - incremental refresh cannot drive them because the second pass
+        // needs the partition's total row count up front. ntile() was the only one covered; cume_dist
+        // and percent_rank are the other two an ordinary user is likely to reach for, and neither had
+        // any live view coverage at all (validateLiveViewWindowFunction's own comment names
+        // percent_rank as the example, so it is worth pinning that it really is refused).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
-            try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                        "SELECT val, ts, ntile(4) OVER w AS bucket FROM base " +
-                        "WINDOW w AS (PARTITION BY val ORDER BY ts ANCHOR DAILY '00:00')");
-                Assert.fail("expected SqlException for TWO_PASS window function");
-            } catch (SqlException e) {
-                // ntile compiles to a CachedWindowRecordCursorFactory, so the
-                // factory-level reject fires - pin its multi-pass tail, not just
-                // the shared prefix, so the two distinct reject messages stay
-                // distinguishable across refactors.
-                Assert.assertTrue(
-                        e.getMessage(),
-                        e.getMessage().contains(
-                                "live view select may only use window functions that support incremental refresh; "
-                                        + "this query requires caching or multi-pass evaluation")
-                );
-            }
+            assertTwoPassWindowFunctionRejected("ntile(4)");
+            assertTwoPassWindowFunctionRejected("cume_dist()");
+            assertTwoPassWindowFunctionRejected("percent_rank()");
         });
     }
 
@@ -594,6 +652,35 @@ public class LiveViewTest extends AbstractCairoTest {
                     "30\t2026-01-01T00:04:00.000000Z\t3\n");
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testRefreshWithSymbolFilterUnderJitDisabled() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
+        assertSymbolEqualityFilterRefreshes();
+    }
+
+    @Test
+    public void testRefreshWithSymbolFilterUnderJitEnabled() throws Exception {
+        // CompiledFilterIRSerializer.serializeSymbolConstant has a live-view-specific gate: for an
+        // ordinary compile it resolves the symbol constant against the base table's dictionary and
+        // bakes the resulting int key into the filter as an immediate, but for a live view compile it
+        // must not, because the keys in a raw WAL segment live in the segment's own space (clean
+        // dictionary keys, then the per-txn diff band - see WalSegmentPageFrameCursor.WalSymbolTable),
+        // not the base's. It forces the deferred bind-variable path instead.
+        //
+        // Be precise about what these two tests pin. No live view test varied the JIT mode at all, so
+        // a symbol-filtered view's refresh was only ever exercised under whatever the default happened
+        // to be; these drive it under both and require the same rows out of each. They do NOT cover
+        // the gate itself, and nothing currently can: every refresh path in LiveViewRefreshJob applies
+        // the Java residual filter Function (filterFactory.getFilter()) and never the native compiled
+        // filter, so the JIT-compiled predicate does not execute during an incremental refresh.
+        // Removing the gate leaves the whole live view suite green. Keep it - it is what would make
+        // the compiled filter safe for the refresh path to use - but it is defensive rather than
+        // load-bearing, and no test can honestly claim to protect it until the refresh path actually
+        // runs the compiled filter.
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED));
+        assertSymbolEqualityFilterRefreshes();
     }
 
     @Test

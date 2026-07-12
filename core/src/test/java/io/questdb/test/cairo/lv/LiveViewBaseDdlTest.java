@@ -29,13 +29,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
-import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -59,10 +57,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * must therefore flip to INVALID before it ever refreshes over the changed base. A
  * type change to a column the view does not read must stay transparent.
  */
-public class LiveViewBaseDdlTest extends AbstractCairoTest {
+public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
 
     // > FLUSH EVERY 100ms, so a single driveRefreshToQuiescence pass crosses the flush window.
-    private static final long CLOCK_ADVANCE_MICROS = 250_000;
     // First data timestamp (2026-01-01). Data sits well above the pinned test clock,
     // which starts at 0 and only creeps forward 250ms per refresh pass.
     private static final long DATA_EPOCH = MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z");
@@ -744,25 +741,6 @@ public class LiveViewBaseDdlTest extends AbstractCairoTest {
         });
     }
 
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
-    }
-
     // Pumps the refresh job until no further LV WAL work is produced, advancing the clock each pass so
     // deferred flushes land, and applying the LV's own WAL after each burst. Mirrors the fuzz harness.
-    private void driveRefreshToQuiescence(LiveViewRefreshJob job) {
-        for (int i = 0; i < 512; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-            drainWalQueue();
-            boolean progressed = drainJob(job);
-            drainWalQueue();
-            if (!progressed) {
-                break;
-            }
-        }
-    }
 }

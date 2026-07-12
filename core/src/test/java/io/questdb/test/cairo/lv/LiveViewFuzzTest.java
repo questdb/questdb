@@ -45,7 +45,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
-import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
@@ -58,7 +57,6 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -102,7 +100,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * timestamp) and uses {@code genericStringMatch} so a SYMBOL passthrough that
  * the materializer stores as STRING still compares by value.
  */
-public class LiveViewFuzzTest extends AbstractCairoTest {
+public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
     // Variants 0..4 and 6 are ORDER BY ts bounded-frame aggregates over
     // LONG/DOUBLE columns (sum/max/first_value/count/avg/min); the decimal variant
@@ -121,7 +119,6 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     // flushEveryMicros of the previous commit is deferred. Tests drive a
     // controllable clock (currentMicros) and advance it past this interval
     // before each refresh so flushes are deterministic, not wall-clock racy.
-    private static final long CLOCK_ADVANCE_MICROS = 250_000; // > FLUSH EVERY 100ms
     // The decimal variant (the last variant) exercises the migrated DECIMAL
     // aggregate window family over a bounded ROWS frame. Each run picks a random
     // storage width (one of the six DECIMAL precisions below, which select the
@@ -979,14 +976,6 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
         return "ts, sym, d, " + agg + " OVER (" + frame + ") AS v";
     }
 
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
-    }
-
     // Drops the last `count` data rows from a printSql output (a header line plus
     // one '\n'-terminated line per row), keeping the header. Used to turn the full
     // recompute into the applied prefix (recompute minus the un-flushed lead) the
@@ -1296,32 +1285,10 @@ public class LiveViewFuzzTest extends AbstractCairoTest {
     // Drives the named view's backfill sweep to completion on the caller's job,
     // re-fetching the instance each pass so it survives a restart, then applies
     // the LV WAL. Mirrors the smoke test helper.
-    private void driveBackfillToCompletion(LiveViewRefreshJob job, String viewName) {
-        for (int i = 0; i < 1000; i++) {
-            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
-            if (inst == null
-                    || inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
-                break;
-            }
-            drainJob(job);
-        }
-        drainWalQueue();
-    }
 
     // Pumps the refresh job until no further LV WAL work is produced, advancing
     // the clock each pass so deferred flushes land, and applying the LV's own
     // WAL after each burst.
-    private void driveRefreshToQuiescence(LiveViewRefreshJob job) {
-        for (int i = 0; i < 512; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-            drainWalQueue();
-            boolean progressed = drainJob(job);
-            drainWalQueue();
-            if (!progressed) {
-                break;
-            }
-        }
-    }
 
     // Removal traffic for the dedup arm that keeps the recompute oracle sound.
     // Inserts a small batch into a far-future partition (strictly above all real

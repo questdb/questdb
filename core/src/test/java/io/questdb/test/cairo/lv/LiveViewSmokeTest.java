@@ -68,7 +68,6 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
-import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -82,7 +81,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -91,6 +89,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntFunction;
 
 /**
  * Smoke tests: confirm the new CREATE LIVE VIEW syntax (FLUSH EVERY,
@@ -100,7 +99,45 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Asserted-wording validation tests will go in a dedicated file once the full
  * suite is rewritten in delta plan task #8.
  */
-public class LiveViewSmokeTest extends AbstractCairoTest {
+public class LiveViewSmokeTest extends AbstractLiveViewTest {
+
+    // The canonical data behind every max/min bounded-frame snapshot round-trip: five rows per
+    // partition against a three-row frame.
+    //
+    // It used to be three monotonically increasing rows against a frame as wide as the data, which
+    // made those tests far weaker than they looked. The frame never slid, so the deque never expired
+    // anything from its front; max came out as a verbatim echo of the input column and min as a
+    // constant, meaning a max() that simply returned the current row would have passed; and because
+    // monotonically increasing input makes each new value pop the whole deque, the variable-length
+    // deque serializer was only ever snapshotted one element deep.
+    //
+    // These values fix all three. The frame slides twice, both deques sit two elements deep at
+    // snapshot time, and the tail values can only be right if the deque expires its head as the frame
+    // moves: for sym 'a' max must drop 30 -> 20 at the last row, and min must drop 10 -> 5 at the
+    // third. A deque that never evicts reports 30 and 10 there.
+    private static final int[] MAXMIN_A_MAX = {10, 30, 30, 30, 20};
+    private static final int[] MAXMIN_A_MIN = {10, 10, 5, 5, 5};
+    private static final int[] MAXMIN_A_VALUES = {10, 30, 5, 20, 15};
+    private static final int[] MAXMIN_B_MAX = {6, 18, 18, 18, 12};
+    private static final int[] MAXMIN_B_MIN = {6, 6, 3, 3, 3};
+    private static final int[] MAXMIN_B_VALUES = {6, 18, 3, 12, 9};
+    // Hourly, so the RANGE '2' HOUR and ROWS 2 PRECEDING framings select exactly the same rows.
+    private static final String[] MAXMIN_ROW_TS = {
+            "2026-08-01T00:00:00.000000Z",
+            "2026-08-01T01:00:00.000000Z",
+            "2026-08-01T02:00:00.000000Z",
+            "2026-08-01T03:00:00.000000Z",
+            "2026-08-01T04:00:00.000000Z",
+    };
+    // The two framings assertMaxMinBoundedRestoresDequeAcrossRestart drives. Over the hourly rows it
+    // ingests they select exactly the same rows, so both share one expected result - but they compile
+    // to different production functions with their own snapshot/restore paths.
+    private static final String RANGE_FRAME_WINDOW = "WINDOW " +
+            "  w1 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW), " +
+            "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '1' HOUR PRECEDING)";
+    private static final String ROWS_FRAME_WINDOW = "WINDOW " +
+            "  w1 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), " +
+            "  w2 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)";
 
     // Pin the test clock below all test data before each test. A non-BACKFILL
     // view's lower bound is the CREATE wall-clock moment, and the forward-append
@@ -186,6 +223,20 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             "('2026-08-02T01:00:00.000000Z', 'b', 50.0, 0.0, 0.0), " +
             "('2026-08-02T02:00:00.000000Z', 'b', 75.0, 0.0, 0.0)";
 
+    // Renders a canonical max/min value as a DATE literal/expected-output string, e.g. 5 ->
+    // "2026-01-05T00:00:00.000Z". Day-of-month ordering matches the numeric ordering, so the expected
+    // max/min carry over from the numeric case unchanged.
+    private static String dateText(int day) {
+        return String.format("2026-01-%02dT00:00:00.000Z", day);
+    }
+
+    // Pulls the scale out of a "DECIMAL(p, s)" type string.
+    private static int decimalScaleOf(String decimalType) {
+        final int comma = decimalType.indexOf(',');
+        final int close = decimalType.indexOf(')');
+        return Integer.parseInt(decimalType.substring(comma + 1, close).trim());
+    }
+
     // Renders an integer as a decimal literal/expected-output string at the
     // given scale, e.g. (10, 3) -> "10.000". The restart helpers use it to
     // drive the same test across every DECIMAL storage width.
@@ -193,12 +244,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         return scale == 0 ? Integer.toString(units) : units + "." + "0".repeat(scale);
     }
 
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
+    // As dateText, but at TIMESTAMP's microsecond precision.
+    private static String timestampText(int day) {
+        return String.format("2026-01-%02dT00:00:00.000000Z", day);
     }
 
     // Drives the named view's backfill sweep to completion across however many
@@ -209,17 +257,6 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     // backfill test must drive the whole sweep through a single
     // LiveViewRefreshJob, since tearing one down mid-sweep and resuming on a
     // fresh one is not a path production takes (the pool keeps jobs alive).
-    private void driveBackfillToCompletion(LiveViewRefreshJob job, String viewName) {
-        for (int i = 0; i < 500; i++) {
-            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
-            if (inst == null
-                    || inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
-                break;
-            }
-            drainJob(job);
-        }
-        drainWalQueue();
-    }
 
     // Removes the view's rolling backfill checkpoint file, simulating a crash
     // before the .bcp the latest committed turn would have written (or a view
@@ -591,6 +628,59 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     private void assertMaxMinDecimalFrameRoundTrip(
             String fnName,
             String decimalType,
+            String frameClause
+    ) throws Exception {
+        final int scale = decimalScaleOf(decimalType);
+        assertMaxMinFrameRoundTrip(
+                fnName,
+                decimalType,
+                frameClause,
+                v -> decimalText(v, scale) + "m",
+                v -> decimalText(v, scale)
+        );
+    }
+
+    // Drives a partitioned bounded-frame max/min live view over the shared five-row-per-partition
+    // data: asserts the windowed value is correct (also proving CREATE-accept), then performs a
+    // byte-exact snapshot/restore round-trip of the function's partition state (write -> toTop ->
+    // restore -> write again, comparing). literal renders a canonical value as a SQL literal of the
+    // column's type; printed renders it the way the cursor prints it back.
+    private void assertMaxMinFrameRoundTrip(
+            String fnName,
+            String valueType,
+            String frameClause,
+            IntFunction<String> literal,
+            IntFunction<String> printed
+    ) throws Exception {
+        final boolean isMax = "max".equals(fnName);
+        final int[] aExpected = isMax ? MAXMIN_A_MAX : MAXMIN_A_MIN;
+        final int[] bExpected = isMax ? MAXMIN_B_MAX : MAXMIN_B_MIN;
+
+        final StringBuilder insertValues = new StringBuilder();
+        for (int i = 0; i < MAXMIN_ROW_TS.length; i++) {
+            if (i > 0) {
+                insertValues.append(", ");
+            }
+            insertValues.append("('").append(MAXMIN_ROW_TS[i]).append("', 'a', ")
+                    .append(literal.apply(MAXMIN_A_VALUES[i])).append("), ");
+            insertValues.append("('").append(MAXMIN_ROW_TS[i]).append("', 'b', ")
+                    .append(literal.apply(MAXMIN_B_VALUES[i])).append(")");
+        }
+
+        final StringBuilder expectedRows = new StringBuilder("ts\tsym\ta\n");
+        for (int i = 0; i < MAXMIN_ROW_TS.length; i++) {
+            expectedRows.append(MAXMIN_ROW_TS[i]).append("\ta\t").append(printed.apply(aExpected[i])).append('\n');
+        }
+        for (int i = 0; i < MAXMIN_ROW_TS.length; i++) {
+            expectedRows.append(MAXMIN_ROW_TS[i]).append("\tb\t").append(printed.apply(bExpected[i])).append('\n');
+        }
+
+        assertMaxMinFrameRoundTrip0(fnName, valueType, frameClause, insertValues.toString(), expectedRows.toString());
+    }
+
+    private void assertMaxMinFrameRoundTrip0(
+            String fnName,
+            String decimalType,
             String frameClause,
             String insertValues,
             String expectedRows
@@ -925,17 +1015,22 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
-    // Drives min/max over bounded and unbounded-lower RANGE frames (the
-    // MaxMinOverPartitionRangeFrameFunction deque and scalar shapes) across a
-    // simulated restart: the head .cp must round-trip the monotonic deque so
-    // the first post-restart row still reports pre-restart extrema, including
+    // Drives min/max over bounded and unbounded-lower frames (the deque and scalar
+    // shapes) across a simulated restart: the head .cp must round-trip the monotonic
+    // deque so the first post-restart row still reports pre-restart extrema, including
     // one cell (sym=2 max) that requires the restored deque to expire its head
     // as the frame slides. The restore-succeeded + seqTxn asserts prove the
     // asserted cells flow from the restored deque, not from a head-miss replay
     // recompute. Uses an INT partition key to side-step the per-WAL-segment
     // SYMBOL index collision. suffix is the printed fraction of the value type
     // (".0" for DOUBLE, "" for LONG).
-    private void assertMaxMinBoundedRangeRestoresDequeAcrossRestart(String valueType, String suffix) throws Exception {
+    //
+    // The rows are hourly, so the RANGE and ROWS framings below select exactly the same
+    // rows and share one expected result. Both are driven: the RANGE and ROWS variants
+    // are different production functions (MaxMinOverPartitionRangeFrameFunction vs
+    // ...RowsFrameFunction) with their own snapshot/restore code, and only the RANGE one
+    // used to get a restored-value oracle - the ROWS one was asserted structurally.
+    private void assertMaxMinBoundedRestoresDequeAcrossRestart(String valueType, String suffix, String windowClause) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -945,9 +1040,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "  min(x) OVER w2 AS mnu, " +
                     "  max(x) OVER w2 AS mxu " +
                     "FROM base " +
-                    "WINDOW " +
-                    "  w1 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW), " +
-                    "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '1' HOUR PRECEDING)");
+                    windowClause);
 
             final long preLastProcessed;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1023,56 +1116,22 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         });
     }
 
-    // Drives a partitioned bounded-frame max/min(TIMESTAMP|DATE) live view:
-    // asserts the windowed value is correct (also proving CREATE-accept), then
-    // performs a byte-exact snapshot/restore round-trip of the function's
-    // partition state (write -> toTop -> restore -> write again, comparing).
+    // Drives a partitioned bounded-frame max/min(TIMESTAMP|DATE) live view over the shared
+    // five-row-per-partition data. The canonical values become days of 2026-01, so their ordering -
+    // and therefore every expected max/min - carries over unchanged from the numeric case.
     private void assertMaxMinTimestampDateFrameRoundTrip(
             String fnName,
             String valueType,
-            String frameClause,
-            String insertValues,
-            String expectedRows
+            String frameClause
     ) throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, " + fnName + "(v) OVER w AS a FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, sym, v) VALUES " + insertValues);
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                WindowFunction fn = unwrapWindowFunctions(lv).getQuick(0);
-                Assert.assertTrue(fn.supportsSnapshot());
-                Map fnMap = fn.getPartitionMap();
-                Assert.assertEquals(2L, fnMap.size());
-
-                try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                     MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    LiveViewFunctionSnapshot.write(s1, fn);
-                    final long len = s1.getAppendOffset();
-                    fn.toTop();
-                    Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
-                    Assert.assertEquals(2L, fnMap.size());
-                    LiveViewFunctionSnapshot.write(s2, fn);
-                    Assert.assertEquals(len, s2.getAppendOffset());
-                    for (long i = 0; i < len; i++) {
-                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
-                    }
-                }
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
+        final boolean isDate = "DATE".equals(valueType);
+        assertMaxMinFrameRoundTrip(
+                fnName,
+                valueType,
+                frameClause,
+                v -> isDate ? "'" + dateText(v) + "'::date" : "'" + timestampText(v) + "'",
+                v -> isDate ? dateText(v) : timestampText(v)
+        );
     }
 
     // Same as assertMaxMinTimestampDateFrameRoundTrip but for the unbounded-preceding
@@ -8655,20 +8714,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(38, 6)",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30.000000\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.000000\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12.000000\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18.000000\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8679,20 +8725,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(38, 6)",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.000000m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000000m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000000m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000000m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000000m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000000m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.000000\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20.000000\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30.000000\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.000000\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12.000000\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18.000000\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8703,20 +8736,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(4, 1)",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30.0\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.0\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12.0\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18.0\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8727,20 +8747,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(4, 1)",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.0m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.0m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.0m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.0m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.0m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.0m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.0\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30.0\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.0\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12.0\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18.0\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8751,20 +8758,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(60, 0)",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8775,20 +8769,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(60, 0)",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8799,20 +8780,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(9, 3)",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.000\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20.000\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30.000\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12.000\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18.000\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8823,20 +8791,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(9, 3)",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.000m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.000m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.000m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.000m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.000m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.000m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.000\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20.000\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30.000\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.000\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12.000\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18.000\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8847,20 +8802,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(18, 2)",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30.00\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12.00\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18.00\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8871,20 +8813,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(18, 2)",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20.00\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30.00\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12.00\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18.00\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8895,20 +8824,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(2, 0)",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8919,20 +8835,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "max",
                 "DECIMAL(2, 0)",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t20\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t30\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t12\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t18\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8944,20 +8847,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "min",
                 "DECIMAL(18, 2)",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t6.00\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -8967,20 +8857,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinDecimalFrameRoundTrip(
                 "min",
                 "DECIMAL(18, 2)",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', 10.00m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', 20.00m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', 30.00m), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', 6.00m), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', 12.00m), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', 18.00m)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t10.00\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t10.00\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t10.00\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t6.00\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t6.00\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t6.00\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -9833,20 +9710,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinTimestampDateFrameRoundTrip(
                 "max",
                 "DATE",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000Z'::date), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000Z'::date), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000Z'::date)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000Z\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-12T00:00:00.000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000Z\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -9856,20 +9720,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinTimestampDateFrameRoundTrip(
                 "max",
                 "TIMESTAMP",
-                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000000Z\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-12T00:00:00.000000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000000Z\n"
+                "RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -9879,20 +9730,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinTimestampDateFrameRoundTrip(
                 "max",
                 "TIMESTAMP",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-20T00:00:00.000000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-30T00:00:00.000000Z\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-12T00:00:00.000000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-18T00:00:00.000000Z\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -10173,20 +10011,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinTimestampDateFrameRoundTrip(
                 "min",
                 "DATE",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000Z'::date), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000Z'::date), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000Z'::date), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000Z'::date), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000Z'::date), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000Z'::date)",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000Z\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000Z\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -10218,20 +10043,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMaxMinTimestampDateFrameRoundTrip(
                 "min",
                 "TIMESTAMP",
-                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW",
-                "('2026-08-01T00:00:00.000000Z', 'a', '2026-01-10T00:00:00.000000Z'), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a', '2026-01-20T00:00:00.000000Z'), " +
-                        "('2026-08-01T02:00:00.000000Z', 'a', '2026-01-30T00:00:00.000000Z'), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b', '2026-03-06T00:00:00.000000Z'), " +
-                        "('2026-08-01T01:00:00.000000Z', 'b', '2026-03-12T00:00:00.000000Z'), " +
-                        "('2026-08-01T02:00:00.000000Z', 'b', '2026-03-18T00:00:00.000000Z')",
-                "ts\tsym\ta\n" +
-                        "2026-08-01T00:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\ta\t2026-01-10T00:00:00.000000Z\n" +
-                        "2026-08-01T00:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
-                        "2026-08-01T01:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n" +
-                        "2026-08-01T02:00:00.000000Z\tb\t2026-03-06T00:00:00.000000Z\n"
+                "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW"
         );
     }
 
@@ -15767,18 +15579,33 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertTrue("lag reports snapshot capability after 2b.2a", lagFn.supportsSnapshot());
             Assert.assertEquals(2L, lagFn.getPartitionMap().size());
 
-            try (MemoryCARW buf = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                LiveViewFunctionSnapshot.write(buf, lagFn);
-                final long snapshotBytes = buf.getAppendOffset();
+            try (MemoryCARW s1 = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                 MemoryCARW s2 = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                LiveViewFunctionSnapshot.write(s1, lagFn);
+                final long snapshotBytes = s1.getAppendOffset();
                 Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
                 lagFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, lagFn.getPartitionMap().size());
-                LiveViewFunctionSnapshot.restore(buf, 0L, snapshotBytes, lagFn, lagFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(s1, 0L, snapshotBytes, lagFn, lagFn.snapshotFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
                         lagFn.getPartitionMap().size()
                 );
+
+                // Re-serialise the restored function and compare byte for byte, the same way the
+                // max/min round-trip helpers do. The partition-count assert above is satisfied by a
+                // restore that rehydrated two partitions of garbage ring bytes - nothing reads the
+                // ring contents back. This pins firstIdx, count and every ring slot.
+                LiveViewFunctionSnapshot.write(s2, lagFn);
+                Assert.assertEquals(
+                        "re-serialising the restored function must reproduce the snapshot exactly",
+                        snapshotBytes,
+                        s2.getAppendOffset()
+                );
+                for (long i = 0; i < snapshotBytes; i++) {
+                    Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                }
             }
 
             execute("DROP LIVE VIEW lv");
@@ -16415,12 +16242,22 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testMaxMinDoubleBoundedRangeRestoresDequeAcrossRestart() throws Exception {
-        assertMaxMinBoundedRangeRestoresDequeAcrossRestart("DOUBLE", ".0");
+        assertMaxMinBoundedRestoresDequeAcrossRestart("DOUBLE", ".0", RANGE_FRAME_WINDOW);
+    }
+
+    @Test
+    public void testMaxMinDoubleBoundedRowsRestoresDequeAcrossRestart() throws Exception {
+        assertMaxMinBoundedRestoresDequeAcrossRestart("DOUBLE", ".0", ROWS_FRAME_WINDOW);
+    }
+
+    @Test
+    public void testMaxMinLongBoundedRowsRestoresDequeAcrossRestart() throws Exception {
+        assertMaxMinBoundedRestoresDequeAcrossRestart("LONG", "", ROWS_FRAME_WINDOW);
     }
 
     @Test
     public void testMaxMinLongBoundedRangeRestoresDequeAcrossRestart() throws Exception {
-        assertMaxMinBoundedRangeRestoresDequeAcrossRestart("LONG", "");
+        assertMaxMinBoundedRestoresDequeAcrossRestart("LONG", "", RANGE_FRAME_WINDOW);
     }
 
     @Test
@@ -16519,45 +16356,78 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             final long preHeadLvSeqTxn;
             final long preLastProcessed;
             final long preFunctionMapSize;
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, sym, x) VALUES " +
-                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
-                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
-                        "('2026-09-01T00:00:00.000000Z', 'b', 3.0)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
+            try (MemoryCARW pre = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                 MemoryCARW post = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    setCurrentMicros(0L);
+                    execute("INSERT INTO base (ts, sym, x) VALUES " +
+                            "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                            "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                            "('2026-09-01T00:00:00.000000Z', 'b', 3.0)");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
 
-                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
-                preLastProcessed = instance.getLastProcessedSeqTxn();
-                preFunctionMapSize = instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size();
-                Assert.assertNotEquals(
-                        "head .cp must be written for an LV with lag() now that 2b.2a makes it snapshot-capable",
-                        Numbers.LONG_NULL,
-                        preHeadLvSeqTxn
+                    LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                    preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                    preLastProcessed = instance.getLastProcessedSeqTxn();
+                    WindowFunction lagFn = instance.getAnchorWindow().getFunctions().getQuick(0);
+                    preFunctionMapSize = lagFn.getPartitionMap().size();
+                    Assert.assertNotEquals(
+                            "head .cp must be written for an LV with lag() now that 2b.2a makes it snapshot-capable",
+                            Numbers.LONG_NULL,
+                            preHeadLvSeqTxn
+                    );
+                    Assert.assertEquals("two partition keys seeded pre-restart", 2L, preFunctionMapSize);
+                    // Capture the pre-restart ring so the restore below has something to be compared
+                    // against, rather than just counted.
+                    LiveViewFunctionSnapshot.write(pre, lagFn);
+                }
+
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(reloaded);
+                Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    drainJob(job);
+                }
+                // isCheckpointRestoreAttempted() is also satisfied by a restore that FAILED and fell
+                // back to a head-miss replay recompute, which would leave everything below passing for
+                // the wrong reason. Only "succeeded" proves the state came off the head .cp.
+                Assert.assertTrue(
+                        "head .cp restore must rehydrate lag's state, not fall back to a head-miss replay",
+                        reloaded.isCheckpointRestoreSucceeded()
                 );
-                Assert.assertEquals("two partition keys seeded pre-restart", 2L, preFunctionMapSize);
+                Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+                WindowFunction reloadedLagFn = reloaded.getAnchorWindow().getFunctions().getQuick(0);
+                Assert.assertEquals(
+                        "lag's partition map rehydrates to its pre-restart partition count",
+                        preFunctionMapSize,
+                        reloadedLagFn.getPartitionMap().size()
+                );
+
+                // The partition count on its own is satisfied by a restore that rehydrated the right
+                // number of partitions holding garbage rings - nothing reads a lag value back out.
+                // Re-serialise the restored function and compare it byte for byte with the pre-restart
+                // snapshot: that pins firstIdx, count and every ring slot. A post-restart INSERT would
+                // be the more direct oracle, but the cross-cycle toTop wipe documented above makes
+                // that scenario meaningless for an ANCHOR window.
+                LiveViewFunctionSnapshot.write(post, reloadedLagFn);
+                final long preBytes = pre.getAppendOffset();
+                Assert.assertTrue("pre-restart snapshot wrote some bytes", preBytes > 0);
+                Assert.assertEquals(
+                        "restored lag state must re-serialise to the pre-restart length",
+                        preBytes,
+                        post.getAppendOffset()
+                );
+                for (long i = 0; i < preBytes; i++) {
+                    Assert.assertEquals("restored lag state differs at byte " + i, pre.getByte(i), post.getByte(i));
+                }
             }
-
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-
-            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(reloaded);
-            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                drainJob(job);
-            }
-            Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
-            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
-            Assert.assertEquals(
-                    "lag's partition map rehydrates to its pre-restart partition count",
-                    preFunctionMapSize,
-                    reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
-            );
 
             execute("DROP LIVE VIEW lv");
         });
@@ -17681,13 +17551,17 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }, "lv-freeze-handshake-test");
             try {
                 agent.start();
-                // Give the agent time to publish the flag and start spinning on
-                // the latch. startCheckpoint must not return while we hold it.
-                Thread.sleep(50);
-                Assert.assertTrue(
+                // Wait for the agent to publish the freeze flag and start spinning on the latch. A
+                // fixed sleep here made this a positive assertion on an unsynchronized thread: on a
+                // loaded machine the agent may not be scheduled inside the window, and the assertion
+                // below would go red for a reason that has nothing to do with the contract under
+                // test. Waiting for the flag instead is safe for the negative assertion that follows
+                // it, because this thread holds the refresh latch the whole time - startCheckpoint
+                // cannot return however long the agent takes to get going.
+                TestUtils.assertEventually(() -> Assert.assertTrue(
                         "freeze flag must be published before the agent blocks on the latch",
                         lv.isFreezeInProgress()
-                );
+                ), 30);
                 Assert.assertFalse(
                         "startCheckpoint must block while the refresh latch is held",
                         returned.get()
@@ -17740,7 +17614,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }, "lv-invalidate-freeze-test");
             try {
                 invalidator.start();
-                Thread.sleep(50);
+                // Wait until the invalidator is actually parked inside waitForUnfrozen() before
+                // asserting it has not returned. A fixed sleep proved nothing: if the thread had not
+                // reached invalidateLiveView yet, the two negative assertions below would hold
+                // trivially and the test would pass without the freeze ever having blocked anything.
+                // waitForUnfrozen parks in Object.wait(), so WAITING is the fence.
+                TestUtils.assertEventually(() -> Assert.assertEquals(
+                        "invalidator must park inside waitForUnfrozen",
+                        Thread.State.WAITING,
+                        invalidator.getState()
+                ), 30);
                 Assert.assertFalse(
                         "invalidateLiveView must wait until endCheckpoint",
                         returned.get()

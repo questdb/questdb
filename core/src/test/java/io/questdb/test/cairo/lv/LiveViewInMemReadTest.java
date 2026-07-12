@@ -42,7 +42,6 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
-import io.questdb.mp.Job;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -51,7 +50,6 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -73,7 +71,7 @@ import org.junit.Test;
  * (disk-only) - across full scans, LIMIT, WHERE, ORDER BY, a seam split, the
  * rowId round-trip, and a toTop re-read.
  */
-public class LiveViewInMemReadTest extends AbstractCairoTest {
+public class LiveViewInMemReadTest extends AbstractLiveViewTest {
 
     // A non-BACKFILL view drops rows below its CREATE wall-clock floor; pin the
     // clock below the (2026) test data so every row stays in-frame.
@@ -3360,14 +3358,6 @@ public class LiveViewInMemReadTest extends AbstractCairoTest {
             drainJob(job);
         }
         drainWalQueue();
-    }
-
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
     }
 
     // A SELECT of rowCount rows carrying one column of every type the in-mem tier stores: each

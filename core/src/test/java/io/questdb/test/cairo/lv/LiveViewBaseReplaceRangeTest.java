@@ -31,9 +31,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.mp.Job;
 import io.questdb.std.Numbers;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -59,10 +57,9 @@ import org.junit.Test;
  * such commits to the O3 replay, which re-reads the applied (post-replace)
  * base.
  */
-public class LiveViewBaseReplaceRangeTest extends AbstractCairoTest {
+public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
 
     // > FLUSH EVERY 100ms so a per-cycle clock bump never defers a flush.
-    private static final long CLOCK_ADVANCE_MICROS = 250_000;
 
     // Pin the test clock below all test data before each test. A non-BACKFILL view's
     // lower bound is the CREATE wall-clock moment, and the forward-append refresh path
@@ -490,14 +487,6 @@ public class LiveViewBaseReplaceRangeTest extends AbstractCairoTest {
         row.append();
     }
 
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
-    }
-
     private static long ts(String timestamp) {
         return MicrosTimestampDriver.floor(timestamp);
     }
@@ -511,17 +500,6 @@ public class LiveViewBaseReplaceRangeTest extends AbstractCairoTest {
     // Pumps the refresh job until no further LV WAL work is produced, advancing
     // the clock each pass so deferred flushes land, and applying the LV's own
     // WAL after each burst.
-    private void driveRefreshToQuiescence(LiveViewRefreshJob job) {
-        for (int i = 0; i < 512; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-            drainWalQueue();
-            boolean progressed = drainJob(job);
-            drainWalQueue();
-            if (!progressed) {
-                break;
-            }
-        }
-    }
 
     // One refresh cycle past the FLUSH EVERY rate-limit: advances the clock so
     // the commit is not deferred, runs the job, and applies the LV WAL.

@@ -34,16 +34,22 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Coverage for {@link LiveViewInMemoryBuffer#copyRowsFromWithRollback} - the
- * transactional fast-path append the refresh worker uses to grow the published
- * in-mem slot in place.
+ * Coverage for {@link LiveViewInMemoryBuffer#appendStaging} - the transactional fast-path append the
+ * refresh worker uses to grow the published in-mem slot in place, under the writer sentinel, while
+ * readers spin on it.
  * <p>
  * A native OOM part-way through the var-size append leaves that column's aux/data
  * append cursors advanced while {@code rowCount} has not moved yet. Without a
  * rewind the next append trips the order assert (aux cursor ==
  * {@code rowCount * auxWidth}) under {@code -ea}, and reads a torn / out-of-bounds
- * varchar with assertions disabled. The rollback wrapper rewinds the cursors so a
- * failed append is a true no-op.
+ * varchar with assertions disabled. {@code appendStaging} goes through
+ * {@link LiveViewInMemoryBuffer#copyRowsFromWithRollback}, which rewinds the cursors so a failed
+ * append is a true no-op.
+ * <p>
+ * These tests drive {@code appendStaging} - the method the worker actually calls - rather than
+ * {@code copyRowsFromWithRollback} directly. That distinction is the point: when the rollback lived
+ * only at the worker's call site, reverting that one call to the plain {@code copyRowsFrom} left
+ * this file green, so the tests protected the wrapper but not the thing that depends on it.
  * <p>
  * The values are longer than {@link io.questdb.cairo.VarcharTypeDriver#VARCHAR_MAX_BYTES_FULLY_INLINED}
  * so each row writes a real {@code dataMem} payload, exercising both the aux and
@@ -52,12 +58,55 @@ import org.junit.Test;
 public class LiveViewInMemoryBufferRollbackTest extends AbstractCairoTest {
 
     private static final long PAGE_SIZE = 1024;
+    private static final long STAGING_MIN_TS = 1_700_000_000_000_000L;
+
+    @Test
+    public void testAppendStagingRestoresCursorsAfterFailedAppend() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(varcharSchema(), 0, PAGE_SIZE);
+                    LiveViewInMemoryBuffer retained = values("retained-row-0", "retained-row-1");
+                    LiveViewInMemoryBuffer poison = throwingValues(1, "poison-row-0", "poison-row-1", "poison-row-2");
+                    LiveViewInMemoryBuffer fresh = values("fresh-row-0", "fresh-row-1")
+            ) {
+                dst.appendStaging(retained, STAGING_MIN_TS);
+                Assert.assertEquals(2, dst.rowCount());
+                Assert.assertEquals("first append seeds the slot's seam", STAGING_MIN_TS, dst.seamTs());
+
+                try {
+                    dst.appendStaging(poison, STAGING_MIN_TS + 1);
+                    Assert.fail("injected failure expected");
+                } catch (InjectedException expected) {
+                    // rollback rewinds the partially-advanced aux/data cursors
+                }
+
+                // Retained rows are intact and rowCount is unchanged - a true no-op. This is what the
+                // worker's error path assumes when it drops the write sentinel without publishing.
+                Assert.assertEquals(2, dst.rowCount());
+                Assert.assertEquals("retained-row-0", dst.getVarcharA(0, 0).toString());
+                Assert.assertEquals("retained-row-1", dst.getVarcharA(1, 0).toString());
+                Assert.assertEquals("a failed append must not move the seam", STAGING_MIN_TS, dst.seamTs());
+
+                // A subsequent real append must NOT trip the order assert and must read
+                // back correctly - no torn / out-of-bounds varchar from the poison run.
+                dst.appendStaging(fresh, STAGING_MIN_TS + 2);
+                Assert.assertEquals(4, dst.rowCount());
+                Assert.assertEquals("retained-row-0", dst.getVarcharA(0, 0).toString());
+                Assert.assertEquals("retained-row-1", dst.getVarcharA(1, 0).toString());
+                Assert.assertEquals("fresh-row-0", dst.getVarcharA(2, 0).toString());
+                Assert.assertEquals("fresh-row-1", dst.getVarcharA(3, 0).toString());
+                // A non-empty slot keeps its seam: staging rows are strictly newer.
+                Assert.assertEquals(STAGING_MIN_TS, dst.seamTs());
+            }
+        });
+    }
 
     @Test
     public void testFailedAppendWithoutRollbackPoisonsCursors() throws Exception {
         // Control: the same partial append WITHOUT the rollback wrapper leaves the
         // var-size aux cursor advanced past rowCount, so the next append trips the
-        // order assert under -ea. This is exactly the poison the rollback prevents.
+        // order assert under -ea. This is exactly the poison appendStaging prevents,
+        // and it is why appendStaging must not be "simplified" to a plain copyRowsFrom.
         assertMemoryLeak(() -> {
             try (
                     LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(varcharSchema(), 0, PAGE_SIZE);
@@ -77,42 +126,6 @@ public class LiveViewInMemoryBufferRollbackTest extends AbstractCairoTest {
 
                 // The advanced aux cursor makes the next append's order assert fail.
                 Assert.assertThrows(AssertionError.class, () -> dst.copyRowsFrom(fresh, 0, 2, 2));
-            }
-        });
-    }
-
-    @Test
-    public void testRollbackRestoresCursorsAfterFailedAppend() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(varcharSchema(), 0, PAGE_SIZE);
-                    LiveViewInMemoryBuffer retained = values("retained-row-0", "retained-row-1");
-                    LiveViewInMemoryBuffer poison = throwingValues(1, "poison-row-0", "poison-row-1", "poison-row-2");
-                    LiveViewInMemoryBuffer fresh = values("fresh-row-0", "fresh-row-1")
-            ) {
-                dst.copyRowsFrom(retained, 0, 2, 0);
-                dst.setRowCount(2);
-
-                try {
-                    dst.copyRowsFromWithRollback(poison, 0, 3, 2);
-                    Assert.fail("injected failure expected");
-                } catch (InjectedException expected) {
-                    // rollback rewinds the partially-advanced aux/data cursors
-                }
-
-                // Retained rows are intact and rowCount is unchanged - a true no-op.
-                Assert.assertEquals(2, dst.rowCount());
-                Assert.assertEquals("retained-row-0", dst.getVarcharA(0, 0).toString());
-                Assert.assertEquals("retained-row-1", dst.getVarcharA(1, 0).toString());
-
-                // A subsequent real append must NOT trip the order assert and must read
-                // back correctly - no torn / out-of-bounds varchar from the poison run.
-                dst.copyRowsFromWithRollback(fresh, 0, 2, 2);
-                dst.setRowCount(4);
-                Assert.assertEquals("retained-row-0", dst.getVarcharA(0, 0).toString());
-                Assert.assertEquals("retained-row-1", dst.getVarcharA(1, 0).toString());
-                Assert.assertEquals("fresh-row-0", dst.getVarcharA(2, 0).toString());
-                Assert.assertEquals("fresh-row-1", dst.getVarcharA(3, 0).toString());
             }
         });
     }
@@ -148,6 +161,10 @@ public class LiveViewInMemoryBufferRollbackTest extends AbstractCairoTest {
             super(varcharSchema(), 0, PAGE_SIZE);
             this.failRow = failRow;
             this.vals = vals;
+            // No rows are ever written into this buffer - copyRowsFrom reads a var column purely
+            // through getVarcharA, which is overridden below. But appendStaging takes its row count
+            // from the staging buffer, so the count has to be real even though the storage is not.
+            setRowCount(vals.length);
         }
 
         @Override

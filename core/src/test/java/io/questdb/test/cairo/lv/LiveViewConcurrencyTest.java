@@ -35,7 +35,6 @@ import io.questdb.cairo.lv.ForwardingLiveViewStateStore;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
-import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -46,7 +45,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
-import io.questdb.mp.Job;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -59,9 +57,9 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -131,15 +129,42 @@ import java.util.concurrent.atomic.AtomicInteger;
  * driver advances the clock to clear FLUSH EVERY gating, but never by enough to cross
  * the one-year gap, so every row stays above the floor.
  */
-public class LiveViewConcurrencyTest extends AbstractCairoTest {
+public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
-    private static final long CLOCK_ADVANCE_MICROS = 250_000; // > FLUSH EVERY 100ms
     // The clock sits at 2026-01-01 (the CREATE moment / view lower bound); the data
     // starts a year later so the refresh driver's clock advances can never lift the
     // floor above a data row, even if it spins many times during ingestion.
     private static final String CLOCK_START = "2026-01-01T00:00:00.000000Z";
     private static final String DATA_START = "2027-01-01T00:00:00.000000Z";
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
+    // Fault injection for testCreateRollbackDefersFreeWhileRefreshLatchHeld, armed for the duration of
+    // that one test. Null (the default) makes the state-store wrapper below a pure pass-through, so
+    // every other test in the class sees a stock engine.
+    private static volatile Runnable registerBaseTableFault;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // The engine builds its LiveViewStateStore once, in load(), via the createLiveViewStateStore
+        // hook. Wrapping it here - rather than reflecting the field out of a live engine and setting
+        // it back afterwards - keeps the swap inside the API the engine already exposes for it.
+        AbstractCairoTest.engineFactory = conf -> new CairoEngine(conf) {
+            @Override
+            protected LiveViewStateStore createLiveViewStateStore() {
+                return new ForwardingLiveViewStateStore(super.createLiveViewStateStore()) {
+                    @Override
+                    public void registerBaseTable(CharSequence baseTableName) {
+                        final Runnable fault = registerBaseTableFault;
+                        if (fault != null) {
+                            fault.run();
+                            return;
+                        }
+                        super.registerBaseTable(baseTableName);
+                    }
+                };
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testCheckpointFreezeDuringLatchHeldRewriteDoesNotDeadlock() throws Exception {
@@ -270,26 +295,19 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 }
             }, "lv-refresh-worker");
 
-            // Swap in a store whose registerBaseTable (called right after registerView)
-            // releases the worker to latch the instance, waits for it to hold the latch,
-            // then throws - so the rollback teardown runs against a latched instance.
-            // The swap itself still needs reflection (there is no setter), but the
-            // read does not: the engine exposes the store.
-            final Field storeField = CairoEngine.class.getDeclaredField("liveViewStateStore");
-            storeField.setAccessible(true);
-            final LiveViewStateStore originalStore = engine.getLiveViewStateStore();
-            storeField.set(engine, new ForwardingLiveViewStateStore(originalStore) {
-                @Override
-                public void registerBaseTable(CharSequence baseTableName) {
-                    instanceRegistered.countDown();
-                    try {
-                        workerLatched.await();
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                    throw CairoException.critical(0).put("injected registerBaseTable failure");
+            // Arm the class's state-store wrapper (installed via the engine's own
+            // createLiveViewStateStore hook in setUpStatic). registerBaseTable, the step right after
+            // registerView, releases the worker to latch the instance, waits for it to hold the
+            // latch, then throws - so the rollback teardown runs against a latched instance.
+            registerBaseTableFault = () -> {
+                instanceRegistered.countDown();
+                try {
+                    workerLatched.await();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
                 }
-            });
+                throw CairoException.critical(0).put("injected registerBaseTable failure");
+            };
 
             worker.start();
             boolean threw = false;
@@ -300,7 +318,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 threw = true; // the injected registerBaseTable failure rolls the CREATE back
             } finally {
                 rollbackDone.countDown();
-                storeField.set(engine, originalStore);
+                registerBaseTableFault = null;
             }
 
             worker.join();
@@ -387,15 +405,20 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
             worker.start();
             latchHeld.await();
             dropper.start();
-            // Let the dropper enter dropLiveView and reach the fence spin, then prove
-            // it is blocked: while the worker holds the latch, fenceRefresh cannot
-            // complete, so dropLiveView cannot return. A broken fence would let the
-            // drop tear the table down and return within this window.
+            // Wait until the dropper is actually spinning in the fence, then prove it is blocked:
+            // while the worker holds the latch, fenceRefresh cannot complete, so dropLiveView cannot
+            // return. A broken fence would let the drop tear the table down and return.
+            //
+            // dropStarted counts down *before* dropLiveView is called, so it says nothing about the
+            // fence, and the fixed sleep that used to stand in for one meant the two assertions below
+            // would hold trivially on a machine where the dropper had not got going yet - a test that
+            // passes without the fence ever being exercised. fenceRefresh busy-spins on Os.pause
+            // instead of parking, so the dropper stays RUNNABLE and Thread.State is no fence either.
             dropStarted.await();
-            Thread.sleep(250);
+            awaitThreadInMethod(dropper, "fenceRefresh", 60_000);
             Assert.assertFalse("dropLiveView must block in fenceRefresh while the refresh latch is held",
                     dropReturned.get());
-            Assert.assertTrue("dropper thread must still be running (parked in the fence)", dropper.isAlive());
+            Assert.assertTrue("dropper thread must still be running (spinning in the fence)", dropper.isAlive());
 
             // Release the latch: the fence completes and the drop finishes.
             releaseLatch.countDown();
@@ -547,14 +570,6 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
         row.append();
     }
 
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
-    }
-
     // Generates the logical dataset: strictly-unique, strictly-increasing timestamps
     // (so OVER (ORDER BY ts) and the natural ts scan order used by OVER () are total
     // orders both the incremental and the batch path agree on), random symbols and
@@ -589,32 +604,10 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
 
     // Drives the named view's backfill sweep to completion, re-fetching the instance
     // each pass, then applies the LV WAL. Mirrors the fuzz harness.
-    private void driveBackfillToCompletion(LiveViewRefreshJob job, String viewName) {
-        for (int i = 0; i < 1000; i++) {
-            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
-            if (inst == null
-                    || inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
-                break;
-            }
-            drainJob(job);
-        }
-        drainWalQueue();
-    }
 
     // Pumps the refresh job until no further LV WAL work is produced, advancing the
     // clock each pass so deferred flushes land, and applying the LV's own WAL after
     // each burst. Mirrors the fuzz harness.
-    private void driveRefreshToQuiescence(LiveViewRefreshJob job) {
-        for (int i = 0; i < 512; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-            drainWalQueue();
-            boolean progressed = drainJob(job);
-            drainWalQueue();
-            if (!progressed) {
-                break;
-            }
-        }
-    }
 
     // Like newWriterThread, but for the var-size base table (ts, vs STRING,
     // vv VARCHAR): writer w ingests the round-robin slice w, w+numWriters, ... Each
@@ -919,6 +912,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -1134,6 +1128,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -1220,6 +1215,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -1289,9 +1285,26 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 CairoEngine.setRoleSwitchMintObserver(null);
             }
 
+            // Unlike every other test here, this one *expects* faults - it throws the read-only
+            // authorization error at the mint point on purpose. Pin them exactly: each refused mint
+            // must be absorbed as one refresh fault and no more. The read-only gate is the branch of
+            // handleRefreshFailure that deliberately never touches the flush-retry budget, so the
+            // fault counter is the only place a refusal is observable at all.
+            final long faultsUnderDemote = instance.getRefreshFaultCount();
+            Assert.assertEquals(
+                    "each refused mint must land as exactly one refresh fault",
+                    refusals.get(),
+                    faultsUnderDemote
+            );
+
             // The demote cleared: the same view resumes forward and converges.
             driveRefreshToQuiescence(job);
             Assert.assertFalse("view must remain valid after recovery", instance.getStateReader().isInvalid());
+            Assert.assertEquals(
+                    "once the demote is lifted the view must refresh incrementally, without faulting",
+                    faultsUnderDemote,
+                    instance.getRefreshFaultCount()
+            );
         } finally {
             Misc.free(job);
         }
@@ -1737,6 +1750,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -1941,6 +1955,7 @@ public class LiveViewConcurrencyTest extends AbstractCairoTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         if (modeB && !leadMode) {
             // Guard against the soak silently passing on disk-only reads: confirm

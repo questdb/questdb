@@ -191,6 +191,12 @@ public class LiveViewSymbolCacheConcurrencyTest {
             }
         }, "lv-symbol-cache-writer");
 
+        // Every reader's loop is bounded by writerDone, so a reader the scheduler never gets to until
+        // the writer has finished runs zero iterations - and the terminal assertions below (no
+        // errors, writer-side intern count) all still pass. Count each reader's probes and require
+        // it actually raced the writer. Each reader owns its slot and the joins below publish it.
+        final long[] probeCounts = new long[numReaders];
+
         final Thread[] readers = new Thread[numReaders];
         for (int r = 0; r < numReaders; r++) {
             final int seed = r;
@@ -198,6 +204,7 @@ public class LiveViewSymbolCacheConcurrencyTest {
                 try {
                     barrier.await();
                     int probe = seed;
+                    long probes = 0;
                     while (!writerDone.get()) {
                         // Acquire-read the published horizon, then bound the scan to
                         // it - the WHERE/GROUP BY raw-int-key path, memory-safe.
@@ -215,11 +222,13 @@ public class LiveViewSymbolCacheConcurrencyTest {
                         if (horizon > 0) {
                             cache.newSymbolValueOf(COL, horizon - 1);
                         }
+                        probes++;
                         probe += numReaders;
                         if (probe >= internCount) {
                             probe = seed;
                         }
                     }
+                    probeCounts[seed] = probes;
                 } catch (Throwable th) {
                     errors.add(th);
                 }
@@ -238,6 +247,7 @@ public class LiveViewSymbolCacheConcurrencyTest {
         if (!errors.isEmpty()) {
             throw new AssertionError("symbol cache read/write raced", errors.peek());
         }
+        assertAllReadersProbed(probeCounts);
         // Sanity: every distinct value was interned exactly once.
         Assert.assertEquals(internCount, cache.newSymbolMaxIdExclusive(COL));
     }
@@ -283,6 +293,12 @@ public class LiveViewSymbolCacheConcurrencyTest {
             }
         }, "lv-symbol-cache-writer");
 
+        // As in testConcurrentInternAndReadDoNotRace, the reader loop is bounded by writerDone and so
+        // can run zero times. Worse, the pin loop below used to bail out with a bare `return` when it
+        // saw no horizon, which is the same silent pass with a comment claiming it cannot happen.
+        // Count the probes and let the assertion decide.
+        final long[] probeCounts = new long[numReaders];
+
         final Thread[] readers = new Thread[numReaders];
         for (int r = 0; r < numReaders; r++) {
             final int seed = r;
@@ -297,9 +313,11 @@ public class LiveViewSymbolCacheConcurrencyTest {
                         Thread.onSpinWait();
                     }
                     if (pinned <= 0) {
-                        return; // writer finished before warmup - cannot happen at 2M
+                        throw new AssertionError("reader pinned no horizon: the writer interned "
+                                + internCount + " values, so the reader must have observed at least one");
                     }
                     int probe = seed % pinned;
+                    long probes = 0;
                     while (!writerDone.get()) {
                         // id probe < pinned, so it was interned before the pin: must resolve.
                         final int key = cache.newSymbolKeyOf(COL, "v" + probe, 0, pinned);
@@ -312,11 +330,13 @@ public class LiveViewSymbolCacheConcurrencyTest {
                             throw new AssertionError("torn id->value: probe=" + probe
                                     + ", resolved=" + resolved);
                         }
+                        probes++;
                         probe += numReaders;
                         if (probe >= pinned) {
                             probe -= pinned;
                         }
                     }
+                    probeCounts[seed] = probes;
                 } catch (Throwable th) {
                     errors.add(th);
                 }
@@ -335,6 +355,7 @@ public class LiveViewSymbolCacheConcurrencyTest {
         if (!errors.isEmpty()) {
             throw new AssertionError("symbol cache torn-value race", errors.peek());
         }
+        assertAllReadersProbed(probeCounts);
     }
 
     @Test
@@ -380,5 +401,19 @@ public class LiveViewSymbolCacheConcurrencyTest {
 
         // Sanity: an in-band value still resolves after the cache grew.
         Assert.assertEquals(1, overlay.keyOf("v1"));
+    }
+
+    // Both soaks race their readers against a writer interning 2M values, and both bound the reader
+    // loop by the writer's done flag. A reader that the scheduler starves until the writer finishes
+    // therefore probes nothing, contributes no error, and leaves the test green while proving
+    // nothing. Neither soak can mean anything unless every reader actually got in.
+    private static void assertAllReadersProbed(long[] probeCounts) {
+        for (int r = 0; r < probeCounts.length; r++) {
+            Assert.assertTrue(
+                    "reader " + r + " probed the cache zero times: its loop runs only while the writer"
+                            + " is still interning, so it raced nothing and asserted nothing",
+                    probeCounts[r] > 0
+            );
+        }
     }
 }

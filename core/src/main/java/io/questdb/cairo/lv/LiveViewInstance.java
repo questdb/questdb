@@ -326,6 +326,15 @@ public class LiveViewInstance implements QuietCloseable {
     // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
     private RecordToRowCopier recordToRowCopier;
     private long recordRowCopierMetadataVersion = -1;
+    // Lifetime count of refresh cycles that threw, incremented once per entry into
+    // LiveViewRefreshJob.handleRefreshFailure. Unlike flushRetryCount this is never reset, because
+    // most refresh faults are invisible after the fact: the job self-heals a mid-drain fault by
+    // recomputing the window from the applied base and calls recordRefreshSuccess(), which zeroes
+    // flushRetryCount, so a view that faults on every cycle and recomputes its way back to the right
+    // answer is indistinguishable from one that never faulted. Tests that mean to assert the
+    // incremental path was actually exercised (rather than silently falling back to a full
+    // recompute) assert this is zero. Written under the refresh latch, read from test threads.
+    private volatile long refreshFaultCount;
     // In-RAM refresh cursor: the highest base seqTxn whose rows have been refreshed
     // into the in-mem tier (the lead), which leads the flushed/applied point
     // ({@link #getLastProcessedSeqTxn()}) by the un-flushed lead. The refresh worker
@@ -792,6 +801,16 @@ public class LiveViewInstance implements QuietCloseable {
         return refreshedUpToSeqTxn == Numbers.LONG_NULL ? getLastProcessedSeqTxn() : refreshedUpToSeqTxn;
     }
 
+    /**
+     * @return the lifetime count of refresh cycles that threw. See {@link #refreshFaultCount}: a
+     * fault that the job self-heals leaves no other trace, so this is the only way a test can tell a
+     * view that refreshed incrementally from one that faulted and recomputed itself back to the same
+     * answer.
+     */
+    public long getRefreshFaultCount() {
+        return refreshFaultCount;
+    }
+
     public long getRowsSinceLastCheckpointWritten() {
         return rowsSinceLastCheckpointWritten;
     }
@@ -1006,6 +1025,15 @@ public class LiveViewInstance implements QuietCloseable {
             flushRetryStartUs = nowUs;
         }
         flushRetryCount++;
+    }
+
+    /**
+     * Records that a refresh cycle threw, whatever the job goes on to do about it (self-heal,
+     * recompile, back off, or invalidate). Separate from {@link #recordRefreshFailure(long)}, which
+     * several recovery paths deliberately never reach. See {@link #refreshFaultCount}.
+     */
+    public void recordRefreshFault() {
+        refreshFaultCount++;
     }
 
     /**

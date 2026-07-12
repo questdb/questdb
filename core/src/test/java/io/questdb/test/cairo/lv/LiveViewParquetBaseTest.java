@@ -25,11 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
-import io.questdb.cairo.lv.LiveViewState;
-import io.questdb.mp.Job;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -43,7 +39,7 @@ import org.junit.Test;
  * next yields, or the sweep re-reads already-consumed rows (double-counted output).
  * This suite pins that equivalence.
  */
-public class LiveViewParquetBaseTest extends AbstractCairoTest {
+public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
 
     @Before
     public void pinClockBelowTestData() {
@@ -175,25 +171,5 @@ public class LiveViewParquetBaseTest extends AbstractCairoTest {
                     .returns("i\n30\n40\n50\n");
             execute("DROP TABLE base");
         });
-    }
-
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
-    }
-
-    private void driveBackfillToCompletion(LiveViewRefreshJob job, String viewName) {
-        for (int i = 0; i < 2000; i++) {
-            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
-            if (inst == null
-                    || inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
-                break;
-            }
-            drainJob(job);
-        }
-        drainWalQueue();
     }
 }

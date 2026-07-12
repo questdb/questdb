@@ -27,9 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.griffin.SqlException;
-import io.questdb.mp.Job;
 import io.questdb.std.Numbers;
-import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -46,7 +44,7 @@ import org.junit.Test;
  * V2-only {@code TransactionLogCursor.getTxnMinTimestamp()} would throw immediately;
  * the overlap trigger must source min ts from the base WAL-E event file instead.
  */
-public class LiveViewDedupBaseTest extends AbstractCairoTest {
+public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
 
     // Pin the test clock below all test data before each test. A non-BACKFILL view's
     // lower bound is the CREATE wall-clock moment, and the forward-append refresh path
@@ -982,13 +980,5 @@ public class LiveViewDedupBaseTest extends AbstractCairoTest {
                             "a\t20\t2026-01-01T00:00:02.000000Z\n");
             execute("DROP LIVE VIEW lv");
         });
-    }
-
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
     }
 }

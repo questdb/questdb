@@ -4244,15 +4244,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // the first staged row in appendStagingInPlace.
                         acquired.reset();
                     }
-                    appendStagingInPlace(acquired, stagingBuffer.seamTs());
+                    acquired.appendStaging(stagingBuffer, stagingBuffer.seamTs());
                     acquired.setLvSeqTxn(lvSeqTxn);
                     acquired.setLeadRowCount(newLeadRowCount);
                 } catch (Throwable t) {
                     // Fast-path append cannot leave the slot partially
                     // populated visibly to readers: rowCount only advances
-                    // once at the end of appendStagingInPlace, after all
-                    // column writes have completed, and appendStagingInPlace
-                    // rewinds any partially-advanced var-size append cursors on
+                    // once at the end of appendStaging, after all column
+                    // writes have completed, and appendStaging rewinds any
+                    // partially-advanced var-size append cursors on
                     // failure, so the slot is byte-identical to its pre-append
                     // state. The writer sentinel (rc = -1) keeps readers
                     // spinning until release. Drop the sentinel and let the
@@ -4393,36 +4393,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             throw t;
         }
         return true;
-    }
-
-    /**
-     * Fast-path append helper: copies staging rows onto the tail of
-     * {@code slot}, bumping {@code rowCount} once at the end. Runs under the
-     * writer sentinel ({@code rc = -1}) so no reader observes intermediate
-     * state.
-     * <p>
-     * {@code seamTs} bookkeeping: when the slot is empty at fast-path entry,
-     * the first appended row's ts becomes the slot's minimum; the helper
-     * initialises {@code seamTs} accordingly. When the slot already holds
-     * rows, the existing {@code seamTs} is already the slot's minimum and
-     * staging rows are strictly newer (ts-ascending append), so no update is
-     * needed. The fast-path defers {@code IN MEMORY} eviction to the next
-     * slow-path edge — {@code seamTs} therefore never grows on the
-     * fast-path.
-     */
-    private void appendStagingInPlace(LiveViewInMemoryBuffer slot, long stagingMinTs) {
-        final long writeRow = slot.rowCount();
-        final long rn = stagingBuffer.rowCount();
-        // Transactional append: a native OOM part-way through leaves the var-size
-        // append cursors advanced. copyRowsFromWithRollback rewinds them on failure,
-        // so the fast-path retry (and the next append's order assert) sees the slot
-        // exactly as it was. seamTs and rowCount advance only after the copy
-        // succeeds, so a failed append is a true no-op.
-        slot.copyRowsFromWithRollback(stagingBuffer, 0, rn, writeRow);
-        if (writeRow == 0 && rn > 0) {
-            slot.setSeamTs(stagingMinTs);
-        }
-        slot.setRowCount(writeRow + rn);
     }
 
     /**
@@ -5552,6 +5522,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * separate branch that never invalidates -- see {@link #onReplicaLeadRefreshFailure}.
      */
     private String handleRefreshFailure(LiveViewInstance instance, Throwable t, boolean leadReconstruction) {
+        // Count the fault before any of the branches below decide to swallow it. Most of them do:
+        // the read-only-gate refusal, the metadata-drift recompile and the mid-drain rebuild all
+        // return null, and the rebuild even calls recordRefreshSuccess(), so nothing else survives to
+        // tell a test that the incremental path faulted at all.
+        instance.recordRefreshFault();
         // Captured before the metadata-drift block reassigns t: that path already
         // rebuilds, so the mid-drain rebuild below must not fire a second time.
         final boolean wasMetadataDrift = t instanceof TableReferenceOutOfDateException;

@@ -36,7 +36,6 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -77,10 +76,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * the internal per-view head {@code .cp} file format and never runs a SQL statement or the
  * checkpoint agent.
  */
-public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
+public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     // > FLUSH EVERY 100ms, so a single driveRefreshToQuiescence pass crosses the flush window.
-    private static final long CLOCK_ADVANCE_MICROS = 250_000;
     private static final String SNAPSHOT_ID = "test-checkpoint-instance";
     // Installed before the engine is built (setUpStatic) so DatabaseCheckpointAgent captures it. A pure
     // pass-through unless a test arms lvStateCopyHook; testCheckpointWhileBaseAdvancesConverges uses it to
@@ -1010,6 +1008,56 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoredLiveViewWithDecimalWindowConvergesAfterRestore() throws Exception {
+        // DECIMAL reaches CHECKPOINT CREATE / restore only as a passthrough projection column
+        // (testCheckpointWithVarSizeLeadRebuildsAfterRestore), never under a window function - so the
+        // DECIMAL window state, which is where the interesting per-width ring/deque serialization
+        // lives, was never carried through a real database checkpoint. Same shape as the convergence
+        // test above, with max/min/sum over a DECIMAL(38, 6) so the window state has to survive.
+        //
+        // The values are deliberately non-monotonic, so max and min over the sliding frame both have
+        // to expire an extremum that has left it.
+        final String viewSql = "SELECT ts, sym, d, " +
+                "  max(d) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS mx, " +
+                "  min(d) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS mn, " +
+                "  sum(d) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s " +
+                "FROM base";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'a', 10.000000m), " +
+                        "('2026-01-01T00:00:02.000000Z', 'b', 6.000000m), " +
+                        "('2026-01-01T00:00:03.000000Z', 'a', 30.000000m), " +
+                        "('2026-01-01T00:00:04.000000Z', 'a', 5.000000m)");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute(viewSql);
+
+                execute("CHECKPOINT CREATE");
+            }
+
+            restoreFromCheckpoint();
+            drainWalQueue();
+
+            // The post-restore rows slide both frames past the pre-restore extrema, so converging
+            // needs the restored DECIMAL window state, not just the restored rows.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, d) VALUES " +
+                        "('2026-01-01T00:00:05.000000Z', 'a', 20.000000m), " +
+                        "('2026-01-01T00:00:06.000000Z', 'b', 18.000000m), " +
+                        "('2026-01-01T00:00:07.000000Z', 'a', 15.000000m)");
+                driveRefreshToQuiescence(job);
+            }
+
+            assertViewMatchesRecompute(viewSql);
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
     public void testRestoredLiveViewContinuesRefreshingToConvergence() throws Exception {
         // After restore the view must resume from its persisted consumed-seqTxn watermark and
         // materialize brand-new base commits, converging to the recompute over the grown base.
@@ -1178,32 +1226,10 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     // Drives the named view's backfill sweep to completion across however many turns the configured
     // budget needs, re-fetching the instance each pass so it survives the registry rebuild a restore
     // performs, and applying the LV WAL at the end. Mirrors the helper in LiveViewSmokeTest.
-    private void driveBackfillToCompletion(LiveViewRefreshJob job, String viewName) {
-        for (int i = 0; i < 500; i++) {
-            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
-            if (inst == null
-                    || inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
-                break;
-            }
-            drainJob(job);
-        }
-        drainWalQueue();
-    }
 
     // Pumps the refresh job until no further LV WAL work is produced, advancing the clock each pass
     // so deferred flushes land, and applying the LV's own WAL after each burst. Mirrors the helper
     // in LiveViewFuzzTest.
-    private void driveRefreshToQuiescence(LiveViewRefreshJob job) {
-        for (int i = 0; i < 512; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-            drainWalQueue();
-            boolean progressed = drainJob(job);
-            drainWalQueue();
-            if (!progressed) {
-                break;
-            }
-        }
-    }
 
     // Simulates a restore-from-checkpoint restart in-process: releases all readers/writers, drops
     // the _restore trigger file, runs checkpoint recovery (which copies the snapshot metadata back
@@ -1231,14 +1257,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
         engine.reloadTableNames();
         engine.getMetadataCache().onStartupAsyncHydrator();
         engine.buildViewGraphs();
-    }
-
-    private static boolean drainJob(Job job) {
-        boolean any = false;
-        for (int i = 0; i < 64 && job.run(); i++) {
-            any = true;
-        }
-        return any;
     }
 
     // A pass-through FilesFacade with a one-shot hook that fires when the checkpoint copies a live

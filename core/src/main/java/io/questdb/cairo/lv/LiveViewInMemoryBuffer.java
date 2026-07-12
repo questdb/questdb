@@ -249,6 +249,34 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return isTierSupported(ColumnType.tagOf(columnType));
     }
 
+    /**
+     * Appends every row of {@code staging} onto the tail of this buffer as a single transaction.
+     * This is the refresh worker's fast path: it grows the <em>published</em> in-mem slot in place,
+     * under the writer sentinel, so the buffer it mutates is one that readers are spinning on.
+     * <p>
+     * The append must therefore be all-or-nothing. It goes through
+     * {@link #copyRowsFromWithRollback}, so a native OOM part-way through the var-size copy rewinds
+     * the partially-advanced aux/data cursors, and {@link #setRowCount(long)} advances only once the
+     * copy has fully succeeded. A failed append leaves the buffer byte-identical to its pre-append
+     * state, which is exactly what the caller's error path assumes when it drops the write sentinel
+     * without publishing.
+     * <p>
+     * When the slot is empty the first appended row's timestamp becomes the slot's minimum, so this
+     * initialises {@code seamTs} from {@code stagingMinTs}. When the slot already holds rows its
+     * existing {@code seamTs} is already the minimum and staging rows are strictly newer
+     * (ts-ascending append), so it stays put - the fast path defers {@code IN MEMORY} eviction to the
+     * next slow-path edge and never grows {@code seamTs}.
+     */
+    public void appendStaging(LiveViewInMemoryBuffer staging, long stagingMinTs) {
+        final long writeRow = rowCount();
+        final long rn = staging.rowCount();
+        copyRowsFromWithRollback(staging, 0, rn, writeRow);
+        if (writeRow == 0 && rn > 0) {
+            setSeamTs(stagingMinTs);
+        }
+        setRowCount(writeRow + rn);
+    }
+
     public int columnCount() {
         return columnTypes.size();
     }

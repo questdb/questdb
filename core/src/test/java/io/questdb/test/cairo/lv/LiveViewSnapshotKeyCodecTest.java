@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
@@ -34,10 +35,12 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -64,6 +67,16 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
 
     private static final long CODEC_BUF_PAGE_SIZE = 4096;
     private static final int CODEC_BUF_MAX_PAGES = 4;
+    // Wire-format byte counts for the testKeyRoundTripMixed key row, pinned as literals. Asserting
+    // them against byteSizeOf() instead would compare the codec with itself: byteSizeOfType and the
+    // read/write offset advances are separate switches, but a coordinated edit to both would pass.
+    // 8 LONG + 1 BYTE + 1 BOOLEAN + 2 SHORT + 2 CHAR + 4 INT + 4 SYMBOL + 4 IPv4 + 4 FLOAT
+    //   + 1 GEOBYTE + 2 GEOSHORT + 4 GEOINT + 8 GEOLONG + 8 TIMESTAMP + 8 DATE + 8 DOUBLE
+    private static final int MIXED_FIXED_BYTES = 69;
+    // A null STRING is a bare 4-byte length of -1: no character payload follows.
+    private static final int MIXED_NULL_KEY_BYTES = MIXED_FIXED_BYTES + 4;
+    // 69 + STRING "live-view-key": 4-byte length prefix + 13 chars x 2 bytes.
+    private static final int MIXED_KEY_BYTES = MIXED_FIXED_BYTES + 4 + 26;
 
     @Test
     public void testIsAllTypesFixedWidth() {
@@ -142,24 +155,7 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
         // not reach - BOOLEAN/CHAR/FLOAT/DATE/DOUBLE/STRING on the read side, plus
         // the INT/SYMBOL/LONG/TIMESTAMP/DATE write getters.
         assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.LONG);                       // col 0
-            keyTypes.add(ColumnType.BYTE);                       // col 1
-            keyTypes.add(ColumnType.BOOLEAN);                    // col 2
-            keyTypes.add(ColumnType.SHORT);                      // col 3
-            keyTypes.add(ColumnType.CHAR);                       // col 4
-            keyTypes.add(ColumnType.INT);                        // col 5
-            keyTypes.add(ColumnType.SYMBOL);                     // col 6 (int id)
-            keyTypes.add(ColumnType.IPv4);                       // col 7
-            keyTypes.add(ColumnType.FLOAT);                      // col 8
-            keyTypes.add(ColumnType.getGeoHashTypeWithBits(5));  // col 9  - GEOBYTE
-            keyTypes.add(ColumnType.getGeoHashTypeWithBits(10)); // col 10 - GEOSHORT
-            keyTypes.add(ColumnType.getGeoHashTypeWithBits(20)); // col 11 - GEOINT
-            keyTypes.add(ColumnType.getGeoHashTypeWithBits(40)); // col 12 - GEOLONG
-            keyTypes.add(ColumnType.TIMESTAMP);                  // col 13
-            keyTypes.add(ColumnType.DATE);                       // col 14
-            keyTypes.add(ColumnType.DOUBLE);                     // col 15
-            keyTypes.add(ColumnType.STRING);                     // col 16
+            ArrayColumnTypes keyTypes = mixedKeyTypes();
 
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.LONG);
@@ -171,7 +167,7 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
                 // Key columns follow the value columns in the record layout, so
                 // startIndex is the value column count.
                 MapKey srcKey = src.withKey();
-                putMixedKey(srcKey);
+                putMixedKey(srcKey, 0x1111_2222_3333_4444L, "live-view-key");
                 srcKey.createValue().putLong(0, 0xDEADL);
 
                 MapRecordCursor srcCursor = src.getCursor();
@@ -180,6 +176,7 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
                 LiveViewSnapshotKeyCodec.writeKey(buf, srcRecord, keyTypes, valueTypes.getColumnCount());
                 Assert.assertFalse(srcCursor.hasNext());
                 final long written = buf.getAppendOffset();
+                Assert.assertEquals("mixed key wire size", MIXED_KEY_BYTES, written);
 
                 // Restore the key bytes into a fresh destination entry; readKey must
                 // consume exactly the bytes writeKey produced.
@@ -191,10 +188,113 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
                 // An independently-built probe key must land on the restored entry:
                 // an equal key proves every arm round-tripped byte for byte.
                 MapKey probe = dst.withKey();
-                putMixedKey(probe);
+                putMixedKey(probe, 0x1111_2222_3333_4444L, "live-view-key");
                 Assert.assertFalse(
                         "mixed key must survive the writeKey/readKey round-trip",
                         probe.createValue().isNew()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testKeyRoundTripMixedNullSentinels() throws Exception {
+        // Every arm carrying its NULL sentinel. The fixed-width arms are bit-transparent, so their
+        // sentinels (Double.NaN, Numbers.LONG_NULL, GeoHashes.INT_NULL, ...) are just values the
+        // round-trip must not mangle - a sloppy widening cast on any of them shows up here. STRING
+        // is the one arm with real NULL control flow: writeKey sinks a bare -1 length and readKey
+        // must take the strLen < 0 branch, advancing 4 bytes and no character payload. Nothing else
+        // covers that branch, and the wire-size assert below is what pins it.
+        assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = mixedKeyTypes();
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            try (Map src = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+                 Map dst = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+                 MemoryCARW buf = Vm.getCARWInstance(CODEC_BUF_PAGE_SIZE, CODEC_BUF_MAX_PAGES, MemoryTag.NATIVE_DEFAULT)) {
+                MapKey srcKey = src.withKey();
+                putMixedNullKey(srcKey);
+                srcKey.createValue().putLong(0, 0xDEADL);
+
+                MapRecordCursor srcCursor = src.getCursor();
+                MapRecord srcRecord = src.getRecord();
+                Assert.assertTrue(srcCursor.hasNext());
+                LiveViewSnapshotKeyCodec.writeKey(buf, srcRecord, keyTypes, valueTypes.getColumnCount());
+                final long written = buf.getAppendOffset();
+                Assert.assertEquals(
+                        "a null STRING must serialise as a bare -1 length with no payload",
+                        MIXED_NULL_KEY_BYTES,
+                        written
+                );
+
+                MapKey restored = dst.withKey();
+                long consumed = LiveViewSnapshotKeyCodec.readKey(restored, buf, 0, keyTypes);
+                Assert.assertEquals("readKey must consume exactly what writeKey wrote", written, consumed);
+                restored.createValue().putLong(0, 0xDEADL);
+
+                MapKey probe = dst.withKey();
+                putMixedNullKey(probe);
+                Assert.assertFalse(
+                        "all-null key must survive the writeKey/readKey round-trip",
+                        probe.createValue().isNew()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testKeyRoundTripMultipleKeysAtAdvancingOffsets() throws Exception {
+        // Production never reads a key at offset 0 twice: LiveViewWindow.restore and
+        // LiveViewFunctionSnapshot.restore loop over the partition count, feeding each readKey the
+        // offset the previous one returned. Every other test in this class reads a single key at a
+        // literal 0, so a codec whose returned offset was wrong - but whose absolute reads at 0 were
+        // right - would pass them all. Three keys of three different widths (the STRING makes the
+        // stride non-uniform) read back-to-back pin the returned offset at each step.
+        assertMemoryLeak(() -> {
+            ArrayColumnTypes keyTypes = mixedKeyTypes();
+
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            // "another-live-view-key" is 21 chars: 4-byte length prefix + 42 bytes of payload.
+            final int thirdKeyBytes = MIXED_FIXED_BYTES + 4 + 42;
+
+            try (Map src = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+                 Map dst = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+                 MemoryCARW buf = Vm.getCARWInstance(CODEC_BUF_PAGE_SIZE, CODEC_BUF_MAX_PAGES, MemoryTag.NATIVE_DEFAULT)) {
+                // Three distinct keys, concatenated into one buffer the way a multi-partition
+                // window snapshot lays them out.
+                appendKey(src, buf, keyTypes, valueTypes, key -> putMixedKey(key, 0x1111_2222_3333_4444L, "live-view-key"));
+                appendKey(src, buf, keyTypes, valueTypes, this::putMixedNullKey);
+                appendKey(src, buf, keyTypes, valueTypes, key -> putMixedKey(key, 0x5555_6666_7777_8888L, "another-live-view-key"));
+
+                Assert.assertEquals(
+                        "concatenated wire size",
+                        MIXED_KEY_BYTES + MIXED_NULL_KEY_BYTES + thirdKeyBytes,
+                        buf.getAppendOffset()
+                );
+
+                long offset = 0;
+                offset = LiveViewSnapshotKeyCodec.readKey(dst.withKey(), buf, offset, keyTypes);
+                Assert.assertEquals("offset after key 1", MIXED_KEY_BYTES, offset);
+                offset = LiveViewSnapshotKeyCodec.readKey(dst.withKey(), buf, offset, keyTypes);
+                Assert.assertEquals("offset after key 2", MIXED_KEY_BYTES + MIXED_NULL_KEY_BYTES, offset);
+                offset = LiveViewSnapshotKeyCodec.readKey(dst.withKey(), buf, offset, keyTypes);
+                Assert.assertEquals("offset after key 3", MIXED_KEY_BYTES + MIXED_NULL_KEY_BYTES + thirdKeyBytes, offset);
+                Assert.assertEquals("the three reads must consume the whole buffer", buf.getAppendOffset(), offset);
+
+                // Re-read each key at its own offset and insert it, so a torn read at a non-zero
+                // offset surfaces as a key that fails to match its independently-built probe.
+                assertKeyAt(dst, buf, keyTypes, 0, key -> putMixedKey(key, 0x1111_2222_3333_4444L, "live-view-key"));
+                assertKeyAt(dst, buf, keyTypes, MIXED_KEY_BYTES, this::putMixedNullKey);
+                assertKeyAt(
+                        dst,
+                        buf,
+                        keyTypes,
+                        MIXED_KEY_BYTES + MIXED_NULL_KEY_BYTES,
+                        key -> putMixedKey(key, 0x5555_6666_7777_8888L, "another-live-view-key")
                 );
             }
         });
@@ -266,7 +366,11 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
                 dstKey.putLong(partitionKey);
                 MapValue dstValue = dstKey.createValue();
                 long consumed = LiveViewSnapshotKeyCodec.readValueSlots(dstValue, 0, buf, 0, valueTypes);
-                Assert.assertEquals(LiveViewSnapshotKeyCodec.byteSizeOf(valueTypes), consumed);
+                // Pin the wire size to a literal, and only then cross-check byteSizeOf against it:
+                // asserting consumed against byteSizeOf alone compares the codec with itself.
+                Assert.assertEquals("value-slot wire size", MIXED_FIXED_BYTES, consumed);
+                Assert.assertEquals(MIXED_FIXED_BYTES, LiveViewSnapshotKeyCodec.byteSizeOf(valueTypes));
+                Assert.assertEquals(MIXED_FIXED_BYTES, buf.getAppendOffset());
 
                 Assert.assertEquals(0x1111_2222_3333_4444L, dstValue.getLong(0));
                 Assert.assertEquals((byte) 0x5A, dstValue.getByte(1));
@@ -288,6 +392,36 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
         });
     }
 
+    // Builds one key in src, serialises it onto the tail of buf, then drops it, so the next call
+    // starts from an empty map and appends the next key's bytes directly after this one's.
+    private void appendKey(Map src, MemoryCARW buf, ArrayColumnTypes keyTypes, ArrayColumnTypes valueTypes, KeyPut put) {
+        src.clear();
+        MapKey key = src.withKey();
+        put.apply(key);
+        key.createValue().putLong(0, 0xDEADL);
+
+        MapRecordCursor cursor = src.getCursor();
+        MapRecord record = src.getRecord();
+        Assert.assertTrue(cursor.hasNext());
+        LiveViewSnapshotKeyCodec.writeKey(buf, record, keyTypes, valueTypes.getColumnCount());
+        Assert.assertFalse(cursor.hasNext());
+    }
+
+    // Reads the key stored at the given offset and asserts an independently-built probe key lands
+    // on the same entry, i.e. the read at that offset was not torn.
+    private void assertKeyAt(Map dst, MemoryCARW buf, ArrayColumnTypes keyTypes, long offset, KeyPut put) {
+        MapKey restored = dst.withKey();
+        LiveViewSnapshotKeyCodec.readKey(restored, buf, offset, keyTypes);
+        restored.createValue().putLong(0, 0xDEADL);
+
+        MapKey probe = dst.withKey();
+        put.apply(probe);
+        Assert.assertFalse(
+                "key read at offset " + offset + " must match its independently-built probe",
+                probe.createValue().isNew()
+        );
+    }
+
     private void assertSingleColumnKeyRoundTrip(int columnType, byte src, ByteKeyPut srcPut, ByteKeyPut dstPut) throws Exception {
         assertMemoryLeak(() -> roundTripByte(columnType, src, srcPut, dstPut));
     }
@@ -304,12 +438,36 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
         assertMemoryLeak(() -> roundTripLong(columnType, src, srcPut, dstPut));
     }
 
-    // Writes the testKeyRoundTripMixed key columns in keyTypes order, each with the
-    // put the codec's readKey uses on the target side (putLong for TIMESTAMP,
-    // putInt for SYMBOL/IPv4/GEOINT, etc.), so the source, restored and probe keys
-    // all share one byte layout.
-    private void putMixedKey(MapKey key) {
-        key.putLong(0x1111_2222_3333_4444L);     // LONG
+    // The composite key type list shared by the mixed-key tests: every fixed-width arm the codec
+    // dispatches, plus STRING.
+    private ArrayColumnTypes mixedKeyTypes() {
+        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        keyTypes.add(ColumnType.LONG);                       // col 0
+        keyTypes.add(ColumnType.BYTE);                       // col 1
+        keyTypes.add(ColumnType.BOOLEAN);                    // col 2
+        keyTypes.add(ColumnType.SHORT);                      // col 3
+        keyTypes.add(ColumnType.CHAR);                       // col 4
+        keyTypes.add(ColumnType.INT);                        // col 5
+        keyTypes.add(ColumnType.SYMBOL);                     // col 6 (int id)
+        keyTypes.add(ColumnType.IPv4);                       // col 7
+        keyTypes.add(ColumnType.FLOAT);                      // col 8
+        keyTypes.add(ColumnType.getGeoHashTypeWithBits(5));  // col 9  - GEOBYTE
+        keyTypes.add(ColumnType.getGeoHashTypeWithBits(10)); // col 10 - GEOSHORT
+        keyTypes.add(ColumnType.getGeoHashTypeWithBits(20)); // col 11 - GEOINT
+        keyTypes.add(ColumnType.getGeoHashTypeWithBits(40)); // col 12 - GEOLONG
+        keyTypes.add(ColumnType.TIMESTAMP);                  // col 13
+        keyTypes.add(ColumnType.DATE);                       // col 14
+        keyTypes.add(ColumnType.DOUBLE);                     // col 15
+        keyTypes.add(ColumnType.STRING);                     // col 16
+        return keyTypes;
+    }
+
+    // Writes the mixed key columns in mixedKeyTypes() order, each with the put the codec's readKey
+    // uses on the target side (putLong for TIMESTAMP, putInt for SYMBOL/IPv4/GEOINT, etc.), so the
+    // source, restored and probe keys all share one byte layout. The LONG and STRING columns are
+    // caller-supplied so multi-key tests can build keys that differ in both value and wire width.
+    private void putMixedKey(MapKey key, long longValue, String str) {
+        key.putLong(longValue);                  // LONG
         key.putByte((byte) 0x5A);                // BYTE
         key.putBool(true);                       // BOOLEAN
         key.putShort((short) 0x2B3C);            // SHORT
@@ -325,7 +483,30 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
         key.putLong(1_700_000_000_000_000L);     // TIMESTAMP
         key.putDate(1_600_000_000_000L);         // DATE
         key.putDouble(3.14159265358979);         // DOUBLE
-        key.putStr("live-view-key");             // STRING
+        key.putStr(str);                         // STRING
+    }
+
+    // The mixedKeyTypes() key with every column at its NULL sentinel. BYTE/BOOLEAN/SHORT have no
+    // NULL in QuestDB, so they carry their zero value and are here only to keep the column count
+    // aligned with mixedKeyTypes().
+    private void putMixedNullKey(MapKey key) {
+        key.putLong(Numbers.LONG_NULL);          // LONG
+        key.putByte((byte) 0);                   // BYTE - no NULL
+        key.putBool(false);                      // BOOLEAN - no NULL
+        key.putShort((short) 0);                 // SHORT - no NULL
+        key.putChar(Numbers.CHAR_NULL);          // CHAR
+        key.putInt(Numbers.INT_NULL);            // INT
+        key.putInt(SymbolTable.VALUE_IS_NULL);   // SYMBOL id
+        key.putInt(Numbers.IPv4_NULL);           // IPv4
+        key.putFloat(Float.NaN);                 // FLOAT
+        key.putByte(GeoHashes.BYTE_NULL);        // GEOBYTE
+        key.putShort(GeoHashes.SHORT_NULL);      // GEOSHORT
+        key.putInt(GeoHashes.INT_NULL);          // GEOINT
+        key.putLong(GeoHashes.NULL);             // GEOLONG
+        key.putLong(Numbers.LONG_NULL);          // TIMESTAMP
+        key.putDate(Numbers.LONG_NULL);          // DATE
+        key.putDouble(Double.NaN);               // DOUBLE
+        key.putStr(null);                        // STRING
     }
 
     private void roundTripByte(int columnType, byte src, ByteKeyPut srcPut, ByteKeyPut dstPut) {
@@ -469,6 +650,11 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface IntKeyPut {
         void apply(MapKey key, int value);
+    }
+
+    @FunctionalInterface
+    private interface KeyPut {
+        void apply(MapKey key);
     }
 
     @FunctionalInterface
