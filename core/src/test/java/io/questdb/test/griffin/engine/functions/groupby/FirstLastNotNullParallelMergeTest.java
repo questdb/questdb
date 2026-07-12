@@ -61,6 +61,19 @@ import org.junit.Test;
  * names the type it belongs to. A plan guard keeps the query on the parallel factory, without which
  * no shard merge would run at all.
  * <p>
+ * Three types do not fit the uniform column-and-count template, and each hid a coverage hole before:
+ * <ul>
+ *     <li>FLOAT - {@code ::float} is a Postgres cast to double precision ({@code SqlParser} rewrites
+ *     it), so {@code 1.5::float} builds a DOUBLE column. The FLOAT column needs {@code ::float4}.</li>
+ *     <li>SYMBOL - a SYMBOL-typed CASE unifies to STRING ({@code CaseCommon} builds it with
+ *     {@code StrCaseFunction}), so the cast has to sit outside the CASE, not on its value.</li>
+ *     <li>DOUBLE[] - {@code count()} has no ARRAY overload and neither does {@code IS NOT NULL}, so
+ *     the array's count reads an element of the aggregate ({@code count(aArray[1])}) instead of the
+ *     aggregate itself. A NULL array yields a NULL element, so it still counts non-null keys.</li>
+ * </ul>
+ * {@code assertFixtureColumnTypes} pins every column's type, so a cast that silently widens again
+ * fails here rather than turning a type's case into a duplicate of another's.
+ * <p>
  * Scope - this test exercises the merge dest-null guard only. For last_not_null that guard is the
  * defect fixed on this branch (the merge previously compared rowId alone), so the pre-fix code
  * drops values here on essentially every run. For first_not_null the guard already existed, so
@@ -93,20 +106,24 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
     private static final ObjList<TypeCase> TYPES = new ObjList<>();
 
     static {
-        TYPES.add(new TypeCase("Char", "'a'::char"));
-        TYPES.add(new TypeCase("Date", "100_000::date"));
-        TYPES.add(new TypeCase("Decimal", "1.5::decimal(18,3)"));
-        TYPES.add(new TypeCase("Double", "1.5::double"));
-        TYPES.add(new TypeCase("Float", "1.5::float"));
-        TYPES.add(new TypeCase("GeoHash", "#u"));
-        TYPES.add(new TypeCase("IPv4", "ipv4 '10.0.0.1'"));
-        TYPES.add(new TypeCase("Int", "42::int"));
-        TYPES.add(new TypeCase("Long", "42::long"));
-        TYPES.add(new TypeCase("Str", "'abc'"));
-        TYPES.add(new TypeCase("Symbol", "'abc'::symbol"));
-        TYPES.add(new TypeCase("Timestamp", "100_000::timestamp"));
-        TYPES.add(new TypeCase("Uuid", "'00000000-0000-0000-0000-000000000001'::uuid"));
-        TYPES.add(new TypeCase("Varchar", "'abc'::varchar"));
+        TYPES.add(new TypeCase("Char", "'a'::char", "CHAR"));
+        TYPES.add(new TypeCase("Date", "100_000::date", "DATE"));
+        TYPES.add(new TypeCase("Decimal", "1.5::decimal(18,3)", "DECIMAL(18,3)"));
+        TYPES.add(new TypeCase("Double", "1.5::double", "DOUBLE"));
+        // ::float is a cast to double precision, per Postgres. ::float4 is the 4-byte one.
+        TYPES.add(new TypeCase("Float", "1.5::float4", "FLOAT"));
+        TYPES.add(new TypeCase("GeoHash", "#u", "GEOHASH(1c)"));
+        TYPES.add(new TypeCase("IPv4", "ipv4 '10.0.0.1'", "IPv4"));
+        TYPES.add(new TypeCase("Int", "42::int", "INT"));
+        TYPES.add(new TypeCase("Long", "42::long", "LONG"));
+        TYPES.add(new TypeCase("Str", "'abc'", "STRING"));
+        // The CASE unifies a SYMBOL value to STRING, so the cast goes on the CASE, not on the value.
+        TYPES.add(new TypeCase("Symbol", "'abc'", "SYMBOL", "symbol", null));
+        TYPES.add(new TypeCase("Timestamp", "100_000::timestamp", "TIMESTAMP"));
+        TYPES.add(new TypeCase("Uuid", "'00000000-0000-0000-0000-000000000001'::uuid", "UUID"));
+        TYPES.add(new TypeCase("Varchar", "'abc'::varchar", "VARCHAR"));
+        // count() takes no ARRAY, so the count reads an element: a NULL array yields a NULL element.
+        TYPES.add(new TypeCase("Array", "ARRAY[1.0, 2.0]", "DOUBLE[]", null, "aArray[1]"));
     }
 
     @Override
@@ -141,24 +158,31 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
         final StringBuilder columns = new StringBuilder();
         final StringBuilder aggregates = new StringBuilder();
         final StringBuilder counts = new StringBuilder();
-        final StringBuilder expected = new StringBuilder();
+        final StringBuilder expectedHeader = new StringBuilder();
         final StringBuilder expectedRow = new StringBuilder();
+        final StringBuilder expectedTypes = new StringBuilder("column\ttype\ng\tINT\n");
         for (int i = 0, n = TYPES.size(); i < n; i++) {
             final TypeCase type = TYPES.getQuick(i);
             if (i > 0) {
                 columns.append(", ");
                 aggregates.append(", ");
                 counts.append(", ");
-                expected.append('\t');
+                expectedHeader.append('\t');
                 expectedRow.append('\t');
             }
-            columns.append("CASE WHEN ").append(nonNullCondition).append(" THEN ").append(type.valueExpr)
-                    .append(" END AS v").append(type.label);
+            columns.append("(CASE WHEN ").append(nonNullCondition).append(" THEN ").append(type.valueExpr).append(" END)");
+            if (type.castType != null) {
+                columns.append("::").append(type.castType);
+            }
+            columns.append(" AS v").append(type.label);
             aggregates.append(func).append("(v").append(type.label).append(") a").append(type.label);
             // Alias each count with its type, so a dropped value names the type in the failure diff.
-            counts.append("count(a").append(type.label).append(") ").append(type.label);
-            expected.append(type.label);
+            // The alias is quoted because some type names - ARRAY - are keywords the parser would
+            // otherwise choke on.
+            counts.append("count(").append(type.countArg).append(") \"").append(type.label).append('"');
+            expectedHeader.append(type.label);
             expectedRow.append(KEY_COUNT);
+            expectedTypes.append('v').append(type.label).append('\t').append(type.columnType).append('\n');
         }
         final String createSql = "CREATE TABLE tab AS (" +
                 "  SELECT (x % " + KEY_COUNT + ")::int AS g, " + columns +
@@ -170,9 +194,20 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
                     execute(compiler, createSql, ctx);
+                    // A type whose cast silently widens turns its case into a duplicate of another
+                    // type's and stops covering its own merge, so pin every column's type.
+                    assertQuery("SELECT \"column\", \"type\" FROM table_columns('tab')")
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .noRandomAccess()
+                            .returns(expectedTypes.toString());
                     // Without the parallel factory there is no shard merge left to guard.
-                    TestUtils.printSql(compiler, ctx, "EXPLAIN " + query, sink);
-                    TestUtils.assertContains(sink, "Async Group By");
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .assertsPlanContaining("Async Group By");
                     // Every key has exactly one non-null value per type, so a correct aggregate is
                     // non-null for all KEY_COUNT keys. A guardless merge drops some on most runs.
                     for (int i = 0; i < ITERATIONS; i++) {
@@ -182,7 +217,7 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
                                 .withContext(ctx)
                                 .noRandomAccess()
                                 .expectSize()
-                                .returns(expected + "\n" + expectedRow + "\n");
+                                .returns(expectedHeader + "\n" + expectedRow + "\n");
                     }
                 }, configuration, LOG);
             }
@@ -190,12 +225,26 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
     }
 
     private static class TypeCase {
+        // Cast applied to the whole CASE, for a type the CASE would otherwise unify away. Nullable.
+        private final String castType;
+        // The column type the fixture must end up with, asserted against table_columns().
+        private final String columnType;
+        // The expression the per-type count() reads. The aggregate itself, unless count() cannot take
+        // that type.
+        private final String countArg;
         private final String label;
         private final String valueExpr;
 
-        private TypeCase(String label, String valueExpr) {
+        private TypeCase(String label, String valueExpr, String columnType) {
+            this(label, valueExpr, columnType, null, null);
+        }
+
+        private TypeCase(String label, String valueExpr, String columnType, String castType, String countArg) {
             this.label = label;
             this.valueExpr = valueExpr;
+            this.columnType = columnType;
+            this.castType = castType;
+            this.countArg = countArg != null ? countArg : "a" + label;
         }
     }
 }

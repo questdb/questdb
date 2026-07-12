@@ -108,8 +108,11 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                 TestUtils.execute(pool, (ignore, compiler, ctx) -> {
                     execute(compiler, createSql, ctx);
                     // Without the parallel factory there is no batched reduce left to guard.
-                    TestUtils.printSql(compiler, ctx, "EXPLAIN " + query, sink);
-                    TestUtils.assertContains(sink, "Async Group By");
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .assertsPlanContaining("Async Group By");
                     assertQuery(query)
                             .noLeakCheck()
                             .withCompiler(compiler)

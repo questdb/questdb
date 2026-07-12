@@ -24,13 +24,10 @@
 
 package io.questdb.test.griffin.engine.join;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
-import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -46,18 +43,10 @@ import org.junit.Test;
  * the first sink's 8-byte heap, tagged {@code NATIVE_RECORD_CHAIN}. The query
  * fuzzer's malloc fault injection surfaced this leak.
  * <p>
- * The sweep arms the RSS ceiling on cursor open alone - it compiles the query above the ceiling
- * and opens the cursor without draining it - so only the code under test can trip the fault, and
- * the swept range covers cursor open rather than compilation and row iteration as well. Each point
- * compiles its own factory: reusing one across points would let a later successful open clean up
- * the partial allocation the pre-fix code stranded, masking the leak.
+ * {@link AbstractOomSweepTest#assertCursorOpenOomSweep} drives the ceiling sweep; the two tests here
+ * differ only in which factory they route the fault into.
  */
-public class AsOfJoinFastOomTest extends AbstractCairoTest {
-
-    // Ceiling range the sweep walks. Cursor open allocates ~4 KiB, so the sweep crosses the whole
-    // OOM/success transition with room to spare; the armed-open assertion below fails loudly if a
-    // later allocation-path change ever pushes the transition past this.
-    private static final int CURSOR_OPEN_SLACK_MAX = 8 * 1024;
+public class AsOfJoinFastOomTest extends AbstractOomSweepTest {
 
     @Test
     public void testFilteredKeyedAsOfJoinCleansUpWhenCursorRunsOutOfMemory() throws Exception {
@@ -113,58 +102,7 @@ public class AsOfJoinFastOomTest extends AbstractCairoTest {
                 assertFactoryClass(factory, expectedFactory);
             }
 
-            // Warm the reader and compiler pools so the swept allocation failure lands
-            // inside cursor open (the sink reopen()s), not in first-touch table open.
-            drain(query);
-
-            boolean hasSeenOom = false;
-            boolean hasOpenedUnderLimit = false;
-            // Sweep the native-memory ceiling across the cursor-open allocation points.
-            // Some ceiling lets the first sink reopen() succeed and trips the second; the
-            // pre-fix code then leaked the first sink's 8-byte heap. The 8-byte step matches
-            // the sink heaps' granularity so the sweep lands inside that transition window.
-            for (int slack = 0; slack <= CURSOR_OPEN_SLACK_MAX; slack += 8) {
-                // Compile outside the ceiling. Under it, a compiler allocation satisfies the
-                // fault instead, and cursor open - the code under test - never runs.
-                try (RecordCursorFactory factory = select(query)) {
-                    // Arm immediately before the operation under test, and open the cursor
-                    // without draining it: the leak happens while the cursor opens, and rows
-                    // would only add allocation noise the sweep would then have to cover.
-                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-                    try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
-                        hasOpenedUnderLimit = true;
-                    } catch (CairoException e) {
-                        Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                        hasSeenOom = true;
-                    } finally {
-                        // Disarm before the factory closes, so close() cannot trip the ceiling.
-                        Unsafe.setRssMemLimit(0);
-                    }
-                }
-            }
-            // slack=0 rejects the next allocation outright, so an OOM alone proves nothing. Pair it
-            // with an open that survived its ceiling: together they bracket the whole cursor-open
-            // allocation span, so the sweep provably crossed the failing-to-succeeding transition
-            // the leak hides in. Over-trimming CURSOR_OPEN_SLACK_MAX now fails here instead of
-            // silently skipping the transition.
-            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", hasSeenOom);
-            Assert.assertTrue("sweep never opened the cursor under an armed ceiling, so it stopped short of "
-                    + "the transition the leak hides in; widen CURSOR_OPEN_SLACK_MAX", hasOpenedUnderLimit);
-
-            // Recovery: with the ceiling removed the same query runs cleanly.
-            Unsafe.setRssMemLimit(0);
-            drain(query);
+            assertCursorOpenOomSweep(query);
         });
-    }
-
-    private void drain(String query) throws Exception {
-        try (RecordCursorFactory factory = select(query)) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                //noinspection StatementWithEmptyBody
-                while (cursor.hasNext()) {
-                    // Pull every row; no assertion reads them, so formatting them would be waste.
-                }
-            }
-        }
     }
 }
