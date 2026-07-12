@@ -101,7 +101,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
     @Override
     public RowCursor getCursor(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
-        assert assertStampOperatingThread();
+        stampOperatingThread();
         reloadConditionally();
 
         // Clamp the index-walked range to the picked chain entry's
@@ -233,7 +233,6 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         // free its native scratch directly and never push it back to the pool
         // (which is racy under the concurrent same-reader decode this enables).
         boolean isDetached;
-        boolean isPooled;
         private long blockBufferAddr = 0;
         private int blockBufferCapacity = 0;
         private int blockBufferEnd;
@@ -278,20 +277,18 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // Detached cursors are owned by a single worker thread that is, by
             // design, NOT the reader's owning thread; they never touch the
             // shared freeCursors pool. Free their native scratch directly and
-            // skip both the operating-thread tripwire and the pool-push.
+            // skip both the operating-thread gate and the pool-push.
             if (isDetached) {
                 releaseResources();
                 return;
             }
-            assert assertSameOperatingThread() : "posting index cursor closed off the reader's owning thread";
-            // Never re-pool into a closed reader: the pool retains blockBufferAddr
-            // (NATIVE_INDEX_READER) for reuse and only the reader's close() drains it,
-            // so a cursor that re-pools after the reader closed would leak its block
-            // buffer. This isOpen() guard is a single-threaded leak mitigation, not a
-            // concurrency primitive; cross-thread safety comes from single reader
-            // ownership + CoveringCursor.close() ordering. See
-            // PostingIndexBwdReader.Cursor.close() for the full rationale.
-            if (!isPooled && isOpen() && freeCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // Re-pool only while the reader is still open (a cursor that re-pools
+            // after the reader closed would strand blockBufferAddr,
+            // NATIVE_INDEX_READER, in a never-drained pool) and on the reader's
+            // operating thread; off-thread closes release the cursor-local
+            // buffers directly. See AbstractPostingIndexReader.isOperatingThread()
+            // for the full rationale and the gate's limits.
+            if (canRepool(freeCursors.size())) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
@@ -1026,16 +1023,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public void close() {
-            // See Cursor.close(): detached cursors bypass the tripwire and the
-            // pool, freeing their own native scratch directly.
+            // See Cursor.close(): detached cursors bypass the operating-thread
+            // gate and the pool, freeing their own native scratch directly.
             if (isDetached) {
                 releaseResources();
                 return;
             }
-            assert assertSameOperatingThread() : "posting index null cursor closed off the reader's owning thread";
-            // See Cursor.close(): the isOpen() guard is a single-threaded leak
-            // mitigation, not a concurrency primitive.
-            if (!isPooled && isOpen() && freeNullCursors.size() < MAX_CACHED_FREE_CURSORS) {
+            // See Cursor.close(): re-pool only while the reader is open and on the
+            // reader's operating thread; otherwise release directly.
+            if (canRepool(freeNullCursors.size())) {
                 isPooled = true;
                 closeCoveringResources();
                 resetCoveringState();
