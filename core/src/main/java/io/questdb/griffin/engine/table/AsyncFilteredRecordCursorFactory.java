@@ -53,6 +53,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
+
+import java.io.Closeable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
@@ -198,26 +201,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public void halfClose() {
-        Throwable cleanupFailure = Misc.freeBestEffort(null, frameSequence);
-        try {
-            cursor.freeRecords();
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
-            }
-        }
-        try {
-            negativeLimitCursor.freeRecords();
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
-            }
-        }
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        halfClose(frameSequence, cursor, negativeLimitCursor);
     }
 
     @Override
@@ -278,6 +262,18 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         }
         sink.attr("filter").val(frameSequence.getAtom());
         sink.child(base, order);
+    }
+
+    /**
+     * Test-only entry point for exercising half-close failure handling without exposing concrete cursors.
+     */
+    @TestOnly
+    public static void halfCloseForTesting(
+            Closeable frameSequence,
+            RecordFreer cursor,
+            RecordFreer negativeLimitCursor
+    ) {
+        halfClose(frameSequence, cursor, negativeLimitCursor);
     }
 
     private static void filter(
@@ -341,6 +337,42 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         } finally {
             atom.releaseFilter(filterId);
         }
+    }
+
+    private static void halfClose(
+            Closeable frameSequence,
+            RecordFreer cursor,
+            RecordFreer negativeLimitCursor
+    ) {
+        Throwable cleanupFailure = Misc.freeBestEffort(null, frameSequence);
+        try {
+            cursor.freeRecords();
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
+        try {
+            negativeLimitCursor.freeRecords();
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
+        Misc.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    /**
+     * Test-only abstraction for observable record cleanup in {@link #halfCloseForTesting}.
+     */
+    @FunctionalInterface
+    @TestOnly
+    public interface RecordFreer {
+        void freeRecords();
     }
 
     @Override

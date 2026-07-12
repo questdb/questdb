@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
@@ -32,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
@@ -398,6 +400,90 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
+    public void testCallbackTypeSnapshotSurvivesCommit() {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        ThrowingTypeFunction function = new ThrowingTypeFunction(2);
+
+        builder.intersectRuntimeTimestamp(function, 42);
+        Assert.assertEquals(1, function.typeCallCount);
+        Assert.assertEquals(0, function.closeCount);
+        Assert.assertEquals(1, builder.dynamicRangeSize());
+        Assert.assertEquals(4, builder.staticIntervalsSize());
+        Assert.assertTrue(builder.hasIntervalFilters());
+
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        try {
+            Misc.free(model);
+            Assert.fail("close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.closeFailure, e);
+        }
+        Assert.assertEquals(1, function.closeCount);
+
+        CloseCountingFunction reused = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(reused, 43);
+        builder.clear();
+        Assert.assertEquals(1, reused.closeCount);
+    }
+
+    @Test
+    public void testCallbackTypeFailureDoesNotMutateState() {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        ThrowingTypeFunction function = new ThrowingTypeFunction(1);
+
+        try {
+            builder.intersectRuntimeTimestamp(function, 42);
+            Assert.fail("type callback failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(function.typeFailure, e);
+            Assert.assertArrayEquals(new Throwable[]{function.closeFailure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, function.typeCallCount);
+        Assert.assertEquals(1, function.closeCount);
+        Assert.assertEquals(0, builder.dynamicRangeSize());
+        Assert.assertEquals(0, builder.staticIntervalsSize());
+        Assert.assertFalse(builder.hasIntervalFilters());
+
+        builder.clear();
+        Assert.assertEquals(1, function.closeCount);
+        CloseCountingFunction reused = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(reused, 43);
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, reused.closeCount);
+    }
+
+    @Test
+    public void testCursorFunctionReservationFailureIsAtomic() {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        ThrowingCloseCursorFunction function = new ThrowingCloseCursorFunction("close");
+        builder.failNextReservation = true;
+
+        try {
+            builder.intersectRuntimeTimestamp(function, 42);
+            Assert.fail("injected reservation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(builder.reservationFailure, e);
+            Assert.assertArrayEquals(new Throwable[]{function.failure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, function.closeCount);
+        Assert.assertEquals(0, builder.dynamicRangeSize());
+        Assert.assertEquals(0, builder.staticIntervalsSize());
+        Assert.assertFalse(builder.hasIntervalFilters());
+
+        builder.clear();
+        Assert.assertEquals(1, function.closeCount);
+        CloseCountingCursorFunction reused = new CloseCountingCursorFunction();
+        builder.intersectRuntimeTimestamp(reused, 43);
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, reused.closeCount);
+    }
+
+    @Test
     public void testCursorFunctionsProducePositionsList() {
         // The non-empty path stays intact: each cursor function records its parse position.
         CursorPositionsExposingBuilder builder = newCursorPositionsExposingBuilder();
@@ -412,6 +498,35 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
+    public void testDynamicCompiledTickReservationFailureIsAtomic() throws Exception {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+        final int dynamicSize = builder.dynamicRangeSize();
+        final int staticSize = builder.staticIntervalsSize();
+        final String intervals = "$today";
+        builder.failNextReservation = true;
+
+        try {
+            builder.unionIntervals(intervals, 0, intervals.length(), 0);
+            Assert.fail("injected reservation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(builder.reservationFailure, e);
+        }
+        Assert.assertEquals(dynamicSize, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize, builder.staticIntervalsSize());
+        Assert.assertEquals(0, adopted.closeCount);
+
+        builder.unionIntervals(intervals, 0, intervals.length(), 0);
+        Assert.assertEquals(dynamicSize + 1, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize + 4, builder.staticIntervalsSize());
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, adopted.closeCount);
+    }
+
+    @Test
     public void testDynamicIntervalsDoNotAllocateErrorPositions() {
         // With no cursor functions the copy must be null, not an empty IntList: null is the
         // "no cursor bounds" sentinel RuntimeIntervalModel.getCursorFunctionPosition() handles,
@@ -423,6 +538,92 @@ public class RuntimeIntervalModelBuilderTest {
 
         Assert.assertNull(builder.cursorFunctionPositionsCopy());
         builder.freeAndClear();
+    }
+
+    @Test
+    public void testDynamicParsedIntervalReservationFailureIsAtomic() throws Exception {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+        final int dynamicSize = builder.dynamicRangeSize();
+        final int staticSize = builder.staticIntervalsSize();
+        builder.failNextReservation = true;
+
+        final String intervals = "2018-01-[10,15]T10:30;1h";
+        try {
+            builder.unionIntervals(intervals, 0, intervals.length(), 0);
+            Assert.fail("injected reservation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(builder.reservationFailure, e);
+        }
+        Assert.assertEquals(dynamicSize, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize, builder.staticIntervalsSize());
+        Assert.assertEquals(0, adopted.closeCount);
+
+        builder.unionIntervals(intervals, 0, intervals.length(), 0);
+        Assert.assertEquals(dynamicSize + 2, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize + 8, builder.staticIntervalsSize());
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, adopted.closeCount);
+    }
+
+    @Test
+    public void testDynamicTimestampLiteralReservationFailureIsAtomic() throws Exception {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+        final int dynamicSize = builder.dynamicRangeSize();
+        final int staticSize = builder.staticIntervalsSize();
+        final String timestamp = "1970-01-01T00:00:00.000000Z";
+        builder.failNextReservation = true;
+
+        try {
+            builder.intersectTimestamp(timestamp, 0, timestamp.length(), 0);
+            Assert.fail("injected reservation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(builder.reservationFailure, e);
+        }
+        Assert.assertEquals(dynamicSize, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize, builder.staticIntervalsSize());
+        Assert.assertEquals(0, adopted.closeCount);
+
+        builder.intersectTimestamp(timestamp, 0, timestamp.length(), 0);
+        Assert.assertEquals(dynamicSize + 1, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize + 4, builder.staticIntervalsSize());
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, adopted.closeCount);
+    }
+
+    @Test
+    public void testDynamicStaticUnionReservationFailureIsAtomic() {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+        final int dynamicSize = builder.dynamicRangeSize();
+        final int staticSize = builder.staticIntervalsSize();
+        builder.failNextReservation = true;
+
+        try {
+            builder.union(20, 30);
+            Assert.fail("injected reservation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(builder.reservationFailure, e);
+        }
+        Assert.assertEquals(dynamicSize, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize, builder.staticIntervalsSize());
+        Assert.assertEquals(0, adopted.closeCount);
+
+        builder.union(20, 30);
+        Assert.assertEquals(dynamicSize + 1, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize + 4, builder.staticIntervalsSize());
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, adopted.closeCount);
     }
 
     @Test
@@ -666,7 +867,7 @@ public class RuntimeIntervalModelBuilderTest {
 
     private static ReservationFailingBuilder newFailingBuilder() {
         ReservationFailingBuilder builder = new ReservationFailingBuilder();
-        builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
+        builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, new DefaultCairoConfiguration("."));
         return builder;
     }
 
@@ -763,6 +964,20 @@ public class RuntimeIntervalModelBuilderTest {
         }
     }
 
+    private static class ThrowingCloseCursorFunction extends CloseCountingCursorFunction {
+        private final RuntimeException failure;
+
+        private ThrowingCloseCursorFunction(String message) {
+            failure = new RuntimeException(message);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            throw failure;
+        }
+    }
+
     private static class ThrowingCloseFunction extends CloseCountingFunction {
         private final RuntimeException failure;
 
@@ -777,20 +992,56 @@ public class RuntimeIntervalModelBuilderTest {
         }
     }
 
+    private static class ThrowingTypeFunction extends IndexedParameterLinkFunction {
+        private final RuntimeException closeFailure = new RuntimeException("close");
+        private final int throwOnTypeCall;
+        private final RuntimeException typeFailure = new RuntimeException("type");
+        private int closeCount;
+        private int typeCallCount;
+
+        private ThrowingTypeFunction(int throwOnTypeCall) {
+            super(0, ColumnType.TIMESTAMP, 0);
+            this.throwOnTypeCall = throwOnTypeCall;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            throw closeFailure;
+        }
+
+        @Override
+        public int getType() {
+            if (++typeCallCount == throwOnTypeCall) {
+                throw typeFailure;
+            }
+            return ColumnType.TIMESTAMP;
+        }
+    }
+
     /**
      * Simulates an allocation failure at the single fallible point of a BETWEEN append: the
      * up-front capacity reservation that precedes every list mutation and ownership transfer.
      */
     private static class ReservationFailingBuilder extends RuntimeIntervalModelBuilder {
         boolean failNextReservation;
+        private final RuntimeException reservationFailure = new RuntimeException("injected allocation failure");
+
+        int dynamicRangeSize() {
+            return copyDynamicRangeList().size();
+        }
 
         @Override
         protected void reserveEncodedIntervals(int intervalCount, int cursorFunctionCount) {
             if (failNextReservation) {
                 failNextReservation = false;
-                throw new RuntimeException("injected allocation failure");
+                throw reservationFailure;
             }
             super.reserveEncodedIntervals(intervalCount, cursorFunctionCount);
+        }
+
+        int staticIntervalsSize() {
+            return copyStaticIntervals().size();
         }
     }
 }

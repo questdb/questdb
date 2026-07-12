@@ -223,10 +223,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
 
                 dynamicFunction.init(null, sqlExecutionContext);
+                final int functionType = dynamicFunction.getType();
 
                 if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
-                    long dynamicValue = getTimestamp(dynamicFunction, sqlExecutionContext, cursorFunctionIndex);
-                    if (dynamicFunction.getType() == ColumnType.CURSOR) {
+                    long dynamicValue = getTimestamp(dynamicFunction, functionType, sqlExecutionContext, cursorFunctionIndex);
+                    if (functionType == ColumnType.CURSOR) {
                         cursorFunctionIndex++;
                     }
                     long dynamicValue2 = 0;
@@ -236,8 +237,14 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
                         dynamicIndex++;
                         dynamicFunction.init(null, sqlExecutionContext);
-                        dynamicValue2 = hi = getTimestamp(dynamicFunction, sqlExecutionContext, cursorFunctionIndex);
-                        if (dynamicFunction.getType() == ColumnType.CURSOR) {
+                        final int functionType2 = dynamicFunction.getType();
+                        dynamicValue2 = hi = getTimestamp(
+                                dynamicFunction,
+                                functionType2,
+                                sqlExecutionContext,
+                                cursorFunctionIndex
+                        );
+                        if (functionType2 == ColumnType.CURSOR) {
                             cursorFunctionIndex++;
                         }
                         lo = dynamicValue;
@@ -298,9 +305,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         IntervalUtils.invert(outIntervals, divider);
                     }
                 } else {
-                    if (ColumnType.isInterval(dynamicFunction.getType())) {
+                    if (ColumnType.isInterval(functionType)) {
                         // This is subtraction or intersection with an Interval (not a single timestamp)
-                        final Interval interval = timestampDriver.fixInterval(dynamicFunction.getInterval(null), dynamicFunction.getType());
+                        final Interval interval = timestampDriver.fixInterval(dynamicFunction.getInterval(null), functionType);
                         applyInterval(outIntervals, interval);
                         if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
                             IntervalUtils.invert(outIntervals, divider);
@@ -357,13 +364,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             return true;
         }
 
-        long floor = floorMethod.floor(intervals.getQuick(0));
-        for (int i = 1, n = intervals.size(); i < n; i++) {
-            if (floor != floorMethod.floor(intervals.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
+        return floorMethod.floor(intervals.getQuick(0)) == floorMethod.floor(intervals.getLast());
     }
 
     private void applyInterval(LongList outIntervals, Interval interval) {
@@ -377,8 +378,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 : 0;
     }
 
-    private long getTimestamp(Function dynamicFunction, SqlExecutionContext sqlExecutionContext, int cursorFunctionIndex) throws SqlException {
-        final int functionType = dynamicFunction.getType();
+    private long getTimestamp(
+            Function dynamicFunction,
+            int functionType,
+            SqlExecutionContext sqlExecutionContext,
+            int cursorFunctionIndex
+    ) throws SqlException {
         if (ColumnType.isString(functionType)) {
             final CharSequence value = dynamicFunction.getStrA(null);
             if (value != null) {

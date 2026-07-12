@@ -92,17 +92,21 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {
-            close();
+            Misc.freeBestEffort(e, this);
             throw e;
         }
     }
 
     public static void freeSharedRecordFunctions(@Nullable ObjList<ObjList<Function>> sharedRecordFunctions) {
+        Throwable cleanupFailure = null;
         if (sharedRecordFunctions != null) {
             for (int i = 0, n = sharedRecordFunctions.size(); i < n; i++) {
-                Misc.freeObjListAndClear(sharedRecordFunctions.getQuick(i));
+                final ObjList<Function> functions = sharedRecordFunctions.getQuick(i);
+                sharedRecordFunctions.setQuick(i, null);
+                cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, functions);
             }
         }
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     public static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
@@ -197,13 +201,23 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-        Misc.freeObjList(keyFunctions);
-        freeSharedRecordFunctions(sharedRecordFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions); // groupByFunctions are included in recordFunctions
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
+        try {
+            freeSharedRecordFunctions(sharedRecordFunctions);
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {

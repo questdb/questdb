@@ -47,8 +47,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TestCloseCounterFunctionFactory implements FunctionFactory {
     // close() invocations across all instances since the last reset
     private static final AtomicInteger CLOSE_CALLS = new AtomicInteger();
+    private static final ObjList<String> CLOSED_VALUES = new ObjList<>();
     // instances created in dev mode since the last reset
     private static final AtomicInteger CREATED = new AtomicInteger();
+    private static final ObjList<String> CREATED_VALUES = new ObjList<>();
     // instances whose close() ran more than once; exact-once ownership keeps this at zero
     private static final AtomicInteger MULTI_CLOSED = new AtomicInteger();
 
@@ -56,8 +58,32 @@ public class TestCloseCounterFunctionFactory implements FunctionFactory {
         return CLOSE_CALLS.get();
     }
 
+    public static int closeCalls(CharSequence value) {
+        synchronized (CLOSED_VALUES) {
+            int count = 0;
+            for (int i = 0, n = CLOSED_VALUES.size(); i < n; i++) {
+                if (Chars.equals(value, CLOSED_VALUES.getQuick(i))) {
+                    count++;
+                }
+            }
+            return count;
+        }
+    }
+
     public static int created() {
         return CREATED.get();
+    }
+
+    public static int created(CharSequence value) {
+        synchronized (CREATED_VALUES) {
+            int count = 0;
+            for (int i = 0, n = CREATED_VALUES.size(); i < n; i++) {
+                if (Chars.equals(value, CREATED_VALUES.getQuick(i))) {
+                    count++;
+                }
+            }
+            return count;
+        }
     }
 
     public static int multiClosed() {
@@ -66,7 +92,13 @@ public class TestCloseCounterFunctionFactory implements FunctionFactory {
 
     public static void reset() {
         CLOSE_CALLS.set(0);
+        synchronized (CLOSED_VALUES) {
+            CLOSED_VALUES.clear();
+        }
         CREATED.set(0);
+        synchronized (CREATED_VALUES) {
+            CREATED_VALUES.clear();
+        }
         MULTI_CLOSED.set(0);
     }
 
@@ -88,7 +120,11 @@ public class TestCloseCounterFunctionFactory implements FunctionFactory {
             return arg;
         }
         CREATED.incrementAndGet();
-        return new Func(Chars.toString(arg.getStrA(null)));
+        final String value = Chars.toString(arg.getStrA(null));
+        synchronized (CREATED_VALUES) {
+            CREATED_VALUES.add(value);
+        }
+        return new Func(value);
     }
 
     private static class Func extends StrFunction {
@@ -102,6 +138,9 @@ public class TestCloseCounterFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             CLOSE_CALLS.incrementAndGet();
+            synchronized (CLOSED_VALUES) {
+                CLOSED_VALUES.add(value);
+            }
             if (++closeCount > 1) {
                 MULTI_CLOSED.incrementAndGet();
             }

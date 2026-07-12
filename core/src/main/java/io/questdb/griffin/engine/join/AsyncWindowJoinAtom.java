@@ -344,7 +344,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 this.groupByFunctionTypes = null;
             }
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -379,19 +379,20 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     @Override
     public void close() {
-        Misc.free(ownerJoinFilter);
-        Misc.freeObjList(perWorkerJoinFilters);
-        Misc.free(ownerSlaveTimeFrameCursor);
-        Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
-        Misc.free(compiledMasterFilter);
-        Misc.free(bindVarMemory);
-        Misc.freeObjList(bindVarFunctions);
-        Misc.free(ownerMasterFilter);
-        Misc.freeObjList(perWorkerMasterFilters);
-        Misc.free(ownerWindowHiFunc);
-        Misc.free(ownerWindowLoFunc);
-        Misc.freeObjList(perWorkerWindowHiFuncs);
-        Misc.freeObjList(perWorkerWindowLoFuncs);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerJoinFilter);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerJoinFilters);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameCursor);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, compiledMasterFilter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, bindVarMemory);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, bindVarFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerMasterFilter);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerMasterFilters);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerWindowHiFunc);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerWindowLoFunc);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerWindowHiFuncs);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerWindowLoFuncs);
         // clear() already freed the data chunks under the bound tracker (the index is on the
         // global counter), so close() has nothing tracked to free. Nulling is defensive: any
         // stray free hits the global counter and cannot underflow an already-recycled block.
@@ -417,16 +418,27 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 }
             }
         }
-        Misc.free(ownerFunctionAllocator);
-        Misc.freeObjList(perWorkerFunctionAllocators);
-        Misc.free(ownerTemporaryAllocator);
-        Misc.freeObjList(perWorkerTemporaryAllocators);
-        Misc.freeObjList(ownerGroupByFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFunctionAllocator);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFunctionAllocators);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerTemporaryAllocator);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerTemporaryAllocators);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerGroupByFunctions);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
+                final ObjList<GroupByFunction> functions = perWorkerGroupByFunctions.getQuick(i);
+                perWorkerGroupByFunctions.setQuick(i, null);
+                try {
+                    PerWorkerFunctionList.close(functions);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
             }
         }
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     public ObjList<Function> getBindVarFunctions() {

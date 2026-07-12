@@ -64,6 +64,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     // not need an error position, so keeping this list sparse avoids O(D) storage when C is zero.
     private final IntList cursorFunctionPositions = new IntList();
     private final ObjList<Function> dynamicRangeList = new ObjList<>();
+    private final LongList parsedIntervals = new LongList();
     private final StringSink sink = new StringSink();
     // All data needed to re-evaluate intervals is stored in 2 lists - a LongList and a list of
     // functions. The LongList starts with plain [lo, hi] static interval pairs and ends with
@@ -154,9 +155,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.encodeInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        addDynamicFunction(hi, functionPosition);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = hi.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+            addDynamicFunction(hi, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, hi));
+        }
     }
 
     public void intersect(Function lo, long hi, short adjustment, int functionPosition) {
@@ -166,9 +173,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.encodeInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        addDynamicFunction(lo, functionPosition);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = lo.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+            addDynamicFunction(lo, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, lo));
+        }
     }
 
     public void intersect(long lo, long hi) {
@@ -182,8 +195,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
+            reserveEncodedIntervals(1, 0);
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);
-            addDynamicFunction(null, 0);
+            addDynamicFunction(null, 0, false);
         }
         intervalApplied = true;
     }
@@ -211,21 +225,23 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        int size = staticIntervals.size();
-        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
-        if (noDynamicIntervals) {
-            if (intervalApplied) {
-                IntervalUtils.intersectInPlace(staticIntervals, size);
+        final int size = staticIntervals.size();
+        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        try {
+            parsedIntervals.clear();
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
+            if (noDynamicIntervals) {
+                staticIntervals.add(parsedIntervals);
+                if (intervalApplied) {
+                    IntervalUtils.intersectInPlace(staticIntervals, size);
+                }
+            } else {
+                appendParsedDynamicIntervals();
             }
-        } else {
-            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
-            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            for (int i = 0; i < intervalsAdded; i++) {
-                addDynamicFunction(null, 0);
-            }
+            intervalApplied = true;
+        } finally {
+            parsedIntervals.clear();
         }
-        intervalApplied = true;
     }
 
     public void intersectMonotonicTimestamp(TimestampMonotonicInverter inverter) {
@@ -234,9 +250,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        addDynamicFunction(inverter, 0);
-        intervalApplied = true;
+        try {
+            reserveEncodedIntervals(1, 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+            addDynamicFunction(inverter, 0, false);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, inverter));
+        }
     }
 
     public void intersectRuntimeIntervals(Function intervalFunction, int functionPosition) {
@@ -246,9 +267,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        addDynamicFunction(intervalFunction, functionPosition);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = intervalFunction.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+            addDynamicFunction(intervalFunction, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, intervalFunction));
+        }
     }
 
     public void intersectRuntimeTimestamp(Function function, int functionPosition) {
@@ -258,9 +285,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        addDynamicFunction(function, functionPosition);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = function.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+            addDynamicFunction(function, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+        }
     }
 
     public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
@@ -284,6 +317,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 throw SqlException.$(position, "invalid timestamp");
             }
         }
+        if (dynamicRangeList.size() == 0) {
+            staticIntervals.checkCapacity(staticIntervals.size() + IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL);
+        } else {
+            reserveEncodedIntervals(1, 0);
+        }
         IntervalUtils.encodeInterval(timestamp, timestamp, IntervalOperation.INTERSECT, staticIntervals);
 
         if (dynamicRangeList.size() == 0) {
@@ -293,7 +331,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             }
         } else {
             // else - nothing to do, interval already encoded in staticIntervals as 4 longs
-            addDynamicFunction(null, 0);
+            addDynamicFunction(null, 0, false);
         }
         intervalApplied = true;
     }
@@ -475,9 +513,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
-        addDynamicFunction(function, functionPosition);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = function.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
+            addDynamicFunction(function, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+        }
     }
 
     public void subtractInterval(long lo, long hi) {
@@ -493,8 +537,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
+            reserveEncodedIntervals(1, 0);
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.SUBTRACT, staticIntervals);
-            addDynamicFunction(null, 0);
+            addDynamicFunction(null, 0, false);
         }
         intervalApplied = true;
     }
@@ -513,22 +558,24 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        int size = staticIntervals.size();
-        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
-        if (noDynamicIntervals) {
-            IntervalUtils.invert(staticIntervals, size);
-            if (intervalApplied) {
-                IntervalUtils.intersectInPlace(staticIntervals, size);
+        final int size = staticIntervals.size();
+        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        try {
+            parsedIntervals.clear();
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
+            if (noDynamicIntervals) {
+                staticIntervals.add(parsedIntervals);
+                IntervalUtils.invert(staticIntervals, size);
+                if (intervalApplied) {
+                    IntervalUtils.intersectInPlace(staticIntervals, size);
+                }
+            } else {
+                appendParsedDynamicIntervals();
             }
-        } else {
-            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
-            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            for (int i = 0; i < intervalsAdded; i++) {
-                addDynamicFunction(null, 0);
-            }
+            intervalApplied = true;
+        } finally {
+            parsedIntervals.clear();
         }
-        intervalApplied = true;
     }
 
     public void subtractRuntimeIntervals(Function intervalFunction, int functionPosition) {
@@ -538,9 +585,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
-        addDynamicFunction(intervalFunction, functionPosition);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = intervalFunction.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+            addDynamicFunction(intervalFunction, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, intervalFunction));
+        }
     }
 
     public void union(long lo, long hi) {
@@ -554,8 +607,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 IntervalUtils.unionInPlace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
+            reserveEncodedIntervals(1, 0);
             IntervalUtils.encodeInterval(lo, hi, IntervalOperation.UNION, staticIntervals);
-            addDynamicFunction(null, 0);
+            addDynamicFunction(null, 0, false);
         }
         intervalApplied = true;
     }
@@ -574,22 +628,24 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        // Parse and expand the interval string (may produce multiple pairs for periodic intervals)
-        int size = staticIntervals.size();
-        boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, staticIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
-        if (noDynamicIntervals) {
-            if (intervalApplied) {
-                IntervalUtils.unionInPlace(staticIntervals, size);
+        // Parse and expand the interval string (may produce multiple pairs for periodic intervals).
+        final int size = staticIntervals.size();
+        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        try {
+            parsedIntervals.clear();
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
+            if (noDynamicIntervals) {
+                staticIntervals.add(parsedIntervals);
+                if (intervalApplied) {
+                    IntervalUtils.unionInPlace(staticIntervals, size);
+                }
+            } else {
+                appendParsedDynamicIntervals();
             }
-        } else {
-            // Dynamic mode: each interval is encoded as 4 longs, add one null per interval
-            int intervalsAdded = (staticIntervals.size() - size) / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-            for (int i = 0; i < intervalsAdded; i++) {
-                addDynamicFunction(null, 0);
-            }
+            intervalApplied = true;
+        } finally {
+            parsedIntervals.clear();
         }
-        intervalApplied = true;
     }
 
     public void unionRuntimeTimestamp(Function function, int functionPosition) {
@@ -599,9 +655,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return;
         }
 
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.UNION, staticIntervals);
-        addDynamicFunction(function, functionPosition);
-        intervalApplied = true;
+        try {
+            final boolean isCursor = function.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.UNION, staticIntervals);
+            addDynamicFunction(function, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+        }
     }
 
     /**
@@ -691,17 +753,21 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
-    private void addDynamicFunction(Function function, int functionPosition) {
-        // Grow all applicable lists before adopting: growth is the only failure mode of add(), so
-        // a growth failure leaves the incoming function unadopted and the sparse positions aligned.
-        final boolean isCursor = function != null && function.getType() == ColumnType.CURSOR;
-        dynamicRangeList.checkCapacity(dynamicRangeList.size() + 1);
-        if (isCursor) {
-            cursorFunctionPositions.checkCapacity(cursorFunctionPositions.size() + 1);
-        }
+    private void addDynamicFunction(Function function, int functionPosition, boolean isCursor) {
+        // Callers reserve all applicable lists and snapshot cursor classification before model
+        // mutation, so commit performs no user callbacks or capacity growth.
         dynamicRangeList.add(function);
         if (isCursor) {
             cursorFunctionPositions.add(functionPosition);
+        }
+    }
+
+    private void appendParsedDynamicIntervals() {
+        final int intervalCount = parsedIntervals.size() / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+        reserveEncodedIntervals(intervalCount, 0);
+        staticIntervals.add(parsedIntervals);
+        for (int i = 0; i < intervalCount; i++) {
+            addDynamicFunction(null, 0, false);
         }
     }
 
@@ -733,16 +799,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // function: a growth failure here leaves both functions with their previous owners and
         // the lists untouched, instead of adopting one endpoint (double-closed by the caller and
         // this builder) while stranding the other.
-        reserveEncodedIntervals(
-                2,
-                (funcValue1.getType() == ColumnType.CURSOR ? 1 : 0) + (funcValue2.getType() == ColumnType.CURSOR ? 1 : 0)
-        );
+        final boolean isCursor1 = funcValue1.getType() == ColumnType.CURSOR;
+        final boolean isCursor2 = funcValue2.getType() == ColumnType.CURSOR;
+        reserveEncodedIntervals(2, (isCursor1 ? 1 : 0) + (isCursor2 ? 1 : 0));
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
         IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        addDynamicFunction(funcValue1, funcPosition1);
-        addDynamicFunction(funcValue2, funcPosition2);
+        addDynamicFunction(funcValue1, funcPosition1, isCursor1);
+        addDynamicFunction(funcValue2, funcPosition2, isCursor2);
         intervalApplied = true;
     }
 
@@ -753,21 +818,28 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Reserve capacity for the whole operation before mutating any list or adopting the
         // function: a growth failure here leaves the function with its previous owner and the
         // lists untouched and aligned.
-        reserveEncodedIntervals(1, funcValue.getType() == ColumnType.CURSOR ? 1 : 0);
+        final boolean isCursor = funcValue.getType() == ColumnType.CURSOR;
+        reserveEncodedIntervals(1, isCursor ? 1 : 0);
 
         short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
         IntervalUtils.encodeInterval(constValue, 0, (short) 0, IntervalDynamicIndicator.IS_HI_DYNAMIC, operation, staticIntervals);
-        addDynamicFunction(funcValue, funcPosition);
+        addDynamicFunction(funcValue, funcPosition, isCursor);
         intervalApplied = true;
     }
 
     private void intersectCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        addDynamicFunction(expr, 0);
-        intervalApplied = true;
+        try {
+            reserveEncodedIntervals(1, 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+            addDynamicFunction(expr, 0, false);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+        }
     }
 
     private void resetBetweenParsingState() {
@@ -779,20 +851,32 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void subtractCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
-        addDynamicFunction(expr, 0);
-        intervalApplied = true;
+        try {
+            reserveEncodedIntervals(1, 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+            addDynamicFunction(expr, 0, false);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+        }
     }
 
     private void unionCompiledTickExpr(CompiledTickExpression expr) {
         if (isEmptySet()) {
+            Misc.free(expr);
             return;
         }
-        IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);
-        addDynamicFunction(expr, 0);
-        intervalApplied = true;
+        try {
+            reserveEncodedIntervals(1, 0);
+            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);
+            addDynamicFunction(expr, 0, false);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+        }
     }
 
     /**

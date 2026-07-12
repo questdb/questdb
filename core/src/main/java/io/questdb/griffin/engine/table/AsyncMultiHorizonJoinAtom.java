@@ -253,13 +253,25 @@ public class AsyncMultiHorizonJoinAtom extends BaseAsyncMultiHorizonJoinAtom {
     protected void closeAggregationState() {
         // Null-safe: the base ctor calls close() on its error path before this subclass
         // ctor has assigned shardingCtx, so it can still be null here.
-        Misc.free(shardingCtx);
-        Misc.freeObjList(ownerKeyFunctions);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, shardingCtx);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerKeyFunctions);
         if (perWorkerKeyFunctions != null) {
             for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.close(perWorkerKeyFunctions.getQuick(i));
+                final ObjList<Function> functions = perWorkerKeyFunctions.getQuick(i);
+                perWorkerKeyFunctions.setQuick(i, null);
+                try {
+                    PerWorkerFunctionList.close(functions);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
             }
         }
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     private ObjList<GroupByFunction> getGroupByFunctions(int slotId) {

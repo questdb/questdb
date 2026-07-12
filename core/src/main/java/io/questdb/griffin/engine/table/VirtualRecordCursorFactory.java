@@ -60,34 +60,39 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         super(virtualMetadata);
         this.base = base;
         this.functions = functions;
-        int functionCount = functions.size();
-        boolean supportsRandomAccess = base.recordCursorSupportsRandomAccess();
-        final ObjList<MemoizerFunction> memoizedFunctions = new ObjList<>();
-        int randomCount = 0;
-        for (int i = 0; i < functionCount; i++) {
-            Function function = functions.getQuick(i);
-            if (supportsRandomAccess && !function.supportsRandomAccess()) {
-                supportsRandomAccess = false;
-            }
+        try {
+            int functionCount = functions.size();
+            boolean supportsRandomAccess = base.recordCursorSupportsRandomAccess();
+            final ObjList<MemoizerFunction> memoizedFunctions = new ObjList<>();
+            int randomCount = 0;
+            for (int i = 0; i < functionCount; i++) {
+                Function function = functions.getQuick(i);
+                if (supportsRandomAccess && !function.supportsRandomAccess()) {
+                    supportsRandomAccess = false;
+                }
 
-            if (function.isRandom()) {
-                randomCount++;
-            }
+                if (function.isRandom()) {
+                    randomCount++;
+                }
 
-            if (function instanceof MemoizerFunction) {
-                memoizedFunctions.add((MemoizerFunction) function);
+                if (function instanceof MemoizerFunction) {
+                    memoizedFunctions.add((MemoizerFunction) function);
+                }
             }
+            this.supportsRandomAccess = supportsRandomAccess && randomCount == 0;
+            this.cursor = new VirtualFunctionRecordCursor(
+                    priorityMetadata,
+                    functions,
+                    memoizedFunctions,
+                    this.supportsRandomAccess,
+                    virtualColumnReservedSlots
+            );
+            this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
+            this.priorityMetadata = priorityMetadata;
+        } catch (Throwable th) {
+            Misc.freeBestEffort(th, this);
+            throw th;
         }
-        this.supportsRandomAccess = supportsRandomAccess && randomCount == 0;
-        this.cursor = new VirtualFunctionRecordCursor(
-                priorityMetadata,
-                functions,
-                memoizedFunctions,
-                this.supportsRandomAccess,
-                virtualColumnReservedSlots
-        );
-        this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
-        this.priorityMetadata = priorityMetadata;
     }
 
     @Override
@@ -220,8 +225,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.freeObjList(functions);
-        Misc.free(base);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, functions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class VirtualRecordCursorFactorySymbolTableSource implements SymbolTableSource {

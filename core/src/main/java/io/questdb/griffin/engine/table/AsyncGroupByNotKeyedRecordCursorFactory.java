@@ -175,7 +175,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions);
             this.workerCount = workerCount;
         } catch (Throwable e) {
-            close();
+            Misc.freeBestEffort(e, this);
             throw e;
         }
     }
@@ -533,12 +533,22 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
      */
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(frameSequence);
-        Misc.freeObjList(groupByFunctions);
-        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        try {
+            GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 }

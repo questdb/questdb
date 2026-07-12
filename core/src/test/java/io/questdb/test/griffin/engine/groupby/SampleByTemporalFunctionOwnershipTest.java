@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -102,6 +103,94 @@ public class SampleByTemporalFunctionOwnershipTest extends AbstractCairoTest {
                     "SampleByFirstLast",
                     "ts\tf\tl\n1970-01-01T00:00:00.000000Z\t1\t3\n"
             );
+        });
+    }
+
+    @Test
+    public void testGenerateFillResidualCleanupClosesOnceAndContinuesRollback() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price LONG, sym STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            TestCloseCounterFunctionFactory.reset();
+            TestFaultFunctionFactory.armCloseFailures();
+            try {
+                select(
+                        "SELECT test_close_counter('8') || sym key, sum(price) total, avg(price) value, ts " +
+                                "FROM t SAMPLE BY 1d " +
+                                "FILL(0, 0, test_fault()) ALIGN TO CALENDAR " +
+                                "TIME ZONE test_close_counter('residual-timezone-owner') " +
+                                "WITH OFFSET test_close_counter('residual-offset-owner')"
+                ).close();
+                Assert.fail("residual fill close failure expected");
+            } catch (Throwable failure) {
+                Assert.assertSame(TestFaultFunctionFactory.closeFailure(0), failure);
+                Assert.assertEquals(0, failure.getSuppressed().length);
+                Assert.assertEquals(1, TestFaultFunctionFactory.created());
+                Assert.assertEquals(1, TestFaultFunctionFactory.closeCalls());
+                Assert.assertTrue(TestCloseCounterFunctionFactory.created("8") > 0);
+                Assert.assertEquals(
+                        TestCloseCounterFunctionFactory.created("8"),
+                        TestCloseCounterFunctionFactory.closeCalls("8")
+                );
+                Assert.assertTrue(TestCloseCounterFunctionFactory.created("residual-timezone-owner") > 0);
+                Assert.assertEquals(
+                        TestCloseCounterFunctionFactory.created("residual-timezone-owner"),
+                        TestCloseCounterFunctionFactory.closeCalls("residual-timezone-owner")
+                );
+                Assert.assertTrue(TestCloseCounterFunctionFactory.created("residual-offset-owner") > 0);
+                Assert.assertEquals(
+                        TestCloseCounterFunctionFactory.created("residual-offset-owner"),
+                        TestCloseCounterFunctionFactory.closeCalls("residual-offset-owner")
+                );
+                Assert.assertEquals(0, TestCloseCounterFunctionFactory.multiClosed());
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
+    public void testGenerateFillRollbackPreservesPrimaryAndContinuesCleanup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price LONG, sym STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            TestCloseCounterFunctionFactory.reset();
+            TestFaultFunctionFactory.armCloseFailures();
+            try {
+                select(
+                        "SELECT test_close_counter('7') || sym key, sum(price) total, avg(price) value, ts " +
+                                "FROM t SAMPLE BY 1d " +
+                                "FILL(0, PREV(no_such_column), test_fault()) ALIGN TO CALENDAR " +
+                                "TIME ZONE test_close_counter('timezone-owner') " +
+                                "WITH OFFSET test_close_counter('offset-owner')"
+                ).close();
+                Assert.fail("invalid PREV source failure expected");
+            } catch (Throwable failure) {
+                Assert.assertTrue(failure.toString(), failure instanceof io.questdb.griffin.SqlException);
+                TestUtils.assertContains(failure.getMessage(), "PREV(col): column not found in output");
+                Assert.assertArrayEquals(
+                        new Throwable[]{TestFaultFunctionFactory.closeFailure(0)},
+                        failure.getSuppressed()
+                );
+                Assert.assertEquals(1, TestFaultFunctionFactory.created());
+                Assert.assertEquals(1, TestFaultFunctionFactory.closeCalls());
+                Assert.assertTrue(TestCloseCounterFunctionFactory.created("7") > 0);
+                Assert.assertEquals(
+                        TestCloseCounterFunctionFactory.created("7"),
+                        TestCloseCounterFunctionFactory.closeCalls("7")
+                );
+                Assert.assertTrue(TestCloseCounterFunctionFactory.created("timezone-owner") > 0);
+                Assert.assertEquals(
+                        TestCloseCounterFunctionFactory.created("timezone-owner"),
+                        TestCloseCounterFunctionFactory.closeCalls("timezone-owner")
+                );
+                Assert.assertTrue(TestCloseCounterFunctionFactory.created("offset-owner") > 0);
+                Assert.assertEquals(
+                        TestCloseCounterFunctionFactory.created("offset-owner"),
+                        TestCloseCounterFunctionFactory.closeCalls("offset-owner")
+                );
+                Assert.assertEquals(0, TestCloseCounterFunctionFactory.multiClosed());
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
         });
     }
 

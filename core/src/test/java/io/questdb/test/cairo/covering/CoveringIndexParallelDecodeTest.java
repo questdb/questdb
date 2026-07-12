@@ -46,7 +46,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -62,6 +64,12 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.util.IdentityHashMap;
+
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -1337,6 +1345,115 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnorderedSequenceThrowingClearStillUnfreezesAndClosesPopulatedCache() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE unordered_cleanup (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO unordered_cleanup SELECT " +
+                    "('2024-01-01'::timestamp + (x - 1) * 3_600_000_000L)::timestamp, " +
+                    "'K1', x::double FROM long_sequence(48)");
+            engine.releaseAllWriters();
+
+            final RuntimeException clearFailure = new RuntimeException("atom clear");
+            final RuntimeException cacheCloseFailure = new RuntimeException("cache close");
+            final RuntimeException cursorCloseFailure = new RuntimeException("cursor close");
+            final RuntimeException atomCloseFailure = new RuntimeException("atom close");
+            final CleanupFailingAtom atom = new CleanupFailingAtom(clearFailure, atomCloseFailure);
+            final CleanupTrackingAddressCache cache = new CleanupTrackingAddressCache(cacheCloseFailure);
+            final int[] cursorCloseCount = {0};
+            final int[] cursorObservedCacheCloseCount = {0};
+
+            try (RecordCursorFactory factory = select("SELECT sym, px FROM unordered_cleanup WHERE sym = 'K1'")) {
+                final UnorderedPageFrameSequence<CleanupFailingAtom> sequence = new UnorderedPageFrameSequence<>(
+                        engine,
+                        configuration,
+                        engine.getMessageBus(),
+                        atom,
+                        (workerId, record, frameIndex, circuitBreaker, frameSequence, stealingFrameSequence) -> {
+                        },
+                        1
+                );
+                final PageFrameAddressCache constructorCache = getField(
+                        UnorderedPageFrameSequence.class,
+                        sequence,
+                        "frameAddressCache"
+                );
+                constructorCache.close();
+                setField(UnorderedPageFrameSequence.class, sequence, "frameAddressCache", cache);
+
+                sequence.of(factory, sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                final PageFrameCursor delegateCursor = getField(
+                        UnorderedPageFrameSequence.class,
+                        sequence,
+                        "frameCursor"
+                );
+                final PageFrameCursor trackingCursor = (PageFrameCursor) Proxy.newProxyInstance(
+                        PageFrameCursor.class.getClassLoader(),
+                        new Class[]{PageFrameCursor.class},
+                        (proxy, method, args) -> {
+                            try {
+                                if ("close".equals(method.getName())) {
+                                    cursorCloseCount[0]++;
+                                    cursorObservedCacheCloseCount[0] = cache.closeCount;
+                                    method.invoke(delegateCursor, args);
+                                    throw cursorCloseFailure;
+                                }
+                                return method.invoke(delegateCursor, args);
+                            } catch (InvocationTargetException e) {
+                                throw e.getCause();
+                            }
+                        }
+                );
+                setField(UnorderedPageFrameSequence.class, sequence, "frameCursor", trackingCursor);
+
+                sequence.prepareForDispatch();
+                assertTrue("cache must contain page frames", sequence.getFrameCount() > 0);
+                assertEquals(sequence.getFrameCount(), cache.getFrameCount());
+                assertTrue("cache must contain covered frames", cache.hasCoveredFrames());
+
+                final IdentityHashMap<IndexReader, Boolean> readers = new IdentityHashMap<>();
+                for (int i = 0; i < cache.getFrameCount(); i++) {
+                    final IndexReader reader = cache.getCoveredIndexReader(i);
+                    assertNotNull("covered frame must retain its real posting reader", reader);
+                    readers.put(reader, Boolean.TRUE);
+                    assertTrue("reader must be frozen before cleanup", reader.isFrozen());
+                }
+                assertTrue("expected at least one real covered reader", readers.size() > 0);
+
+                try {
+                    sequence.close();
+                    fail("throwing cleanup should fail");
+                } catch (Throwable failure) {
+                    assertTrue("atom clear must remain primary", failure == clearFailure);
+                    assertArrayEquals(
+                            new Throwable[]{cacheCloseFailure, cursorCloseFailure, atomCloseFailure},
+                            failure.getSuppressed()
+                    );
+                }
+
+                for (IndexReader reader : readers.keySet()) {
+                    assertFalse("cleanup must unfreeze the real posting reader", reader.isFrozen());
+                }
+                assertEquals(1, atom.clearCount);
+                assertEquals(1, atom.closeCount);
+                assertEquals(1, cache.unfreezeCount);
+                assertEquals(1, cache.closeCount);
+                assertTrue("cache close must observe unfrozen readers", cache.wereReadersUnfrozenOnClose);
+                assertEquals("cursor must close after cache", 1, cursorObservedCacheCloseCount[0]);
+                assertEquals(1, cursorCloseCount[0]);
+
+                // close() consumes every owner before rethrowing, so retry is a no-op.
+                sequence.close();
+                assertEquals(1, atom.clearCount);
+                assertEquals(1, atom.closeCount);
+                assertEquals(1, cache.unfreezeCount);
+                assertEquals(1, cache.closeCount);
+                assertEquals(1, cursorCloseCount[0]);
+            }
+        });
+    }
+
+    @Test
     public void testAddressCacheStoresCoveredMetadata() throws Exception {
         // Task 8: drive a covering query's produced frames through a
         // PageFrameAddressCache the same way the async pipeline does, then read
@@ -2180,6 +2297,61 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
      * root and free each one between configs. The fresh engine reloads the
      * persisted BYPASS WAL tables on construction.
      */
+    private static final class CleanupFailingAtom implements StatefulAtom {
+        private final RuntimeException clearFailure;
+        private final RuntimeException closeFailure;
+        private int clearCount;
+        private int closeCount;
+
+        private CleanupFailingAtom(RuntimeException clearFailure, RuntimeException closeFailure) {
+            this.clearFailure = clearFailure;
+            this.closeFailure = closeFailure;
+        }
+
+        @Override
+        public void clear() {
+            clearCount++;
+            throw clearFailure;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            throw closeFailure;
+        }
+    }
+
+    private static final class CleanupTrackingAddressCache extends PageFrameAddressCache {
+        private final RuntimeException closeFailure;
+        private int closeCount;
+        private int unfreezeCount;
+        private boolean wereReadersUnfrozenOnClose;
+
+        private CleanupTrackingAddressCache(RuntimeException closeFailure) {
+            this.closeFailure = closeFailure;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            wereReadersUnfrozenOnClose = true;
+            for (int i = 0; i < getFrameCount(); i++) {
+                final IndexReader reader = getCoveredIndexReader(i);
+                if (reader != null && reader.isFrozen()) {
+                    wereReadersUnfrozenOnClose = false;
+                }
+            }
+            super.close();
+            throw closeFailure;
+        }
+
+        @Override
+        public void unfreezeCoveredReaders() {
+            unfreezeCount++;
+            super.unfreezeCoveredReaders();
+        }
+    }
+
     private static final class PerfNode implements AutoCloseable {
         final SqlCompiler compiler;
         final SqlExecutionContextImpl ctx;
@@ -2323,6 +2495,12 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         return timings;
     }
 
+    @SuppressWarnings("unchecked")
+    private static <T> T getField(Class<?> clazz, Object instance, String name) throws NoSuchFieldException {
+        final Field field = clazz.getDeclaredField(name);
+        return (T) Unsafe.getUnsafe().getObject(instance, Unsafe.getUnsafe().objectFieldOffset(field));
+    }
+
     private static long drainSum(PerfNode node, String query) throws Exception {
         long sum = 0;
         try (RecordCursorFactory factory = node.compiler.compile(query, node.ctx).getRecordCursorFactory()) {
@@ -2365,6 +2543,11 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         System.arraycopy(all, skip, m, 0, n);
         java.util.Arrays.sort(m);
         return (n & 1) == 1 ? m[n / 2] : (m[n / 2 - 1] + m[n / 2]) / 2.0;
+    }
+
+    private static void setField(Class<?> clazz, Object instance, String name, Object value) throws NoSuchFieldException {
+        final Field field = clazz.getDeclaredField(name);
+        Unsafe.getUnsafe().putObject(instance, Unsafe.getUnsafe().objectFieldOffset(field), value);
     }
 
     private static String verdict(String label, long[] a, long[] b, long[] c, int warmup) {

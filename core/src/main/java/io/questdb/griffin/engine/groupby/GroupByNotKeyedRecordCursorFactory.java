@@ -84,7 +84,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 this.cursor = new GroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);
             }
         } catch (Throwable e) {
-            close();
+            Misc.freeBestEffort(e, this);
             throw e;
         }
     }
@@ -212,13 +212,23 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     protected void _close() {
-        Misc.free(value);
-        Misc.freeObjList(groupByFunctions);
-        Misc.free(base);
-        Misc.free(cursor);
-        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, value);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        try {
+            GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class GroupByNotKeyedSharedCursor implements NoRandomAccessRecordCursor {

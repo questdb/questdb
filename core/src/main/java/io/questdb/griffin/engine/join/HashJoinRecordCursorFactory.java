@@ -90,9 +90,9 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     : null;
             cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
         } catch (Throwable th) {
-            Misc.free(joinKeyMap);
-            Misc.free(slaveChain);
-            close();
+            Misc.freeBestEffort(th, joinKeyMap);
+            Misc.freeBestEffort(th, slaveChain);
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -167,11 +167,17 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(cursor);
-        Misc.free(symbolTranslatingRecord);
+        Throwable cleanupFailure = null;
+        try {
+            Misc.freeIfCloseable(getMetadata());
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, symbolTranslatingRecord);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     private class HashJoinRecordCursor extends AbstractJoinCursor {

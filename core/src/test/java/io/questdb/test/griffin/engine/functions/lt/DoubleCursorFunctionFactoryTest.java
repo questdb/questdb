@@ -30,7 +30,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -48,6 +50,7 @@ import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction
 import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
+import io.questdb.griffin.engine.functions.test.TestWorkerCloneFunctionFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
@@ -895,6 +898,69 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
     }
 
     @Test
+    public void testSpecialValueRawBitMatrix() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE double_values (id INT, v DOUBLE)");
+            execute("CREATE TABLE double_scalars (id INT, v DOUBLE)");
+            final long[] bits = {
+                    0xfff0_0000_0000_0000L, // 1: -Infinity
+                    0xbff0_0000_0000_0000L, // 2: -1.0
+                    0x8000_0000_0000_0000L, // 3: -0.0
+                    0x0000_0000_0000_0000L, // 4: +0.0
+                    0x3ff0_0000_0000_0000L, // 5: +1.0
+                    0x7ff0_0000_0000_0000L, // 6: +Infinity
+                    0x7ff8_0000_0000_0000L, // 7: canonical DOUBLE NULL NaN
+                    0x7ff8_0000_0000_0001L  // 8: noncanonical NaN payload
+            };
+            try (
+                    TableWriter valueWriter = getWriter("double_values");
+                    TableWriter scalarWriter = getWriter("double_scalars")
+            ) {
+                for (int i = 0; i < bits.length; i++) {
+                    final double value = Double.longBitsToDouble(bits[i]);
+                    TableWriter.Row row = valueWriter.newRow();
+                    row.putInt(0, i + 1);
+                    row.putDouble(1, value);
+                    row.append();
+                    row = scalarWriter.newRow();
+                    row.putInt(0, i + 1);
+                    row.putDouble(1, value);
+                    row.append();
+                }
+                valueWriter.commit();
+                scalarWriter.commit();
+            }
+
+            final int initialJitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    // Expected ID lists are ordered as v > scalar, v >= scalar, v < scalar,
+                    // v <= scalar, scalar > v, scalar >= v, scalar < v, scalar <= v.
+                    assertSpecialValueMatrix(4,
+                            "5,6", "3,4,5,6", "1,2", "1,2,3,4",
+                            "1,2", "1,2,3,4", "5,6", "3,4,5,6"
+                    );
+                    assertSpecialValueMatrix(6,
+                            "", "1,6,7,8", "2,3,4,5", "1,2,3,4,5,6,7,8",
+                            "2,3,4,5", "1,2,3,4,5,6,7,8", "", "1,6,7,8"
+                    );
+                    assertSpecialValueMatrix(7,
+                            "", "1,6,7,8", "", "1,6,7,8",
+                            "", "1,6,7,8", "", "1,6,7,8"
+                    );
+                    assertSpecialValueMatrix(8,
+                            "", "1,6,7,8", "", "1,6,7,8",
+                            "", "1,6,7,8", "", "1,6,7,8"
+                    );
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(initialJitMode);
+            }
+        });
+    }
+
+    @Test
     public void testToleranceEqualityAtScalarBoundary() throws Exception {
         // Doubles within Numbers.DOUBLE_TOLERANCE (1e-10) of the cached scalar are equal under
         // QuestDB's double semantics: the strict comparisons must exclude them and the negated
@@ -1417,6 +1483,54 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             assertQuery("select price from t where price <= (select null::long)")
                     .noLeakCheck()
                     .returns("price\n");
+        });
+    }
+
+    @Test
+    public void testWorkerCloneEvaluatesFrameWithDonatedCursorState() throws Exception {
+        runWithPool((compiler, ctx) -> {
+            execute(compiler, "CREATE TABLE src (ts TIMESTAMP)", ctx);
+            execute(compiler, "INSERT INTO src VALUES (5000)", ctx);
+            execute(
+                    compiler,
+                    "CREATE TABLE t AS (" +
+                            "  SELECT x::double price, timestamp_sequence(0, 1000000) ts" +
+                            "  FROM long_sequence(10000)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY",
+                    ctx
+            );
+
+            final String query = "SELECT sum(test_worker_clone(" +
+                    "price::string::double > (SELECT test_timestamp_counter(ts)::long FROM src), price" +
+                    ")::int) s FROM t";
+            TestTimestampCounterFactory.COUNTER.set(0);
+            TestWorkerCloneFunctionFactory.arm(5000);
+            try {
+                try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                    Assert.assertEquals("owner plus four worker instances", 5, TestWorkerCloneFunctionFactory.created());
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        TestUtils.assertCursor("s\n5000\n", cursor, factory.getMetadata(), true, sink);
+                    }
+                }
+
+                Assert.assertEquals("scalar cursor must execute once", 1, TestTimestampCounterFactory.COUNTER.get());
+                Assert.assertEquals("worker clones must observe the donated threshold", 0, TestWorkerCloneFunctionFactory.mismatches());
+                Assert.assertTrue("a non-owner thread must evaluate a worker clone", TestWorkerCloneFunctionFactory.workerEvaluations() > 0);
+                int totalEvaluations = 0;
+                int evaluatedClones = 0;
+                for (int i = 0, n = TestWorkerCloneFunctionFactory.created(); i < n; i++) {
+                    final int evaluations = TestWorkerCloneFunctionFactory.evaluations(i);
+                    totalEvaluations += evaluations;
+                    if (i > 0 && evaluations > 0) {
+                        evaluatedClones++;
+                    }
+                }
+                Assert.assertEquals("every input row must be evaluated exactly once", 10_000, totalEvaluations);
+                Assert.assertTrue("at least one worker clone must evaluate a real frame", evaluatedClones > 0);
+            } finally {
+                // Unblock only this run on compile, cursor, assertion, or worker-pool failure.
+                TestWorkerCloneFunctionFactory.disarm();
+            }
         });
     }
 
@@ -2246,6 +2360,29 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         Assert.assertEquals(1, firstSlave.closeCount);
         Assert.assertEquals(1, secondSlave.closeCount);
         Assert.assertEquals(1, thirdSlave.closeCount);
+    }
+
+    private void assertSpecialValueMatrix(int scalarId, String... expectedIdLists) throws Exception {
+        final String scalar = "(SELECT v FROM double_scalars WHERE id = " + scalarId + ")";
+        final String[] predicates = {
+                "v > " + scalar,
+                "v >= " + scalar,
+                "v < " + scalar,
+                "v <= " + scalar,
+                scalar + " > v",
+                scalar + " >= v",
+                scalar + " < v",
+                scalar + " <= v"
+        };
+        Assert.assertEquals(predicates.length, expectedIdLists.length);
+        for (int i = 0; i < predicates.length; i++) {
+            final String expected = expectedIdLists[i].isEmpty()
+                    ? "id\n"
+                    : "id\n" + expectedIdLists[i].replace(',', '\n') + '\n';
+            assertQuery("SELECT id FROM double_values WHERE " + predicates[i] + " ORDER BY id")
+                    .noLeakCheck()
+                    .returns(expected);
+        }
     }
 
     private void createHorizonJoinTables(SqlCompiler compiler, SqlExecutionContext ctx) throws Exception {

@@ -232,7 +232,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
             }
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -258,8 +258,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void close() {
-        Misc.free(shardingCtx);
-        Misc.freeObjList(ownerKeyFunctions);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, shardingCtx);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerKeyFunctions);
         // clear() already freed the data chunks under the bound tracker (the index is on the
         // global counter), so close() has nothing tracked to free. Nulling is defensive: any
         // stray free hits the global counter and cannot underflow an already-recycled block.
@@ -274,23 +275,35 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
                 }
             }
         }
-        Misc.free(ownerAllocator);
-        Misc.freeObjList(perWorkerAllocators);
-        Misc.free(ownerLongTopKList);
-        Misc.freeObjListAndKeepObjects(perWorkerLongTopKLists);
-        if (perWorkerKeyFunctions != null) {
-            for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.close(perWorkerKeyFunctions.getQuick(i));
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAllocator);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAllocators);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerLongTopKList);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerLongTopKLists);
+        cleanupFailure = closePerWorkerFunctions(cleanupFailure, perWorkerKeyFunctions);
+        cleanupFailure = closePerWorkerFunctions(cleanupFailure, perWorkerGroupByFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerBatchList);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerBatchLists);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
+        Misc.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    private static Throwable closePerWorkerFunctions(Throwable cleanupFailure, ObjList<? extends ObjList<? extends Function>> perWorkerFunctions) {
+        if (perWorkerFunctions != null) {
+            for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                final ObjList<? extends Function> functions = perWorkerFunctions.getQuick(i);
+                perWorkerFunctions.setQuick(i, null);
+                try {
+                    PerWorkerFunctionList.close(functions);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
             }
         }
-        if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
-            }
-        }
-        Misc.free(ownerBatchList);
-        Misc.freeObjList(perWorkerBatchLists);
-        Misc.free(filterCtx);
+        return cleanupFailure;
     }
 
     public DirectLongList getBatchList(int slotId) {

@@ -3587,7 +3587,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
                 expr = fillValuesExprs.getQuick(i);
                 if (isNoneKeyword(expr.token)) {
-                    Misc.freeObjList(fillValues);
+                    final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
+                    fillValues = null;
+                    Misc.rethrowCleanupFailure(cleanupFailure);
                     return groupByFactory;
                 }
                 // LINEAR is unsupported on the fast path. SqlOptimiser.hasLinearFill
@@ -3605,7 +3607,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (fillValues.size() == 0 || (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName()))) {
-                Misc.freeObjList(fillValues);
+                final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
+                fillValues = null;
+                Misc.rethrowCleanupFailure(cleanupFailure);
                 return groupByFactory;
             }
 
@@ -3661,7 +3665,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // No TIMESTAMP column reachable (e.g. wrapped by an outer GROUP BY that
             // projects different columns). Skip fill entirely.
             if (timestampIndex < 0) {
-                Misc.freeObjList(fillValues);
+                final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
+                fillValues = null;
+                Misc.rethrowCleanupFailure(cleanupFailure);
                 return groupByFactory;
             }
             int timestampType = baseMeta.getColumnType(timestampIndex);
@@ -4228,8 +4234,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             fillMetadata.setTimestampIndex(timestampIndex);
 
             // Transferred slots were nulled in the per-column branch; this frees
-            // any residual non-transferred fill functions.
-            Misc.freeObjList(fillValues);
+            // any residual non-transferred fill functions. Detach each slot before
+            // close so the outer rollback cannot retry a function whose close throws.
+            final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
+            fillValues = null;
+            Misc.rethrowCleanupFailure(cleanupFailure);
             return new SampleByFillRecordCursorFactory(
                     configuration,
                     fillMetadata,
@@ -4259,13 +4268,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     needsPrevPositioning
             );
         } catch (Throwable e) {
-            Misc.freeObjList(fillValues);
-            Misc.freeObjList(constantFills);
-            Misc.free(fillFromFunc);
-            Misc.free(fillToFunc);
-            Misc.free(offsetFunc);
-            Misc.free(tzFunc);
-            Misc.free(groupByFactory);
+            Misc.freeObjListBestEffort(e, fillValues);
+            Misc.freeObjListBestEffort(e, constantFills);
+            final Function fillFromFuncToFree = fillFromFunc;
+            fillFromFunc = null;
+            Misc.freeBestEffort(e, fillFromFuncToFree);
+            final Function fillToFuncToFree = fillToFunc;
+            fillToFunc = null;
+            Misc.freeBestEffort(e, fillToFuncToFree);
+            final Function offsetFuncToFree = offsetFunc;
+            offsetFunc = null;
+            Misc.freeBestEffort(e, offsetFuncToFree);
+            final Function tzFuncToFree = tzFunc;
+            tzFunc = null;
+            Misc.freeBestEffort(e, tzFuncToFree);
+            final RecordCursorFactory groupByFactoryToFree = groupByFactory;
+            groupByFactory = null;
+            Misc.freeBestEffort(e, groupByFactoryToFree);
             throw e;
         }
     }
