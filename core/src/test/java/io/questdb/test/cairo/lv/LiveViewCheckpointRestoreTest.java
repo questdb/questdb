@@ -522,6 +522,64 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointOverUnreadableLiveViewStateSkipsItAndCompletes() throws Exception {
+        // A live view whose _lv.s is gone but whose _lv (the CREATE commit marker) survives comes
+        // up as a droppable state_unreadable stub: the loader refuses it rather than resume from a
+        // -1 floor and replay the whole base. The checkpoint agent hard-threw when it could not
+        // copy that missing file, and its per-table loop has no per-table catch - so ONE damaged
+        // view failed CHECKPOINT CREATE for the ENTIRE database, every healthy table included,
+        // until an operator found it and dropped it. The copy must skip what is not there.
+        //
+        // Skipping does not paper the damage over: the snapshot reproduces the view exactly as
+        // broken as it is here, and the restored database re-derives the same stub from the same
+        // missing file.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            // A healthy, unrelated table. It is what the whole-database checkpoint was losing.
+            execute("CREATE TABLE other (ts TIMESTAMP, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:01.000000Z', 1)");
+                execute("INSERT INTO other (ts, y) VALUES ('2026-01-01T00:00:01.000000Z', 7)");
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            // Damage the view the way a restart onto the damaged directory would find it.
+            removeLiveViewStateFile("lv");
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            assertQuery("SELECT view_name, view_status FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\n" +
+                            "lv\tstate_unreadable\n");
+
+            // The database-wide checkpoint must complete despite the damaged view.
+            execute("CHECKPOINT CREATE");
+            restoreFromCheckpoint();
+
+            // The healthy table came through the snapshot intact.
+            assertQuery("SELECT ts, y FROM other")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\ty\n" +
+                            "2026-01-01T00:00:01.000000Z\t7\n");
+            // And the damaged view is still surfaced as damaged, not silently resurrected.
+            assertQuery("SELECT view_name, view_status FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_name\tview_status\n" +
+                            "lv\tstate_unreadable\n");
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
     public void testCheckpointOverDedupBaseRestores() throws Exception {
         // Checkpoint/restore composes with a DEDUP base. A below-frontier UPSERT replaces an
         // already-emitted row before the checkpoint (exercising the dedup replay path), and the
@@ -1151,6 +1209,20 @@ public class LiveViewCheckpointRestoreTest extends AbstractCairoTest {
     // the _restore trigger file, runs checkpoint recovery (which copies the snapshot metadata back
     // over the db root), then re-hydrates the name registry, metadata cache and view graphs. Mirrors
     // the in-process restore sequence in CheckpointTest#testCheckpointRestoresLiveView.
+    // Unlinks the view's _lv.s, leaving its _lv (the CREATE commit marker) in place. That is the
+    // on-disk shape the loader reports as state_unreadable: a committed definition with no state to
+    // resume from.
+    private void removeLiveViewStateFile(String viewName) {
+        final TableToken token = engine.verifyTableName(viewName);
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+            Assert.assertTrue(
+                    "expected an _lv.s to remove at " + path,
+                    configuration.getFilesFacade().removeQuiet(path.$())
+            );
+        }
+    }
+
     private void restoreFromCheckpoint() {
         engine.clear();
         engine.closeNameRegistry();

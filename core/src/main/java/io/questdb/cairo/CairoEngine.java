@@ -1327,6 +1327,28 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
 
+                // Authorize reading the base columns the view projects. CREATE LIVE VIEW
+                // never opens a cursor over the compiled factory - unlike CREATE
+                // MATERIALIZED VIEW, which does and thereby triggers the cursor-open
+                // authorizeSelect in AbstractPartitionFrameCursorFactory - so the write-side
+                // authorizeLiveViewCreate would otherwise be the only check. A principal
+                // holding live-view-create but no SELECT on the base could then read the
+                // base's columns through the view it creates. dependencyColumnNames is the
+                // base-scan read set (projection + filter columns), so this grants exactly
+                // the per-column precision the cursor-open path applies to a plain SELECT.
+                // Runs before the table is created, so a denial leaves nothing behind.
+                final SecurityContext securityContext = executionContext.getSecurityContext();
+                if (dependencyColumnNames.size() > 0) {
+                    // Widen to the authorizeSelect signature; CREATE is not a hot path.
+                    final ObjList<CharSequence> authorizeColumnNames = new ObjList<>(dependencyColumnNames.size());
+                    for (int i = 0, n = dependencyColumnNames.size(); i < n; i++) {
+                        authorizeColumnNames.add(dependencyColumnNames.getQuick(i));
+                    }
+                    securityContext.authorizeSelect(baseTableToken, authorizeColumnNames);
+                } else {
+                    securityContext.authorizeSelectOnAnyColumn(baseTableToken);
+                }
+
                 // Pass 2 of the ANCHOR EXPRESSION validator. Pass 1 (AST-level rejects of subqueries,
                 // bind variables, rnd_*/now()/etc.) ran in the parser; this is the
                 // function-property half that needs the compiled tree so it can see

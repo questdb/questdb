@@ -3202,6 +3202,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // final turn's batchMaxTs) so the ACTIVE phase's restart-restore + O3
         // head-hit have an anchor. lvRowsTotal is already maintained above, so
         // pass 0 appendedRows to avoid double-counting it.
+        //
+        // The head .cp is written BEFORE the _lv.s persist below - deliberately the
+        // reverse of every steady-state site, which persists _lv.s first and writes
+        // the .cp after. Do not "fix" this to match them. Those sites advance a
+        // watermark over rows already on disk under an already-existing head, where a
+        // head lagging the watermark is the routine cadence state and replayToApplied
+        // closes the gap. This is where the FIRST head is born, and the _lv.s persist
+        // is what flips the view durably ACTIVE at sweepSeqTxn. Persisting that first
+        // would open a window where a crash leaves an ACTIVE view whose disk table
+        // holds the whole swept output but which has no head .cp at all: the restart
+        // then finds no head, and on a live primary (base WAL present) the applied-base
+        // re-derive does not trigger, so the view drains forward from cold accumulators
+        // and durably commits wrong cumulative results. Writing the head first makes
+        // every crash window degrade safely - before the _lv.s persist the view is still
+        // BACKFILLING on disk and simply resumes the sweep from its .bcp (the orphan
+        // .cp, being above the persisted watermark, is unlinked by the startup sweep and
+        // was never load-bearing for that resume); after it, the head is already there.
         instance.setLastProcessedSeqTxn(sweepSeqTxn);
         instance.setAppliedWatermark(sweepSeqTxn);
         maybeWriteHeadCheckpoint(instance, windowFactory, sweepSeqTxn, instance.getLatestSeenTs(), 0L);

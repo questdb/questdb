@@ -500,18 +500,39 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // after fall-through.
                                         final Path auxPath = Path.PATH2.get();
 
-                                        // Copy _lv definition file (immutable after CREATE).
+                                        // Copy _lv definition + _lv.s state file. Both are
+                                        // skipped when absent, mirroring the mat-view arm above:
+                                        // a view the catalogue could not load registers as a
+                                        // droppable state_unreadable stub, and one shape of that
+                                        // is an _lv.s that vanished alongside a committed _lv
+                                        // (CairoEngine's load path raises exactly that). This
+                                        // loop has no per-table catch, so hard-throwing on the
+                                        // absent file would abort CHECKPOINT CREATE for the whole
+                                        // database - one broken view would block every checkpoint
+                                        // until an operator dropped it. Skipping reproduces the
+                                        // view in the snapshot exactly as broken as it is here:
+                                        // the restored database re-derives the same stub from the
+                                        // same missing file. A copy that fails for a file that IS
+                                        // present still throws - that is a real I/O error and the
+                                        // snapshot would be silently incomplete.
                                         auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
-                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
-                                        if (ff.copy(auxPath.$(), path.$()) < 0) {
-                                            throw CairoException.critical(ff.errno()).put("could not copy live view definition file [view=").put(tableToken).put(']');
+                                        if (ff.exists(auxPath.$())) {
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$();
+                                            if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                                throw CairoException.critical(ff.errno()).put("could not copy live view definition file [view=").put(tableToken).put(']');
+                                            }
+                                        } else {
+                                            LOG.info().$("live view definition file not found, skipping [view=").$(tableToken).I$();
                                         }
 
-                                        // Copy _lv.s state file.
                                         auxPath.of(configuration.getDbRoot()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
-                                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
-                                        if (ff.copy(auxPath.$(), path.$()) < 0) {
-                                            throw CairoException.critical(ff.errno()).put("could not copy live view state file [view=").put(tableToken).put(']');
+                                        if (ff.exists(auxPath.$())) {
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$();
+                                            if (ff.copy(auxPath.$(), path.$()) < 0) {
+                                                throw CairoException.critical(ff.errno()).put("could not copy live view state file [view=").put(tableToken).put(']');
+                                            }
+                                        } else {
+                                            LOG.info().$("live view state file not found, skipping [view=").$(tableToken).I$();
                                         }
 
                                         // Copy _checkpoints/<head>.cp if present. The directory was
