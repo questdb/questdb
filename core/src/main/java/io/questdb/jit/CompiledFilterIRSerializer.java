@@ -1586,11 +1586,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     /**
      * @param isNarrowResolved the enclosing arithmetic context is already known to be narrow-int (not
-     *                       LONG, not float). By the monotonic widening of {@link #promoteArithType}
-     *                       a narrow node has only narrow descendants, all read at INT width, so
-     *                       {@link #genuineArithType} need not be recomputed here. This lets a deep
-     *                       narrow-int chain mark its wrap leaves in O(depth) rather than recomputing
-     *                       genuineArithType at every level (O(depth^2)).
+     *                         LONG, not float). By the monotonic widening of {@link #promoteArithType}
+     *                         a narrow node has only narrow descendants, all read at INT width, so
+     *                         {@link #genuineArithType} need not be recomputed here. This lets a deep
+     *                         narrow-int chain mark its wrap leaves in O(depth) rather than recomputing
+     *                         genuineArithType at every level (O(depth^2)).
      */
     private void markI64WrapArithLeaves(ExpressionNode node, boolean underLong, boolean isNarrowResolved) {
         if (node == null || node.type != ExpressionNode.OPERATION) {
