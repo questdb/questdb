@@ -93,7 +93,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             );
             peeker.setCursor(cursor);
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

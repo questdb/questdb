@@ -26,10 +26,12 @@ package io.questdb.test.std;
 
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.ex.FatalError;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.Closeable;
+import java.io.IOException;
 
 public class MiscTest {
 
@@ -90,6 +92,72 @@ public class MiscTest {
         Assert.assertEquals(1, second.closeCount);
         Assert.assertEquals(1, third.closeCount);
         Assert.assertEquals(1, last.closeCount);
+    }
+
+    @Test
+    public void testFreeObjListWithPrimaryNullsSlotsAndContinuesAfterFailures() {
+        final RuntimeException primary = new RuntimeException("primary");
+        Misc.freeObjList(null, primary);
+
+        final ObjList<Closeable> closeables = new ObjList<>();
+        final RuntimeException firstFailure = new RuntimeException("first");
+        final Error secondFailure = new AssertionError("second");
+        final TestCloseable first = new TestCloseable(() -> Assert.assertNull(closeables.getQuick(1)), firstFailure);
+        final TestCloseable second = new TestCloseable(() -> Assert.assertNull(closeables.getQuick(2)), secondFailure);
+        final TestCloseable last = new TestCloseable(() -> Assert.assertNull(closeables.getQuick(3)), null);
+        closeables.add(null);
+        closeables.add(first);
+        closeables.add(second);
+        closeables.add(last);
+
+        Misc.freeObjList(closeables, primary);
+
+        Assert.assertArrayEquals(new Throwable[]{firstFailure, secondFailure}, primary.getSuppressed());
+        Assert.assertEquals(1, first.closeCount);
+        Assert.assertEquals(1, second.closeCount);
+        Assert.assertEquals(1, last.closeCount);
+        for (int i = 0, n = closeables.size(); i < n; i++) {
+            Assert.assertNull(closeables.getQuick(i));
+        }
+    }
+
+    @Test
+    public void testFreeWithPrimarySuppressesCloseFailure() {
+        final RuntimeException primary = new RuntimeException("primary");
+        Misc.free(null, primary);
+
+        final TestCloseable successful = new TestCloseable(null, null);
+        Misc.free(successful, primary);
+        Assert.assertEquals(1, successful.closeCount);
+        Assert.assertEquals(0, primary.getSuppressed().length);
+
+        final RuntimeException runtimeFailure = new RuntimeException("runtime");
+        final TestCloseable runtimeThrowing = new TestCloseable(null, runtimeFailure);
+        Misc.free(runtimeThrowing, primary);
+
+        final Error errorFailure = new AssertionError("error");
+        final TestCloseable errorThrowing = new TestCloseable(null, errorFailure);
+        Misc.free(errorThrowing, primary);
+
+        final IOException ioFailure = new IOException("io");
+        Misc.free((Closeable) () -> {
+            throw ioFailure;
+        }, primary);
+
+        final Throwable[] suppressed = primary.getSuppressed();
+        Assert.assertEquals(3, suppressed.length);
+        Assert.assertSame(runtimeFailure, suppressed[0]);
+        Assert.assertSame(errorFailure, suppressed[1]);
+        Assert.assertTrue(suppressed[2] instanceof FatalError);
+        Assert.assertSame(ioFailure, suppressed[2].getCause());
+        Assert.assertEquals(1, runtimeThrowing.closeCount);
+        Assert.assertEquals(1, errorThrowing.closeCount);
+
+        final RuntimeException selfPrimary = new RuntimeException("self");
+        final TestCloseable selfThrowing = new TestCloseable(null, selfPrimary);
+        Misc.free(selfThrowing, selfPrimary);
+        Assert.assertEquals(1, selfThrowing.closeCount);
+        Assert.assertEquals(0, selfPrimary.getSuppressed().length);
     }
 
     @Test

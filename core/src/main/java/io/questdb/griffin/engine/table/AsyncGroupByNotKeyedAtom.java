@@ -160,7 +160,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
 
             clear();
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

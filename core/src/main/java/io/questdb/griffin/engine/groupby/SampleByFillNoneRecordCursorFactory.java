@@ -101,8 +101,8 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                     sampleToFuncPos
             );
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, map);
-            Misc.freeBestEffort(th, this);
+            Misc.free(map, th);
+            Misc.free(this, th);
             throw th;
         }
     }

@@ -339,7 +339,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 perWorkerHorizonIterators.add(new AsyncHorizonTimestampIterator(offsets));
             }
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

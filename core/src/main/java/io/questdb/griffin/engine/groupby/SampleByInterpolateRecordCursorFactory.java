@@ -189,7 +189,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
             this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc);
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -345,7 +345,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
                 this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
             } catch (Throwable th) {
-                Misc.freeBestEffort(th, this);
+                Misc.free(this, th);
                 throw th;
             }
         }

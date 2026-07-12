@@ -125,8 +125,8 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             // close() frees everything except the map, which _close() reaches only through the
             // cursor - not constructed yet - so free it directly. The record functions are
             // freed by close() and must not be freed here as well.
-            Misc.freeBestEffort(e, map);
-            Misc.freeBestEffort(e, this);
+            Misc.free(map, e);
+            Misc.free(this, e);
             throw e;
         }
     }

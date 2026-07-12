@@ -107,7 +107,7 @@ public class AsyncHorizonJoinNotKeyedAtom extends BaseAsyncHorizonJoinAtom {
             // Initialize values to empty state
             resetMapValues();
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

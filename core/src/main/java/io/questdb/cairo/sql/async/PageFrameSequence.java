@@ -124,7 +124,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             this.taskType = taskType;
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

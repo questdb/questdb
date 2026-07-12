@@ -201,8 +201,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         } catch (Throwable th) {
             // Free what this constructor allocated. Caller still owns its inputs
             // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
-            Misc.freeBestEffort(th, keysMap);
-            Misc.freeBestEffort(th, localNonKeyedPrevCache);
+            Misc.free(keysMap, th);
+            Misc.free(localNonKeyedPrevCache, th);
             throw th;
         }
         this.nonKeyedPrevCache = localNonKeyedPrevCache;
@@ -234,7 +234,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, cursor);
+            Misc.free(cursor, th);
             throw th;
         }
     }

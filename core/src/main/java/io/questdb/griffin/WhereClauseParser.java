@@ -646,7 +646,7 @@ public final class WhereClauseParser implements Mutable {
                     func = null;
                     return analyzeTimestampEqualsFunction(timestampDriver, model, node, ownedFunc, b.position);
                 } catch (Throwable th) {
-                    Misc.freeBestEffort(th, func);
+                    Misc.free(func, th);
                     throw th;
                 }
             } else {
@@ -761,7 +761,7 @@ public final class WhereClauseParser implements Mutable {
                 func = null;
                 Misc.free(ownedFunc);
             } catch (Throwable th) {
-                Misc.freeBestEffort(th, func);
+                Misc.free(func, th);
                 throw th;
             }
         }
@@ -954,7 +954,7 @@ public final class WhereClauseParser implements Mutable {
                             return analyzeTimestampEqualsFunction(timestampDriver, model, in, ownedFunc, inArg.position);
                         }
                     } catch (Throwable th) {
-                        Misc.freeBestEffort(th, func);
+                        Misc.free(func, th);
                         throw th;
                     }
                 }
@@ -1845,7 +1845,7 @@ public final class WhereClauseParser implements Mutable {
             Misc.free(ownedFunc);
             return false;
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, func);
+            Misc.free(func, th);
             throw th;
         }
     }
@@ -2029,7 +2029,7 @@ public final class WhereClauseParser implements Mutable {
             Misc.free(ownedFunc);
             return false;
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, func);
+            Misc.free(func, th);
             throw th;
         }
     }
@@ -2152,7 +2152,7 @@ public final class WhereClauseParser implements Mutable {
             }
             return false;
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, func);
+            Misc.free(func, th);
             throw th;
         }
     }

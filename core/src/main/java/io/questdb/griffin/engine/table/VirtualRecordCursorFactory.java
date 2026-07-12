@@ -90,7 +90,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             this.internalSymbolTableSource = new VirtualRecordCursorFactorySymbolTableSource(cursor, virtualColumnReservedSlots);
             this.priorityMetadata = priorityMetadata;
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

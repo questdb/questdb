@@ -84,7 +84,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 this.cursor = new GroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);
             }
         } catch (Throwable e) {
-            Misc.freeBestEffort(e, this);
+            Misc.free(this, e);
             throw e;
         }
     }

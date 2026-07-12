@@ -150,7 +150,7 @@ public class AsyncFilterContext implements Closeable {
                 frameFilteredMemoryRecords = null;
             }
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

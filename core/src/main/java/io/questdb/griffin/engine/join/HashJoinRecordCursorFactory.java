@@ -90,9 +90,9 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     : null;
             cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, joinKeyMap);
-            Misc.freeBestEffort(th, slaveChain);
-            Misc.freeBestEffort(th, this);
+            Misc.free(joinKeyMap, th);
+            Misc.free(slaveChain, th);
+            Misc.free(this, th);
             throw th;
         }
     }

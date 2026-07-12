@@ -395,7 +395,7 @@ public class GroupByUtils {
                 for (int i = 0, n = extraOuterProjectionFunctions.size(); i < n; i++) {
                     final ObjList<Function> extra = extraOuterProjectionFunctions.getQuick(i);
                     if (extra != null) {
-                        Misc.freeObjListBestEffort(th, extra);
+                        Misc.freeObjList(extra, th);
                         extra.clear();
                     }
                 }

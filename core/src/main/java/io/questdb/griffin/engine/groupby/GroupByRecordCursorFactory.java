@@ -92,7 +92,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {
-            Misc.freeBestEffort(e, this);
+            Misc.free(this, e);
             throw e;
         }
     }

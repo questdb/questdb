@@ -73,18 +73,13 @@ abstract class AbstractDoubleCursorFunctionFactory implements FunctionFactory {
                     .put(ColumnType.nameOf(arg0.getType()));
         }
         final int cursorTag = ColumnType.tagOf(metadata.getColumnType(0));
-        switch (cursorTag) {
-            case ColumnType.DOUBLE:
-            case ColumnType.FLOAT:
-            case ColumnType.LONG:
-            case ColumnType.INT:
-            case ColumnType.SHORT:
-            case ColumnType.BYTE:
-            case ColumnType.NULL:
-                return newDoubleFunc(factory, arg0, args.getQuick(1), cursorTag, argPositions.getQuick(1));
-            default:
-                throw SqlException.$(argPositions.getQuick(1), "cannot compare DOUBLE and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
-        }
+        return switch (cursorTag) {
+            case ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.LONG, ColumnType.INT, ColumnType.SHORT,
+                 ColumnType.BYTE, ColumnType.NULL ->
+                    newDoubleFunc(factory, arg0, args.getQuick(1), cursorTag, argPositions.getQuick(1));
+            default ->
+                    throw SqlException.$(argPositions.getQuick(1), "cannot compare DOUBLE and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
+        };
     }
 
     protected abstract Function newDoubleFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int cursorTag, int rightPos);

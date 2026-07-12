@@ -126,7 +126,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
             this.reduceSubSeq = messageBus.getUnorderedPageFrameReduceSubSeq();
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

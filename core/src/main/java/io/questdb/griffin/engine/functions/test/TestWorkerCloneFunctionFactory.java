@@ -52,7 +52,7 @@ public class TestWorkerCloneFunctionFactory implements FunctionFactory {
         if (RUN_STATE.get() != null) {
             throw new IllegalStateException("test_worker_clone run is already armed on this thread");
         }
-        RUN_STATE.set(new RunState(threshold, Thread.currentThread().getId()));
+        RUN_STATE.set(new RunState(threshold, Thread.currentThread().threadId()));
     }
 
     public static int created() {
@@ -128,7 +128,7 @@ public class TestWorkerCloneFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            final boolean isWorkerClone = Thread.currentThread().getId() != state.ownerThreadId && instanceId > 0;
+            final boolean isWorkerClone = Thread.currentThread().threadId() != state.ownerThreadId && instanceId > 0;
             state.incrementEvaluation(instanceId);
             if (isWorkerClone) {
                 state.workerEvaluations.incrementAndGet();
@@ -144,7 +144,7 @@ public class TestWorkerCloneFunctionFactory implements FunctionFactory {
             }
 
             final boolean result = comparison.getBool(rec);
-            if (Thread.currentThread().getId() == state.ownerThreadId) {
+            if (Thread.currentThread().threadId() == state.ownerThreadId) {
                 try {
                     if (!state.workerReached.await(10, TimeUnit.SECONDS)) {
                         throw new AssertionError("worker clone did not evaluate a frame");

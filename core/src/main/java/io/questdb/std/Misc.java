@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -105,6 +106,21 @@ public final class Misc {
         return null;
     }
 
+    /**
+     * Closes the object and adds any close failure to {@code primary} as a suppressed
+     * exception. This method lets callers continue a multi-resource cleanup without
+     * masking the primary failure.
+     */
+    public static <T extends Closeable> void free(@Nullable T object, @NotNull Throwable primary) {
+        try {
+            free(object);
+        } catch (Throwable th) {
+            if (th != primary) {
+                primary.addSuppressed(th);
+            }
+        }
+    }
+
     public static <T extends Closeable> void free(T[] list) {
         if (list != null) {
             for (int i = 0, n = list.length; i < n; i++) {
@@ -118,22 +134,20 @@ public final class Misc {
      * folds into the given failure chain instead of propagating, so later resources in the
      * same cleanup sequence still see a close attempt. The first failure becomes the primary
      * and later failures attach to it as suppressed. Callers thread the returned chain
-     * through the whole sequence and rethrow it at the end, either explicitly (when the
-     * primary is the exception that triggered the cleanup) or via
-     * {@link #rethrowCleanupFailure(Throwable)}.
+     * through the whole sequence and rethrow it at the end via
+     * {@link #rethrowCleanupFailure(Throwable)}. Callers that already have a non-null primary
+     * failure should use {@link #free(Closeable, Throwable)} instead.
      */
     public static <T extends Closeable> @Nullable Throwable freeBestEffort(@Nullable Throwable primary, @Nullable T object) {
+        if (primary != null) {
+            free(object, primary);
+            return primary;
+        }
         try {
             free(object);
-            return primary;
+            return null;
         } catch (Throwable th) {
-            if (primary == null) {
-                return th;
-            }
-            if (th != primary) {
-                primary.addSuppressed(th);
-            }
-            return primary;
+            return th;
         }
     }
 
@@ -152,6 +166,21 @@ public final class Misc {
     public static <T extends Closeable> void freeObjList(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
+        }
+    }
+
+    /**
+     * Closes every list entry and adds close failures to {@code primary} as suppressed
+     * exceptions. The method nulls each slot before its close attempt and continues after
+     * failures. Do not pass list subclasses that reject {@code setQuick()}.
+     */
+    public static <T extends Closeable> void freeObjList(@Nullable ObjList<T> list, @NotNull Throwable primary) {
+        if (list != null) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                final T object = list.getQuick(i);
+                list.setQuick(i, null);
+                free(object, primary);
+            }
         }
     }
 
@@ -175,8 +204,9 @@ public final class Misc {
     /**
      * Closes every list entry and nulls its slot even when earlier entries throw, folding
      * close() failures into the given failure chain the same way
-     * {@link #freeBestEffort(Throwable, Closeable)} does. Do not pass list subclasses that
-     * reject setQuick().
+     * {@link #freeBestEffort(Throwable, Closeable)} does. Callers that already have a non-null
+     * primary failure should use {@link #freeObjList(ObjList, Throwable)} instead. Do not pass
+     * list subclasses that reject {@code setQuick()}.
      */
     public static <T extends Closeable> @Nullable Throwable freeObjListBestEffort(@Nullable Throwable primary, @Nullable ObjList<T> list) {
         if (list != null) {
@@ -242,14 +272,14 @@ public final class Misc {
      * the wrapping branch is a defensive fallback.
      */
     public static void rethrowCleanupFailure(@Nullable Throwable failure) {
-        if (failure == null) {
-            return;
-        }
-        if (failure instanceof RuntimeException runtimeException) {
-            throw runtimeException;
-        }
-        if (failure instanceof Error error) {
-            throw error;
+        switch (failure) {
+            case null -> {
+                return;
+            }
+            case RuntimeException runtimeException -> throw runtimeException;
+            case Error error -> throw error;
+            default -> {
+            }
         }
         throw new RuntimeException(failure);
     }

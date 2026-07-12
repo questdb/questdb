@@ -83,7 +83,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleToFuncPos
             );
         } catch (Throwable th) {
-            Misc.freeBestEffort(th, this);
+            Misc.free(this, th);
             throw th;
         }
     }

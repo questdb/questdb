@@ -895,12 +895,12 @@ public final class ColumnType {
         //
         // All types must be mentioned at all times.
         //
-        /// Note that the overload rule here must align with the corresponding function implementation, or specific
-        /// rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
-        /// For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
-        /// apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
-        /// all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
-        /// overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
+        // Note that the overload rule here must align with the corresponding function implementation, or specific
+        // rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
+        // For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
+        // apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
+        // all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
+        // overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
 
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED   */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}

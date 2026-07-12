@@ -84,24 +84,21 @@ public final class ScalarSubQueryUtils {
      * @return the scalar as a double, or {@link Double#NaN} for null values
      */
     public static double readDoubleValue(Record record, int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.DOUBLE:
-                return record.getDouble(0);
-            case ColumnType.FLOAT:
-                return record.getFloat(0);
-            case ColumnType.LONG:
+        return switch (columnTypeTag) {
+            case ColumnType.DOUBLE -> record.getDouble(0);
+            case ColumnType.FLOAT -> record.getFloat(0);
+            case ColumnType.LONG -> {
                 final long l = record.getLong(0);
-                return l == Numbers.LONG_NULL ? Double.NaN : l;
-            case ColumnType.INT:
+                yield l == Numbers.LONG_NULL ? Double.NaN : l;
+            }
+            case ColumnType.INT -> {
                 final int i = record.getInt(0);
-                return i == Numbers.INT_NULL ? Double.NaN : i;
-            case ColumnType.SHORT:
-                return record.getShort(0);
-            case ColumnType.BYTE:
-                return record.getByte(0);
-            default:
-                return Double.NaN;
-        }
+                yield i == Numbers.INT_NULL ? Double.NaN : i;
+            }
+            case ColumnType.SHORT -> record.getShort(0);
+            case ColumnType.BYTE -> record.getByte(0);
+            default -> Double.NaN;
+        };
     }
 
     /**
@@ -116,16 +113,12 @@ public final class ScalarSubQueryUtils {
      * @return the scalar as an int, or {@link Numbers#INT_NULL} for null values
      */
     public static int readIntValue(Record record, int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.BYTE:
-                return record.getByte(0);
-            case ColumnType.SHORT:
-                return record.getShort(0);
-            case ColumnType.INT:
-                return record.getInt(0);
-            default:
-                return Numbers.INT_NULL;
-        }
+        return switch (columnTypeTag) {
+            case ColumnType.BYTE -> record.getByte(0);
+            case ColumnType.SHORT -> record.getShort(0);
+            case ColumnType.INT -> record.getInt(0);
+            default -> Numbers.INT_NULL;
+        };
     }
 
     /**
@@ -140,17 +133,12 @@ public final class ScalarSubQueryUtils {
      * @return the scalar as a long, or {@link Numbers#LONG_NULL} for null values
      */
     public static long readLongValue(Record record, int columnTypeTag) {
-        switch (columnTypeTag) {
-            case ColumnType.BYTE:
-                return record.getByte(0);
-            case ColumnType.SHORT:
-                return record.getShort(0);
-            case ColumnType.INT:
-                return Numbers.intToLong(record.getInt(0));
-            case ColumnType.LONG:
-                return record.getLong(0);
-            default:
-                return Numbers.LONG_NULL;
-        }
+        return switch (columnTypeTag) {
+            case ColumnType.BYTE -> record.getByte(0);
+            case ColumnType.SHORT -> record.getShort(0);
+            case ColumnType.INT -> Numbers.intToLong(record.getInt(0));
+            case ColumnType.LONG -> record.getLong(0);
+            default -> Numbers.LONG_NULL;
+        };
     }
 }

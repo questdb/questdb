@@ -216,11 +216,6 @@ public class TestFaultFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
-
-        @Override
         public void offerStateTo(Function that) {
             if (initProbeEpoch == INIT_PROBE_EPOCH.get()) {
                 OFFER_COUNT.incrementAndGet();
