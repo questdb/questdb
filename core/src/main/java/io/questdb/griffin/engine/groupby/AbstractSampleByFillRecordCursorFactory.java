@@ -77,7 +77,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             // map's malloc and the matching free at cursor close balance on the per-query counter.
             map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes, false);
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -143,7 +143,13 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(getRawCursor());
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, getRawCursor());
+        Misc.rethrowCleanupFailure(failure);
     }
 }

@@ -139,6 +139,51 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     }
 
     @Test
+    public void testFillNoneNotKeyedConstructorFailureKeepsPrimaryWhenCleanupThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            final Fixture fixture = new Fixture();
+            final ThrowingCloseFunction throwingRecordFunc = new ThrowingCloseFunction("injected cleanup failure");
+            fixture.recordFunctions.clear();
+            fixture.recordFunctions.add(throwingRecordFunc);
+            fixture.recordFunctions.add(fixture.recordFunc);
+
+            final Throwable e = Assert.assertThrows(Throwable.class, () ->
+                    new SampleByFillNoneNotKeyedRecordCursorFactory(
+                            new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
+                            configuration,
+                            fixture.base(),
+                            fixture.sampler(),
+                            fixture.groupByMetadata,
+                            new ObjList<>(),
+                            fixture.recordFunctions,
+                            1,
+                            1,
+                            ColumnType.TIMESTAMP,
+                            fixture.timezoneNameFunc,
+                            0,
+                            fixture.offsetFunc,
+                            0,
+                            fixture.sampleFromFunc,
+                            0,
+                            fixture.sampleToFunc,
+                            0
+                    )
+            );
+
+            TestUtils.assertContains(e.getMessage(), UPDATER_FAILURE);
+            Assert.assertEquals(1, e.getSuppressed().length);
+            TestUtils.assertContains(e.getSuppressed()[0].getMessage(), "injected cleanup failure");
+            Assert.assertEquals(1, throwingRecordFunc.closeCount);
+            Assert.assertEquals("later record functions must close despite the earlier failure", 1, fixture.recordFunc.closeCount);
+            Assert.assertEquals(1, fixture.baseFactory.closeCount);
+            Assert.assertEquals(1, fixture.timezoneNameFunc.closeCount);
+            Assert.assertEquals(1, fixture.offsetFunc.closeCount);
+            Assert.assertEquals(1, fixture.sampleFromFunc.closeCount);
+            Assert.assertEquals(1, fixture.sampleToFunc.closeCount);
+        });
+    }
+
+    @Test
     public void testFillNullConstructorFailureClosesAdoptedResources() throws Exception {
         assertConstructionFailureClosesAdoptedResources(UPDATER_FAILURE, true, fixture ->
                 new SampleByFillNullRecordCursorFactory(
@@ -353,6 +398,60 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     }
 
     @Test
+    public void testFirstLastConstructorFailureKeepsPrimaryWhenBaseCloseThrows() throws Exception {
+        assertMemoryLeak(() -> {
+            final Fixture fixture = new Fixture();
+            final CloseCountingBaseFactory base = fixture.base();
+            base.closeFailure = "injected base cleanup failure";
+
+            final Throwable e = Assert.assertThrows(Throwable.class, () ->
+                    new SampleByFirstLastRecordCursorFactory(
+                            base,
+                            fixture.sampler(),
+                            fixture.groupByMetadata,
+                            new ObjList<>(),
+                            fixture.baseMetadata,
+                            fixture.timezoneNameFunc,
+                            0,
+                            fixture.offsetFunc,
+                            0,
+                            1,
+                            new SingleSymbolFilter() {
+                                @Override
+                                public int getColumnIndex() {
+                                    throw CairoException.nonCritical().put(SYMBOL_FILTER_FAILURE);
+                                }
+
+                                @Override
+                                public int getSymbolFilterKey() {
+                                    return 0;
+                                }
+                            },
+                            16,
+                            fixture.sampleFromFunc,
+                            0,
+                            fixture.sampleToFunc,
+                            0
+                    )
+            );
+
+            TestUtils.assertContains(e.getMessage(), SYMBOL_FILTER_FAILURE);
+            Assert.assertEquals(1, e.getSuppressed().length);
+            TestUtils.assertContains(e.getSuppressed()[0].getMessage(), "injected base cleanup failure");
+            Assert.assertEquals(1, base.closeCount);
+            Assert.assertEquals(1, fixture.timezoneNameFunc.closeCount);
+            Assert.assertEquals(1, fixture.offsetFunc.closeCount);
+            Assert.assertEquals(1, fixture.sampleFromFunc.closeCount);
+            Assert.assertEquals(1, fixture.sampleToFunc.closeCount);
+
+            // A second owner may still hold the base after the failed construction. Its close
+            // must neither throw again nor retry resources from the first close attempt.
+            base.close();
+            Assert.assertEquals(1, base.closeCount);
+        });
+    }
+
+    @Test
     public void testInterpolateConstructorFailureClosesAdoptedResources() throws Exception {
         // fill(linear): the record-sink generation is the last fallible step before the cursor
         // is constructed; the catch must free the adopted record and temporal functions
@@ -540,6 +639,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
      * count of 1 means the constructor freed the adopted base and 0 means it leaked.
      */
     private static class CloseCountingBaseFactory extends EmptyTableRecordCursorFactory {
+        String closeFailure;
         int closeCount;
 
         CloseCountingBaseFactory(GenericRecordMetadata metadata) {
@@ -550,6 +650,9 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         protected void _close() {
             closeCount++;
             super._close();
+            if (closeFailure != null) {
+                throw new RuntimeException(closeFailure);
+            }
         }
     }
 
@@ -694,6 +797,20 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                 throw CairoException.nonCritical().put(message);
             }
             super.init(host);
+        }
+    }
+
+    private static class ThrowingCloseFunction extends CloseCountingFunction {
+        private final String message;
+
+        private ThrowingCloseFunction(String message) {
+            this.message = message;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            throw new RuntimeException(message);
         }
     }
 

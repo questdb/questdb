@@ -84,7 +84,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleToFuncPos
             );
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -102,9 +102,15 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(value);
-        Misc.free(cursor);
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, value);
+        failure = Misc.freeBestEffort(failure, cursor);
+        Misc.rethrowCleanupFailure(failure);
     }
 
     @Override

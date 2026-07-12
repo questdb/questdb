@@ -149,7 +149,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFuncPos
             );
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -300,18 +300,19 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.free(base);
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, base);
         rowIdOutAddress = Misc.free(rowIdOutAddress);
         samplePeriodAddress = Misc.free(samplePeriodAddress);
         // The factory is the lifetime owner of the temporal parameter functions (timezone,
         // offset, FROM, TO); the cursor only borrows them across the executions of this cached
         // factory. The generator accepts runtime-constant expressions here, which may own child
         // functions, so they must be closed exactly once.
-        Misc.free(timezoneNameFunc);
-        Misc.free(offsetFunc);
-        Misc.free(sampleFromFunc);
-        Misc.free(sampleToFunc);
+        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
+        failure = Misc.freeBestEffort(failure, offsetFunc);
+        failure = Misc.freeBestEffort(failure, sampleFromFunc);
+        failure = Misc.freeBestEffort(failure, sampleToFunc);
+        Misc.rethrowCleanupFailure(failure);
     }
 
     private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {

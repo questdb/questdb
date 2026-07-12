@@ -189,7 +189,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
             this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc);
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -258,18 +258,27 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     protected void _close() {
-        Misc.freeObjList(recordFunctions);
-        freeYData();
-        Misc.free(base);
-        Misc.free(cursor);
+        Throwable failure = Misc.freeObjListBestEffort(null, recordFunctions);
+        try {
+            freeYData();
+        } catch (Throwable th) {
+            if (failure == null) {
+                failure = th;
+            } else if (th != failure) {
+                failure.addSuppressed(th);
+            }
+        }
+        failure = Misc.freeBestEffort(failure, base);
+        failure = Misc.freeBestEffort(failure, cursor);
         // The factory is the lifetime owner of the temporal parameter functions (timezone,
         // offset, FROM, TO); the cursor only borrows them across the executions of this cached
         // factory. The generator accepts runtime-constant expressions here, which may own child
         // functions, so they must be closed exactly once.
-        Misc.free(timezoneNameFunc);
-        Misc.free(offsetFunc);
-        Misc.free(sampleFromFunc);
-        Misc.free(sampleToFunc);
+        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
+        failure = Misc.freeBestEffort(failure, offsetFunc);
+        failure = Misc.freeBestEffort(failure, sampleFromFunc);
+        failure = Misc.freeBestEffort(failure, sampleToFunc);
+        Misc.rethrowCleanupFailure(failure);
     }
 
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
@@ -336,7 +345,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
                 this.sampleFromFuncType = ColumnType.getTimestampType(sampleFromFunc.getType());
             } catch (Throwable th) {
-                close();
+                Misc.freeBestEffort(th, this);
                 throw th;
             }
         }

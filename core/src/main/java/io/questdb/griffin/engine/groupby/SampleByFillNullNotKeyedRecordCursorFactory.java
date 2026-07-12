@@ -93,7 +93,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             );
             peeker.setCursor(cursor);
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -112,10 +112,16 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
 
     @Override
     protected void _close() {
-        super._close();
-        Misc.free(value);
-        Misc.free(valueB);
-        Misc.free(cursor);
+        Throwable failure = null;
+        try {
+            super._close();
+        } catch (Throwable th) {
+            failure = th;
+        }
+        failure = Misc.freeBestEffort(failure, value);
+        failure = Misc.freeBestEffort(failure, valueB);
+        failure = Misc.freeBestEffort(failure, cursor);
+        Misc.rethrowCleanupFailure(failure);
     }
 
     protected AbstractNoRecordSampleByCursor getRawCursor() {

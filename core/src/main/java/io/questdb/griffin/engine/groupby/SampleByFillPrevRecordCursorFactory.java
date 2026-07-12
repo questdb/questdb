@@ -104,8 +104,8 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
             // temporal parameter functions; the unreturned partial object would strand them.
             // close() frees everything except the map, which _close() reaches only through the
             // cursor - not constructed yet - so free it directly.
-            Misc.free(map);
-            close();
+            Misc.freeBestEffort(th, map);
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
