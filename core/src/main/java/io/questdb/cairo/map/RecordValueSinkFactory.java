@@ -220,7 +220,12 @@ public class RecordValueSinkFactory {
                 default:
                     // Unreachable: both callers reject unsupported types up front - the
                     // full-fat join guard via isSupportedColumnType, and RankFunctionFactory
-                    // by asserting fixed-size-or-static-symbol streaming ORDER BY columns.
+                    // by rejecting streaming ORDER BY columns that are neither fixed-size nor
+                    // static symbols. The assert is the tripwire for the "keep in sync" contract
+                    // isSupportedColumnType() documents: it fires the moment that method starts
+                    // claiming a type this switch cannot actually emit.
+                    assert !isSupportedColumnType(columnType)
+                            : "isSupportedColumnType()/getInstance() disagree on " + ColumnType.nameOf(columnType);
                     throw new UnsupportedOperationException();
             }
         }

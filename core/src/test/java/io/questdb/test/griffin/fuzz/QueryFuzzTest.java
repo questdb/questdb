@@ -179,6 +179,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // means the injector is disarmed. A default run injects ~15 (100 queries at a
     // 15% fault probability), so the floor holds for every unshrunk run.
     private static final int MIN_FAULT_QUERIES_FOR_FIRE_FLOOR = 5;
+    // Fault queries of ONE type a run needs before runFuzz holds that type to its own fire floor.
+    // Higher than the aggregate floor because a per-type zero-fire run is far likelier by chance:
+    // measured per-arm fire rates run 49-88% by type, so at a pessimistic 30% it takes 20 arms for
+    // an all-miss run to drop below 1e-3. See the guard in runFuzz.
+    private static final int MIN_FAULT_QUERIES_PER_TYPE_FOR_FIRE_FLOOR = 20;
     // Differential queries a shape needs before runFuzz holds it to MIN_ACCEPTED_PCT_PER_SHAPE.
     // Below this count the accepted rate is too noisy to assert on. The narrow bands (LATEST ON
     // draws 7 in 100 queries, the joins 5) stay under it on a default 100-query run and come under
@@ -836,16 +841,44 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     100L * accepted >= (long) MIN_ACCEPTED_PCT_PER_SHAPE * generated
             );
         }
-        // Guard the fault injector against a silent disarm. It has several ways to
-        // stop biting while the run stays green and tests nothing but the happy path:
-        // dev mode off (test_fault() folds to the constant true), the FailureFileFacade
-        // not installed on the engine, or the MALLOC RSS ceiling armed above what the
-        // query allocates. Each one shows up here as "armed N, fired 0".
+        // Guard the fault injector against a silent disarm. It has several ways to stop biting while
+        // the run stays green and tests nothing but the happy path: dev mode off (test_fault() folds
+        // to the constant true), the FailureFileFacade not installed on the engine, or the MALLOC RSS
+        // ceiling armed above what the query allocates.
+        //
+        // The facade case never even arms - QueryRunner drops FILE from its fault types when the
+        // engine's FilesFacade is not a FailureFileFacade - so it reads as "armed 0, fired 0" and no
+        // fire-count floor can see it. Assert the type is on offer instead.
+        for (FaultType type : FaultType.values()) {
+            Assert.assertTrue(
+                    "fault type " + type.name() + " was never offered to the runner; that injector looks disarmed",
+                    runner.isFaultTypeAvailable(type)
+            );
+        }
         if (faultGen >= MIN_FAULT_QUERIES_FOR_FIRE_FLOOR) {
             Assert.assertTrue(
                     "fault injection ran on " + faultGen + " queries but no fault fired; the injector looks disarmed",
                     runner.getFaultsFired() > 0
             );
+        }
+        // The aggregate floor above cannot tell a live FUNCTION injector from a dead FILE one: a single
+        // FUNCTION fire satisfies it while FILE and MALLOC fire zero all run. Hold each type to its own
+        // floor, but only once it has armed often enough that a zero-fire run means something. Arming
+        // does not imply firing - each fault arms at a random trigger point (the Nth file op, the Nth
+        // test_fault() call, an RSS ceiling a few KB up), and a query that does fewer ops than its
+        // trigger runs clean - so a strict "armed once, must fire" would flake. Measured per-arm fire
+        // rates run 49-88% by type; at a pessimistic 30% the odds of 20 arms all missing are below
+        // 1e-3. A default run arms ~5 per type, so this floor engages on a soak
+        // (-Dquestdb.fuzz.queries=500, or a raised -Dquestdb.fuzz.fault.pct).
+        for (FaultType type : FaultType.values()) {
+            final int armed = runner.getFaultsArmed(type);
+            if (armed >= MIN_FAULT_QUERIES_PER_TYPE_FOR_FIRE_FLOOR) {
+                Assert.assertTrue(
+                        "fault type " + type.name() + " armed on " + armed
+                                + " queries but never fired; that injector looks disarmed",
+                        runner.getFaultsFired(type) > 0
+                );
+            }
         }
     }
 }

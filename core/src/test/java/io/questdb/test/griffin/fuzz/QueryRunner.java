@@ -286,6 +286,21 @@ public final class QueryRunner {
         return faultsFiredByType[type.ordinal()];
     }
 
+    /**
+     * Reports whether {@code type} can be armed at all this run. FILE needs the engine's FilesFacade
+     * to be a {@link FailureFileFacade}; without it the constructor drops FILE from {@link #faultTypes}
+     * and the fuzzer never arms one. That disarm reads as "armed 0, fired 0", so no fire-count floor
+     * can see it - only this check can.
+     */
+    public boolean isFaultTypeAvailable(FaultType type) {
+        for (int i = 0, n = faultTypes.length; i < n; i++) {
+            if (faultTypes[i] == type) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Result run(GeneratedQuery query) {
         // A per-cursor self-consistency violation detected by any runOnce pass
         // surfaces as a CursorCheckException so it can short-circuit the

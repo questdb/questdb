@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
-
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -64,7 +63,6 @@ public class AbsIntFunctionFactory implements FunctionFactory {
         public Function getArg() {
             return arg;
         }
-
 
         @Override
         public int getInt(Record rec) {

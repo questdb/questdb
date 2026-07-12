@@ -666,6 +666,47 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testInSymbolAndCharKeysAreNotWidened() throws Exception {
+        // SYMBOL and CHAR IN keys collapse onto the same narrow type codes as a genuine INT / SHORT key
+        // (columnTypeCode maps SYMBOL to I4 and CHAR to I2), but they route through InSymbol / InChar,
+        // not the width-sensitive InLong path, so isWidthSensitiveInKey must keep them out of the
+        // per-element width override. Taking that override would read a string element as "not narrow"
+        // (genuineArithType == UNDEFINED_CODE -> I8) and sign-extend the key: an SX_I64 that AVX2 does
+        // not implement, dropping the whole filter onto the scalar path. Row results stay correct either
+        // way - sign-extending a symbol / char key is value-preserving - so only the IR and the exec
+        // hint can catch this. See CompiledFilterRegressionTest#testInOperatorSymbolAndCharKeysAreNotWidthSensitive,
+        // whose own comment records that it cannot.
+        int options = serialize("asymbol IN ('ABC', 'DEF')", false, false, true);
+        // 'ABC' is symbol key 0 in asymbol; 'DEF' is not in its symbol table, so it emits as a bind
+        // variable (see testUnknownSymbolConstant). Neither key leaf carries an sx_i64.
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+        assertOptionsHint("asymbol IN ('ABC', 'DEF')", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("asymbol NOT IN ('ABC', 'DEF')", false, false, true);
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(!)(ret)");
+        assertOptionsHint("asymbol NOT IN ('ABC', 'DEF')", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("achar IN ('x', 'z')", false, false, true);
+        assertIR("(i16 122L)(i16 achar)(=)(i16 120L)(i16 achar)(=)(||)(ret)");
+        assertOptionsHint("achar IN ('x', 'z')", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("achar NOT IN ('x', 'z')", false, false, true);
+        assertIR("(i16 122L)(i16 achar)(=)(i16 120L)(i16 achar)(=)(||)(!)(ret)");
+        assertOptionsHint("achar NOT IN ('x', 'z')", options, OptionsHint.SINGLE_SIZE);
+
+        // Control: a genuine narrow-int key still wraps against narrow elements, and still widens (and
+        // goes scalar) against an out-of-INT-range one - the width sensitivity symbol / char must not
+        // inherit.
+        options = serialize("abyte IN (1, 2)", false, false, true);
+        assertIR("(i8 2L)(i8 abyte)(=)(i8 1L)(i8 abyte)(=)(||)(ret)");
+        assertOptionsHint("abyte IN (1, 2)", options, OptionsHint.SINGLE_SIZE);
+
+        options = serialize("anint IN (1, 5_000_000_000)", false, false, true);
+        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 1L)(i32 anint)(=)(||)(ret)");
+        assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.SCALAR);
+    }
+
+    @Test
     public void testInVariableBinding() throws Exception {
         bindVariableService.clear();
         bindVariableService.setInt("anint", 1);

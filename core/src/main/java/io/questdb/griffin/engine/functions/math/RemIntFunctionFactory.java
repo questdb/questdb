@@ -76,9 +76,8 @@ public class RemIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            // Recurse via getLong() so nested INT arithmetic computes at long width,
-            // matching the widened '/' operator and explicit widening casts; getInt()
-            // would let an inner product wrap mod 2^32 first.
+            // See Function#isIntWidthStable for why the operands recurse via getLong(); reading them
+            // via getInt() would let an inner product wrap mod 2^32 before the remainder is taken.
             final long l = left.getLong(rec);
             if (l == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;

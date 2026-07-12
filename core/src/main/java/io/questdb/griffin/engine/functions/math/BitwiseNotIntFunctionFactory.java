@@ -73,9 +73,8 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            // Recurse via getLong() so nested INT arithmetic computes at long width,
-            // matching the widened arithmetic operators and explicit widening casts.
             // Sign extension commutes with '~', so a plain INT operand is unaffected.
+            // See Function#isIntWidthStable for why the operand recurses via getLong().
             final long val = value.getLong(rec);
             return val != Numbers.LONG_NULL ? ~val : Numbers.LONG_NULL;
         }

@@ -492,13 +492,15 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     // comparator reads the right-hand operand via getLong256B, which FlyweightPackedMapValue
                     // does not implement (it throws), so a LONG256 ORDER BY would crash here rather than
                     // return a wrong rank. Only the designated timestamp and static indexed SYMBOLs reach
-                    // the streaming path today; assert the comparable-and-cached-by-value invariant so a
-                    // future routing change that admits another type fails fast here instead of crashing
-                    // or returning wrong results.
-                    assert (ColumnType.isFixedSize(orderByColumnType) && ColumnType.tagOf(orderByColumnType) != ColumnType.LONG256)
-                            || (ColumnType.isSymbol(orderByColumnType) && src.isSymbolTableStatic())
-                            : "streaming rank ORDER BY column must be fixed-size (excluding LONG256) or a static symbol, was "
-                            + ColumnType.nameOf(orderByColumnType);
+                    // the streaming path today. RecordValueSinkFactory used to reject LONG256 outright,
+                    // which failed such a query at compile time; now that it accepts LONG256, reject here
+                    // instead, so a future routing change that admits another type surfaces as a clean
+                    // compile-time error rather than a mid-query crash or a wrong rank.
+                    if (!(ColumnType.isFixedSize(orderByColumnType) && ColumnType.tagOf(orderByColumnType) != ColumnType.LONG256)
+                            && !(ColumnType.isSymbol(orderByColumnType) && src.isSymbolTableStatic())) {
+                        throw SqlException.$(orderBy != null ? orderBy.getQuick(i).position : 0, "unsupported column type in streaming rank() ORDER BY: ")
+                                .put(ColumnType.nameOf(orderByColumnType));
+                    }
                     // Synthetic unique names keep duplicate ORDER BY columns from clashing; only the
                     // type and the static-symbol flag matter to the comparator and the rank maps.
                     orderByMetadata.add(new TableColumnMetadata(

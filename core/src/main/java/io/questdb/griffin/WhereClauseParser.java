@@ -679,7 +679,7 @@ public final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
+                        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
@@ -1024,7 +1024,7 @@ public final class WhereClauseParser implements Mutable {
             TableReader reader
     ) throws SqlException {
         int columnIndex = m.getColumnIndex(columnName);
-        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
+        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
             if (preferredKeyColumn != null && !Chars.equalsIgnoreCase(columnName, preferredKeyColumn)) {
                 return false;
             }
@@ -1119,8 +1119,8 @@ public final class WhereClauseParser implements Mutable {
         //    because one indexed column alone does not identify the "latest" record (that needs all the
         //    LATEST BY columns); a non-symbol key has no symbol index to scan at all. In both cases the
         //    predicate must stay a residual filter, so disable key extraction. See
-        //    columnIsPreferredOrIndexedAndKeyColumnAllowed for the full rule.
-        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, meta, isKeyColumnSuppressed)) {
+        //    isColumnPreferredOrIndexedAndKeyColumnAllowed for the full rule.
+        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, meta, isKeyColumnSuppressed)) {
             // check if we already have indexed column, and it is of worse selectivity
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
@@ -1559,7 +1559,7 @@ public final class WhereClauseParser implements Mutable {
                     case ColumnType.STRING:
                     case ColumnType.LONG:
                     case ColumnType.INT:
-                        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
+                        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
                             CharSequence value = isNullKeyword(b.token) ? null : unquote(b.token);
                             if (Chars.equalsIgnoreCaseNc(columnName, model.keyColumn)) {
                                 if (!isCorrectType(b.type)) {
@@ -1700,7 +1700,7 @@ public final class WhereClauseParser implements Mutable {
     ) throws SqlException {
         final int columnIndex = m.getColumnIndex(columnName);
         boolean newColumn = true;
-        if (columnIsPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
+        if (isColumnPreferredOrIndexedAndKeyColumnAllowed(columnName, m, isKeyColumnSuppressed)) {
             if (model.keyColumn != null
                     && (newColumn = !Chars.equalsIgnoreCase(model.keyColumn, columnName))
                     && !isMoreSelective(model, m, reader, columnIndex)) {
@@ -2237,23 +2237,6 @@ public final class WhereClauseParser implements Mutable {
         return collapseWithin0(node);
     }
 
-    // A column qualifies as the intrinsic key column when key extraction is enabled
-    // (isKeyColumnSuppressed is false) and the column is either the preferred key column or, absent
-    // a preferred one, an indexed column. isKeyColumnSuppressed is set when the caller has no factory
-    // that can consume a key intrinsic - a multi-column or non-symbol LATEST ON - so the
-    // predicate stays a residual filter instead of being silently dropped.
-    private boolean columnIsPreferredOrIndexedAndKeyColumnAllowed(
-            CharSequence columnName,
-            RecordMetadata m,
-            boolean isKeyColumnSuppressed
-    ) {
-        return !isKeyColumnSuppressed &&
-                (
-                        Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
-                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
-                );
-    }
-
     /**
      * Compiles {@code operandNode} and, when it bottoms out at the designated timestamp through a
      * (possibly empty) chain of {@link MonotonicTimestampFunction}s, returns the compiled head (the
@@ -2538,6 +2521,23 @@ public final class WhereClauseParser implements Mutable {
                 throw SqlException.$(node.position, "Unexpected function type [").put(ColumnType.nameOf(funcType)).put("]");
             }
         }
+    }
+
+    // A column qualifies as the intrinsic key column when key extraction is enabled
+    // (isKeyColumnSuppressed is false) and the column is either the preferred key column or, absent
+    // a preferred one, an indexed column. isKeyColumnSuppressed is set when the caller has no factory
+    // that can consume a key intrinsic - a multi-column or non-symbol LATEST ON - so the
+    // predicate stays a residual filter instead of being silently dropped.
+    private boolean isColumnPreferredOrIndexedAndKeyColumnAllowed(
+            CharSequence columnName,
+            RecordMetadata m,
+            boolean isKeyColumnSuppressed
+    ) {
+        return !isKeyColumnSuppressed &&
+                (
+                        Chars.equalsIgnoreCaseNc(columnName, preferredKeyColumn)
+                                || (preferredKeyColumn == null && !noIndex && m.isColumnIndexed(m.getColumnIndex(columnName)))
+                );
     }
 
     private boolean isCorrectType(int type) {

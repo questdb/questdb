@@ -29,7 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
+import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -4880,6 +4882,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "ON t.sym = p.sym AND p.ts >= dateadd('h', -4, t.ts) AND p.ts <= dateadd('h', -2, t.ts) " +
                     "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
             final String expected = sink.toString();
+            assertNonVacuousOracle("both bounds preceding", expected);
 
             for (boolean parallel : new boolean[]{false, true}) {
                 sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
@@ -4888,6 +4891,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
                             "RANGE BETWEEN 4 HOURS PRECEDING AND 2 HOURS PRECEDING EXCLUDE PREVAILING " +
                             "ORDER BY t.sym, t.ts";
+                    assertWindowJoinParallelism(q, parallel);
                     sink.clear();
                     printSql(q, sink);
                     TestUtils.assertEquals("parallel=" + parallel + " slave=" + slave, expected, sink);
@@ -4910,6 +4914,74 @@ public class WindowJoinTest extends AbstractCairoTest {
                 printSql(incl, sink);
                 TestUtils.assertEquals("include prevailing slave=" + slave, single, sink);
             }
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIndexAmortization() throws Exception {
+        // The keyed (fast) factory amortizes the slave index: indexLookaheadHi() prefetches past the
+        // window so following master rows reuse the index, and INDEX_COMPLETE stops rebuilding once
+        // the index spans the rest of the slave. Rows alone cannot pin any of that - a rebuild
+        // re-derives the same index from the same slave rows, so dropping the amortization keeps
+        // every result identical and merely turns the join quadratic. Assert the rebuild count.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Slave: one row per minute over 24 h. Master: one row per minute, starting 4 h in and
+            // running 4 h past the slave's last row, so the master tail exercises INDEX_COMPLETE.
+            execute("INSERT INTO prices SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
+            execute("INSERT INTO trades SELECT 'a', " +
+                    "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(1_440)");
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            // Vectorized cursor. A 4 h window plus the lookahead margin gives a horizon several hours
+            // past the window, so the index is rebuilt a handful of times over 1_440 master rows, and
+            // the master tail past the slave's last row rebuilds nothing at all. Without the margin,
+            // or without INDEX_COMPLETE, this climbs towards one rebuild per master row.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
+                    5
+            );
+
+            // INCLUDE PREVAILING routes to a different cursor carrying its own copy of the rebuild gate.
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW INCLUDE PREVAILING",
+                    5
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoinKeyedIndexAmortizationOverEmptyWindows() throws Exception {
+        // The index scan looks for its first slave row up to the lookahead horizon, not merely up to
+        // the window's own upper bound. That distinction only shows when the window itself is empty:
+        // every master row here sits before the slave's first row, so its 4 h window holds nothing and
+        // aggregates to null. Searching only up to the window's upper bound finds no row, leaves the
+        // index empty, and rebuilds again for the next master row - all 240 of them. Searching up to
+        // the horizon finds the slave's first row, indexes it once, and every later master row reuses
+        // it. Both produce the same 240 null rows, so only the rebuild count can tell them apart.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Master runs 00:00-03:59, the slave only starts at 04:00: every master window is empty.
+            execute("INSERT INTO trades SELECT 'a', " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            execute("INSERT INTO prices SELECT 'a', x, " +
+                    "timestamp_sequence('2024-01-01T04:00:00.000000Z', 60 * 1_000_000L) FROM long_sequence(240)");
+            sqlExecutionContext.setParallelWindowJoinEnabled(false);
+
+            assertIndexRebuildCount(
+                    "SELECT t.ts, sum(p.x) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+                            "RANGE BETWEEN 4 HOURS PRECEDING AND CURRENT ROW EXCLUDE PREVAILING",
+                    1
+            );
         });
     }
 
@@ -4952,15 +5024,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "ON t.sym = p.sym AND p.ts >= dateadd('h', -4, t.ts) AND " + window[1] + " " +
                         "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
                 final String expected = sink.toString();
+                assertNonVacuousOracle(window[0], expected);
 
                 for (boolean parallel : new boolean[]{false, true}) {
                     sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
                     for (String slave : new String[]{"prices", "prices_pq"}) {
-                        sink.clear();
-                        printSql("SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
+                        final String q = "SELECT t.sym, t.ts, sum(p.x) AS a0, count(p.x) AS a1 " +
                                 "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym) " +
                                 window[0] + " EXCLUDE PREVAILING " +
-                                "ORDER BY t.sym, t.ts", sink);
+                                "ORDER BY t.sym, t.ts";
+                        assertWindowJoinParallelism(q, parallel);
+                        sink.clear();
+                        printSql(q, sink);
                         TestUtils.assertEquals(
                                 window[0] + " parallel=" + parallel + " slave=" + slave,
                                 expected,
@@ -5033,15 +5108,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "ON t.sym = p.sym AND " + window[1] + shape[1] + " " +
                             "GROUP BY t.sym, t.ts ORDER BY t.sym, t.ts", sink);
                     final String expected = sink.toString();
+                    assertNonVacuousOracle(window[0] + " " + shape[0], expected);
 
                     final String prefix = window[0] + " " + shape[0] + shape[1];
                     for (String slave : new String[]{"prices", "prices_pq"}) {
                         for (boolean parallel : new boolean[]{false, true}) {
                             sqlExecutionContext.setParallelWindowJoinEnabled(parallel);
-                            sink.clear();
-                            printSql("SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
+                            final String q = "SELECT t.sym, t.ts, " + shape[0] + " AS a0 " +
                                     "FROM trades t WINDOW JOIN " + slave + " p ON (t.sym = p.sym)" + shape[1] + " " +
-                                    window[0] + " EXCLUDE PREVAILING ORDER BY t.sym, t.ts", sink);
+                                    window[0] + " EXCLUDE PREVAILING ORDER BY t.sym, t.ts";
+                            assertWindowJoinParallelism(q, parallel);
+                            sink.clear();
+                            printSql(q, sink);
                             TestUtils.assertEquals(prefix + " parallel=" + parallel + " slave=" + slave, expected, sink);
                         }
 
@@ -5105,10 +5183,22 @@ public class WindowJoinTest extends AbstractCairoTest {
                     sink.clear();
                     printSql(baseQuery, sink);
                     final String expected = sink.toString();
+                    // The baseline is itself a WINDOW JOIN, so this comparison alone is a self-check: the
+                    // bug it pins produces null aggregates, and a break that nulls both arms would pass.
+                    // Pin the baseline absolutely. avg over [ts-120m, ts-30m] is 15.0 for the 12:00 master
+                    // row (prices at 10:30 and 11:00) and 25.0 for the 13:00 one (11:00 and 11:40).
+                    // INCLUDE PREVAILING carries the 11:00 row, which is already in-window, so both
+                    // prevailing modes land on the same rows.
+                    TestUtils.assertEquals(
+                            "baseline drifted (parallel=" + parallel + ", on='" + on + "')",
+                            "sym\ta0\na\t15.0\na\t25.0\n",
+                            expected
+                    );
                     for (String pred : predicates) {
                         final String query = "SELECT t.sym, avg(p.x) AS a0 FROM trades t WINDOW JOIN prices p" + on +
                                 " RANGE BETWEEN 120 MINUTES PRECEDING AND 30 MINUTES PRECEDING" + prevailing +
                                 " WHERE " + pred + " ORDER BY t.sym, a0";
+                        assertWindowJoinParallelism(query, parallel);
                         sink.clear();
                         printSql(query, sink);
                         TestUtils.assertEquals(query + " (parallel=" + parallel + ")", expected, sink);
@@ -5951,11 +6041,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                 sink.clear();
                 printSql(query, sink);
                 final String expected = sink.toString();
-                // Guard against a vacuous comparison: the fixed bug crashes rather than returning
-                // wrong rows, so a zero-row result on both paths would let a regression pass. Require
-                // the single-threaded oracle to carry at least one data row (>= 2 newlines: header + row).
-                Assert.assertTrue("expected non-empty oracle for: " + query,
-                        expected.indexOf('\n') != expected.lastIndexOf('\n'));
+                // Guard against a vacuous comparison: the fixed bug crashes rather than returning wrong
+                // rows, so a result that is empty - or all-null - on both paths would let a regression pass.
+                assertNonVacuousOracle(query, expected);
 
                 sqlExecutionContext.setParallelWindowJoinEnabled(true);
                 sink.clear();
@@ -6039,6 +6127,9 @@ public class WindowJoinTest extends AbstractCairoTest {
                             final String query = queries[i];
                             sqlExecutionContext.setParallelWindowJoinEnabled(false);
                             TestUtils.printSql(compiler, sqlExecutionContext, query, expectedSink);
+                            // The fixed bug throws rather than returning wrong rows, so a result that is
+                            // empty - or all-null - on both paths would let a regression pass.
+                            assertNonVacuousOracle(query, expectedSink.toString());
 
                             sqlExecutionContext.setParallelWindowJoinEnabled(true);
                             TestUtils.printSql(compiler, sqlExecutionContext, query, actualSink);
@@ -7421,6 +7512,68 @@ public class WindowJoinTest extends AbstractCairoTest {
                             sym2	sym2	2023-01-01T09:00:00.000000Z	1
                             """);
         });
+    }
+
+    /**
+     * Drains the query and asserts how many times the keyed WINDOW JOIN rebuilt its slave index.
+     * The index amortization is invisible in the result set - a rebuild re-derives the same index
+     * from the same rows - so this counter is the only thing that can pin it.
+     */
+    /**
+     * Rejects a vacuous differential comparison. A LEFT JOIN oracle emits one row per master row
+     * whether or not the window matched anything, so "the oracle has rows" is not enough on its own:
+     * if the data ever drifted such that no window held a slave row, every aggregate would be null on
+     * both arms and the comparison would assert nothing. Require a data row, and a row whose
+     * aggregates are not all null.
+     */
+    private static void assertNonVacuousOracle(String context, String oracle) {
+        final int header = oracle.indexOf('\n');
+        Assert.assertTrue("expected a non-empty oracle for: " + context, header != oracle.lastIndexOf('\n'));
+        boolean hasAggregate = false;
+        for (String row : oracle.substring(header + 1).split("\n")) {
+            if (!row.isEmpty() && !row.contains("\tnull")) {
+                hasAggregate = true;
+                break;
+            }
+        }
+        Assert.assertTrue("expected at least one non-null aggregate in the oracle for: " + context, hasAggregate);
+    }
+
+    /**
+     * Pins that the parallel knob actually routed the query to the async window-join factory - and that
+     * the serial arm did not. Without this, a future gate change could silently degenerate a
+     * single-threaded-vs-parallel differential into comparing one path against itself.
+     * <p>
+     * "Async Window Join" / "Async Window Fast Join" are the async plan types; their single-threaded
+     * siblings render as "Window Join" / "Window Fast Join", which are substrings of the async ones -
+     * so the serial arm asserts the absence of the "Async " prefix rather than the presence of its own.
+     */
+    private void assertWindowJoinParallelism(String query, boolean parallel) throws Exception {
+        if (parallel) {
+            assertQuery(query).noLeakCheck().assertsPlanContaining("Async Window ");
+        } else {
+            assertQuery(query).noLeakCheck().assertsPlanNotContaining("Async Window ");
+        }
+    }
+
+    private void assertIndexRebuildCount(String select, long expectedRebuilds) throws SqlException {
+        try (RecordCursorFactory factory = select(select)) {
+            RecordCursorFactory base = factory instanceof QueryProgress ? ((QueryProgress) factory).getBaseFactory() : factory;
+            Assert.assertTrue(
+                    "expected the keyed fast WINDOW JOIN factory, got " + base.getClass().getSimpleName(),
+                    base instanceof WindowJoinFastRecordCursorFactory
+            );
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+            }
+            Assert.assertEquals(
+                    "slave index rebuilds",
+                    expectedRebuilds,
+                    ((WindowJoinFastRecordCursorFactory) base).getIndexRebuildCount()
+            );
+        }
     }
 
     private void assertSkipToAndCalculateSize(String select, int size) throws Exception {

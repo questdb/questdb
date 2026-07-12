@@ -460,11 +460,18 @@ public class WindowJoinTimeFrameHelper {
     // note: recordAt() must be called after making this call!!!
     public boolean nextFrame(long timestampHi) {
         isFrameCursorExhausted = false;
-        if (!advanceTimeFrame()) {
-            return false;
-        }
-        if (timestampHi >= scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale)) {
-            return timeFrameCursor.open() > 0;
+        while (advanceTimeFrame()) {
+            if (timestampHi < scaleTimestamp(timeFrame.getTimestampEstimateLo(), scale)) {
+                // The frame opens past the horizon: there is more data, just none this scan wants.
+                return false;
+            }
+            if (timeFrameCursor.open() > 0) {
+                return true;
+            }
+            // Step over an empty frame rather than end the scan on it, the way findRowLo() does.
+            // No TimeFrameCursor hands out an empty frame today, so this loop never spins; it keeps
+            // nextFrame() consistent with findRowLo() and every other open() consumer, since ending
+            // the scan here would silently truncate the index and drop window rows past the frame.
         }
         return false;
     }
@@ -479,10 +486,13 @@ public class WindowJoinTimeFrameHelper {
 
     // note: recordAt() must be called after making this call!!!
     public boolean previousFrame() {
-        if (!timeFrameCursor.prev()) {
-            return false;
+        while (timeFrameCursor.prev()) {
+            if (timeFrameCursor.open() > 0) {
+                return true;
+            }
+            // Step over an empty frame, as nextFrame() does.
         }
-        return timeFrameCursor.open() > 0;
+        return false;
     }
 
     public void recordAt(long rowId) {

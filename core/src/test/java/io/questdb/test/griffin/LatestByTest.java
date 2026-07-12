@@ -370,15 +370,14 @@ public class LatestByTest extends AbstractCairoTest {
                         "sym NOT IN ('a')",
                 }) {
                     String suffix = " WHERE " + pred + " LATEST ON ts PARTITION BY c1 ORDER BY c1, sym";
-                    StringSink expected = new StringSink();
-                    StringSink actual = new StringSink();
-                    printSql("SELECT sym, c1 FROM t_plain" + suffix, expected);
-                    printSql("SELECT sym, c1 FROM t_idx" + suffix, actual);
-                    org.junit.Assert.assertEquals(
-                            "predicate=[" + pred + "] index=[" + indexDdl + "]",
-                            expected.toString(),
-                            actual.toString()
-                    );
+                    try {
+                        assertSqlCursors(
+                                "SELECT sym, c1 FROM t_plain" + suffix,
+                                "SELECT sym, c1 FROM t_idx" + suffix
+                        );
+                    } catch (AssertionError e) {
+                        throw new AssertionError("predicate=[" + pred + "] index=[" + indexDdl + "]", e);
+                    }
                 }
 
                 // The indexed table must compute the same latest-by rows as the full scan does;
@@ -755,8 +754,12 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByOverGenerateSeriesDescending() throws Exception {
-        // A negative step makes the base scan descend, so the cursor must compare timestamps
-        // rather than trust the scan order.
+        // A negative step makes the base scan descend. A table-function leaf has no nested model, so
+        // generateLatestBy() has no ORDER BY to inspect and must leave orderedByTimestampAsc unset: the
+        // cursor then stores and compares timestamps instead of trusting the scan order. The rows alone
+        // cannot prove that - PARTITION BY generate_series keys on the timestamp itself, so every key
+        // holds exactly one row and both map builds agree - hence the plan assertion, which goes red the
+        // moment the nested == null path starts claiming ascending order.
         assertMemoryLeak(() -> assertQuery(
                 """
                         SELECT * FROM generate_series(
@@ -764,7 +767,7 @@ public class LatestByTest extends AbstractCairoTest {
                           '2021-01-01T00:00:00.000000Z'::timestamp,
                           -1_000_000L)
                         LATEST ON generate_series PARTITION BY generate_series"""
-        ).expectSize().returns("""
+        ).expectSize().withPlanContaining("LatestBy light order_by_timestamp: false").returns("""
                 generate_series
                 2021-01-01T00:00:03.000000Z
                 2021-01-01T00:00:02.000000Z
@@ -819,11 +822,7 @@ public class LatestByTest extends AbstractCairoTest {
             assertQuery(bind).expectSize().returns("r0\tr1\na\t7\nb\t8\n");
 
             // The residual-filter form must match the equivalent no-filter form.
-            StringSink expected = new StringSink();
-            StringSink actual = new StringSink();
-            printSql(noFilter, expected);
-            printSql(bind, actual);
-            Assert.assertEquals(expected.toString(), actual.toString());
+            assertSqlCursors(noFilter, bind);
         });
     }
 

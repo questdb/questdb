@@ -81,7 +81,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         super(metadata, joinContext, masterFactory, slaveFactory);
         Map joinKeyMapA = null;
         Map joinKeyMapB = null;
-        boolean cursorOwnsMaps = false;
+        boolean isCursorOwningMaps = false;
         try {
             this.masterKeySink = masterKeySink;
             this.slaveKeySink = slaveKeySink;
@@ -104,12 +104,8 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     slaveWrappedOverMaster,
                     columnIndex
             );
-            // From here on the cursor owns the maps. Its close() frees them only once of() has set
-            // isOpen=true; before that it is a no-op. Safe only because the maps use openOnInit=false
-            // and hold no native backing until of() calls reopen(), so this pre-of() window has
-            // nothing to leak. Switching these maps to openOnInit=true would require close() to free
-            // them unconditionally, or this path leaks.
-            cursorOwnsMaps = true;
+            // From here on the cursor owns the maps and its close() frees them.
+            isCursorOwningMaps = true;
             this.slaveColumnIndex = columnIndex;
             this.toleranceInterval = toleranceInterval;
             this.slaveValueTimestampIndex = slaveValueTimestampIndex;
@@ -117,7 +113,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         } catch (Throwable th) {
             // If a map allocation or the cursor constructor throws before the cursor takes ownership,
             // close() cannot reach the maps, so free them here.
-            if (!cursorOwnsMaps) {
+            if (!isCursorOwningMaps) {
                 Misc.free(joinKeyMapA);
                 Misc.free(joinKeyMapB);
             }
@@ -221,12 +217,15 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
         @Override
         public void close() {
+            // Free the maps regardless of isOpen. Map.close() is idempotent, so this costs nothing when
+            // of() never ran, and it keeps the factory leak-free no matter which openOnInit the maps use.
+            // The factory can be closed without ever handing out a cursor - EXPLAIN does exactly that.
+            joinKeyMapA.close();
+            if (joinKeyMapB != null) {
+                joinKeyMapB.close();
+            }
             if (isOpen) {
                 isOpen = false;
-                joinKeyMapA.close();
-                if (joinKeyMapB != null) {
-                    joinKeyMapB.close();
-                }
                 super.close();
             }
         }

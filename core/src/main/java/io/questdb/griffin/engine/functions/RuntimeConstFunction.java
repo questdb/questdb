@@ -490,9 +490,8 @@ public interface RuntimeConstFunction extends UnaryFunction {
             // wraps to -103911424 under getInt() yet widens to 142857142857 under getLong(), whose low
             // 32 bits (1123222089) are a different number. So the widened value cannot be derived from
             // the cached int and init() reads both getters, evaluating the runtime-constant subtree
-            // twice. That is two evaluations per cursor, and it keeps every field read-only outside
-            // init(): the wrapper stays thread-safe, so parallel filters and GROUP BYs share one
-            // instance instead of recompiling the whole expression once per worker. NULL flows through
+            // twice - two evaluations per cursor, which keeps both fields read-only outside init() and
+            // so preserves the thread-safety the interface javadoc relies on. NULL flows through
             // unchanged: getInt() yields INT_NULL and getLong() yields LONG_NULL.
             value = arg.getInt(null);
             longValue = arg.getLong(null);
