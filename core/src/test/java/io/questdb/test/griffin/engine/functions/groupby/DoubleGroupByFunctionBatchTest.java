@@ -48,6 +48,13 @@ import org.junit.Test;
 
 public class DoubleGroupByFunctionBatchTest {
     private static final int COLUMN_INDEX = 123;
+    // Stands in for a row whose column is NULL, as a column-top row reads.
+    private static final Record NULL_RECORD = new Record() {
+        @Override
+        public double getDouble(int col) {
+            return Double.NaN;
+        }
+    };
     private long lastAllocated;
     private long lastSize;
 
@@ -455,6 +462,23 @@ public class DoubleGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 2, 2);
 
             Assert.assertEquals(6.6, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
+    public void testLastNotNullDoubleBatchReplacesStoredNull() {
+        LastNotNullDoubleGroupByFunction function = new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // The row-by-row fallback for a frame with column tops calls computeFirst, which
+            // writes through unconditionally - NULL included - leaving a real rowId next to a NULL
+            // value. Frames reach a worker out of order, so a later frame's non-null at a LOWER
+            // rowId must still replace that stored NULL, as computeNext already does.
+            function.computeFirst(value, NULL_RECORD, 100);
+
+            long ptr = allocateDoubles(4.25);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(4.25, function.getDouble(value), 0.0);
         }
     }
 

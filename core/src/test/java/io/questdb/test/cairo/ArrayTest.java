@@ -298,6 +298,19 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAccessConstantNullIndexFreesArrayLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            // A constant NULL index folds the whole access to a NULL constant, which keeps neither
+            // argument, so the factory has to free the array itself. A constant array literal holds
+            // its shape and values in native memory, so dropping that free leaks it.
+            assertQuery("SELECT ARRAY[[1.0, 2], [3.0, 4]][1, NULL::long] x FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\nnull\n");
+        });
+    }
+
+    @Test
     public void testAccessFirstElement1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[])");
@@ -2815,25 +2828,64 @@ public class ArrayTest extends AbstractCairoTest {
         });
     }
 
+
     @Test
     public void testLengthNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], 1), " +
-                    "(NULL, 1)"
+                    "(NULL, 1), " +
+                    "(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], NULL), " +
+                    "(NULL, NULL)"
             );
             // A NULL array carries no shape, so there is no length to report and dim_length() returns
             // NULL. It must not read the shape it does not have.
             assertQuery("SELECT dim_length(arr, 1) len FROM tango")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("len\n3\nnull\n");
+                    .returns("len\n3\nnull\n3\nnull\n");
             // Same, for a non-constant dimension, which takes the other of the two function paths.
+            // A NULL dimension is not an out-of-range dimension: it is the absence of a dimension to
+            // measure, so it returns NULL instead of failing the query. This matches the sibling
+            // array-access function, where arr[NULL] is NULL.
             assertQuery("SELECT dim_length(arr, n) len FROM tango")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("len\n3\nnull\n");
+                    .returns("len\n3\nnull\nnull\nnull\n");
+            // Same, with the dimension NULL at compile time, which takes the constant path.
+            assertQuery("SELECT dim_length(arr, NULL::int) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\nnull\nnull\nnull\n");
+            // The constant path folds to a NULL constant and keeps neither argument, so it must free
+            // the array argument itself. A constant array literal holds native memory, so dropping
+            // that close() leaks it, and assertMemoryLeak() catches it here.
+            assertQuery("SELECT dim_length(ARRAY[[1.0, 2], [3.0, 4]], NULL::int) len FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\n");
+        });
+    }
+
+    @Test
+    public void testLengthReadsShapeWithoutMaterializingArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 2, 3], [4.0, 5, 6]], 1), " +
+                    "(ARRAY[[1.0, 2]], 2), " +
+                    "(NULL, 3)"
+            );
+            // In a filter the function reads straight off the page frame, which is the path that
+            // reads the shape header directly instead of materializing the array.
+            assertQuery("SELECT n FROM tango WHERE dim_length(arr, 2) = 3")
+                    .noLeakCheck()
+                    .returns("n\n1\n");
+            // A NULL array has no shape, so it matches no length.
+            assertQuery("SELECT n FROM tango WHERE dim_length(arr, 1) IS NULL")
+                    .noLeakCheck()
+                    .returns("n\n3\n");
         });
     }
 

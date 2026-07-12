@@ -108,6 +108,11 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     }
 
     @Override
+    public int getArrayDimLen(int columnIndex, int columnType, int dim) {
+        return getArrayDimLen0(columnIndex, dim, getRowIndex(columnIndex));
+    }
+
+    @Override
     public double getArrayDouble1d2d(int columnIndex, int columnType, int idx0, int idx1) {
         return getArrayDouble1d2d0(columnIndex, columnType, idx0, idx1, getRowIndex(columnIndex));
     }

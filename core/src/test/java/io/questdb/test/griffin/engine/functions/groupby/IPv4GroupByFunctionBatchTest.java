@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.groupby.CountIPv4GroupByFunction;
@@ -47,6 +48,13 @@ import org.junit.Test;
 
 public class IPv4GroupByFunctionBatchTest {
     private static final int COLUMN_INDEX = 654;
+    // Stands in for a row whose IPv4 column is NULL, as a column-top row reads.
+    private static final Record NULL_IPv4_RECORD = new Record() {
+        @Override
+        public int getIPv4(int col) {
+            return Numbers.IPv4_NULL;
+        }
+    };
     private long lastAllocated;
     private long lastSize;
 
@@ -214,6 +222,25 @@ public class IPv4GroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 2, 2);
 
             Assert.assertEquals(ipv4("5.6.7.8"), function.getIPv4(value));
+        }
+    }
+
+    @Test
+    public void testLastNotNullIPv4BatchReplacesStoredNull() {
+        GroupByFunction function = newLastNotNullIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // A frame with column tops or type casts falls back to the row-by-row path, whose
+            // computeFirst writes through unconditionally - NULL value included - leaving the
+            // accumulator holding a real rowId next to a NULL value. Frames reach a worker out of
+            // order, so a later frame can carry a non-null at a LOWER rowId, and computeBatch must
+            // still take it: a stored NULL is not a value to keep. computeNext already does this.
+            function.computeFirst(value, NULL_IPv4_RECORD, 100);
+            Assert.assertEquals(Numbers.IPv4_NULL, function.getIPv4(value));
+
+            long ptr = allocateInts(ipv4("10.0.0.7"));
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(ipv4("10.0.0.7"), function.getIPv4(value));
         }
     }
 

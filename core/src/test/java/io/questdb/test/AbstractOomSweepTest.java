@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 /**
@@ -107,6 +108,42 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
         drain(query);
     }
 
+    /**
+     * Sweeps the RSS ceiling across the allocation points of {@code armed}, which runs with the
+     * ceiling already set. {@code beforeArm}, when given, runs at each point with the ceiling down;
+     * a sweep whose setup allocates (dropping a pooled reader, say) needs it, or the setup competes
+     * with the code under test for the fault.
+     * <p>
+     * Asserts both ends of the failing-to-succeeding transition, for the reason
+     * {@link #assertCursorOpenOomSweep} does: an OOM alone only shows the operation allocates, and
+     * a range that never reaches the point where the operation survives its ceiling passes
+     * vacuously.
+     */
+    protected static void assertOomSweep(int slackMax, int slackStep, @Nullable OomSweepStep beforeArm, OomSweepStep armed) throws Exception {
+        boolean hasSeenOom = false;
+        boolean hasRunUnderLimit = false;
+        for (int slack = 0; slack <= slackMax; slack += slackStep) {
+            if (beforeArm != null) {
+                beforeArm.run();
+            }
+            Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+            try {
+                armed.run();
+                hasRunUnderLimit = true;
+            } catch (CairoException e) {
+                Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
+                hasSeenOom = true;
+            } finally {
+                Unsafe.setRssMemLimit(0);
+            }
+        }
+        Assert.assertTrue("the swept operation made no tracked native allocation, so the sweep never "
+                + "faulted the code under test", hasSeenOom);
+        Assert.assertTrue("the sweep never completed the operation under an armed ceiling, so it stopped "
+                + "short of the transition the leak hides in; widen slackMax", hasRunUnderLimit);
+        Unsafe.setRssMemLimit(0);
+    }
+
     protected static void drain(String query) throws Exception {
         try (RecordCursorFactory factory = select(query)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -116,5 +153,10 @@ public abstract class AbstractOomSweepTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    @FunctionalInterface
+    protected interface OomSweepStep {
+        void run() throws Exception;
     }
 }

@@ -63,16 +63,14 @@ public class IPv4GroupByFunctionKeyedBatchTest {
             0x80_00_00_00, Numbers.IPv4_NULL, 0x01_02_03_04, 0xC0_A8_00_01
     };
     // The not-null aggregators need the nulls placed differently from ARG_VALUES. The shared
-    // fixture primes entries from rows {0, 2, 4, 6} at low rowIds and then replays rows
-    // {3, 1, 6, 5} at rowIds 1000+, so every test rowId exceeds every primed rowId. Under
-    // ARG_VALUES no primed entry ends up holding a NULL, and the only branch that separates a
-    // not-null aggregator from its plain base - "overwrite a stored NULL with a later non-null
-    // value" - is therefore never taken, leaving the two indistinguishable.
+    // fixture primes entries from rows {0, 2, 4, 6} and then replays rows {3, 1, 6, 5} at higher
+    // rowIds. Under ARG_VALUES no primed entry ends up holding a NULL, so the branch that
+    // overwrites a stored NULL with a later non-null value is never taken on a primed entry.
     //
-    // Null at row 2 primes entry 1 with (rowId 2, NULL); entry 1's test row 1 is non-null at
-    // rowId 1001, so first_not_null must replace the stored NULL even though 1001 > 2 - a plain
-    // "first" keeps the NULL. Null at row 3 lands on entry 0, primed non-null at rowId 0; a plain
-    // "last" overwrites it because 1003 > 0, while last_not_null must keep the non-null value.
+    // Null at row 2 primes entry 1 with (rowId, NULL); entry 1's test row 1 is non-null at a
+    // higher rowId, so first_not_null must replace the stored NULL - a plain "first" keeps it.
+    // Null at row 3 lands on entry 0, primed non-null; a plain "last" overwrites it with the NULL
+    // because the test rowId is higher, while last_not_null must keep the non-null value.
     private static final int[] NOT_NULL_ARG_VALUES = {
             0x0A_00_00_01, 0x7F_00_00_01, Numbers.IPv4_NULL, Numbers.IPv4_NULL,
             0xFF_FF_FF_FF, 0xC0_A8_00_01, 0x80_00_00_00, 0x01_02_03_04

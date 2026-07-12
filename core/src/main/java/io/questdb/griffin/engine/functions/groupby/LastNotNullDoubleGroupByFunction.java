@@ -50,7 +50,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
                 if (!Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getDouble(valueIndex + 1))) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putDouble(valueIndex + 1, value);
                     }

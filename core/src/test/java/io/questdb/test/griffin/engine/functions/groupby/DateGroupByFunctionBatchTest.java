@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.DateColumn;
 import io.questdb.griffin.engine.functions.groupby.FirstDateGroupByFunctionFactory;
@@ -46,6 +47,13 @@ import org.junit.Test;
 
 public class DateGroupByFunctionBatchTest {
     private static final int COLUMN_INDEX = 876;
+    // Stands in for a row whose column is NULL, as a column-top row reads.
+    private static final Record NULL_RECORD = new Record() {
+        @Override
+        public long getDate(int col) {
+            return Numbers.LONG_NULL;
+        }
+    };
     private long lastAllocated;
     private long lastSize;
 
@@ -252,6 +260,7 @@ public class DateGroupByFunctionBatchTest {
         }
     }
 
+
     @Test
     public void testLastNotNullDateBatchAllNulls() {
         LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
@@ -288,6 +297,23 @@ public class DateGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 3, 0);
 
             Assert.assertEquals(epochDay(1), function.getDate(value));
+        }
+    }
+
+    @Test
+    public void testLastNotNullDateBatchReplacesStoredNull() {
+        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // The row-by-row fallback for a frame with column tops calls computeFirst, which
+            // writes through unconditionally - NULL included - leaving a real rowId next to a NULL
+            // value. Frames reach a worker out of order, so a later frame's non-null at a LOWER
+            // rowId must still replace that stored NULL, as computeNext already does.
+            function.computeFirst(value, NULL_RECORD, 100);
+
+            long ptr = allocateDates(epochDay(2));
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(epochDay(2), function.getDate(value));
         }
     }
 

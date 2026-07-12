@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicIntegerArray;
 
@@ -80,6 +81,23 @@ public class PerWorkerLocks {
             Os.pause();
         }
         throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+    }
+
+    /**
+     * Returns the number of slots currently held. Every acquired slot must be released, so
+     * this is zero whenever no worker is inside a locked section. A non-zero count once all
+     * workers are done means a slot leaked: there is no reset, so a leaked slot is lost for
+     * the lifetime of the owning atom, and the pool eventually starves.
+     */
+    @TestOnly
+    public int getAcquiredSlotCount() {
+        int count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            if (locks.get(INTS_PER_SLOT * i) != 0) {
+                count++;
+            }
+        }
+        return count;
     }
 
     public void releaseSlot(int slot) {

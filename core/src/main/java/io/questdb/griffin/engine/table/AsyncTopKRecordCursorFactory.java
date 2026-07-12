@@ -61,6 +61,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -130,6 +131,15 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             close();
             throw th;
         }
+    }
+
+    /**
+     * Returns the number of per-worker slots the atom currently holds. The atom outlives every
+     * execution of this factory, so a slot leaked by a failing reducer is never recovered.
+     */
+    @TestOnly
+    public int getAcquiredSlotCount() {
+        return frameSequence.getAtom().getAcquiredSlotCount();
     }
 
     @Override
@@ -213,19 +223,21 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-
-        record.init(frameMemory);
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
+        // navigateTo() can throw, so it must sit inside the try that releases the slot: the locks
+        // have no reset and the atom outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);

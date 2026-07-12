@@ -50,7 +50,7 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
                 if (!Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putFloat(valueIndex + 1, value);
                     }

@@ -51,7 +51,7 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
                 if (value != CharConstant.ZERO.getChar(null)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getChar(valueIndex + 1) == CharConstant.ZERO.getChar(null)) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putChar(valueIndex + 1, value);
                     }

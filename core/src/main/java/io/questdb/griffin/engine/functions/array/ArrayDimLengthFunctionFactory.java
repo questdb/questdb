@@ -38,6 +38,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -65,6 +67,15 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         if (dimArg.isConstant()) {
             final int dim = dimArg.getInt(null);
             dimArg.close();
+            if (dim == Numbers.INT_NULL) {
+                // A NULL dimension is not an out-of-bounds dimension: there is no dimension to
+                // measure, so the length is NULL. This mirrors the array access function, where
+                // arr[NULL] is NULL rather than an error. Neither arg survives into the constant,
+                // so this branch owns both of them. arrayArg may be a constant array literal holding
+                // native memory, so failing to close it leaks.
+                arrayArg.close();
+                return IntConstant.NULL;
+            }
             if (dim < 1 || dim > ColumnType.ARRAY_NDIMS_LIMIT) {
                 throw SqlException.position(dimArgPos).put("array dimension out of bounds [dim=").put(dim).put(']');
             }
@@ -73,13 +84,29 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         return new Func(arrayArg, dimArg, dimArgPos);
     }
 
+    /**
+     * Returns the column index when the argument reads a plain array column, so the function can take
+     * the dimension length straight out of the shape header: materializing the array loads its shape,
+     * resets its strides and builds a flat view, and all of that is thrown away to return one int.
+     * Returns -1 for any other argument, which then takes the {@code ArrayView} route. Unwraps the
+     * memoizer the code generator adds around a column an alias references more than once.
+     */
+    private static int arrayColumnIndex(Function arrayArg) {
+        final ColumnFunction cf = ColumnFunction.unwrap(arrayArg);
+        return cf != null ? cf.getColumnIndex() : -1;
+    }
+
     private static class ConstFunc extends IntFunction implements UnaryFunction {
         private final Function arrayArg;
+        private final int arrayColumnIndex;
+        private final int arrayColumnType;
         private final int dim;
         private final int dimArgPos;
 
         public ConstFunc(Function arrayArg, int dim, int dimArgPos) {
             this.arrayArg = arrayArg;
+            this.arrayColumnIndex = arrayColumnIndex(arrayArg);
+            this.arrayColumnType = arrayArg.getType();
             this.dim = dim;
             this.dimArgPos = dimArgPos;
         }
@@ -91,6 +118,10 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
+            // init() has already checked dim against the column's dimensionality.
+            if (arrayColumnIndex >= 0) {
+                return rec.getArrayDimLen(arrayColumnIndex, arrayColumnType, dim);
+            }
             ArrayView array = arrayArg.getArray(rec);
             if (array.isNull()) {
                 return Numbers.INT_NULL;
@@ -121,20 +152,28 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
 
     private static class Func extends IntFunction implements BinaryFunction {
         private final Function arrayArg;
+        private final int arrayColumnIndex;
+        private final int arrayColumnType;
         private final Function dimArg;
         private final int dimArgPos;
         private int dims;
 
         public Func(Function arrayArg, Function dimArg, int dimArgPos) {
             this.arrayArg = arrayArg;
+            this.arrayColumnIndex = arrayColumnIndex(arrayArg);
+            this.arrayColumnType = arrayArg.getType();
             this.dimArg = dimArg;
             this.dimArgPos = dimArgPos;
         }
 
         @Override
         public int getInt(Record rec) {
-            ArrayView array = arrayArg.getArray(rec);
+            // Read the dimension before touching the array: a NULL or out-of-bounds dimension needs
+            // no array at all.
             int dim = dimArg.getInt(rec);
+            if (dim == Numbers.INT_NULL) {
+                return Numbers.INT_NULL;
+            }
             if (dim < 1 || dim > dims) {
                 throw CairoException.nonCritical()
                         .position(dimArgPos)
@@ -144,6 +183,10 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
                         .put(dims)
                         .put(']');
             }
+            if (arrayColumnIndex >= 0) {
+                return rec.getArrayDimLen(arrayColumnIndex, arrayColumnType, dim);
+            }
+            ArrayView array = arrayArg.getArray(rec);
             if (array.isNull()) {
                 return Numbers.INT_NULL;
             }

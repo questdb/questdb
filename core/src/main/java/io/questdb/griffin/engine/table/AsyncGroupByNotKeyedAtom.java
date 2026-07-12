@@ -52,6 +52,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -210,6 +211,15 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
             }
         }
         Misc.free(filterCtx);
+    }
+
+    /**
+     * Returns the number of per-worker slots currently held. Zero once a query has finished;
+     * anything else means a reducer leaked a slot and the atom has permanently lost capacity.
+     */
+    @TestOnly
+    public int getAcquiredSlotCount() {
+        return perWorkerLocks.getAcquiredSlotCount();
     }
 
     public int[] getBatchColumnIndexes() {

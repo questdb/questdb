@@ -49,7 +49,7 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
                 if (value != Numbers.INT_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putInt(valueIndex + 1, value);
                     }

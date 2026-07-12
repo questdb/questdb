@@ -1541,15 +1541,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -1557,7 +1548,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
+        // outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -1691,15 +1695,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -1707,7 +1702,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
+        // outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -1871,15 +1879,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -1887,7 +1886,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
+        // outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -2048,15 +2060,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -2064,7 +2067,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
+        // outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -2312,15 +2328,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -2328,7 +2335,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
+        // outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -2470,15 +2490,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -2486,7 +2497,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
+        // outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -2627,15 +2651,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -2643,7 +2658,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
+        // outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -2773,15 +2801,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-        final PageFrameMemory frameMemory;
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -2789,7 +2808,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
+        // outlives the query, so a leaked slot starves the pool.
         try {
+            final PageFrameMemory frameMemory;
+            final boolean isParquetFrame = task.isParquetFrame();
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame);
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {

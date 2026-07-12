@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
 import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
@@ -52,6 +53,28 @@ import org.junit.Test;
 
 public class GeoHashGroupByFunctionBatchTest {
     private static final int COLUMN_INDEX = 543;
+    // Stands in for a row whose geohash column is NULL, as a column-top row reads.
+    private static final Record NULL_GEO_RECORD = new Record() {
+        @Override
+        public byte getGeoByte(int col) {
+            return GeoHashes.BYTE_NULL;
+        }
+
+        @Override
+        public int getGeoInt(int col) {
+            return GeoHashes.INT_NULL;
+        }
+
+        @Override
+        public long getGeoLong(int col) {
+            return GeoHashes.NULL;
+        }
+
+        @Override
+        public short getGeoShort(int col) {
+            return GeoHashes.SHORT_NULL;
+        }
+    };
     private long lastAllocated;
     private long lastSize;
 
@@ -349,6 +372,23 @@ public class GeoHashGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullGeoHashBatchByteReplacesStoredNull() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
+        GroupByFunction function = newLastNotNullGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
+        try (SimpleMapValue value = prepare(function)) {
+            // computeFirst writes through unconditionally on the row-by-row fallback, so the
+            // accumulator can hold a real rowId next to a NULL value. A later frame's non-null at a
+            // LOWER rowId must still replace that stored NULL, as computeNext already does.
+            function.computeFirst(value, NULL_GEO_RECORD, 100);
+
+            long ptr = allocateBytes((byte) 7);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(7, function.getGeoByte(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullGeoHashBatchInt() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOINT_MAX_BITS);
         GroupByFunction function = newLastNotNullGeoHashFunction(GeoIntColumn.newInstance(COLUMN_INDEX, type));
@@ -381,6 +421,20 @@ public class GeoHashGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullGeoHashBatchIntReplacesStoredNull() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOINT_MAX_BITS);
+        GroupByFunction function = newLastNotNullGeoHashFunction(GeoIntColumn.newInstance(COLUMN_INDEX, type));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, NULL_GEO_RECORD, 100);
+
+            long ptr = allocateInts(7);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(7, function.getGeoInt(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullGeoHashBatchLong() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOLONG_MAX_BITS);
         GroupByFunction function = newLastNotNullGeoHashFunction(GeoLongColumn.newInstance(COLUMN_INDEX, type));
@@ -392,6 +446,34 @@ public class GeoHashGroupByFunctionBatchTest {
 
             Assert.assertEquals(5L, function.getGeoLong(value));
             Assert.assertTrue(function.supportsBatchComputation());
+        }
+    }
+
+    @Test
+    public void testLastNotNullGeoHashBatchLongReplacesStoredNull() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOLONG_MAX_BITS);
+        GroupByFunction function = newLastNotNullGeoHashFunction(GeoLongColumn.newInstance(COLUMN_INDEX, type));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, NULL_GEO_RECORD, 100);
+
+            long ptr = allocateLongs(7);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(7, function.getGeoLong(value));
+        }
+    }
+
+    @Test
+    public void testLastNotNullGeoHashBatchShortReplacesStoredNull() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOSHORT_MAX_BITS);
+        GroupByFunction function = newLastNotNullGeoHashFunction(GeoShortColumn.newInstance(COLUMN_INDEX, type));
+        try (SimpleMapValue value = prepare(function)) {
+            function.computeFirst(value, NULL_GEO_RECORD, 100);
+
+            long ptr = allocateShorts((short) 7);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(7, function.getGeoShort(value));
         }
     }
 

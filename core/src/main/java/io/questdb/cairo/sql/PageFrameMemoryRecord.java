@@ -247,6 +247,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     @Override
+    public int getArrayDimLen(int columnIndex, int columnType, int dim) {
+        return getArrayDimLen0(columnIndex, dim, rowIndex);
+    }
+
+    @Override
     public double getArrayDouble1d2d(int columnIndex, int columnType, int idx0, int idx1) {
         return getArrayDouble1d2d0(columnIndex, columnType, idx0, idx1, rowIndex);
     }
@@ -1399,6 +1404,25 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         }
         bsViews.extendAndSet(columnIndex, view = new DirectByteSequenceView());
         return view;
+    }
+
+    /**
+     * Reads one int out of the array's shape header, which sits at the start of the array's data
+     * and holds one int per dimension. Resolves the column the same way {@link #getArray} does, so
+     * a column top or a NULL entry reads as NULL rather than as a length.
+     */
+    protected int getArrayDimLen0(int columnIndex, int dim, long rowIdx) {
+        final long auxAddr = auxPageAddresses.get(columnOffset + columnIndex);
+        if (auxAddr == 0) {
+            return Numbers.INT_NULL;
+        }
+        final long auxEntryAddr = auxAddr + ArrayTypeDriver.getAuxVectorOffsetStatic(rowIdx);
+        if (Unsafe.getInt(auxEntryAddr + Long.BYTES) == 0) {
+            return Numbers.INT_NULL;
+        }
+        final long dataOffset = Unsafe.getLong(auxEntryAddr) & ArrayTypeDriver.OFFSET_MAX;
+        final long dataAddr = pageAddresses.get(columnOffset + columnIndex);
+        return Unsafe.getInt(dataAddr + dataOffset + (long) (dim - 1) * Integer.BYTES);
     }
 
     protected double getArrayDouble1d2d0(int columnIndex, int columnType, int idx0, int idx1, long rowIdx) {

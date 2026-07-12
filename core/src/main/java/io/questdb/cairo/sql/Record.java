@@ -69,6 +69,27 @@ public interface Record {
     }
 
     /**
+     * Reads the length of one dimension of an array column, without materializing the array.
+     * Returns {@link Numbers#INT_NULL} when the array is null.
+     * <p>
+     * The default implementation is just for convenience, it does not implement the main
+     * optimization. That lives in {@link PageFrameMemoryRecord#getArrayDimLen}, which reads the
+     * shape header directly and bypasses the {@link ArrayView} setup.
+     *
+     * @param col        column index
+     * @param columnType encoded array column type
+     * @param dim        1-based dimension; the caller must have validated it against the column's
+     *                   dimensionality
+     */
+    default int getArrayDimLen(int col, int columnType, int dim) {
+        ArrayView array = getArray(col, columnType);
+        if (array.isNull()) {
+            return Numbers.INT_NULL;
+        }
+        return array.getDimLen(dim - 1);
+    }
+
+    /**
      * Reads a single {@code double} from a 1D or 2D array column at the given
      * 0-based indices. Returns {@link Double#NaN} when the array is null or an
      * index is out of bounds.

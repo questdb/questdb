@@ -24,15 +24,13 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractOomSweepTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -48,7 +46,7 @@ import org.junit.Test;
  * this as a small {@code NATIVE_INDEX_READER} leak when reading through a posting
  * index.
  */
-public class PostingIndexReaderOomTest extends AbstractCairoTest {
+public class PostingIndexReaderOomTest extends AbstractOomSweepTest {
 
     @Test
     public void testReaderConstructionCleansUpOnOom() throws Exception {
@@ -63,29 +61,15 @@ public class PostingIndexReaderOomTest extends AbstractCairoTest {
             final StringSink expected = new StringSink();
             drain(query, expected);
 
-            boolean sawOom = false;
-            // Sweep the native-memory ceiling so it lands inside posting index
-            // reader construction. releaseInactive() before each run drops the
-            // pooled reader so it rebuilds and the fault can land in the
-            // PostingGenLookup buffer allocations.
+            // Sweep the native-memory ceiling so it lands inside posting index reader
+            // construction. releaseInactive() drops the pooled reader so it rebuilds and the
+            // fault can land in the PostingGenLookup buffer allocations; it runs before the
+            // ceiling goes up, or its own allocations would compete for the fault.
             final StringSink scratch = new StringSink();
-            for (int slack = 0; slack <= 48 * 1024; slack += 64) {
-                engine.releaseInactive();
-                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
-                try {
-                    drain(query, scratch);
-                } catch (CairoException e) {
-                    Assert.assertTrue("expected an out-of-memory error, got: " + e.getMessage(), e.isOutOfMemory());
-                    sawOom = true;
-                } finally {
-                    Unsafe.setRssMemLimit(0);
-                }
-            }
-            Assert.assertTrue("sweep never tripped the RSS limit; widen the range", sawOom);
+            assertOomSweep(48 * 1024, 64, () -> engine.releaseInactive(), () -> drain(query, scratch));
 
             // Recovery: with no ceiling the query returns the same row. The
             // enclosing assertMemoryLeak is the authoritative net leak check.
-            Unsafe.setRssMemLimit(0);
             engine.releaseInactive();
             final StringSink recovered = new StringSink();
             drain(query, recovered);
@@ -93,6 +77,7 @@ public class PostingIndexReaderOomTest extends AbstractCairoTest {
         });
     }
 
+    // Prints the rows, unlike the base drain(): the recovery check compares the output.
     private static void drain(String query, StringSink out) throws Exception {
         out.clear();
         try (RecordCursorFactory factory = select(query)) {

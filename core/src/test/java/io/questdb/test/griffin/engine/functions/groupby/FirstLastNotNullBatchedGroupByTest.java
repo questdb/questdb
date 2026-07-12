@@ -78,6 +78,11 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
         // this to 1 to force the opposite path.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1_000_000);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        // The four aggregates make a 48-byte value region, so with the default 32-byte cap
+        // MapFactory picks OrderedMap (4 + 48 > 32). The reported bug shape - one INT key and one
+        // not-null aggregate - fits Unordered4Map instead, which has its own probeBatch and
+        // setBatchEmptyValue. Raise the cap so the batched reduce runs against that map as well.
+        setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 64);
         // Small frames, so a key's rows scatter across many frames and every worker map sees both
         // the key's non-null row and its NULL rows.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 64);
@@ -94,14 +99,12 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                 "  CASE WHEN " + LAST_OCCURRENCE + " THEN 42::int END AS vLastInt" +
                 "  FROM long_sequence(" + ROW_COUNT + ")" +
                 ")";
-        final String query = "SELECT count(aLastIPv4) LastIPv4, count(aFirstIPv4) FirstIPv4," +
-                " count(aLastInt) LastInt, count(aFirstInt) FirstInt FROM (" +
-                "SELECT g," +
-                " last_not_null(vFirstIPv4) aLastIPv4," +
-                " first_not_null(vLastIPv4) aFirstIPv4," +
-                " last_not_null(vFirstInt) aLastInt," +
-                " first_not_null(vLastInt) aFirstInt" +
-                " FROM tab)";
+        // The reducer feeds computeKeyedBatch from two callsites: probeBatch for an unfiltered
+        // frame and probeBatchFiltered for a filtered one. "g >= 0" passes every row, so both
+        // queries must produce the same counts, but only the second one reaches the filtered
+        // callsite.
+        final String query = countsOf("");
+        final String filteredQuery = countsOf(" WHERE g >= 0");
 
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 4)) {
@@ -113,16 +116,44 @@ public class FirstLastNotNullBatchedGroupByTest extends AbstractCairoTest {
                             .withCompiler(compiler)
                             .withContext(ctx)
                             .assertsPlanContaining("Async Group By");
+                    // The filter routes the reduce through filterAndAggregate, whose batch comes
+                    // from probeBatchFiltered. The plan node is "Async JIT Group By" when the
+                    // filter compiles and "Async Group By" when it does not; either way the
+                    // filtered callsite is the one that runs.
+                    assertQuery(filteredQuery)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .assertsPlanContaining("Group By workers:", "filter: g>=0");
+                    final String expected = "LastIPv4\tFirstIPv4\tLastInt\tFirstInt\n"
+                            + KEY_COUNT + "\t" + KEY_COUNT + "\t" + KEY_COUNT + "\t" + KEY_COUNT + "\n";
                     assertQuery(query)
                             .noLeakCheck()
                             .withCompiler(compiler)
                             .withContext(ctx)
                             .noRandomAccess()
                             .expectSize()
-                            .returns("LastIPv4\tFirstIPv4\tLastInt\tFirstInt\n"
-                                    + KEY_COUNT + "\t" + KEY_COUNT + "\t" + KEY_COUNT + "\t" + KEY_COUNT + "\n");
+                            .returns(expected);
+                    assertQuery(filteredQuery)
+                            .noLeakCheck()
+                            .withCompiler(compiler)
+                            .withContext(ctx)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expected);
                 }, configuration, LOG);
             }
         });
+    }
+
+    private static String countsOf(String whereClause) {
+        return "SELECT count(aLastIPv4) LastIPv4, count(aFirstIPv4) FirstIPv4," +
+                " count(aLastInt) LastInt, count(aFirstInt) FirstInt FROM (" +
+                "SELECT g," +
+                " last_not_null(vFirstIPv4) aLastIPv4," +
+                " first_not_null(vLastIPv4) aFirstIPv4," +
+                " last_not_null(vFirstInt) aLastInt," +
+                " first_not_null(vLastInt) aFirstInt" +
+                " FROM tab" + whereClause + ")";
     }
 }

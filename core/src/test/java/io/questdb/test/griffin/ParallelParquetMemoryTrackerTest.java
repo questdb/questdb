@@ -28,6 +28,11 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
@@ -178,14 +183,123 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testParallelGroupByOverParquetReleasesWorkerSlotsOnBreach() throws Exception {
+        // A reducer acquires a per-worker slot and only then navigates to the frame, which
+        // decodes it and can breach the per-query limit. The acquire must therefore sit inside
+        // the try that releases the slot. PerWorkerLocks has no reset, and the atom belongs to
+        // the factory rather than the cursor, so a slot leaked on a failed reduce is gone for as
+        // long as the factory stays in the SQL cache. Once every slot has leaked, each later
+        // execution spins in acquireSlot waiting for a slot nobody will release, burning a core
+        // until the circuit breaker trips. Re-executing the same cached factory after a breach is
+        // what makes the leak observable; a single execution hides it, because the first error
+        // cancels the frame sequence.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE tab (s VARCHAR, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO tab SELECT rpad(x::varchar, 256, 'a'), (x * 1_000_000L)::timestamp, x FROM long_sequence(50_000)",
+                                sqlExecutionContext
+                        );
+                        engine.execute("INSERT INTO tab VALUES ('z', '1970-01-02T00:00:00.000000Z', -1)", sqlExecutionContext);
+                        engine.execute("ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '1970-01-01'", sqlExecutionContext);
+                        // One query per reducer that acquires a slot. Every one reads the wide VARCHAR
+                        // column, so the breach lands in the parquet decode inside navigateTo.
+                        // The filters test s, not v: with late materialization navigateTo decodes only
+                        // the filter columns, so a filter on a narrow column would defer the wide
+                        // decode past the acquire and never fault the code under test.
+                        // Keyed, unfiltered and filtered:
+                        assertNoSlotLeak(compiler, sqlExecutionContext,
+                                "SELECT s, count(*) c FROM tab WHERE ts < '1970-01-02' GROUP BY s");
+                        assertNoSlotLeak(compiler, sqlExecutionContext,
+                                "SELECT s, count(*) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' GROUP BY s");
+                        // Not-keyed: count(s) alone is not batch-eligible, so it takes the row-by-row
+                        // reducer; adding a batch-eligible max(v) switches it to the vectorized one,
+                        // which still decodes s and so still breaches in the decode. The filtered
+                        // variant takes the third reducer.
+                        assertNoSlotLeak(compiler, sqlExecutionContext,
+                                "SELECT count(s) c FROM tab WHERE ts < '1970-01-02'");
+                        assertNoSlotLeak(compiler, sqlExecutionContext,
+                                "SELECT max(v) m, count(s) c FROM tab WHERE ts < '1970-01-02'");
+                        assertNoSlotLeak(compiler, sqlExecutionContext,
+                                "SELECT count(s) c FROM tab WHERE ts < '1970-01-02' AND s != 'zzz'");
+                        // The filtered parallel top-K reducer acquires a slot the same way.
+                        assertNoSlotLeak(compiler, sqlExecutionContext,
+                                "SELECT s FROM tab WHERE ts < '1970-01-02' AND s != 'zzz' ORDER BY s LIMIT 5");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private static int acquiredSlots(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        while (f != null) {
+            if (f instanceof AsyncGroupByRecordCursorFactory keyed) {
+                return keyed.getAcquiredSlotCount();
+            }
+            if (f instanceof AsyncGroupByNotKeyedRecordCursorFactory notKeyed) {
+                return notKeyed.getAcquiredSlotCount();
+            }
+            if (f instanceof AsyncTopKRecordCursorFactory topK) {
+                return topK.getAcquiredSlotCount();
+            }
+            f = f.getBaseFactory();
+        }
+        Assert.fail("expected a parallel GROUP BY or TOP K factory in the tree, but top was " + factory.getClass().getName());
+        return -1;
+    }
+
     private static void assertInTree(RecordCursorFactory factory, Class<?> expected) {
+        findInTree(factory, expected);
+    }
+
+    /**
+     * Compiles the query once and re-executes that single cached factory more times than the pool
+     * has slots. Every execution must breach the per-query limit, and every execution must leave
+     * the atom holding no slots.
+     */
+    private static void assertNoSlotLeak(SqlCompiler compiler, SqlExecutionContext ctx, String query) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+            for (int i = 0; i < 6; i++) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                        // drain until breach
+                    }
+                    Assert.fail("expected per-query memory breach on iteration " + i + " of: " + query);
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+                // The cursor is closed by now, so the frame sequence has been awaited and no worker
+                // is inside a locked section.
+                Assert.assertEquals(
+                        "worker slot leaked after iteration " + i + " of: " + query,
+                        0,
+                        acquiredSlots(factory)
+                );
+            }
+        }
+    }
+
+    private static <T> T findInTree(RecordCursorFactory factory, Class<T> expected) {
         RecordCursorFactory f = factory;
         while (f != null) {
             if (expected.isInstance(f)) {
-                return;
+                return expected.cast(f);
             }
             f = f.getBaseFactory();
         }
         Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getName());
+        return null;
     }
 }

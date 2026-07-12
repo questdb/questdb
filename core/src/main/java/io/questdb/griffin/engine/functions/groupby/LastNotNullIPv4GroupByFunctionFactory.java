@@ -70,7 +70,7 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                     if (value != Numbers.IPv4_NULL) {
                         long rowId = startRowId + offset;
                         long existingRowId = mapValue.getLong(valueIndex);
-                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL) {
+                        if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getIPv4(valueIndex + 1) == Numbers.IPv4_NULL) {
                             mapValue.putLong(valueIndex, rowId);
                             mapValue.putInt(valueIndex + 1, value);
                         }

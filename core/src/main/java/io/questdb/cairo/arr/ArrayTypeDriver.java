@@ -81,9 +81,12 @@ import org.jetbrains.annotations.Nullable;
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
  *     * START ALIGNMENT: the start of each entry in the data vector is aligned at 32 bits.
- *     * Shape: len-prefixed ints
- *         * A list of dimension sizes of the array.
- *         * Starts with a 32-bit length (number of dimensions).
+ *     * Shape: one int per dimension, and nothing else.
+ *         * A list of dimension sizes of the array, in dimension order.
+ *         * There is NO length prefix: the dimension count comes from the column type, so the
+ *           shape of an N-dimensional array is exactly N ints starting at the entry's offset.
+ *           Readers that walk the shape by hand rely on this - see
+ *           {@code PageFrameMemoryRecord.getArrayDimLen0} and {@code getArrayDouble1d2d0}.
  *         * Each dimension size is a 32-bit int, but uses only 27 bits.
  *     * Padding:
  *         * enough padding to satisfy the datatype alignment requirements.
