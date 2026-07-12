@@ -167,6 +167,34 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
+     * Rewrites the columns in {@code descriptor} and raw-copies every other
+     * target-schema column chunk from the source row group. Call
+     * {@link #setTargetSchema(PartitionDescriptor)} before this method.
+     */
+    public void rewriteRowGroupColumns(int rowGroupIndex, PartitionDescriptor descriptor) {
+        final int columnCount = descriptor.getColumnCount();
+        final long rowCount = descriptor.getPartitionRowCount();
+        try {
+            assert ptr != 0;
+            rewriteRowGroupColumns(
+                    ptr,
+                    descriptor.tableName.size(),
+                    descriptor.tableName.ptr(),
+                    rowGroupIndex,
+                    columnCount,
+                    descriptor.getColumnNamesPtr(),
+                    descriptor.getColumnNamesLen(),
+                    descriptor.getColumnDataPtr(),
+                    descriptor.getColumnDataLen(),
+                    descriptor.getTimestampIndex(),
+                    rowCount
+            );
+        } finally {
+            descriptor.clear();
+        }
+    }
+
+    /**
      * Sets the target schema for the output file. Call this after {@link #of}
      * when the table schema differs from the source parquet file schema
      * (e.g., after ADD COLUMN or DROP COLUMN).
@@ -265,18 +293,6 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native long getResultUnusedBytes(long impl);
 
-    private static native void setTargetSchema(
-            long impl,
-            long tableNamePtr,
-            int tableNameLen,
-            int colCount,
-            long colNamesPtr,
-            int colNamesLen,
-            long colDataPtr,
-            long colDataLen,
-            int timestampIndex
-    ) throws CairoException;
-
     private static native void insertRowGroup(
             long impl,
             int tableNameLen,
@@ -289,6 +305,32 @@ public class PartitionUpdater implements QuietCloseable {
             long columnDataSize,
             int timestampIndex,
             long rowCount
+    ) throws CairoException;
+
+    private static native void rewriteRowGroupColumns(
+            long impl,
+            int tableNameLen,
+            long tableNamePtr,
+            int rowGroupIndex,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesSize,
+            long columnDataPtr,
+            long columnDataSize,
+            int timestampIndex,
+            long rowCount
+    ) throws CairoException;
+
+    private static native void setTargetSchema(
+            long impl,
+            long tableNamePtr,
+            int tableNameLen,
+            int colCount,
+            long colNamesPtr,
+            int colNamesLen,
+            long colDataPtr,
+            long colDataLen,
+            int timestampIndex
     ) throws CairoException;
 
     // throws CairoException on error, returns file size

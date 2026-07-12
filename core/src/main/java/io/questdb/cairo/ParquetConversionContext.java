@@ -40,6 +40,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -57,6 +58,7 @@ public class ParquetConversionContext implements Closeable {
     private Decimal128 decimal128Buf;
     private Decimal256 decimal256Buf;
     private Decimal64 decimal64Buf;
+    private int lastDecodedColumnCount;
     private final int memoryTag;
     private IntIntHashMap parquetColIdToIdx;
     private DirectIntList parquetColumns;
@@ -94,6 +96,7 @@ public class ParquetConversionContext implements Closeable {
         activeToDecodeIdx.clear();
         chunkDescriptor.clear();
         convertedPtrs.clear();
+        lastDecodedColumnCount = 0;
         parquetColIdToIdx.clear();
         parquetColumns.clear();
         parquetMetaReader.clear();
@@ -161,6 +164,16 @@ public class ParquetConversionContext implements Closeable {
 
     public Decimal64 getDecimal64Buf() {
         return decimal64Buf;
+    }
+
+    @TestOnly
+    public int getLastDecodedColumnCount() {
+        return lastDecodedColumnCount;
+    }
+
+    @TestOnly
+    public long getLastDecodedRowGroupBytes() {
+        return rowGroupBuffers.sumChunkBytes(0, lastDecodedColumnCount);
     }
 
     public int getMemoryTag() {
@@ -232,6 +245,10 @@ public class ParquetConversionContext implements Closeable {
         if (partitionUpdater != null) {
             partitionUpdater.close();
         }
+    }
+
+    void setLastDecodedColumnCount(int lastDecodedColumnCount) {
+        this.lastDecodedColumnCount = lastDecodedColumnCount;
     }
 
     protected final LongList freeNativePairsAndNull(LongList list) {

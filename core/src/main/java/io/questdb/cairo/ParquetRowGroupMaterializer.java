@@ -53,6 +53,60 @@ final class ParquetRowGroupMaterializer {
             IntList tableToParquetIndex,
             SymbolTableProvider symbolTableProvider
     ) {
+        materialize(
+                context,
+                decoder,
+                partitionUpdater,
+                sourceRowGroupIndex,
+                targetRowGroupIndex,
+                metadata,
+                tableToParquetIndex,
+                symbolTableProvider,
+                false,
+                null,
+                Long.MIN_VALUE
+        );
+    }
+
+    static void materializeChangedColumns(
+            ParquetConversionContext context,
+            ParquetPartitionDecoder decoder,
+            PartitionUpdater partitionUpdater,
+            int sourceRowGroupIndex,
+            TableRecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            IntList tableToParquetIndex,
+            SymbolTableProvider symbolTableProvider
+    ) {
+        materialize(
+                context,
+                decoder,
+                partitionUpdater,
+                sourceRowGroupIndex,
+                sourceRowGroupIndex,
+                metadata,
+                tableToParquetIndex,
+                symbolTableProvider,
+                true,
+                columnVersionReader,
+                partitionTimestamp
+        );
+    }
+
+    private static void materialize(
+            ParquetConversionContext context,
+            ParquetPartitionDecoder decoder,
+            PartitionUpdater partitionUpdater,
+            int sourceRowGroupIndex,
+            int targetRowGroupIndex,
+            TableRecordMetadata metadata,
+            IntList tableToParquetIndex,
+            SymbolTableProvider symbolTableProvider,
+            boolean changedColumnsOnly,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
         final DirectIntList parquetColumns = context.getParquetColumns();
         parquetColumns.clear();
         final int columnCount = metadata.getColumnCount();
@@ -66,6 +120,22 @@ final class ParquetRowGroupMaterializer {
                 continue;
             }
             final int parquetIndex = tableToParquetIndex.getQuick(columnIndex);
+            // The designated timestamp is always physically present from row zero and is not
+            // represented by an ordinary column-version top; the reader's -1 sentinel therefore
+            // means "no override", not an absent/full-top timestamp.
+            final long columnTop = changedColumnsOnly && columnIndex != metadata.getTimestampIndex()
+                    ? columnVersionReader.getColumnTop(partitionTimestamp, metadata.getWriterIndex(columnIndex))
+                    : 0;
+            final boolean materializeColumn = requiresMaterialization(
+                    decoder,
+                    parquetIndex,
+                    columnType,
+                    columnTop,
+                    columnIndex == metadata.getTimestampIndex()
+            );
+            if (changedColumnsOnly && !materializeColumn) {
+                continue;
+            }
             if (parquetIndex >= 0) {
                 parquetColumns.add(parquetIndex);
                 parquetColumns.add(ParquetColumnTypeConverter.chooseDecodeType(decoder, parquetIndex, columnType));
@@ -80,10 +150,17 @@ final class ParquetRowGroupMaterializer {
         assert rowGroupSizeLong <= Integer.MAX_VALUE;
         final int rowGroupSize = (int) rowGroupSizeLong;
         final RowGroupBuffers rowGroupBuffers = context.getRowGroupBuffers();
-        decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, sourceRowGroupIndex, 0, rowGroupSize);
+        context.setLastDecodedColumnCount(decodeColumnCount);
+        if (decodeColumnCount > 0) {
+            decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, sourceRowGroupIndex, 0, rowGroupSize);
+        }
 
         final PartitionDescriptor descriptor = context.getChunkDescriptor();
-        descriptor.of(metadata.getTableToken().getTableName(), rowGroupSize, metadata.getTimestampIndex());
+        descriptor.of(
+                metadata.getTableToken().getTableName(),
+                rowGroupSize,
+                changedColumnsOnly ? -1 : metadata.getTimestampIndex()
+        );
         final LongList ownedBuffers = context.getTmpBufs(activeColumnCount);
         final LongList targetPointers = context.getConvertedPtrs(activeColumnCount);
 
@@ -167,11 +244,37 @@ final class ParquetRowGroupMaterializer {
                     );
                 }
             }
-            partitionUpdater.addRowGroup(targetRowGroupIndex, descriptor);
+            if (changedColumnsOnly) {
+                partitionUpdater.rewriteRowGroupColumns(sourceRowGroupIndex, descriptor);
+            } else {
+                partitionUpdater.addRowGroup(targetRowGroupIndex, descriptor);
+            }
         } finally {
             descriptor.clear();
             context.freeNativePairs(ownedBuffers);
         }
+    }
+
+    private static boolean requiresMaterialization(
+            ParquetPartitionDecoder decoder,
+            int parquetIndex,
+            int targetType,
+            long columnTop,
+            boolean designatedTimestamp
+    ) {
+        if (parquetIndex < 0 || columnTop != 0) {
+            return true;
+        }
+        final int sourceType = decoder.metadata().getColumnType(parquetIndex);
+        if (sourceType != targetType
+                && !(designatedTimestamp && ColumnType.tagOf(sourceType) == ColumnType.tagOf(targetType))) {
+            return true;
+        }
+        // A raw Required page cannot sit under the modern Optional schema for
+        // these no-sentinel types. Re-encode the column while the remaining,
+        // schema-compatible chunks still take the hybrid raw-copy path.
+        return decoder.metadata().getColumnMaxDefLevel(parquetIndex) == 0
+                && (ColumnType.isSymbol(targetType) || ColumnType.isNoNullSentinelFixedType(targetType));
     }
 
     static void setTargetSchema(

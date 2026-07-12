@@ -384,6 +384,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
+    private IntList parquetRewriteColumnIndexes;
+    private SymbolColumnIndexer parquetRewriteIndexer;
+    private byte parquetRewriteIndexerType = IndexType.NONE;
+    private RowGroupBuffers parquetRewriteRowGroupBuffers;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -2721,6 +2725,71 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
+    /**
+     * Carries indexed SYMBOL files into a freshly rewritten parquet partition.
+     * Indexes whose source column top is already zero are hard-linked. Indexes
+     * whose top will be normalized to zero are rebuilt from the rewritten
+     * parquet so their NULL prefix (or all-NULL body) and POSTING sidecars are
+     * physically present before the column-version commit publishes top zero.
+     */
+    public void linkOrRebuildPartitionIndexFilesAfterParquetRewrite(
+            long partitionTimestamp,
+            long oldPartitionNameTxn,
+            long newPartitionNameTxn,
+            long newParquetFileSize
+    ) {
+        if (parquetRewriteColumnIndexes == null) {
+            parquetRewriteColumnIndexes = new IntList();
+        } else {
+            parquetRewriteColumnIndexes.clear();
+        }
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
+        final int srcDirLen = path.size();
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
+        final int dstDirLen = other.size();
+        try {
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop == 0) {
+                    linkColumnIndexFiles(
+                            srcDirLen,
+                            dstDirLen,
+                            metadata.getColumnName(columnIndex),
+                            getColumnNameTxn(partitionTimestamp, columnIndex),
+                            indexType,
+                            partitionTimestamp,
+                            oldPartitionNameTxn
+                    );
+                } else {
+                    // The rewritten parquet materializes every current-schema
+                    // column and normalizeColumnTopsAfterParquetRewrite will set
+                    // this top to zero, including absent (-1), partial and
+                    // full-top (>= partitionSize) source states.
+                    assert columnTop == -1 || columnTop > 0;
+                    parquetRewriteColumnIndexes.add(columnIndex);
+                }
+            }
+
+            if (parquetRewriteColumnIndexes.size() > 0) {
+                rebuildParquetRewriteIndexes(
+                        partitionTimestamp,
+                        newPartitionNameTxn,
+                        newParquetFileSize,
+                        dstDirLen,
+                        parquetRewriteColumnIndexes
+                );
+            }
+        } finally {
+            parquetRewriteColumnIndexes.clear();
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
     }
 
     public void linkPartitionIndexFiles(long partitionTimestamp, long oldPartitionNameTxn, long newPartitionNameTxn) {
@@ -5406,7 +5475,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolColumnIndexer indexer,
             IntList coveringColumnIndices,
             long partitionTimestamp,
-            ObjList<MemoryMARW> covMmaps
+            ObjList<MemoryMARW> covMmaps,
+            boolean normalizeColumnTops
     ) {
         final int coverCount = coveringColumnIndices.size();
         coveringAddrs.setPos(coverCount);
@@ -5434,7 +5504,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
             coveringAddrs.setQuick(slot, dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
             coveringAuxAddrs.setQuick(slot, auxMem != null && auxMem.isOpen() ? auxMem.addressOf(0) : 0);
-            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringTops.add(normalizeColumnTops ? 0 : columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covCol);
             coveringTypes.add(covType);
@@ -6650,6 +6720,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // parquetMetaReader is a flyweight: it never owns its mmap, so
         // clear() (release native handle, zero state) is the right cleanup.
         parquetMetaReader.clear();
+        Misc.free(parquetRewriteIndexer);
+        Misc.free(parquetRewriteRowGroupBuffers);
         Misc.free(parquetBloomFilterIndexes);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
@@ -7597,7 +7669,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int plen,
             long timestamp,
             RowGroupBuffers rowGroupBuffers,
-            boolean allowDestructiveRecovery
+            boolean allowDestructiveRecovery,
+            boolean normalizeColumnTops,
+            long partitionNameTxn
     ) {
         final ParquetMetaFileReader parquetMetadata = parquetDecoder.metadata();
 
@@ -7617,7 +7691,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // branch returns early on ff.exists, never resetting it).
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, allowDestructiveRecovery);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
-        final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
+        final long columnTop = normalizeColumnTops ? 0 : columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
         // Invariant: on a parquet partition the indexed SYMBOL's columnTop is
         // one of three values. 0 (column has data from row 0):
@@ -7640,7 +7714,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (columnTop > -1 && partitionSize > columnTop) {
             indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-            indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
+            indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, partitionNameTxn);
             indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1);
             // Discard any existing chain generations before re-adding from the
             // parquet. On a fresh ADD INDEX this is a no-op (empty chain); on an
@@ -7677,7 +7751,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasCovering) {
                     includedCoveredCount = prepareCoveredColumnMmaps(
                             coveringColumnIndices, timestamp, plen,
-                            parquetMetadata, partitionSize, covSlotMeta, covMmaps);
+                            parquetMetadata, partitionSize, covSlotMeta, covMmaps,
+                            normalizeColumnTops);
                 }
 
                 long rowCount = 0;
@@ -7731,7 +7806,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasCovering) {
                     configureCoveringFromMmaps(
                             indexer, coveringColumnIndices, timestamp,
-                            covMmaps);
+                            covMmaps, normalizeColumnTops);
                 }
 
                 indexWriter.setMaxValue(partitionSize - 1);
@@ -7775,7 +7850,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             // Fresh ADD INDEX over a parquet partition indexes a single column and
             // holds no live indexer, so destructive .pk recovery is permitted.
-            indexParquetColumn(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp, rowGroupBuffers, true);
+            indexParquetColumn(
+                    indexer,
+                    columnName,
+                    columnIndex,
+                    columnNameTxn,
+                    indexValueBlockSize,
+                    indexType,
+                    plen,
+                    timestamp,
+                    rowGroupBuffers,
+                    true,
+                    false,
+                    txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp)
+            );
         } finally {
             // Release the decoder's native state before tearing down the mmaps it
             // borrows from. ParquetPartitionDecoder documents a clear-then-munmap
@@ -9409,7 +9497,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ParquetMetaFileReader parquetMetadata,
             long partitionSize,
             DirectLongList covSlotMeta,
-            ObjList<MemoryMARW> covMmaps
+            ObjList<MemoryMARW> covMmaps,
+            boolean normalizeColumnTops
     ) {
         final int coverCount = coveringColumnIndices.size();
         int includedCount = 0;
@@ -9426,7 +9515,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
             final long coveredColTop = columnVersionWriter.getColumnTop(partitionTimestamp, tableColIdx);
-            if (coveredColTop >= partitionSize) {
+            if (!normalizeColumnTops && coveredColTop >= partitionSize) {
                 covSlotMeta.add(-1L);
                 covSlotMeta.add(0L);
                 covSlotMeta.add(0L);
@@ -12183,6 +12272,77 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
+    private void rebuildParquetRewriteIndexes(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long parquetFileSize,
+            int partitionDirLen,
+            IntList columnIndexes
+    ) {
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        setPathForNativePartition(
+                path.trimTo(pathSize),
+                timestampType,
+                partitionBy,
+                partitionTimestamp,
+                partitionNameTxn
+        );
+        assert path.size() == partitionDirLen;
+        try {
+            if (parquetRewriteRowGroupBuffers == null) {
+                parquetRewriteRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER, true);
+            }
+            parquetRewriteRowGroupBuffers.reopen();
+            openParquetMetadataOrThrow(path, partitionDirLen, parquetFileSize);
+            parquetSize = parquetMetaReader.getParquetFileSize();
+            path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
+            parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+                final int columnIndex = columnIndexes.getQuick(i);
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                if (parquetRewriteIndexer == null || parquetRewriteIndexerType != indexType) {
+                    parquetRewriteIndexer = Misc.free(parquetRewriteIndexer);
+                    parquetRewriteIndexer = new SymbolColumnIndexer(configuration, indexType);
+                    parquetRewriteIndexerType = indexType;
+                }
+                try {
+                    indexParquetColumn(
+                            parquetRewriteIndexer,
+                            metadata.getColumnName(columnIndex),
+                            columnIndex,
+                            getColumnNameTxn(partitionTimestamp, columnIndex),
+                            metadata.getIndexValueBlockCapacity(columnIndex),
+                            indexType,
+                            partitionDirLen,
+                            partitionTimestamp,
+                            parquetRewriteRowGroupBuffers,
+                            true,
+                            true,
+                            partitionNameTxn
+                    );
+                } finally {
+                    parquetRewriteIndexer.clear();
+                    path.trimTo(partitionDirLen);
+                }
+            }
+        } finally {
+            Misc.free(parquetRewriteRowGroupBuffers);
+            Misc.free(parquetDecoder);
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathSize);
+        }
+    }
+
     /**
      * Rebuild index files for indexed symbol columns from the data
      * files in {@code other}.  Both the data files (.d) and the newly
@@ -12952,7 +13112,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 plen,
                                 partitionTimestamp,
                                 rowGroupBuffers,
-                                false
+                                false,
+                                false,
+                                partitionNameTxn
                         );
                     } finally {
                         // Drain the rebuild's seal-purge outbox (the .pv/.pc its

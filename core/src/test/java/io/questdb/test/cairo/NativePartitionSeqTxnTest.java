@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -155,6 +156,81 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
                             "2024-01-01T00:00:00.000000Z\t10\n" +
                             "2024-01-01T01:00:00.000000Z\t20\n" +
                             "2024-01-02T00:00:00.000000Z\t30\n");
+        });
+    }
+
+    @Test
+    public void testChangeColumnTypeOnRemoteParquetPartitionFullTopClearsRemote() throws Exception {
+        // A schema-present all-NULL STRING has columnTop == partitionSize. STRING -> SYMBOL
+        // takes the eager parquet-to-native pre-pass, but there are then zero native values for
+        // the normal conversion loop to visit. The pre-pass caller must invalidate REMOTE itself;
+        // otherwise the stale object generation survives forever and suppresses re-upload.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00'), ('2024-01-01T01:00:00')");
+            drainWalQueue();
+            // ADD while day1 is active records a real full top (partitionSize), rather than
+            // writing physical NULL values or leaving the older-partition -1 sentinel.
+            execute("ALTER TABLE t ADD COLUMN x STRING");
+            drainWalQueue();
+            execute("INSERT INTO t (ts, x) VALUES ('2024-01-02T00:00:00', 'active')");
+            drainWalQueue();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            try (TableWriter writer = getWriter("t")) {
+                TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue("day1 must be parquet before the ALTER", tx.isPartitionParquet(0));
+                Assert.assertTrue("day1 must retain a local parquet source", tx.isPartitionParquetGenerated(0));
+                tx.setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+
+            try (TableReader reader = getReader("t")) {
+                final TxReader tx = reader.getTxFile();
+                final int partitionIndex = tx.getPartitionIndex(reader.getMinTimestamp());
+                final long partitionTimestamp = tx.getPartitionTimestampByIndex(partitionIndex);
+                final int xIndex = reader.getMetadata().getColumnIndex("x");
+                final int xWriterIndex = reader.getMetadata().getWriterIndex(xIndex);
+                Assert.assertEquals(
+                        "the reproducer must reach the schema-present full-top branch",
+                        tx.getPartitionSize(partitionIndex),
+                        reader.getColumnVersionReader().getColumnTop(partitionTimestamp, xWriterIndex)
+                );
+                reader.openPartition(partitionIndex);
+                final int parquetXIndex = reader.getAndInitParquetPartitionDecoder(partitionIndex)
+                        .metadata()
+                        .getColumnIndex("x");
+                Assert.assertTrue("native-to-parquet must keep x in the physical schema", parquetXIndex >= 0);
+                Assert.assertEquals(
+                        "the parquet source must still carry the pre-ALTER STRING type",
+                        ColumnType.STRING,
+                        reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().getColumnType(parquetXIndex)
+                );
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN x TYPE SYMBOL");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("t")) {
+                TxReader tx = reader.getTxFile();
+                Assert.assertFalse("the eager pre-pass converts day1 back to native", tx.isPartitionParquet(0));
+                Assert.assertFalse("ALTER must invalidate the stale remote object for a full-top column",
+                        tx.isPartitionRemote(0));
+                Assert.assertFalse("the native result no longer has a staged local parquet",
+                        tx.isPartitionParquetGenerated(0));
+                Assert.assertTrue("the ALTER must leave a real partition version",
+                        tx.getNativePartitionSeqTxn(0) > 0);
+            }
+
+            assertQuery("SELECT * FROM t ORDER BY ts")
+                    .timestamp("ts").expectSize()
+                    .returns("ts\tx\n" +
+                            "2024-01-01T00:00:00.000000Z\t\n" +
+                            "2024-01-01T01:00:00.000000Z\t\n" +
+                            "2024-01-02T00:00:00.000000Z\tactive\n");
         });
     }
 

@@ -2112,6 +2112,7 @@ public final class TableUtils {
             CharSequence candidateParquetFileName,
             CharSequence candidateParquetMetaFileName,
             TableMetadata metadata,
+            ColumnVersionReader columnVersionReader,
             SymbolTableProvider symbolTableProvider,
             CairoConfiguration configuration,
             ParquetConversionContext conversionContext,
@@ -2183,11 +2184,19 @@ public final class TableUtils {
             readerFdOs = Files.detach(readerFd);
             readerFd = -1;
 
+            // JNI adopts all three detached descriptors before it can fail
+            // (for example while validating compression or parsing the source).
+            // Disown them on the Java side before crossing that ownership
+            // boundary so the finally block cannot close recycled OS fd numbers.
+            final int adoptedReaderFdOs = readerFdOs;
+            final int adoptedWriterFdOs = writerFdOs;
+            final int adoptedParquetMetaFdOs = parquetMetaFdOs;
+            readerFdOs = writerFdOs = parquetMetaFdOs = -1;
             partitionUpdater.of(
                     path.$(),
-                    readerFdOs,
+                    adoptedReaderFdOs,
                     sourceParquetSize,
-                    writerFdOs,
+                    adoptedWriterFdOs,
                     0,
                     timestampIndex,
                     ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
@@ -2197,13 +2206,12 @@ public final class TableUtils {
                     dataPageSize,
                     bloomFilterFpp,
                     minCompressionRatio,
-                    parquetMetaFdOs,
+                    adoptedParquetMetaFdOs,
                     0,
                     0,
                     -1,
                     seqTxn
             );
-            readerFdOs = writerFdOs = parquetMetaFdOs = -1;
 
             final int columnCount = metadata.getColumnCount();
             ParquetRowGroupMaterializer.setTargetSchema(
@@ -2227,13 +2235,14 @@ public final class TableUtils {
             }
 
             for (int rowGroupIndex = 0, rowGroupCount = sourceMeta.getRowGroupCount(); rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                ParquetRowGroupMaterializer.materialize(
+                ParquetRowGroupMaterializer.materializeChangedColumns(
                         conversionContext,
                         decoder,
                         partitionUpdater,
                         rowGroupIndex,
-                        rowGroupIndex,
                         metadata,
+                        columnVersionReader,
+                        partitionTimestamp,
                         tableToParquetIdx,
                         symbolTableProvider
                 );

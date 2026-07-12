@@ -44,6 +44,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
+import io.questdb.std.BoolList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -68,6 +69,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final SOUnboundedCountDownLatch countDownLatch;
     private final FilesFacade ff;
     private final int fileOpenOpts;
+    private final BoolList invalidatedByPrepass = new BoolList();
     private final MessageBus messageBus;
     private final ColumnConversionOffsetSink noopConversionOffsetSink = new ColumnConversionOffsetSink() {
         @Override
@@ -149,6 +151,7 @@ public class ConvertOperatorImpl implements Closeable {
     }
 
     private void clear() {
+        invalidatedByPrepass.clear();
         purgingOperator.clear();
         Misc.free(symbolMapReader);
     }
@@ -240,7 +243,9 @@ public class ConvertOperatorImpl implements Closeable {
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
             boolean hasAnyPartitionConverted = false;
-            for (int pi = 0, pn = tableWriter.getPartitionCount(); pi < pn; pi++) {
+            final int partitionCount = tableWriter.getPartitionCount();
+            invalidatedByPrepass.setAll(partitionCount, false);
+            for (int pi = 0; pi < partitionCount; pi++) {
                 if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
                     continue;
                 }
@@ -261,6 +266,13 @@ public class ConvertOperatorImpl implements Closeable {
                             .$(", targetType=").$(ColumnType.nameOf(newType))
                             .I$();
                     tableWriter.convertPartitionParquetToNative(pts, false);
+                    // The pre-pass above is a format-preserving conversion, so the conversion
+                    // primitive deliberately keeps REMOTE. This caller is not format-only,
+                    // though: ALTER will replace the column under a new writer index. Invalidate
+                    // the old object generation even when the column is full-top and the native
+                    // loop below therefore has zero physical rows to convert.
+                    tableWriter.markPartitionDataChanged(pi);
+                    invalidatedByPrepass.setQuick(pi, true);
                     hasAnyPartitionConverted = true;
                 } else {
                     if (tableWriter.getTxWriter().isPartitionRemote(pi)) {
@@ -357,7 +369,9 @@ public class ConvertOperatorImpl implements Closeable {
                                 // index, so any remote copy is stale: stamp the ALTER's seqTxn and
                                 // clear REMOTE / staged parquet, exactly as the UPDATE path does
                                 // (UpdateOperatorImpl.markPartitionDataChanged).
-                                tableWriter.markPartitionDataChanged(partitionIndex);
+                                if (!invalidatedByPrepass.get(partitionIndex)) {
+                                    tableWriter.markPartitionDataChanged(partitionIndex);
+                                }
                             }
 
                             long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);

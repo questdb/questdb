@@ -99,6 +99,57 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_rewriteRowGroupColumns(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    table_name_len: u32,
+    table_name_ptr: *const u8,
+    row_group_id: jint,
+    col_count: jint,
+    col_names_ptr: *const u8,
+    col_names_len: jint,
+    col_data_ptr: *const i64,
+    col_data_len: jlong,
+    timestamp_index: jint,
+    row_count: jlong,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.rewriteRowGroupColumns");
+        return err.into_cairo_exception().throw(env);
+    }
+    let parquet_updater = unsafe { &mut *updater };
+
+    let mut rewrite = || -> ParquetResult<()> {
+        let partition = create_partition_descriptor(
+            table_name_ptr,
+            table_name_len as i32,
+            col_count,
+            col_names_ptr,
+            col_names_len,
+            col_data_ptr,
+            col_data_len,
+            row_count,
+            timestamp_index,
+        )?;
+        parquet_updater.rewrite_row_group_columns(row_group_id, &partition)
+    };
+
+    match rewrite() {
+        Ok(_) => (),
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not rewrite columns in row group {row_group_id}"
+            ));
+            err.add_context("error in PartitionUpdater.rewriteRowGroupColumns");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroupWithNullColumns(
     mut env: JNIEnv,
     _class: JClass,
