@@ -797,10 +797,10 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // An overflowing constant product (258558 * -259815) nested under a LONG
         // add (c0 + ...) is read at long width by AddLong#getLong, so the Java
         // filter never wraps it. A FLOAT in the predicate suppressed the global
-        // narrow-i64 widening, and isLongTypedConstArith only checks LONG *leaves*,
-        // so the JIT folded the product to a wrapped I4 IMM and diverged (JIT all
-        // rows, Java none). The serializer now tags such fold roots for a full I8
-        // IMM.
+        // narrow-i64 widening, and the old check only looked at LONG *leaves*, so the
+        // JIT folded the product to a wrapped I4 IMM and diverged (JIT all rows, Java
+        // none). markI64WidenFoldRoots / genuineArithType now tag such fold roots for a
+        // full I8 IMM.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (c0 LONG, c8 INT, c9 FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t SELECT rnd_long(-1000000, 1000000, 8), " +

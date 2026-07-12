@@ -118,21 +118,25 @@ public class InLongFunctionFactory implements FunctionFactory {
             switch (argCount) {
                 case 1: {
                     final long v = parseValue(argPositions, args.getQuick(1), 1, isNarrowIntKey);
-                    return new InLongSingleConstFunction(
+                    final Function fn = new InLongSingleConstFunction(
                             args.getQuick(0),
                             v,
                             isIntWidthElement(args.getQuick(1), v, isSplitKey));
+                    freeElements(args);
+                    return fn;
                 }
                 case 2: {
                     final long v0 = parseValue(argPositions, args.getQuick(1), 1, isNarrowIntKey);
                     final long v1 = parseValue(argPositions, args.getQuick(2), 2, isNarrowIntKey);
-                    return new InLongTwoConstFunction(
+                    final Function fn = new InLongTwoConstFunction(
                             args.getQuick(0),
                             v0,
                             v1,
                             isIntWidthElement(args.getQuick(1), v0, isSplitKey),
                             isIntWidthElement(args.getQuick(2), v1, isSplitKey)
                     );
+                    freeElements(args);
+                    return fn;
                 }
                 default:
                     // A split key needs an INT-width set for the elements it wraps against; every
@@ -154,7 +158,9 @@ public class InLongFunctionFactory implements FunctionFactory {
                         if (longVals.size() == 0) {
                             longVals = Misc.free(longVals);
                         }
-                        return new InLongConstFunction(args.getQuick(0), intVals, longVals);
+                        final Function fn = new InLongConstFunction(args.getQuick(0), intVals, longVals);
+                        freeElements(args);
+                        return fn;
                     } catch (Throwable e) {
                         Misc.free(intVals);
                         Misc.free(longVals);
@@ -171,6 +177,21 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         // have to copy, args is mutable
         return new InLongVarFunction(new ObjList<>(args), isNarrowIntKey, isSplitKey);
+    }
+
+    /**
+     * Frees the IN-list element functions (args past index 0). The all-constant forms read every
+     * element into a primitive value or a set and keep only the key function, so nothing else ever
+     * closes the elements: {@link io.questdb.griffin.FunctionParser} frees args on the error path
+     * only, and on the success path the returned function owns what it retains. The elements used to
+     * be leaf constants, but a constant IN element is now an unfolded overflowing arithmetic subtree
+     * (see FunctionParser#functionToConstant0), i.e. a whole function tree to close. The runtime-const
+     * and var forms retain the full arg list and close it themselves.
+     */
+    private static void freeElements(ObjList<Function> args) {
+        for (int i = 1, n = args.size(); i < n; i++) {
+            Misc.free(args.getQuick(i));
+        }
     }
 
     /**

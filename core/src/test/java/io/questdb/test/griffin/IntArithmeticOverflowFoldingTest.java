@@ -232,9 +232,9 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     @Test
     public void testReassociationLongPairWrappingToLongNullWrapsLikeColumnAndLiteral() throws Exception {
         // (longCol + C1) + C2 where the regrouped LONG constant pair (C1 + C2) wraps exactly
-        // onto the LONG_NULL sentinel (-2^63). intConstFold rejects LONG-range / L-suffixed
-        // literals (parseInt throws), so the INT_NULL guard never saw a LONG pair and the
-        // poison slipped through: the column read LONG_NULL while the left-associative literal
+        // onto the LONG_NULL sentinel (-2^63). The INT-width fold rejects LONG-range /
+        // L-suffixed literals (parseInt throws), so integerPairFoldsToNull never saw a LONG pair
+        // and the poison slipped through: the column read LONG_NULL while the left-associative literal
         // kept the real wrapped value. The guard now also folds at LONG width and blocks a pair
         // that lands on LONG_NULL, so both paths agree. (This shape diverged before this PR too;
         // it is the LONG-width sibling of the INT_NULL guard, fixed in the same place.)

@@ -2806,7 +2806,9 @@ public final class WhereClauseParser implements Mutable {
         // The temp interval extraction may have marked predicate sub-nodes as consumed (intrinsicValue
         // TRUE); reset them so collapseIntrinsicNodes keeps the whole reconstructed residual.
         resetIntrinsicMarks(predicate);
-        wrapTimestampLiterals(predicate, unitToken, stride);
+        // The stride is invariant across the subtree, so format it once here rather than once
+        // per wrapped literal down in the recursion.
+        wrapTimestampLiterals(predicate, unitToken, Integer.toString(stride));
         node.copyFrom(predicate);
     }
 
@@ -3182,13 +3184,13 @@ public final class WhereClauseParser implements Mutable {
      * {@code dateadd(unit, stride, child)}; otherwise descends to wrap nested literals. Returns the
      * (possibly replaced) child to store back into the parent slot.
      */
-    private ExpressionNode wrapTimestampLiteral(ExpressionNode child, CharSequence unitToken, int stride) {
+    private ExpressionNode wrapTimestampLiteral(ExpressionNode child, CharSequence unitToken, CharSequence strideToken) {
         if (child == null) {
             return null;
         }
         if (child.type == ExpressionNode.LITERAL) {
             final ExpressionNode strideNode = expressionNodePool.next().of(
-                    ExpressionNode.CONSTANT, Integer.toString(stride), 0, child.position);
+                    ExpressionNode.CONSTANT, strideToken, 0, child.position);
             final ExpressionNode unitNode = expressionNodePool.next().of(
                     ExpressionNode.CONSTANT, unitToken, 0, child.position);
             final ExpressionNode dateadd = expressionNodePool.next().of(
@@ -3200,7 +3202,7 @@ public final class WhereClauseParser implements Mutable {
             dateadd.args.add(unitNode);
             return dateadd;
         }
-        wrapTimestampLiterals(child, unitToken, stride);
+        wrapTimestampLiterals(child, unitToken, strideToken);
         return child;
     }
 
@@ -3210,15 +3212,15 @@ public final class WhereClauseParser implements Mutable {
      * only literals present reference the offset source timestamp column, so wrapping each occurrence
      * faithfully restores the virtual expression {@code tt = dateadd(unit, stride, source_ts)}.
      */
-    private void wrapTimestampLiterals(ExpressionNode node, CharSequence unitToken, int stride) {
+    private void wrapTimestampLiterals(ExpressionNode node, CharSequence unitToken, CharSequence strideToken) {
         if (node == null) {
             return;
         }
-        node.lhs = wrapTimestampLiteral(node.lhs, unitToken, stride);
-        node.rhs = wrapTimestampLiteral(node.rhs, unitToken, stride);
+        node.lhs = wrapTimestampLiteral(node.lhs, unitToken, strideToken);
+        node.rhs = wrapTimestampLiteral(node.rhs, unitToken, strideToken);
         final ObjList<ExpressionNode> args = node.args;
         for (int i = 0, n = args.size(); i < n; i++) {
-            args.setQuick(i, wrapTimestampLiteral(args.getQuick(i), unitToken, stride));
+            args.setQuick(i, wrapTimestampLiteral(args.getQuick(i), unitToken, strideToken));
         }
     }
 

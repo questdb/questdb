@@ -71,8 +71,9 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // DivInt / RemInt are INT-typed and propagate INT_NULL just like + - *, so a
         // constant pair element built with '/' or '%' that folds to the INT_NULL sentinel
         // (-2^31) must keep the pair un-regrouped. The fold used to model only + - * & | ^,
-        // so a '/' or '%' element made intConstFold bail and the guard missed the poison;
-        // it now models '/' and '%' (a zero divisor folds to INT_NULL, like DivInt#getInt).
+        // so a '/' or '%' element made it bail and integerPairFoldsToNull missed the poison;
+        // ExpressionNode#applyIntFold now models '/' and '%' too (a zero divisor folds to
+        // INT_NULL, like DivInt#getInt).
 
         // division: 2147483647 + (2 / 2) = 2147483647 + 1 wraps to -2^31 == INT_NULL
         assertReassociationNoOp("d + 2147483647 + (2 / 2)");
@@ -211,8 +212,9 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // A LONG (or INT+LONG) constant pair whose LONG-width fold lands exactly on the
         // LONG_NULL sentinel (-2^63) must not be regrouped: col op (C1 op C2) = col op
         // LONG_NULL poisons every row to NULL, while the left-associative form keeps the
-        // real wrapped value. intConstFold rejects LONG-range / L-suffixed literals, so the
-        // INT_NULL guard never saw a LONG pair; the guard now also folds at LONG width.
+        // real wrapped value. The INT-width fold rejects LONG-range / L-suffixed literals, so
+        // integerPairFoldsToNull never saw a LONG pair; it now also folds at LONG width via
+        // ExpressionNode#applyLongFold.
 
         // 9223372036854775807 + 1 wraps to -2^63 == LONG_NULL
         assertReassociationNoOp("l + 9223372036854775807 + 1");

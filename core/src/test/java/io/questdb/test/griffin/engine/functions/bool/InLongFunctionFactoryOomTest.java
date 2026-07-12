@@ -36,29 +36,34 @@ import org.junit.Test;
  * releases its native hash sets when a set allocation fails half-way through
  * building the IN-list function.
  * <p>
- * A narrow-integer key needs a second set for the elements the key wraps against,
+ * A split key - a narrow-integer key whose getLong() disagrees with its getInt(), i.e. INT
+ * arithmetic such as {@code i32 * 3} - needs a second set for the elements it wraps against,
  * so both the constant-list path and the runtime-constant constructor allocate two
- * {@code DirectLongHashSet}s. If the second allocation trips the RSS memory limit
- * after the first has already succeeded, the first set must still be freed. The
- * query fuzzer's malloc fault injection surfaces exactly this kind of leak.
+ * {@code DirectLongHashSet}s. If the second allocation trips the RSS memory limit after the
+ * first has already succeeded, the first set must still be freed. The query fuzzer's malloc
+ * fault injection surfaces exactly this kind of leak.
+ * <p>
+ * The key has to be an arithmetic expression: a plain {@code i32} column is width-stable
+ * (isIntWidthStable), so it takes the single-set path and would leave both allocations here
+ * untested.
  */
 public class InLongFunctionFactoryOomTest extends AbstractCairoTest {
 
     @Test
     public void testConstListCleansUpWhenSetAllocationRunsOutOfMemory() throws Exception {
-        // A narrow-int (INT) key with several constant elements builds an INT-width
+        // A split key with both INT-range and LONG-range constant elements builds an INT-width
         // set and a long-width set; a failure on the second must free the first.
-        assertNoLeakOnCompileOom("SELECT * FROM x WHERE i32 IN (10, 20, 30, 40, 50)");
+        assertNoLeakOnCompileOom("SELECT * FROM x WHERE i32 * 3 IN (10, 20, 30, 40, 5_000_000_000)");
     }
 
     @Test
     public void testRuntimeConstCleansUpWhenSetAllocationRunsOutOfMemory() throws Exception {
-        // A narrow-int (INT) key with a runtime-constant (bind variable) element
-        // routes to InLongRuntimeConstFunction, whose constructor allocates both
-        // sets; a failure on the second must free the first.
+        // A split key with an INT constant element and a LONG runtime-constant (bind variable)
+        // element routes to InLongRuntimeConstFunction, whose constructor allocates both sets;
+        // a failure on the second must free the first.
         bindVariableService.clear();
         bindVariableService.setLong(0, 100);
-        assertNoLeakOnCompileOom("SELECT * FROM x WHERE i32 IN (5, $1)");
+        assertNoLeakOnCompileOom("SELECT * FROM x WHERE i32 * 3 IN (5, $1)");
     }
 
     private void assertNoLeakOnCompileOom(String query) throws Exception {
@@ -72,9 +77,14 @@ public class InLongFunctionFactoryOomTest extends AbstractCairoTest {
             }
 
             boolean sawOom = false;
-            // Sweep the native-memory ceiling across the compile allocation points.
-            // Some ceiling lets the first set allocate and trips the second; the
-            // pre-fix code then leaked the first set.
+            // Sweep the native-memory ceiling across the compile allocation points. Some ceiling
+            // lets the first set allocate and trips the second; the pre-fix code then leaked the
+            // first set. Keep the step fine: the window that trips the SECOND allocation is one
+            // set wide (DirectLongHashSet's MIN_CAPACITY of 16 slots = 128 bytes here), and the
+            // ceiling drifts a little per iteration, so a coarse step walks straight over it. A
+            // step of 8 lands in that window ~11 times per sweep; a step of 64 lands in it zero
+            // times and the sweep stops catching the leak it exists to catch. The sweep is cheap
+            // regardless - a warm re-compile is well under a millisecond.
             for (int slack = 0; slack <= 32 * 1024; slack += 8) {
                 Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
                 try (RecordCursorFactory factory = select(query)) {

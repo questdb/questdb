@@ -725,6 +725,13 @@ public class ExpressionNode implements Mutable, Sinkable {
      * divisor folds to LONG_NULL, matching DivLong / RemLong getLong(). Throws
      * {@link NumericException} for an operator outside that set so the LONG-width
      * fold in {@link #cacheConstantFold} bails like a non-constant operand.
+     * <p>
+     * The JIT models the same operator table in {@code CompiledFilterIRSerializer#tryFoldConstantArith},
+     * and the two look like they disagree on division by zero: this one folds to LONG_NULL,
+     * that one throws. They agree observably - the throw means "decline to fold", so the JIT
+     * emits the division as IR instead, and the native int64_div (see impl/x86.h) returns
+     * LONG_NULL for a zero divisor. Keep both arms as they are: neither is a bug to fix by
+     * copying the other.
      */
     private static long applyLongFold(CharSequence opToken, long a, long b) {
         if (a == Numbers.LONG_NULL || b == Numbers.LONG_NULL) {

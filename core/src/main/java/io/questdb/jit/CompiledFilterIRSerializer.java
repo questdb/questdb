@@ -416,10 +416,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // would silently miscompare a sign-extended narrow column against an i64
             // operand. The float-suppressed widen set (i64WidenLeaves) emits SX_I64
             // too, so it forces scalar as well.
-            forceScalarMode |= predicateContext.hasArithmeticOperations
+            forceScalarMode |= (predicateContext.hasArithmeticOperations
                     && (predicateContext.localTypesObserver.maxSize() <= 2
                     || predicateContext.localTypesObserver.hasNarrowInt()
-                    || predicateContext.needsNarrowI64Widening)
+                    || predicateContext.needsNarrowI64Widening))
                     || i64WidenLeaves.size() > 0;
 
             // Then backfill constants and symbol bind variables and clean up
@@ -2729,6 +2729,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (Chars.equals(node.token, '/')) {
             if (right == 0L) {
+                // Decline the fold and let descend() emit the division as IR: the native
+                // int64_div (impl/x86.h) returns LONG_NULL for a zero divisor, which is what
+                // the Java filter's DivLong#getLong produces. ExpressionNode#applyLongFold
+                // models the same operator table and folds this case straight to LONG_NULL -
+                // a different spelling of the same result, not a disagreement.
                 throw NumericException.INSTANCE;
             }
             return left / right;

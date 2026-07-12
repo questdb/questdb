@@ -237,6 +237,13 @@ public final class ParquetRowGroupFilter {
                                 default:
                                     filterValues.putInt(f.getByte(null));
                             }
+                            // A break inside the switch above leaves the switch, not this loop, so
+                            // the remaining values would keep evaluating and appending after the
+                            // bound has already been declined. The INT/LONG arms are if/else chains
+                            // and break out of the loop directly.
+                            if (!supported) {
+                                break;
+                            }
                         }
                         break;
                     case ColumnType.SHORT:
@@ -260,6 +267,10 @@ public final class ParquetRowGroupFilter {
                                     break;
                                 default:
                                     filterValues.putInt(f.getShort(null));
+                            }
+                            // See the BYTE arm: break out of the value loop, not just the switch.
+                            if (!supported) {
+                                break;
                             }
                         }
                         break;

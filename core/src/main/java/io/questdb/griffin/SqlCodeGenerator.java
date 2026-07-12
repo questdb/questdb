@@ -4296,9 +4296,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (useJit && canCompile) {
                     CompiledFilter compiledFilter = null;
                     CompiledCountOnlyFilter compiledCountOnlyFilter = null;
+                    // The serializer allocates a link function per bind variable it meets. Only the
+                    // factory below takes ownership of them, so every path that does not reach it
+                    // has to free them, like the compiled filters above.
+                    final ObjList<Function> bindVarFunctions = new ObjList<>();
                     try {
                         int jitOptions;
-                        final ObjList<Function> bindVarFunctions = new ObjList<>();
                         try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
                             final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
                             jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
@@ -4347,6 +4350,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // if a JIT filter cannot be used, we will simply use a Java filter
                         Misc.free(compiledFilter);
                         Misc.free(compiledCountOnlyFilter);
+                        Misc.freeObjList(bindVarFunctions);
                         LOG.debug()
                                 .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                                 .$(", ex=").$safe(ex.getFlyweightMessage())
@@ -4355,6 +4359,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // other errors are fatal -> rethrow them
                         Misc.free(compiledFilter);
                         Misc.free(compiledCountOnlyFilter);
+                        Misc.freeObjList(bindVarFunctions);
                         throw t;
                     } finally {
                         jitIRSerializer.clear();
