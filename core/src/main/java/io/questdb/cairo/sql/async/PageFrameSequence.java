@@ -225,7 +225,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         final T atomToFree = atom;
         atom = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, atomToFree);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public void collect(long cursor, boolean forceCollect) {
@@ -519,7 +519,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 }
             }
         }
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**

@@ -37,7 +37,7 @@ public class TextPlanSinkTest {
     public void testListMetadataModeRestoredAfterException() {
         final TextPlanSink sink = new TextPlanSink();
         final ObjList<Plannable> values = new ObjList<>();
-        values.add(planSink -> {
+        values.add(_ -> {
             throw new RuntimeException("expected");
         });
         sink.useBaseMetadata(true);

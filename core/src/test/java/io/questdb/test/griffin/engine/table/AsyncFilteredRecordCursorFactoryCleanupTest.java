@@ -154,7 +154,7 @@ public class AsyncFilteredRecordCursorFactoryCleanupTest extends AbstractCairoTe
         private TrackingRecordFreer(RuntimeException failure) {
             PageFrameMemoryRecord record = null;
             PageFrameMemoryRecord recordB = null;
-            PageFrameMemoryPool frameMemoryPool = null;
+            PageFrameMemoryPool frameMemoryPool;
             try {
                 record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
                 recordB = new PageFrameMemoryRecord(record, PageFrameMemoryRecord.RECORD_B_LETTER);
@@ -162,7 +162,6 @@ public class AsyncFilteredRecordCursorFactoryCleanupTest extends AbstractCairoTe
             } catch (Throwable th) {
                 Misc.free(record);
                 Misc.free(recordB);
-                Misc.free(frameMemoryPool);
                 throw th;
             }
             this.failure = failure;

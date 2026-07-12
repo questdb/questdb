@@ -479,7 +479,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         Throwable failure = Misc.freeBestEffort(null, cursor);
         failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeBestEffort(failure, pageFrameCursor);
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     class RegisteredPageFrameCursor implements PageFrameCursor {

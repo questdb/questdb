@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -109,7 +110,7 @@ public class AsOfJoinLightNoKeyRecordCursorFactory extends AbstractJoinRecordCur
         }
         failure = Misc.freeBestEffort(failure, masterFactory);
         failure = Misc.freeBestEffort(failure, slaveFactory);
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class AsOfLightJoinRecordCursor extends AbstractJoinCursor {

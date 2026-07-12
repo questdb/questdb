@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
@@ -106,7 +107,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, functions);
             }
         }
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public static ObjList<String> getKeys(ObjList<Function> recordFunctions, RecordMetadata metadata) {
@@ -217,7 +218,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class GroupBySharedCursor extends AbstractVirtualFunctionRecordCursor {

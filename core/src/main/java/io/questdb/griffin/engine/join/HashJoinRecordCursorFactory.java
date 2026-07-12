@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
@@ -177,7 +178,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, symbolTranslatingRecord);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private class HashJoinRecordCursor extends AbstractJoinCursor {

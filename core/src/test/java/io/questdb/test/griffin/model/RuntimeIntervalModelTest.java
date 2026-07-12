@@ -168,19 +168,16 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
             final ObjList<Function> dynamicFunctions = new ObjList<>();
             dynamicFunctions.add(TimestampConstant.newInstance(5_000L, ColumnType.TIMESTAMP));
             // legacy constructor: no position list at all
-            final RuntimeIntervalModel model = new RuntimeIntervalModel(
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
                     ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
                     PartitionBy.DAY,
                     intervals,
                     dynamicFunctions
-            );
-            try {
+            )) {
                 final LongList out = model.calculateIntervals(sqlExecutionContext);
                 Assert.assertEquals(2, out.size());
                 Assert.assertEquals(1_000L, out.getQuick(0));
                 Assert.assertEquals(5_000L, out.getQuick(1));
-            } finally {
-                model.close();
             }
         });
     }
@@ -200,20 +197,17 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
             final ObjList<Function> dynamicFunctions = new ObjList<>();
             dynamicFunctions.add(TimestampConstant.newInstance(7_000L, ColumnType.TIMESTAMP));
             // No cursor positions are needed for a timestamp function.
-            final RuntimeIntervalModel model = new RuntimeIntervalModel(
+            try (RuntimeIntervalModel model = new RuntimeIntervalModel(
                     ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
                     PartitionBy.DAY,
                     intervals,
                     dynamicFunctions,
                     new IntList()
-            );
-            try {
+            )) {
                 final LongList out = model.calculateIntervals(sqlExecutionContext);
                 Assert.assertEquals(2, out.size());
                 Assert.assertEquals(2_000L, out.getQuick(0));
                 Assert.assertEquals(7_000L, out.getQuick(1));
-            } finally {
-                model.close();
             }
         });
     }
@@ -326,8 +320,8 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         Assert.assertEquals(expected, model.allIntervalsHitOnePartition());
     }
 
-    private void assertModelMultiRowSubQueryError(RuntimeIntrinsicIntervalModel model, int expectedPosition) throws SqlException {
-        try {
+    private void assertModelMultiRowSubQueryError(RuntimeIntrinsicIntervalModel model, int expectedPosition) {
+        try (model) {
             model.calculateIntervals(sqlExecutionContext);
             Assert.fail("multi-row scalar sub-query must be rejected");
         } catch (SqlException e) {
@@ -337,8 +331,6 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
                     e.getPosition()
             );
             TestUtils.assertContains(e.getFlyweightMessage(), "scalar sub-query returned more than one row");
-        } finally {
-            model.close();
         }
     }
 
@@ -352,7 +344,7 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
             ObjList<Function> dynamicFunctions,
             IntList positions,
             int expectedPosition
-    ) throws Exception {
+    ) {
         final LongList intervals = new LongList();
         for (int i = 0, n = dynamicFunctions.size(); i < n; i++) {
             IntervalUtils.encodeInterval(
@@ -385,16 +377,13 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
         );
         final ObjList<Function> dynamicFunctions = new ObjList<>();
         dynamicFunctions.add(function);
-        final RuntimeIntervalModel model = new RuntimeIntervalModel(
+        try (RuntimeIntervalModel model = new RuntimeIntervalModel(
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
                 PartitionBy.DAY,
                 intervals,
                 dynamicFunctions
-        );
-        try {
+        )) {
             Assert.assertEquals(expectedIntervalCount, model.calculateIntervals(sqlExecutionContext).size());
-        } finally {
-            model.close();
         }
     }
 
@@ -436,7 +425,7 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
             driver = (TimestampDriver) java.lang.reflect.Proxy.newProxyInstance(
                     TimestampDriver.class.getClassLoader(),
                     new Class[]{TimestampDriver.class},
-                    (proxy, method, args) -> {
+                    (_, method, args) -> {
                         final Object result = method.invoke(delegate, args);
                         if (method.getName().equals("getPartitionFloorMethod")) {
                             final TimestampDriver.TimestampFloorMethod floorMethod = (TimestampDriver.TimestampFloorMethod) result;

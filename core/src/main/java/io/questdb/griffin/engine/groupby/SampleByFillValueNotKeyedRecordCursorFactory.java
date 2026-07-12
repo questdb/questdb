@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -133,7 +134,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
         failure = Misc.freeBestEffort(failure, value);
         failure = Misc.freeBestEffort(failure, valueB);
         failure = Misc.freeBestEffort(failure, cursor);
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

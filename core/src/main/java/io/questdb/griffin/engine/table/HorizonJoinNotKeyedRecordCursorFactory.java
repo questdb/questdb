@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -190,7 +191,7 @@ public class HorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursor
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private class HorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor {

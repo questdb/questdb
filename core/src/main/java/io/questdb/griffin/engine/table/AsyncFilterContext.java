@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
@@ -192,7 +193,7 @@ public class AsyncFilterContext implements Closeable {
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAuxAddresses);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, frameFilteredMemoryRecords);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPageFrameFilteredMemoryRecord);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public DirectLongList getAuxAddresses(int slotId) {

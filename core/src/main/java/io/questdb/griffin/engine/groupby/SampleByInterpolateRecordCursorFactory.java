@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.ListColumnFilter;
@@ -278,7 +279,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         failure = Misc.freeBestEffort(failure, offsetFunc);
         failure = Misc.freeBestEffort(failure, sampleFromFunc);
         failure = Misc.freeBestEffort(failure, sampleToFunc);
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {

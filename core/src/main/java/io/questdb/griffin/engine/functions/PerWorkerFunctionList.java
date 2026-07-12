@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
@@ -257,6 +258,6 @@ public final class PerWorkerFunctionList<T extends Function> extends ObjList<T> 
             super.setQuick(i, null);
             failure = Misc.freeBestEffort(failure, function);
         }
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 }

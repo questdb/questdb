@@ -63,6 +63,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -1878,20 +1879,22 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
         assertMemoryLeak(() -> {
             execute("create table tab (price double, qty double, ts timestamp) timestamp(ts) partition by day");
             assertQuery("select avg((qty > (select avg(price) from tab))::int) a, vwap(price, qty) v from tab")
-                    .assertsPlan("Async Group By workers: 1\n" +
-                            "  vectorized: false\n" +
-                            "  values: [avg(qty [thread-safe] > cursor \n" +
-                            "    Async Group By workers: 1\n" +
-                            "      vectorized: true\n" +
-                            "      values: [avg(price)]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab::int),vwap(price,qty)]\n" +
-                            "  filter: null\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
+                    .assertsPlan("""
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [avg(qty [thread-safe] > cursor\s
+                                Async Group By workers: 1
+                                  vectorized: true
+                                  values: [avg(price)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab::int),vwap(price,qty)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
         });
     }
 
@@ -1908,20 +1911,22 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             // the string cast keeps the nested filter off the JIT path so the plan is stable
             // across platforms
             assertQuery("select avg((qty > (select avg(price) from tab where price::string::double > 0))::int) a, vwap(price, qty) v from tab")
-                    .assertsPlan("Async Group By workers: 1\n" +
-                            "  vectorized: false\n" +
-                            "  values: [avg(qty [thread-safe] > cursor \n" +
-                            "    Async Group By workers: 1\n" +
-                            "      vectorized: false\n" +
-                            "      values: [avg(price)]\n" +
-                            "      filter: 0<price::string::double\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tab::int),vwap(price,qty)]\n" +
-                            "  filter: null\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n");
+                    .assertsPlan("""
+                            Async Group By workers: 1
+                              vectorized: false
+                              values: [avg(qty [thread-safe] > cursor\s
+                                Async Group By workers: 1
+                                  vectorized: false
+                                  values: [avg(price)]
+                                  filter: 0<price::string::double
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab::int),vwap(price,qty)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """);
         });
     }
 
@@ -1934,7 +1939,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             final CountingStatefulAtom atom = new CountingStatefulAtom(clearFailure, closeFailure);
             final CairoConfiguration throwingConfiguration = new CairoConfigurationWrapper(configuration) {
                 @Override
-                public MillisecondClock getMillisecondClock() {
+                public @NotNull MillisecondClock getMillisecondClock() {
                     throw primary;
                 }
             };
@@ -1945,7 +1950,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
                         throwingConfiguration,
                         engine.getMessageBus(),
                         atom,
-                        (workerId, record, frameIndex, circuitBreaker, frameSequence, stealingFrameSequence) -> {
+                        (_, _, _, _, _, _) -> {
                         },
                         1
                 );
@@ -2069,7 +2074,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
             SqlCompiler compiler,
             SqlExecutionContext ctx,
             String query
-    ) throws Exception {
+    ) {
         TestFaultFunctionFactory.armCloseFailures();
         // Owner assembly compiles once; fail on the second worker clone after one worker succeeds.
         TestFaultFunctionFactory.armToFailAfterCompiles(2);

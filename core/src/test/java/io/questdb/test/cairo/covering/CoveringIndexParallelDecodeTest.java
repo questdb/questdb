@@ -69,13 +69,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.IdentityHashMap;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
 
@@ -730,7 +724,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         // succeed -- the reader is not left frozen.
                         sink.clear();
                         TestUtils.printSql(compiler, sqlExecutionContext, "SELECT count() FROM cov", sink);
-                        assertTrue(sink.length() > 0);
+                        assertFalse(sink.isEmpty());
                     },
                     configuration,
                     LOG
@@ -1042,8 +1036,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         sink.clear();
                         TestUtils.printSql(compiler, sqlExecutionContext, "SELECT sum(px), count() FROM cov WHERE sym = 'S0'", sink);
                         final String afterResult = sink.toString();
-                        assertFalse("post-commit covered aggregate must differ from the pre-commit snapshot",
-                                snapshotResult.equals(afterResult));
+                        assertNotEquals("post-commit covered aggregate must differ from the pre-commit snapshot", snapshotResult, afterResult);
                     },
                     configuration,
                     LOG
@@ -1329,7 +1322,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                     readers.put(r, Boolean.TRUE);
                     assertFalse("reader must start unfrozen", r.isFrozen());
                 }
-                assertTrue("expected at least one covered reader", readers.size() > 0);
+                assertFalse("expected at least one covered reader", readers.isEmpty());
 
                 addressCache.freezeCoveredReaders();
                 for (IndexReader r : readers.keySet()) {
@@ -1369,7 +1362,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         configuration,
                         engine.getMessageBus(),
                         atom,
-                        (workerId, record, frameIndex, circuitBreaker, frameSequence, stealingFrameSequence) -> {
+                        (_, _, _, _, _, _) -> {
                         },
                         1
                 );
@@ -1390,7 +1383,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 final PageFrameCursor trackingCursor = (PageFrameCursor) Proxy.newProxyInstance(
                         PageFrameCursor.class.getClassLoader(),
                         new Class[]{PageFrameCursor.class},
-                        (proxy, method, args) -> {
+                        (_, method, args) -> {
                             try {
                                 if ("close".equals(method.getName())) {
                                     cursorCloseCount[0]++;
@@ -1418,13 +1411,13 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                     readers.put(reader, Boolean.TRUE);
                     assertTrue("reader must be frozen before cleanup", reader.isFrozen());
                 }
-                assertTrue("expected at least one real covered reader", readers.size() > 0);
+                assertFalse("expected at least one real covered reader", readers.isEmpty());
 
                 try {
                     sequence.close();
                     fail("throwing cleanup should fail");
                 } catch (Throwable failure) {
-                    assertTrue("atom clear must remain primary", failure == clearFailure);
+                    assertSame("atom clear must remain primary", failure, clearFailure);
                     assertArrayEquals(
                             new Throwable[]{cacheCloseFailure, cursorCloseFailure, atomCloseFailure},
                             failure.getSuppressed()
@@ -2130,7 +2123,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 // copyOfNew (not copyOf) so we never mutate the base's own metadata.
                 final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(baseMetadata);
                 metadata.add(new TableColumnMetadata("pad", ColumnType.LONG));
-                final int paddedColumnIndex = columnSplit; // 2 (the synthetic null column)
+                // 2 (the synthetic null column)
 
                 final ExtraNullColumnCursorFactory enc = new ExtraNullColumnCursorFactory(metadata, columnSplit, base);
                 try (PageFrameCursor cursor = enc.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
@@ -2158,11 +2151,11 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                                 f.getCoveredIncludeIndices());
                         // (c) synthetic null column above the split is DIRECT / -1 / null.
                         assertEquals("synthetic null column above the split reports DIRECT",
-                                DataSource.DIRECT, f.getColumnSource(paddedColumnIndex));
+                                DataSource.DIRECT, f.getColumnSource(columnSplit));
                         assertEquals("synthetic null column above the split has no include index",
-                                -1, f.getCoveredIncludeIndex(paddedColumnIndex));
+                                -1, f.getCoveredIncludeIndex(columnSplit));
                         assertNull("synthetic null column above the split has no index reader",
-                                f.getIndexReader(paddedColumnIndex, IndexReader.DIR_FORWARD));
+                                f.getIndexReader(columnSplit, IndexReader.DIR_FORWARD));
                     }
                     assertTrue("expected at least one covering page frame through ExtraNullColumn", frames > 0);
                 }
@@ -2367,7 +2360,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 this.ctx = TestUtils.createSqlExecutionCtx(engine, workerCount);
                 TestUtils.setupWorkerPool(pool, engine);
                 pool.start(LOG);
-                ok = true;
             } catch (Throwable th) {
                 if (!ok) {
                     pool.halt();
@@ -2386,7 +2378,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         }
     }
 
-    private static void appendPerf(StringBuilder sb, String label, long[] a, long[] b, long[] c, int warmup, int iters) {
+    private static void appendPerf(StringBuilder sb, String label, long[] a, long[] b, long[] c, int warmup, int ignoredIters) {
         sb.append(String.format("  %s  (ns wall-clock per query)%n", label));
         appendRow(sb, "A) parallel cov (8w)", a, warmup);
         appendRow(sb, "B) serial   cov (1w)", b, warmup);
@@ -2498,7 +2490,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     @SuppressWarnings("unchecked")
     private static <T> T getField(Class<?> clazz, Object instance, String name) throws NoSuchFieldException {
         final Field field = clazz.getDeclaredField(name);
-        return (T) Unsafe.getUnsafe().getObject(instance, Unsafe.getUnsafe().objectFieldOffset(field));
+        return (T) Unsafe.getObject(instance, Unsafe.objectFieldOffset(field));
     }
 
     private static long drainSum(PerfNode node, String query) throws Exception {
@@ -2547,7 +2539,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
 
     private static void setField(Class<?> clazz, Object instance, String name, Object value) throws NoSuchFieldException {
         final Field field = clazz.getDeclaredField(name);
-        Unsafe.getUnsafe().putObject(instance, Unsafe.getUnsafe().objectFieldOffset(field), value);
+        Unsafe.putObject(instance, Unsafe.objectFieldOffset(field), value);
     }
 
     private static String verdict(String label, long[] a, long[] b, long[] c, int warmup) {

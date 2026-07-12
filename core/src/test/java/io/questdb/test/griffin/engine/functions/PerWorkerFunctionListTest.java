@@ -156,14 +156,14 @@ public class PerWorkerFunctionListTest {
         Assert.assertThrows(UnsupportedOperationException.class, list::popLast);
         Assert.assertThrows(UnsupportedOperationException.class, () -> list.remove(0));
         Assert.assertThrows(UnsupportedOperationException.class, () -> list.remove(0, 0));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> list.remove((Object) function));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> list.remove(function));
         Assert.assertThrows(UnsupportedOperationException.class, () -> list.set(0, function));
         Assert.assertThrows(UnsupportedOperationException.class, () -> list.set(0, 1, function));
         Assert.assertThrows(UnsupportedOperationException.class, () -> list.setAll(1, function));
         Assert.assertThrows(UnsupportedOperationException.class, () -> list.setPos(0));
         Assert.assertThrows(UnsupportedOperationException.class, () -> list.setQuick(0, function));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> list.sort((a, b) -> 0));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> list.sort(0, 1, (a, b) -> 0));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> list.sort((_, _) -> 0));
+        Assert.assertThrows(UnsupportedOperationException.class, () -> list.sort(0, 1, (_, _) -> 0));
         // rejected mutators must leave the list and ownership metadata intact
         Assert.assertEquals(1, list.size());
         Assert.assertSame(function, list.getQuick(0));

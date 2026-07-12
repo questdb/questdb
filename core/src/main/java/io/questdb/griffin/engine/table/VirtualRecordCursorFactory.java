@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
@@ -225,10 +226,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Throwable cleanupFailure = null;
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, functions);
+        Throwable cleanupFailure;
+        cleanupFailure = Misc.freeObjListBestEffort(null, functions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class VirtualRecordCursorFactorySymbolTableSource implements SymbolTableSource {

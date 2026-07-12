@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TimestampDriver;
@@ -119,7 +120,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     @Override
     public void close() {
-        Misc.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, dynamicRangeList));
+        CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, dynamicRangeList));
     }
 
     public ObjList<Function> getDynamicRangeList() {
@@ -190,147 +191,152 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             // Get day filter mask (stored in high byte of periodCount)
             int dayFilterMask = IntervalUtils.decodeDayFilterMask(intervals, i);
 
-            if (dynamicFunction == null) {
-                // copy 4 longs to output and apply the operation
-                outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
-                IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
-                // Apply day filter if specified
-                if (dayFilterMask != 0) {
-                    // Check if the interval's lo timestamp matches the day filter
-                    long lo = outIntervals.getQuick(divider);
-                    int dayOfWeek = timestampDriver.getDayOfWeek(lo);
-                    if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
-                        // Day doesn't match filter - remove this interval
-                        outIntervals.setPos(divider);
-                        continue;
-                    }
-                }
-            } else if (dynamicFunction instanceof CompiledTickExpression compiled) {
-                // Compiled tick expression with date variables ($now, $today, etc.)
-                // Re-evaluates the expression with the current "now" timestamp
-                compiled.init(null, sqlExecutionContext);
-                compiled.evaluate(outIntervals);
-                if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
-                    IntervalUtils.invert(outIntervals, divider);
-                }
-            } else if (dynamicFunction instanceof TimestampMonotonicInverter inverter) {
-                inverter.init(null, sqlExecutionContext);
-                inverter.evaluate(outIntervals);
-            } else {
-                long lo = IntervalUtils.decodeIntervalLo(intervals, i);
-                long hi = IntervalUtils.decodeIntervalHi(intervals, i);
-                short adjustment = IntervalUtils.getEncodedAdjustment(intervals, i);
-                short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
-
-                dynamicFunction.init(null, sqlExecutionContext);
-                final int functionType = dynamicFunction.getType();
-
-                if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
-                    long dynamicValue = getTimestamp(dynamicFunction, functionType, sqlExecutionContext, cursorFunctionIndex);
-                    if (functionType == ColumnType.CURSOR) {
-                        cursorFunctionIndex++;
-                    }
-                    long dynamicValue2 = 0;
-                    if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
-                        // Both ends of BETWEEN are dynamic and different values. Take the next dynamic point.
-                        i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-                        dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
-                        dynamicIndex++;
-                        dynamicFunction.init(null, sqlExecutionContext);
-                        final int functionType2 = dynamicFunction.getType();
-                        dynamicValue2 = hi = getTimestamp(
-                                dynamicFunction,
-                                functionType2,
-                                sqlExecutionContext,
-                                cursorFunctionIndex
-                        );
-                        if (functionType2 == ColumnType.CURSOR) {
-                            cursorFunctionIndex++;
-                        }
-                        lo = dynamicValue;
-                    } else {
-                        if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
-                            hi = dynamicValue + adjustment;
-                        }
-                        if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
-                            lo = dynamicValue + adjustment;
-                        }
-                    }
-
-                    if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
-                        // functions evaluated to null
-                        if (!negated) {
-                            // return an empty set if it's not negated
-                            outIntervals.clear();
-                            return;
-                        } else {
-                            // or full set
-                            negatedNothing(outIntervals, divider);
-                            continue;
-                        }
-                    }
-
-                    if (adjustment > 0 && dynamicValue == Long.MAX_VALUE) {
-                        // a strict bound just past the timestamp domain matches nothing;
-                        // the adjustment would wrap around to Long.MIN_VALUE and select every row
-                        if (!negated) {
-                            outIntervals.clear();
-                            return;
-                        } else {
-                            negatedNothing(outIntervals, divider);
-                            continue;
-                        }
-                    }
-
-                    if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
-                        long tempHi = Math.max(hi, lo);
-                        lo = Math.min(hi, lo);
-                        hi = tempHi;
-                    }
-
+            switch (dynamicFunction) {
+                case null -> {
+                    // copy 4 longs to output and apply the operation
+                    outIntervals.add(intervals, i, i + STATIC_LONGS_PER_DYNAMIC_INTERVAL);
+                    IntervalUtils.applyLastEncodedInterval(timestampDriver, outIntervals);
                     // Apply day filter if specified
                     if (dayFilterMask != 0) {
+                        // Check if the interval's lo timestamp matches the day filter
+                        long lo = outIntervals.getQuick(divider);
                         int dayOfWeek = timestampDriver.getDayOfWeek(lo);
                         if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
-                            // Day doesn't match filter - skip this interval
+                            // Day doesn't match filter - remove this interval
+                            outIntervals.setPos(divider);
                             continue;
                         }
                     }
-
-                    outIntervals.extendAndSet(divider + 1, hi);
-                    outIntervals.setQuick(divider, lo);
-                    if (divider == 0 && negated) {
-                        // Divider == 0 means it's the first interval applied
-                        // Invert the interval, since it will not be applied negated to anything
+                }
+                case CompiledTickExpression compiled -> {
+                    // Compiled tick expression with date variables ($now, $today, etc.)
+                    // Re-evaluates the expression with the current "now" timestamp
+                    compiled.init(null, sqlExecutionContext);
+                    compiled.evaluate(outIntervals);
+                    if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
                         IntervalUtils.invert(outIntervals, divider);
                     }
-                } else {
-                    if (ColumnType.isInterval(functionType)) {
-                        // This is subtraction or intersection with an Interval (not a single timestamp)
-                        final Interval interval = timestampDriver.fixInterval(dynamicFunction.getInterval(null), functionType);
-                        applyInterval(outIntervals, interval);
-                        if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
-                            IntervalUtils.invert(outIntervals, divider);
+                }
+                case TimestampMonotonicInverter inverter -> {
+                    inverter.init(null, sqlExecutionContext);
+                    inverter.evaluate(outIntervals);
+                }
+                default -> {
+                    long lo = IntervalUtils.decodeIntervalLo(intervals, i);
+                    long hi = IntervalUtils.decodeIntervalHi(intervals, i);
+                    short adjustment = IntervalUtils.getEncodedAdjustment(intervals, i);
+                    short dynamicHiLo = IntervalUtils.getEncodedDynamicIndicator(intervals, i);
+
+                    dynamicFunction.init(null, sqlExecutionContext);
+                    final int functionType = dynamicFunction.getType();
+
+                    if (operation != IntervalOperation.INTERSECT_INTERVALS && operation != IntervalOperation.SUBTRACT_INTERVALS) {
+                        long dynamicValue = getTimestamp(dynamicFunction, functionType, sqlExecutionContext, cursorFunctionIndex);
+                        if (functionType == ColumnType.CURSOR) {
+                            cursorFunctionIndex++;
                         }
-                    } else {
-                        // This is subtraction or intersection with a string interval (not a single timestamp)
-                        final CharSequence strInterval = dynamicFunction.getStrA(null);
-                        final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
-                        if (operation == IntervalOperation.INTERSECT_INTERVALS) {
-                            // This is an intersection
-                            if (tryParseInterval(outIntervals, strInterval, configuration)) {
-                                // return an empty set
+                        long dynamicValue2 = 0;
+                        if (dynamicHiLo == IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC) {
+                            // Both ends of BETWEEN are dynamic and different values. Take the next dynamic point.
+                            i += STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+                            dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
+                            dynamicIndex++;
+                            dynamicFunction.init(null, sqlExecutionContext);
+                            final int functionType2 = dynamicFunction.getType();
+                            dynamicValue2 = hi = getTimestamp(
+                                    dynamicFunction,
+                                    functionType2,
+                                    sqlExecutionContext,
+                                    cursorFunctionIndex
+                            );
+                            if (functionType2 == ColumnType.CURSOR) {
+                                cursorFunctionIndex++;
+                            }
+                            lo = dynamicValue;
+                        } else {
+                            if ((dynamicHiLo & IntervalDynamicIndicator.IS_HI_DYNAMIC) != 0) {
+                                hi = dynamicValue + adjustment;
+                            }
+                            if ((dynamicHiLo & IntervalDynamicIndicator.IS_LO_DYNAMIC) != 0) {
+                                lo = dynamicValue + adjustment;
+                            }
+                        }
+
+                        if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
+                            // functions evaluated to null
+                            if (!negated) {
+                                // return an empty set if it's not negated
                                 outIntervals.clear();
                                 return;
-                            }
-                        } else {
-                            // This is a subtraction
-                            if (tryParseInterval(outIntervals, strInterval, configuration)) {
-                                // full set
+                            } else {
+                                // or full set
                                 negatedNothing(outIntervals, divider);
                                 continue;
                             }
+                        }
+
+                        if (adjustment > 0 && dynamicValue == Long.MAX_VALUE) {
+                            // a strict bound just past the timestamp domain matches nothing;
+                            // the adjustment would wrap around to Long.MIN_VALUE and select every row
+                            if (!negated) {
+                                outIntervals.clear();
+                                return;
+                            } else {
+                                negatedNothing(outIntervals, divider);
+                                continue;
+                            }
+                        }
+
+                        if (operation == IntervalOperation.INTERSECT_BETWEEN || operation == IntervalOperation.SUBTRACT_BETWEEN) {
+                            long tempHi = Math.max(hi, lo);
+                            lo = Math.min(hi, lo);
+                            hi = tempHi;
+                        }
+
+                        // Apply day filter if specified
+                        if (dayFilterMask != 0) {
+                            int dayOfWeek = timestampDriver.getDayOfWeek(lo);
+                            if ((dayFilterMask & (1 << (dayOfWeek - 1))) == 0) {
+                                // Day doesn't match filter - skip this interval
+                                continue;
+                            }
+                        }
+
+                        outIntervals.extendAndSet(divider + 1, hi);
+                        outIntervals.setQuick(divider, lo);
+                        if (divider == 0 && negated) {
+                            // Divider == 0 means it's the first interval applied
+                            // Invert the interval, since it will not be applied negated to anything
                             IntervalUtils.invert(outIntervals, divider);
+                        }
+                    } else {
+                        if (ColumnType.isInterval(functionType)) {
+                            // This is subtraction or intersection with an Interval (not a single timestamp)
+                            final Interval interval = timestampDriver.fixInterval(dynamicFunction.getInterval(null), functionType);
+                            applyInterval(outIntervals, interval);
+                            if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
+                                IntervalUtils.invert(outIntervals, divider);
+                            }
+                        } else {
+                            // This is subtraction or intersection with a string interval (not a single timestamp)
+                            final CharSequence strInterval = dynamicFunction.getStrA(null);
+                            final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
+                            if (operation == IntervalOperation.INTERSECT_INTERVALS) {
+                                // This is an intersection
+                                if (tryParseInterval(outIntervals, strInterval, configuration)) {
+                                    // return an empty set
+                                    outIntervals.clear();
+                                    return;
+                                }
+                            } else {
+                                // This is a subtraction
+                                if (tryParseInterval(outIntervals, strInterval, configuration)) {
+                                    // full set
+                                    negatedNothing(outIntervals, divider);
+                                    continue;
+                                }
+                                IntervalUtils.invert(outIntervals, divider);
+                            }
                         }
                     }
                 }

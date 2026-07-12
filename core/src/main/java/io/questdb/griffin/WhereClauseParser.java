@@ -1907,7 +1907,7 @@ public final class WhereClauseParser implements Mutable {
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
-                func = Misc.free(func);
+                Misc.free(func);
             } catch (Throwable th) {
                 Misc.free(func);
                 throw th;
@@ -1976,7 +1976,7 @@ public final class WhereClauseParser implements Mutable {
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
                 }
-                func = Misc.free(func);
+                Misc.free(func);
             } catch (Throwable th) {
                 Misc.free(func);
                 throw th;
@@ -3129,7 +3129,7 @@ public final class WhereClauseParser implements Mutable {
                 if (!isRetained) {
                     final Throwable cleanupFailure = Misc.freeBestEffort(failure, func);
                     if (failure == null) {
-                        Misc.rethrowCleanupFailure(cleanupFailure);
+                        CairoException.rethrowCleanupFailure(cleanupFailure);
                     }
                 }
             }

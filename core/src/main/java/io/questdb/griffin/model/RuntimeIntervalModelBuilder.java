@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
@@ -102,7 +103,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             cursorFunctionPositions.clear();
             dynamicRangeList.clear();
             intervalApplied = false;
-            Misc.rethrowCleanupFailure(failure);
+            CairoException.rethrowCleanupFailure(failure);
         } else {
             // no build(): the accumulated functions are orphaned, free them here
             freeAndClear();
@@ -115,7 +116,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * otherwise this double-frees Functions still owned by the built model.
      */
     public void freeAndClear() {
-        Misc.rethrowCleanupFailure(freeAndClear(null));
+        CairoException.rethrowCleanupFailure(freeAndClearBestEffort());
     }
 
     /**
@@ -126,7 +127,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * from it) owns it.
      */
     public void clearBetweenParsing() {
-        Misc.rethrowCleanupFailure(clearBetweenParsing(null));
+        CairoException.rethrowCleanupFailure(clearBetweenParsing(null));
     }
 
     /**
@@ -135,11 +136,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      */
     public Throwable clearBetweenParsing(Throwable primary) {
         final Function pendingFunction = betweenBoundaryFunc;
-        if (pendingFunction != null) {
-            // A non-null field denotes a pending, not-yet-adopted function. Handoffs reserve all
-            // capacity before adoption and drop this reference only after the append commits.
-            assert dynamicRangeList.indexOf(pendingFunction) < 0;
-        }
+        assert pendingFunction == null || dynamicRangeList.indexOf(pendingFunction) < 0;
         resetBetweenParsingState();
         return Misc.freeBestEffort(primary, pendingFunction);
     }
@@ -162,7 +159,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(hi, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, hi));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, hi));
         }
     }
 
@@ -180,7 +177,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(lo, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, lo));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, lo));
         }
     }
 
@@ -204,9 +201,9 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     public void intersectEmpty() {
         // Finish the empty-state transition even when an adopted function throws during cleanup.
-        final Throwable failure = freeAndClear(null);
+        final Throwable failure = freeAndClearBestEffort();
         intervalApplied = true;
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
@@ -256,7 +253,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(inverter, 0, false);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, inverter));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, inverter));
         }
     }
 
@@ -274,7 +271,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(intervalFunction, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, intervalFunction));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, intervalFunction));
         }
     }
 
@@ -292,7 +289,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(function, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
         }
     }
 
@@ -435,11 +432,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             resetBetweenParsingState();
             Throwable failure = null;
             if (timestamp == Numbers.LONG_NULL && !betweenNegated) {
-                failure = freeAndClear(null);
+                failure = freeAndClearBestEffort();
                 intervalApplied = true;
             }
             failure = Misc.freeBestEffort(failure, pendingFunction);
-            Misc.rethrowCleanupFailure(failure);
+            CairoException.rethrowCleanupFailure(failure);
             return;
         }
 
@@ -467,11 +464,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 resetBetweenParsingState();
                 Throwable failure = null;
                 if (isNullBoundary && !betweenNegated) {
-                    failure = freeAndClear(null);
+                    failure = freeAndClearBestEffort();
                     intervalApplied = true;
                 }
                 failure = Misc.freeBestEffort(failure, timestamp);
-                Misc.rethrowCleanupFailure(failure);
+                CairoException.rethrowCleanupFailure(failure);
                 return;
             }
 
@@ -491,7 +488,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             resetBetweenParsingState();
             Throwable failure = Misc.freeBestEffort(null, pendingFunction);
             failure = Misc.freeBestEffort(failure, timestamp);
-            Misc.rethrowCleanupFailure(failure);
+            CairoException.rethrowCleanupFailure(failure);
             return;
         }
 
@@ -520,7 +517,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(function, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
         }
     }
 
@@ -592,7 +589,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(intervalFunction, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, intervalFunction));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, intervalFunction));
         }
     }
 
@@ -662,7 +659,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(function, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
         }
     }
 
@@ -780,10 +777,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return false;
     }
 
-    private Throwable freeAndClear(Throwable primary) {
+    private Throwable freeAndClearBestEffort() {
         isOwnershipTransferred = false;
         // Detach the pending endpoint and every adopted slot before invoking user close methods.
-        Throwable failure = clearBetweenParsing(primary);
+        Throwable failure = clearBetweenParsing(null);
         failure = Misc.freeObjListBestEffort(failure, dynamicRangeList);
         dynamicRangeList.clear();
         cursorFunctionPositions.clear();
@@ -838,7 +835,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(expr, 0, false);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
         }
     }
 
@@ -860,7 +857,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(expr, 0, false);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
         }
     }
 
@@ -875,7 +872,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             addDynamicFunction(expr, 0, false);
             intervalApplied = true;
         } catch (Throwable th) {
-            Misc.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, expr));
         }
     }
 

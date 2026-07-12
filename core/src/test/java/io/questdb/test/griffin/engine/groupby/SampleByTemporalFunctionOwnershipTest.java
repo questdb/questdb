@@ -210,9 +210,11 @@ public class SampleByTemporalFunctionOwnershipTest extends AbstractCairoTest {
                             "align to calendar time zone test_close_counter('UTC') " +
                             "with offset test_close_counter('00:00')",
                     "Sample By",
-                    "ts\tsym\ts\n" +
-                            "1970-01-01T00:00:00.000000Z\tb\t4\n" +
-                            "1970-01-01T00:00:00.000000Z\ta\t2\n"
+                    """
+                            ts\tsym\ts
+                            1970-01-01T00:00:00.000000Z\tb\t4
+                            1970-01-01T00:00:00.000000Z\ta\t2
+                            """
             );
         });
     }

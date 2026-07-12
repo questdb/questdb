@@ -191,7 +191,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         final T atomToFree = atom;
         atom = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, atomToFree);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**
@@ -444,7 +444,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         final PageFrameCursor frameCursorToFree = frameCursor;
         frameCursor = null;
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameCursorToFree);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**

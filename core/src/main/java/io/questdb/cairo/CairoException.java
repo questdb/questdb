@@ -219,6 +219,26 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     /**
+     * Rethrows a failure after a best-effort Cairo/SQL resource cleanup has attempted every
+     * close. Unchecked failures retain their identity. The checked branch handles defensive
+     * cases such as a sneaky checked exception escaping a Closeable implementation.
+     */
+    public static void rethrowCleanupFailure(@Nullable Throwable failure) {
+        switch (failure) {
+            case null -> {
+                return;
+            }
+            case RuntimeException runtimeException -> throw runtimeException;
+            case Error error -> throw error;
+            default -> {
+                final CairoException exception = nonCritical().put("resource cleanup failed");
+                exception.initCause(failure);
+                throw exception;
+            }
+        }
+    }
+
+    /**
      * A non-critical error raised BECAUSE the wire value's type, shape or
      * precision is fundamentally incompatible with the target column (e.g.
      * an unsupported type coercion or a geohash precision mismatch). The

@@ -140,7 +140,7 @@ public class MiscTest {
         Misc.free(errorThrowing, primary);
 
         final IOException ioFailure = new IOException("io");
-        Misc.free((Closeable) () -> {
+        Misc.free(() -> {
             throw ioFailure;
         }, primary);
 
@@ -158,32 +158,6 @@ public class MiscTest {
         Misc.free(selfThrowing, selfPrimary);
         Assert.assertEquals(1, selfThrowing.closeCount);
         Assert.assertEquals(0, selfPrimary.getSuppressed().length);
-    }
-
-    @Test
-    public void testRethrowCleanupFailurePreservesUncheckedAndWrapsChecked() {
-        Misc.rethrowCleanupFailure(null);
-
-        final RuntimeException runtimeException = new RuntimeException("runtime");
-        Assert.assertSame(
-                runtimeException,
-                Assert.assertThrows(RuntimeException.class, () -> Misc.rethrowCleanupFailure(runtimeException))
-        );
-
-        final Error error = new AssertionError("error");
-        Assert.assertSame(
-                error,
-                Assert.assertThrows(Error.class, () -> Misc.rethrowCleanupFailure(error))
-        );
-
-        final Exception checked = new Exception("checked");
-        final RuntimeException wrapper = Assert.assertThrows(
-                RuntimeException.class,
-                () -> Misc.rethrowCleanupFailure(checked)
-        );
-        Assert.assertSame(RuntimeException.class, wrapper.getClass());
-        Assert.assertSame(checked, wrapper.getCause());
-        Assert.assertEquals(0, wrapper.getSuppressed().length);
     }
 
     private static class TestCloseable implements Closeable {

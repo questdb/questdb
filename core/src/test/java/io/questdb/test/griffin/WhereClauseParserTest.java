@@ -63,6 +63,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -3589,7 +3590,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampEqualsFunctionInvalidTypePreservesPrimary() throws Exception {
+    public void testTimestampEqualsFunctionInvalidTypePreservesPrimary() {
         RuntimeException closeFailure = new RuntimeException("injected close failure");
         ThrowingCloseIntervalFunction function = new ThrowingCloseIntervalFunction(false, closeFailure);
         try {
@@ -4644,11 +4645,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
     }
 
-    private IntrinsicModel modelOfWithFunctionParser(CharSequence seq, FunctionParser parser) throws SqlException {
+    private void modelOfWithFunctionParser(CharSequence seq, FunctionParser parser) throws SqlException {
         queryModel.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             RecordMetadata m = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? metadata : metadataNanos;
-            return e.extract(
+            e.extract(
                     column -> column,
                     compiler.testParseExpression(seq, queryModel),
                     m,
@@ -4725,8 +4726,8 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     private String replaceTimestampSuffix(String expected) {
         return ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? expected.replaceAll("00000", "00000000")
-                .replaceAll("99999", "99999999")
+                ? expected.replace("00000", "00000000")
+                .replace("99999", "99999999")
                 .replaceAll("294247-01-10T04:00:54.775807Z", "2262-04-11T23:47:16.854775807Z")
                 // domain max minus a dateadd shift (1 day / 2h / 1h), used by the wrapping-bound dateadd tests
                 .replaceAll("294247-01-09T04:00:54.775807Z", "2262-04-10T23:47:16.854775807Z")
@@ -4927,7 +4928,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         }
 
         @Override
-        public Interval getInterval(Record rec) {
+        public @NotNull Interval getInterval(Record rec) {
             return new Interval(0, 0);
         }
 

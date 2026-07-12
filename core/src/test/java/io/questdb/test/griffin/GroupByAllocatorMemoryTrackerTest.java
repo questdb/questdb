@@ -148,9 +148,11 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
             assertQuery("SELECT k, count_distinct(v) cnt FROM tab GROUP BY k ORDER BY k")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("k\tcnt\n" +
-                            "0\t5\n" +
-                            "1\t5\n");
+                    .returns("""
+                            k\tcnt
+                            0\t5
+                            1\t5
+                            """);
         });
     }
 
@@ -196,7 +198,7 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler();
                  RecordCursorFactory factory = compiler.compile("SELECT count_distinct(v) FROM tab", sqlExecutionContext).getRecordCursorFactory()) {
                 assertInTree(factory, GroupByRecordCursorFactory.class);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                try (RecordCursor _ = factory.getCursor(sqlExecutionContext)) {
                     Assert.fail("expected a per-query memory breach during cursor open");
                 } catch (CairoException e) {
                     Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
@@ -225,6 +227,35 @@ public class GroupByAllocatorMemoryTrackerTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("cnt\n5\n");
+        });
+    }
+
+    @Test
+    public void testNotKeyedSharedCursorIsUnsupportedWithoutFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata baseMetadata = new GenericRecordMetadata();
+            baseMetadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+            groupByMetadata.add(new TableColumnMetadata("c", ColumnType.LONG));
+
+            final ObjList<GroupByFunction> groupByFunctions = new ObjList<>();
+            groupByFunctions.add(new CountLongConstGroupByFunction());
+
+            try (GroupByNotKeyedRecordCursorFactory factory = new GroupByNotKeyedRecordCursorFactory(
+                    new BytecodeAssembler(),
+                    configuration,
+                    new EmptyTableRecordCursorFactory(baseMetadata),
+                    groupByMetadata,
+                    groupByFunctions,
+                    1,
+                    null
+            )) {
+                Assert.assertFalse(factory.supportsSharedCursors());
+                Assert.assertThrows(
+                        UnsupportedOperationException.class,
+                        () -> factory.getSharedCursor(sqlExecutionContext, 1)
+                );
+            }
         });
     }
 

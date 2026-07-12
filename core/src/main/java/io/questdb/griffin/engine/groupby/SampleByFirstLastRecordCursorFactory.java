@@ -312,7 +312,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         failure = Misc.freeBestEffort(failure, offsetFunc);
         failure = Misc.freeBestEffort(failure, sampleFromFunc);
         failure = Misc.freeBestEffort(failure, sampleToFunc);
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {

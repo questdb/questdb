@@ -28,6 +28,7 @@ import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -3589,7 +3590,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (isNoneKeyword(expr.token)) {
                     final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
                     fillValues = null;
-                    Misc.rethrowCleanupFailure(cleanupFailure);
+                    CairoException.rethrowCleanupFailure(cleanupFailure);
                     return groupByFactory;
                 }
                 // LINEAR is unsupported on the fast path. SqlOptimiser.hasLinearFill
@@ -3609,7 +3610,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (fillValues.size() == 0 || (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName()))) {
                 final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
                 fillValues = null;
-                Misc.rethrowCleanupFailure(cleanupFailure);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
                 return groupByFactory;
             }
 
@@ -3667,7 +3668,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (timestampIndex < 0) {
                 final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
                 fillValues = null;
-                Misc.rethrowCleanupFailure(cleanupFailure);
+                CairoException.rethrowCleanupFailure(cleanupFailure);
                 return groupByFactory;
             }
             int timestampType = baseMeta.getColumnType(timestampIndex);
@@ -4238,7 +4239,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // close so the outer rollback cannot retry a function whose close throws.
             final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
             fillValues = null;
-            Misc.rethrowCleanupFailure(cleanupFailure);
+            CairoException.rethrowCleanupFailure(cleanupFailure);
             return new SampleByFillRecordCursorFactory(
                     configuration,
                     fillMetadata,

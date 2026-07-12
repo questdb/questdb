@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -363,7 +364,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 cleanupFailure.addSuppressed(th);
             }
         }
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**
@@ -390,6 +391,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             }
         }
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

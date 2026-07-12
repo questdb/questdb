@@ -134,9 +134,9 @@ public final class Misc {
      * folds into the given failure chain instead of propagating, so later resources in the
      * same cleanup sequence still see a close attempt. The first failure becomes the primary
      * and later failures attach to it as suppressed. Callers thread the returned chain
-     * through the whole sequence and rethrow it at the end via
-     * {@link #rethrowCleanupFailure(Throwable)}. Callers that already have a non-null primary
-     * failure should use {@link #free(Closeable, Throwable)} instead.
+     * through the whole sequence and rethrow it at the appropriate package boundary. Callers
+     * that already have a non-null primary failure should use
+     * {@link #free(Closeable, Throwable)} instead.
      */
     public static <T extends Closeable> @Nullable Throwable freeBestEffort(@Nullable Throwable primary, @Nullable T object) {
         if (primary != null) {
@@ -263,25 +263,6 @@ public final class Misc {
 
     public static void releaseUtf8Sink() {
         tlUtf8SinkPool.get().release();
-    }
-
-    /**
-     * Rethrows a failure collected through {@link #freeBestEffort(Throwable, Closeable)} once
-     * a best-effort cleanup sequence has attempted every close. Close paths only surface
-     * unchecked throwables ({@link #free(Closeable)} wraps IOException into FatalError), so
-     * the wrapping branch is a defensive fallback.
-     */
-    public static void rethrowCleanupFailure(@Nullable Throwable failure) {
-        switch (failure) {
-            case null -> {
-                return;
-            }
-            case RuntimeException runtimeException -> throw runtimeException;
-            case Error error -> throw error;
-            default -> {
-            }
-        }
-        throw new RuntimeException(failure);
     }
 
     private static <T> void freeObjList0(ObjList<T> list) {

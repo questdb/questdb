@@ -1,5 +1,6 @@
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -61,7 +62,7 @@ public final class AsyncHorizonJoinResources implements QuietCloseable {
         filter = null;
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilters);
         perWorkerFilters = null;
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Nullable ObjList<Function> getBindVarFunctions() {

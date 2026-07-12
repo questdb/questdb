@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -581,7 +582,7 @@ public class GroupByUtils {
             if (innerProjectionFunctions != null) {
                 final Throwable failure = Misc.freeObjListBestEffort(null, innerProjectionFunctions);
                 innerProjectionFunctions.clear();
-                Misc.rethrowCleanupFailure(failure);
+                CairoException.rethrowCleanupFailure(failure);
             }
             return;
         }
@@ -612,7 +613,7 @@ public class GroupByUtils {
             innerProjectionFunctions.clear();
         }
         outerProjectionFunctions.clear();
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**

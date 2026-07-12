@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -97,7 +98,7 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
         failure = Misc.freeBestEffort(failure, offsetFunc);
         failure = Misc.freeBestEffort(failure, sampleFromFunc);
         failure = Misc.freeBestEffort(failure, sampleToFunc);
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     protected abstract AbstractNoRecordSampleByCursor getRawCursor();

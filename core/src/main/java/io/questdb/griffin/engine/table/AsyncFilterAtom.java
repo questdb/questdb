@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -103,7 +104,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     @Override
     public void close() {
         final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
-        Misc.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public Function getFilter(int filterId) {

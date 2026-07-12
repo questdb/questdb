@@ -286,7 +286,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         failure = Misc.freeBestEffort(failure, tzFunc);
         failure = Misc.freeBestEffort(failure, nonKeyedPrevCache);
         failure = Misc.freeObjListBestEffort(failure, constantFills);
-        Misc.rethrowCleanupFailure(failure);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private boolean hasAnyConstantOrNullFill() {
@@ -499,7 +499,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 isOpen = false;
                 failure = Misc.freeBestEffort(failure, keysMap);
             }
-            Misc.rethrowCleanupFailure(failure);
+            CairoException.rethrowCleanupFailure(failure);
         }
 
         @Override

@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
@@ -64,6 +65,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -131,6 +133,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
     @Test
     public void testGroupByConstructorPreservesPrimaryAndAttemptsAllCleanup() throws Exception {
         assertMemoryLeak(() -> {
+            final RuntimeException constructionFailure = new RuntimeException("record sink configuration");
             final RuntimeException firstCloseFailure = new RuntimeException("first function close");
             final RuntimeException secondCloseFailure = new RuntimeException("second function close");
             final RuntimeException baseCloseFailure = new RuntimeException("base close");
@@ -140,11 +143,17 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             recordFunctions.add(first);
             recordFunctions.add(second);
             final CloseTrackingFactory base = new CloseTrackingFactory(new GenericRecordMetadata(), baseCloseFailure);
+            final CairoConfiguration configuration = new CairoConfigurationWrapper(engine.getConfiguration()) {
+                @Override
+                public int getCopierType() {
+                    throw constructionFailure;
+                }
+            };
 
             try {
                 new GroupByRecordCursorFactory(
-                        (BytecodeAssembler) null,
-                        engine.getConfiguration(),
+                        new BytecodeAssembler(),
+                        configuration,
                         base,
                         new ListColumnFilter(),
                         new ArrayColumnTypes(),
@@ -157,7 +166,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (RuntimeException e) {
-                Assert.assertTrue(e instanceof NullPointerException);
+                Assert.assertSame(constructionFailure, e);
                 Assert.assertArrayEquals(new Throwable[]{firstCloseFailure}, e.getSuppressed());
                 Assert.assertArrayEquals(new Throwable[]{secondCloseFailure, baseCloseFailure}, firstCloseFailure.getSuppressed());
             }
@@ -250,7 +259,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             final CloseTrackingAtom atom = new CloseTrackingAtom(clearFailure, closeFailure);
             final CairoConfiguration configuration = new CairoConfigurationWrapper(engine.getConfiguration()) {
                 @Override
-                public io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+                public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                     throw constructionFailure;
                 }
             };
@@ -430,7 +439,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
 
     private static void setField(Class<?> clazz, Object instance, String name, Object value) throws NoSuchFieldException {
         final Field field = clazz.getDeclaredField(name);
-        Unsafe.getUnsafe().putObject(instance, Unsafe.getUnsafe().objectFieldOffset(field), value);
+        Unsafe.putObject(instance, Unsafe.objectFieldOffset(field), value);
     }
 
     private static GenericRecordMetadata timestampMetadata(String name) {
@@ -559,7 +568,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
         }
     }
 
-    private class CloseTrackingUnorderedPageFrameSequence extends UnorderedPageFrameSequence<AsyncGroupByAtom> {
+    private static class CloseTrackingUnorderedPageFrameSequence extends UnorderedPageFrameSequence<AsyncGroupByAtom> {
         private final CloseTrackingBooleanFunction atomFunction;
         private int closeCount;
 
