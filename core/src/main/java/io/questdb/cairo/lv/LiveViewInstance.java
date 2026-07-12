@@ -342,8 +342,12 @@ public class LiveViewInstance implements QuietCloseable {
     // to it. In-RAM only (not persisted): on restart it re-initialises to the applied
     // point and drain-forward rebuilds the lead. LONG_NULL means "not initialised
     // yet" -> {@link #getRefreshedUpToSeqTxn()} falls back to the applied point.
-    // Mutated under the refresh latch only.
-    private long refreshedUpToSeqTxn = Numbers.LONG_NULL;
+    // Mutated under the refresh latch only, but WalPurgeJob reads it off-latch to
+    // compute the base WAL purge floor, so it must be volatile: a stale read there
+    // only over-retains base WAL (the value is monotone and min-combined with the
+    // flushed point), never under-retains, but the visibility must not rely on the
+    // latch a purge run never takes.
+    private volatile long refreshedUpToSeqTxn = Numbers.LONG_NULL;
     // Live-view-row count applied since the most recent head-checkpoint commit.
     // The refresh worker compares this against cairo.live.view.checkpoint.rows
     // each cycle to decide whether the row-count trigger has fired. Mutated

@@ -75,8 +75,10 @@ public interface SqlParserCallback {
         final TableToken tableToken = getTableToken(tableNameExpr, executionContext, path,
                 SqlException.tableDoesNotExist(tableNameExpr.position, tableNameExpr.token)
         );
-        if (tableToken.isMatView() || tableToken.isView()) {
-            throw SqlException.$(tableNameExpr.position, "table name expected, got view or materialized view name");
+        if (tableToken.isMatView() || tableToken.isView() || tableToken.isLiveView()) {
+            throw SqlException.$(tableNameExpr.position, tableToken.isLiveView()
+                    ? "table name expected, got live view name"
+                    : "table name expected, got view or materialized view name");
         }
         return tableToken;
     }

@@ -4459,8 +4459,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
                 final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
-                if (tt != null && (tt.isView() || tt.isMatView())) {
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "view or materialized view with the requested name already exists");
+                if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
+                    // Mirrors executeCreateLiveView: a cross-kind collision is always an error, even
+                    // under IF NOT EXISTS. Letting a live view satisfy IF NOT EXISTS would silently
+                    // no-op the CREATE and leave the user believing a plain table exists when the
+                    // name is actually a live view.
+                    throw SqlException.$(createTableOp.getTableNamePosition(), tt.isLiveView()
+                            ? "live view with the requested name already exists"
+                            : "view or materialized view with the requested name already exists");
                 }
                 if (createTableOp.ignoreIfExists()) {
                     createTableOp.updateOperationFutureTableToken(tt);

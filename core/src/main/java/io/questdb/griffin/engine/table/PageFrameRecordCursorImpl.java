@@ -70,7 +70,14 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         prepareRowCursorFactory();
 
-        if (!frameCursor.supportsSizeCalculation() || filter != null || rowCursorFactory.isUsingIndex()) {
+        // Mirrors the slow-path gate in skipRows(): pushdown pruning drops whole non-matching
+        // parquet row groups, so the metadata-only accounting below would count physical rows
+        // the cursor never yields and over-report the size. The row-by-row walk counts exactly
+        // the rows hasNext() yields, matching the pruned scan.
+        if (!frameCursor.supportsSizeCalculation()
+                || filter != null
+                || rowCursorFactory.isUsingIndex()
+                || frameCursor.hasActivePushdownFilter()) {
             while (hasNext()) {
                 counter.inc();
             }

@@ -96,6 +96,8 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                         "wrong message [msg=" + e.getFlyweightMessage() + ']',
                         Chars.contains(e.getFlyweightMessage(), "live views are disabled")
                 );
+                // the error points at the LIVE keyword, not at char 0
+                Assert.assertEquals(7, e.getPosition());
             }
             Assert.assertNull("no view should be created when the feature is disabled",
                     engine.getLiveViewRegistry().getViewInstance("lv"));
@@ -127,6 +129,33 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             // The original view survives the rejected re-create.
             Assert.assertNotNull("the pre-existing live view must be untouched",
                     engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateTableOverLiveViewNameRejected() throws Exception {
+        // The mirror image of testCreateNameCollisionMessage. CREATE TABLE's collision check
+        // recognised regular and materialized views but not live views, so a live view fell
+        // through it. Without IF NOT EXISTS that surfaced the generic "table already exists";
+        // WITH IF NOT EXISTS the create silently no-opped, leaving a user believing a plain
+        // table exists when the name is actually a live view - exactly the hazard
+        // executeCreateLiveView already guards in the opposite direction.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            // IF NOT EXISTS first: it is the dangerous arm (a silent no-op, not a wrong message).
+            assertCreateTableOverLiveViewRejected(true);
+            assertCreateTableOverLiveViewRejected(false);
+
+            // The live view survives both rejected creates and the name still resolves to it,
+            // rather than to a freshly created plain table.
+            Assert.assertNotNull("the live view must be untouched by the rejected CREATE TABLE",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertTrue("the name must still resolve to a live view",
+                    engine.getTableTokenIfExists("lv").isLiveView());
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -384,6 +413,19 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "wrong message [msg=" + e.getFlyweightMessage() + ", ifNotExists=" + ifNotExists + ']',
                     Chars.contains(e.getFlyweightMessage(), "table or view with the requested name already exists")
+            );
+        }
+    }
+
+    private void assertCreateTableOverLiveViewRejected(boolean ifNotExists) throws Exception {
+        try {
+            execute("CREATE TABLE " + (ifNotExists ? "IF NOT EXISTS " : "") +
+                    "lv (ts TIMESTAMP, y LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            Assert.fail("expected CREATE TABLE over a live view name to be rejected [ifNotExists=" + ifNotExists + ']');
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + ", ifNotExists=" + ifNotExists + ']',
+                    Chars.contains(e.getFlyweightMessage(), "live view with the requested name already exists")
             );
         }
     }

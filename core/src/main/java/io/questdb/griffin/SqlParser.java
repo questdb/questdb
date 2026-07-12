@@ -1274,7 +1274,7 @@ public class SqlParser {
         }
         if (isLiveKeyword(tok)) {
             if (!configuration.isLiveViewEnabled()) {
-                throw SqlException.$(0, "live views are disabled");
+                throw SqlException.$(lexer.lastTokenPosition(), "live views are disabled");
             }
             // The CREATE body is the one place ANCHOR is written by hand, and it
             // parses with isLiveViewCompile() still false (only the later re-compile
@@ -1289,7 +1289,7 @@ public class SqlParser {
         }
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
-                throw SqlException.$(0, "materialized views are disabled");
+                throw SqlException.$(lexer.lastTokenPosition(), "materialized views are disabled");
             }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
