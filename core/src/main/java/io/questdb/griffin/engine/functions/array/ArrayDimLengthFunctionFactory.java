@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -91,6 +92,9 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
+            if (array.isNull()) {
+                return Numbers.INT_NULL;
+            }
             return array.getDimLen(dim - 1);
         }
 
@@ -139,6 +143,9 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
                         .put(", dims=")
                         .put(dims)
                         .put(']');
+            }
+            if (array.isNull()) {
+                return Numbers.INT_NULL;
             }
             return array.getDimLen(dim - 1);
         }

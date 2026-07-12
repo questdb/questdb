@@ -2816,6 +2816,28 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLengthNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], 1), " +
+                    "(NULL, 1)"
+            );
+            // A NULL array carries no shape, so there is no length to report and dim_length() returns
+            // NULL. It must not read the shape it does not have.
+            assertQuery("SELECT dim_length(arr, 1) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n3\nnull\n");
+            // Same, for a non-constant dimension, which takes the other of the two function paths.
+            assertQuery("SELECT dim_length(arr, n) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n3\nnull\n");
+        });
+    }
+
+    @Test
     public void testLevelTwoPrice1D() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ask_price DOUBLE[], ask_size DOUBLE[])");
