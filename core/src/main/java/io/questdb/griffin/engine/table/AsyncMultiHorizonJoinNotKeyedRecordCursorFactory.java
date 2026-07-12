@@ -82,7 +82,9 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
     private final JoinRecordMetadata horizonJoinMetadata;
     private final RecordCursorFactory masterFactory;
     private final long[] offsets;
+    private final AsyncHorizonJoinResources resources;
     private final ObjList<RecordCursorFactory> slaveFactories;
+    private final ObjList<HorizonJoinSlaveState> slaveStates;
     private final int workerCount;
 
     public AsyncMultiHorizonJoinNotKeyedRecordCursorFactory(
@@ -100,16 +102,10 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int valueCount,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function filter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncHorizonJoinResources resources,
             int workerCount
     ) {
         super(metadata);
@@ -118,13 +114,12 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             this.masterFactory = masterFactory;
             this.offsets = offsets;
             this.groupByFunctions = groupByFunctions;
+            this.resources = resources;
+            this.slaveStates = slaveStates;
+            this.slaveFactories = new ObjList<>(slaveStates.size());
             this.workerCount = workerCount;
 
-            this.slaveFactories = new ObjList<>(slaveStates.size());
-            for (int i = 0; i < slaveStates.size(); i++) {
-                slaveFactories.add(slaveStates.getQuick(i).getFactory());
-            }
-
+            final boolean hasFilter = resources.getFilter() != null;
             final AsyncMultiHorizonJoinNotKeyedAtom atom = new AsyncMultiHorizonJoinNotKeyedAtom(
                     asm,
                     configuration,
@@ -138,13 +133,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     columnSources,
                     columnIndexes,
                     groupByFunctions,
-                    perWorkerGroupByFunctions,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
+                    resources,
                     workerCount
             );
 
@@ -153,13 +142,22 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_REDUCE : REDUCE,
+                    hasFilter ? FILTER_AND_REDUCE : REDUCE,
                     workerCount
             );
 
+            // Transfer one state factory at a time. The destination owns an entry only after add()
+            // succeeds; detach then makes the state suffix the sole rollback owner.
+            for (int i = 0; i < slaveStates.size(); i++) {
+                final HorizonJoinSlaveState state = slaveStates.getQuick(i);
+                slaveFactories.add(state.getFactory());
+                state.detachFactory();
+            }
+            slaveStates.clear();
+
             this.cursor = new AsyncMultiHorizonJoinNotKeyedRecordCursor(groupByFunctions, slaveFactories);
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -466,13 +464,17 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
 
     @Override
     protected void _close() {
+        Throwable cleanupFailure = null;
         // Free cursor before frameSequence: a cursor left half-open by a failed
         // getCursor() still references frameSequence and reset()s it on close().
-        Misc.free(cursor);
-        Misc.free(frameSequence);
-        Misc.free(masterFactory);
-        Misc.freeObjList(slaveFactories);
-        Misc.free(horizonJoinMetadata);
-        Misc.freeObjList(groupByFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, slaveFactories);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, slaveStates);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, resources);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 }

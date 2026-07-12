@@ -60,6 +60,70 @@ import java.util.BitSet;
 public class GroupByUtilsTest {
 
     @Test
+    public void testExtractNonGroupByFunctionsAllGroupBy() {
+        final GroupByFunction groupBy0 = new AllocatorCountingGroupByFunction();
+        final GroupByFunction groupBy1 = new AllocatorCountingGroupByFunction();
+        final ObjList<Function> source = list(groupBy0, groupBy1);
+
+        final ObjList<Function> result = GroupByUtils.extractNonGroupByFunctions(source);
+
+        Assert.assertNotSame(source, result);
+        Assert.assertEquals(0, result.size());
+        Assert.assertEquals(2, source.size());
+        Assert.assertSame(groupBy0, source.getQuick(0));
+        Assert.assertSame(groupBy1, source.getQuick(1));
+    }
+
+    @Test
+    public void testExtractNonGroupByFunctionsAllNonGroupBy() {
+        final Function function0 = new CloseCountingFunction();
+        final Function function1 = new CloseCountingFunction();
+        final ObjList<Function> source = list(function0, function1);
+
+        final ObjList<Function> result = GroupByUtils.extractNonGroupByFunctions(source);
+
+        Assert.assertNotSame(source, result);
+        Assert.assertEquals(2, result.size());
+        Assert.assertSame(function0, result.getQuick(0));
+        Assert.assertSame(function1, result.getQuick(1));
+        Assert.assertEquals(2, source.size());
+        Assert.assertSame(function0, source.getQuick(0));
+        Assert.assertSame(function1, source.getQuick(1));
+    }
+
+    @Test
+    public void testExtractNonGroupByFunctionsEmpty() {
+        final ObjList<Function> source = new ObjList<>();
+
+        final ObjList<Function> result = GroupByUtils.extractNonGroupByFunctions(source);
+
+        Assert.assertNotSame(source, result);
+        Assert.assertEquals(0, result.size());
+        Assert.assertEquals(0, source.size());
+    }
+
+    @Test
+    public void testExtractNonGroupByFunctionsMixed() {
+        final GroupByFunction groupBy0 = new AllocatorCountingGroupByFunction();
+        final Function function0 = new CloseCountingFunction();
+        final GroupByFunction groupBy1 = new AllocatorCountingGroupByFunction();
+        final Function function1 = new CloseCountingFunction();
+        final ObjList<Function> source = list(groupBy0, function0, groupBy1, function1);
+
+        final ObjList<Function> result = GroupByUtils.extractNonGroupByFunctions(source);
+
+        Assert.assertNotSame(source, result);
+        Assert.assertEquals(2, result.size());
+        Assert.assertSame(function0, result.getQuick(0));
+        Assert.assertSame(function1, result.getQuick(1));
+        Assert.assertEquals(4, source.size());
+        Assert.assertSame(groupBy0, source.getQuick(0));
+        Assert.assertSame(function0, source.getQuick(1));
+        Assert.assertSame(groupBy1, source.getQuick(2));
+        Assert.assertSame(function1, source.getQuick(3));
+    }
+
+    @Test
     public void testFreeAliasedSlots() {
         // fully aliased projection: both lists share every reference
         CloseCountingFunction f0 = new CloseCountingFunction();
@@ -153,6 +217,34 @@ public class GroupByUtilsTest {
         Assert.assertEquals(1, replacementThrower.closeAttempts);
         Assert.assertEquals(0, outer.size());
         Assert.assertEquals(0, inner.size());
+    }
+
+    @Test
+    public void testFreeSuppressesFailuresOnPrimaryAndContinuesCleanup() {
+        final ThrowingCloseFunction aliasedThrower = new ThrowingCloseFunction("close failure 0");
+        final ThrowingCloseFunction replacementThrower = new ThrowingCloseFunction("close failure 1");
+        final CloseCountingFunction original = new CloseCountingFunction();
+        final ObjList<Function> outer = list(aliasedThrower, replacementThrower);
+        final ObjList<Function> inner = list(aliasedThrower, original);
+        final RuntimeException primary = new RuntimeException("primary");
+
+        GroupByUtils.freeAssembledProjectionFunctions(outer, inner, primary);
+
+        Assert.assertEquals(1, primary.getSuppressed().length);
+        Assert.assertSame(aliasedThrower.failure, primary.getSuppressed()[0]);
+        Assert.assertEquals(1, aliasedThrower.failure.getSuppressed().length);
+        Assert.assertSame(replacementThrower.failure, aliasedThrower.failure.getSuppressed()[0]);
+        Assert.assertEquals(1, original.closeCount);
+        Assert.assertEquals(1, aliasedThrower.closeAttempts);
+        Assert.assertEquals(1, replacementThrower.closeAttempts);
+        Assert.assertEquals(0, outer.size());
+        Assert.assertEquals(0, inner.size());
+
+        GroupByUtils.freeAssembledProjectionFunctions(outer, inner, primary);
+        Assert.assertEquals(1, primary.getSuppressed().length);
+        Assert.assertEquals(1, original.closeCount);
+        Assert.assertEquals(1, aliasedThrower.closeAttempts);
+        Assert.assertEquals(1, replacementThrower.closeAttempts);
     }
 
     @Test
@@ -396,17 +488,17 @@ public class GroupByUtilsTest {
     }
 
     private static class ThrowingCloseFunction extends LongFunction {
-        private final String message;
+        private final RuntimeException failure;
         private int closeAttempts;
 
         private ThrowingCloseFunction(String message) {
-            this.message = message;
+            this.failure = new RuntimeException(message);
         }
 
         @Override
         public void close() {
             closeAttempts++;
-            throw new RuntimeException(message);
+            throw failure;
         }
 
         @Override

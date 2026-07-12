@@ -73,6 +73,10 @@ public class IntrinsicModel implements Mutable {
         runtimeIntervalBuilder.clearBetweenParsing();
     }
 
+    public void clearBetweenTempParsing(Throwable primary) {
+        runtimeIntervalBuilder.clearBetweenParsing(primary);
+    }
+
     /**
      * Clears only the interval filter state without touching keys, filter
      * expression or intrinsicValue. Used by WhereClauseParser to roll back
@@ -87,6 +91,10 @@ public class IntrinsicModel implements Mutable {
 
     public boolean hasIntervalFilters() {
         return runtimeIntervalBuilder.hasIntervalFilters();
+    }
+
+    public boolean isBetweenBoundaryFunctionConsumed() {
+        return runtimeIntervalBuilder.isBetweenBoundaryFunctionConsumed();
     }
 
     public void intersectEmpty() {

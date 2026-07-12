@@ -121,8 +121,9 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
-        filter.close();
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, filter);
+        Misc.rethrowCleanupFailure(failure);
     }
 
     /**

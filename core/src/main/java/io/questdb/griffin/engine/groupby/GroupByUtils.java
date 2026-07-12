@@ -652,49 +652,6 @@ public class GroupByUtils {
         return true;
     }
 
-    // assembleGroupByFunctions must be called before this call to get the idea of how many map values
-    // we will have. Map value count is needed to calculate offsets for map key columns.
-    public static void prepareWorkerGroupByFunctions(
-            @NotNull IQueryModel model,
-            @NotNull RecordMetadata metadata,
-            @NotNull FunctionParser functionParser,
-            @NotNull SqlExecutionContext executionContext,
-            @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @NotNull ObjList<GroupByFunction> workerGroupByFunctions
-    ) throws SqlException {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode node = column.getAst();
-
-            if (node.type != ExpressionNode.LITERAL) {
-                // this can fail
-                final Function function = functionParser.parseFunction(
-                        node,
-                        metadata,
-                        executionContext
-                );
-
-                if (function instanceof GroupByFunction func) {
-                    // configure map value columns for group-by functions
-                    // some functions may need more than one column in values,
-                    // so we have them do all the work
-                    workerGroupByFunctions.add(func);
-                } else {
-                    // it's a key function; we don't need it
-                    Misc.free(function);
-                }
-            }
-        }
-
-        assert groupByFunctions.size() == workerGroupByFunctions.size();
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
-            final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
-            workerGroupByFunction.initValueIndex(groupByFunction.getValueIndex());
-        }
-    }
-
     public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {
         if (functions instanceof PerWorkerFunctionList<?> perWorkerFunctions) {
             // The list tracks worker-owned clones positionally, so iterate the owned bits

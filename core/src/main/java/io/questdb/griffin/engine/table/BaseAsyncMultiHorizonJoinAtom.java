@@ -128,49 +128,38 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            AsyncHorizonJoinResources resources,
             int workerCount
     ) {
         assert slaveStates.size() > 0;
-        assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
-        assert perWorkerFilters == null || perWorkerFilters.size() == workerCount;
+        assert resources.getPerWorkerFilters() == null || resources.getPerWorkerFilters().size() == workerCount;
 
-        this.slaveCount = slaveStates.size();
-        this.workerCount = workerCount;
-        this.masterTimestampColumnIndex = masterTimestampColumnIndex;
-        this.offsets = offsets;
-        this.offsetCount = offsets.length;
-        this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
-        this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
-        this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
-        this.horizonJoinSymbolTableSource = new MultiHorizonJoinSymbolTableSource(columnSources, columnIndexes, slaveCount);
-
-        // Filter and memory pool resources (ownership transferred from caller)
-        this.filterCtx = new AsyncFilterContext(
-                configuration,
-                compiledFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                ownerFilter,
-                filterUsedColumnIndexes,
-                perWorkerFilters,
-                workerCount,
-                workerCount,
-                0L, // owner memory pool budget (single-buffer effective behavior)
-                0L  // per-worker memory pool budget
-        );
-
-        // Group by functions (ownership transferred from caller)
+        // Adopt the worker function views before configuration or allocation can fail. The
+        // factory's transfer holder retains everything that this constructor has not adopted yet.
         this.ownerGroupByFunctions = ownerGroupByFunctions;
-        this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
+        this.perWorkerGroupByFunctions = resources.takePerWorkerGroupByFunctions();
+        assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
 
         try {
+            this.slaveCount = slaveStates.size();
+            this.workerCount = workerCount;
+            this.masterTimestampColumnIndex = masterTimestampColumnIndex;
+            this.offsets = offsets;
+            this.offsetCount = offsets.length;
+            this.bwdScanAbsoluteThreshold = configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold();
+            this.bwdScanMinGap = configuration.getSqlHorizonJoinBwdScanMinGap();
+            this.bwdScanSwitchFactor = configuration.getSqlHorizonJoinBwdScanSwitchFactor();
+            this.horizonJoinSymbolTableSource = new MultiHorizonJoinSymbolTableSource(columnSources, columnIndexes, slaveCount);
+
+            // AsyncFilterContext adopts all filter and bind resources directly from the holder.
+            this.filterCtx = new AsyncFilterContext(
+                    configuration,
+                    resources,
+                    workerCount,
+                    workerCount,
+                    0L, // owner memory pool budget (single-buffer effective behavior)
+                    0L  // per-worker memory pool budget
+            );
             // Per-worker locks
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
 
@@ -350,7 +339,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 perWorkerHorizonIterators.add(new AsyncHorizonTimestampIterator(offsets));
             }
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -403,30 +392,50 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 }
             }
         }
-        Misc.free(ownerAllocator);
-        Misc.freeObjList(perWorkerAllocators);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAllocator);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAllocators);
         // ownerGroupByFunctions are freed by the owning factory via
         // recordFunctions/groupByFunctions field, so we only free per-worker clones here.
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.close(perWorkerGroupByFunctions.getQuick(i));
+                final ObjList<GroupByFunction> workerFunctions = perWorkerGroupByFunctions.getQuick(i);
+                perWorkerGroupByFunctions.setQuick(i, null);
+                try {
+                    PerWorkerFunctionList.close(workerFunctions);
+                } catch (Throwable th) {
+                    if (cleanupFailure == null) {
+                        cleanupFailure = th;
+                    } else if (cleanupFailure != th) {
+                        cleanupFailure.addSuppressed(th);
+                    }
+                }
             }
         }
-        Misc.freeObjList(ownerAsOfJoinMaps);
-        Misc.freeObjList(perWorkerAsOfJoinMaps);
-        Misc.freeObjList(ownerSlaveTimeFrameCursors);
-        Misc.freeObjList(perWorkerSlaveTimeFrameCursors);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerAsOfJoinMaps);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAsOfJoinMaps);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerSlaveTimeFrameCursors);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
         // Horizon timestamp iterators
-        Misc.free(ownerHorizonIterator);
-        Misc.freeObjList(perWorkerHorizonIterators);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerHorizonIterator);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerHorizonIterators);
         // Filter and memory pool resources
-        Misc.free(filterCtx);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
         // Symbol translating records (per-slave)
-        Misc.freeObjList(ownerSymbolTranslatingRecords);
-        Misc.freeObjList(perWorkerSymbolTranslatingRecords);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, ownerSymbolTranslatingRecords);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSymbolTranslatingRecords);
 
         // Let subclass close its resources
-        closeAggregationState();
+        try {
+            closeAggregationState();
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     public Map getAsOfJoinMap(int slotId, int slaveIndex) {

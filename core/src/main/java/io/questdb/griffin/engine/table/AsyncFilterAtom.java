@@ -102,7 +102,8 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
 
     @Override
     public void close() {
-        Misc.freeObjList(perWorkerFilters);
+        final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     public Function getFilter(int filterId) {

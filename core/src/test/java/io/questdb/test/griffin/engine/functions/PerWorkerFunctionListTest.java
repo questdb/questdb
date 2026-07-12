@@ -106,6 +106,39 @@ public class PerWorkerFunctionListTest {
     }
 
     @Test
+    public void testCloseWithPrimarySuppressesFailuresAndContinuesCleanup() {
+        final PerWorkerFunctionList<Function> list = new PerWorkerFunctionList<>(4);
+        final ThrowingCloseFunction throwingFirst = new ThrowingCloseFunction("close failure 0");
+        final TrackingFunction borrowed = new TrackingFunction();
+        final ThrowingCloseFunction throwingSecond = new ThrowingCloseFunction("close failure 1");
+        final TrackingFunction owned = new TrackingFunction();
+        list.add(throwingFirst, true);
+        list.add(borrowed, false);
+        list.add(throwingSecond, true);
+        list.add(owned, true);
+        final RuntimeException primary = new RuntimeException("primary");
+
+        PerWorkerFunctionList.close(list, primary);
+
+        Assert.assertEquals(1, primary.getSuppressed().length);
+        Assert.assertSame(throwingFirst.failure, primary.getSuppressed()[0]);
+        Assert.assertEquals(1, throwingFirst.failure.getSuppressed().length);
+        Assert.assertSame(throwingSecond.failure, throwingFirst.failure.getSuppressed()[0]);
+        Assert.assertEquals(1, owned.closeCount);
+        Assert.assertEquals(0, borrowed.closeCount);
+        Assert.assertNull(list.getQuick(0));
+        Assert.assertSame(borrowed, list.getQuick(1));
+        Assert.assertNull(list.getQuick(2));
+        Assert.assertNull(list.getQuick(3));
+
+        PerWorkerFunctionList.close(list, primary);
+        Assert.assertEquals(1, primary.getSuppressed().length);
+        Assert.assertEquals(1, throwingFirst.closeAttempts);
+        Assert.assertEquals(1, throwingSecond.closeAttempts);
+        Assert.assertEquals(1, owned.closeCount);
+    }
+
+    @Test
     public void testInheritedStructuralMutatorsAreRejected() {
         final PerWorkerFunctionList<Function> list = new PerWorkerFunctionList<>(4);
         final TrackingFunction function = new TrackingFunction();
@@ -137,6 +170,121 @@ public class PerWorkerFunctionListTest {
         Assert.assertTrue(PerWorkerFunctionList.isOwned(list, 0));
         PerWorkerFunctionList.close(list);
         Assert.assertEquals(1, function.closeCount);
+    }
+
+    @Test
+    public void testInitFailuresCanBeRetriedOnPerWorkerList() throws Exception {
+        final PerWorkerFunctionList<Function> donationFailureList = new PerWorkerFunctionList<>(3);
+        final TrackingFunction borrowed = new TrackingFunction();
+        final TrackingFunction firstClone = new TrackingFunction();
+        final TrackingFunction secondClone = new TrackingFunction();
+        donationFailureList.add(borrowed, false);
+        donationFailureList.add(firstClone, true);
+        donationFailureList.add(secondClone, true);
+        final ObjList<Function> donationOwners = new ObjList<>();
+        final TrackingFunction borrowedOwner = new TrackingFunction();
+        final TrackingFunction firstOwner = new ThrowOnceTrackingFunction(false, true);
+        final TrackingFunction secondOwner = new TrackingFunction();
+        donationOwners.add(borrowedOwner);
+        donationOwners.add(firstOwner);
+        donationOwners.add(secondOwner);
+
+        Assert.assertThrows(RuntimeException.class, () -> PerWorkerFunctionList.init(donationFailureList, donationOwners, null, null));
+        Assert.assertEquals(0, borrowedOwner.offerStateCount);
+        Assert.assertEquals(1, firstOwner.offerStateCount);
+        Assert.assertEquals(0, firstClone.initCount);
+        Assert.assertEquals(0, secondOwner.offerStateCount);
+        Assert.assertEquals(0, secondClone.initCount);
+        PerWorkerFunctionList.init(donationFailureList, donationOwners, null, null);
+        Assert.assertEquals(2, firstOwner.offerStateCount);
+        Assert.assertEquals(1, firstClone.initCount);
+        Assert.assertEquals(1, secondOwner.offerStateCount);
+        Assert.assertEquals(1, secondClone.initCount);
+
+        final PerWorkerFunctionList<Function> initFailureList = new PerWorkerFunctionList<>(2);
+        final TrackingFunction failingClone = new ThrowOnceTrackingFunction(true, false);
+        final TrackingFunction trailingClone = new TrackingFunction();
+        initFailureList.add(failingClone, true);
+        initFailureList.add(trailingClone, true);
+        final ObjList<Function> initOwners = new ObjList<>();
+        final TrackingFunction firstInitOwner = new TrackingFunction();
+        final TrackingFunction secondInitOwner = new TrackingFunction();
+        initOwners.add(firstInitOwner);
+        initOwners.add(secondInitOwner);
+
+        Assert.assertThrows(RuntimeException.class, () -> PerWorkerFunctionList.init(initFailureList, initOwners, null, null));
+        Assert.assertEquals(1, firstInitOwner.offerStateCount);
+        Assert.assertEquals(1, failingClone.initCount);
+        Assert.assertEquals(0, secondInitOwner.offerStateCount);
+        Assert.assertEquals(0, trailingClone.initCount);
+        PerWorkerFunctionList.init(initFailureList, initOwners, null, null);
+        Assert.assertEquals(2, firstInitOwner.offerStateCount);
+        Assert.assertEquals(2, failingClone.initCount);
+        Assert.assertEquals(1, secondInitOwner.offerStateCount);
+        Assert.assertEquals(1, trailingClone.initCount);
+    }
+
+    @Test
+    public void testInitFailuresCanBeRetriedOnPlainList() throws Exception {
+        final ObjList<Function> donationFailureList = new ObjList<>();
+        final TrackingFunction firstClone = new TrackingFunction();
+        final TrackingFunction secondClone = new TrackingFunction();
+        final TrackingFunction thirdClone = new TrackingFunction();
+        donationFailureList.add(firstClone);
+        donationFailureList.add(secondClone);
+        donationFailureList.add(thirdClone);
+        final ObjList<Function> donationOwners = new ObjList<>();
+        final TrackingFunction firstOwner = new TrackingFunction();
+        final TrackingFunction secondOwner = new ThrowOnceTrackingFunction(false, true);
+        final TrackingFunction thirdOwner = new TrackingFunction();
+        donationOwners.add(firstOwner);
+        donationOwners.add(secondOwner);
+        donationOwners.add(thirdOwner);
+
+        Assert.assertThrows(RuntimeException.class, () -> PerWorkerFunctionList.init(donationFailureList, donationOwners, null, null));
+        Assert.assertEquals(1, firstOwner.offerStateCount);
+        Assert.assertEquals(1, secondOwner.offerStateCount);
+        Assert.assertEquals(0, thirdOwner.offerStateCount);
+        Assert.assertEquals(0, firstClone.initCount);
+        Assert.assertEquals(0, secondClone.initCount);
+        Assert.assertEquals(0, thirdClone.initCount);
+        PerWorkerFunctionList.init(donationFailureList, donationOwners, null, null);
+        Assert.assertEquals(2, firstOwner.offerStateCount);
+        Assert.assertEquals(2, secondOwner.offerStateCount);
+        Assert.assertEquals(1, thirdOwner.offerStateCount);
+        Assert.assertEquals(1, firstClone.initCount);
+        Assert.assertEquals(1, secondClone.initCount);
+        Assert.assertEquals(1, thirdClone.initCount);
+
+        final ObjList<Function> initFailureList = new ObjList<>();
+        final TrackingFunction initializedClone = new TrackingFunction();
+        final TrackingFunction failingClone = new ThrowOnceTrackingFunction(true, false);
+        final TrackingFunction trailingClone = new TrackingFunction();
+        initFailureList.add(initializedClone);
+        initFailureList.add(failingClone);
+        initFailureList.add(trailingClone);
+        final ObjList<Function> initOwners = new ObjList<>();
+        final TrackingFunction initializedOwner = new TrackingFunction();
+        final TrackingFunction failingOwner = new TrackingFunction();
+        final TrackingFunction trailingOwner = new TrackingFunction();
+        initOwners.add(initializedOwner);
+        initOwners.add(failingOwner);
+        initOwners.add(trailingOwner);
+
+        Assert.assertThrows(RuntimeException.class, () -> PerWorkerFunctionList.init(initFailureList, initOwners, null, null));
+        Assert.assertEquals(1, initializedOwner.offerStateCount);
+        Assert.assertEquals(1, failingOwner.offerStateCount);
+        Assert.assertEquals(1, trailingOwner.offerStateCount);
+        Assert.assertEquals(1, initializedClone.initCount);
+        Assert.assertEquals(1, failingClone.initCount);
+        Assert.assertEquals(0, trailingClone.initCount);
+        PerWorkerFunctionList.init(initFailureList, initOwners, null, null);
+        Assert.assertEquals(2, initializedOwner.offerStateCount);
+        Assert.assertEquals(2, failingOwner.offerStateCount);
+        Assert.assertEquals(2, trailingOwner.offerStateCount);
+        Assert.assertEquals(2, initializedClone.initCount);
+        Assert.assertEquals(2, failingClone.initCount);
+        Assert.assertEquals(1, trailingClone.initCount);
     }
 
     @Test
@@ -280,22 +428,50 @@ public class PerWorkerFunctionListTest {
     }
 
     private static class ThrowingCloseFunction extends LongFunction {
-        private final String message;
+        private final RuntimeException failure;
         private int closeAttempts;
 
         private ThrowingCloseFunction(String message) {
-            this.message = message;
+            this.failure = new RuntimeException(message);
         }
 
         @Override
         public void close() {
             closeAttempts++;
-            throw new RuntimeException(message);
+            throw failure;
         }
 
         @Override
         public long getLong(Record rec) {
             return 0;
+        }
+    }
+
+    private static class ThrowOnceTrackingFunction extends TrackingFunction {
+        private boolean isInitFailurePending;
+        private boolean isOfferFailurePending;
+
+        private ThrowOnceTrackingFunction(boolean isInitFailurePending, boolean isOfferFailurePending) {
+            this.isInitFailurePending = isInitFailurePending;
+            this.isOfferFailurePending = isOfferFailurePending;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            super.init(symbolTableSource, executionContext);
+            if (isInitFailurePending) {
+                isInitFailurePending = false;
+                throw new RuntimeException("init failure");
+            }
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            super.offerStateTo(that);
+            if (isOfferFailurePending) {
+                isOfferFailurePending = false;
+                throw new RuntimeException("offer failure");
+            }
         }
     }
 

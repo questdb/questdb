@@ -27,13 +27,17 @@ package io.questdb.test.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.IntervalDynamicIndicator;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -48,6 +52,53 @@ import org.junit.Test;
  * position 0. Cursor entries carry their positions in cursor encounter order.
  */
 public class RuntimeIntervalModelTest extends AbstractCairoTest {
+
+    @Test
+    public void testCloseAttemptsEveryFunctionAndPreservesFirstFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final RuntimeException firstFailure = new RuntimeException("first");
+            final RuntimeException laterFailure = new RuntimeException("later");
+            final CloseCountingFunction first = new CloseCountingFunction(firstFailure);
+            final CloseCountingFunction second = new CloseCountingFunction(null);
+            final CloseCountingFunction third = new CloseCountingFunction(laterFailure);
+            final CloseCountingFunction fourth = new CloseCountingFunction(null);
+            final ObjList<Function> dynamicFunctions = new ObjList<>();
+            dynamicFunctions.add(first);
+            dynamicFunctions.add(second);
+            dynamicFunctions.add(null);
+            dynamicFunctions.add(third);
+            dynamicFunctions.add(fourth);
+            final RuntimeIntervalModel model = new RuntimeIntervalModel(
+                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
+                    PartitionBy.DAY,
+                    new LongList(),
+                    dynamicFunctions
+            );
+
+            try {
+                model.close();
+                Assert.fail("close must propagate the first failure");
+            } catch (RuntimeException e) {
+                Assert.assertSame(firstFailure, e);
+                Assert.assertArrayEquals(new Throwable[]{laterFailure}, e.getSuppressed());
+            }
+
+            Assert.assertEquals(1, first.closeCount);
+            Assert.assertEquals(1, second.closeCount);
+            Assert.assertEquals(1, third.closeCount);
+            Assert.assertEquals(1, fourth.closeCount);
+            for (int i = 0, n = dynamicFunctions.size(); i < n; i++) {
+                Assert.assertNull(dynamicFunctions.getQuick(i));
+            }
+
+            model.close();
+            Assert.assertEquals(1, first.closeCount);
+            Assert.assertEquals(1, second.closeCount);
+            Assert.assertEquals(1, third.closeCount);
+            Assert.assertEquals(1, fourth.closeCount);
+            Assert.assertArrayEquals(new Throwable[]{laterFailure}, firstFailure.getSuppressed());
+        });
+    }
 
     @Test
     public void testDynamicIntervalWithNullPositionList() throws Exception {
@@ -147,13 +198,17 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
     public void testMultiRowSubQueryErrorUsesSecondCursorPosition() throws Exception {
         assertMemoryLeak(() -> {
             createTwoRowTable();
-            final ObjList<Function> dynamicFunctions = new ObjList<>();
-            dynamicFunctions.add(new CursorFunction(select("SELECT 2_000::timestamp")));
-            dynamicFunctions.add(new CursorFunction(select("SELECT ts FROM tab")));
-            final IntList positions = new IntList();
-            positions.add(17);
-            positions.add(42);
-            assertMultiRowSubQueryError(dynamicFunctions, positions, 42);
+            final RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+            builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, configuration);
+            // The builder stores the incoming BETWEEN boundary before the pending one. Supplying
+            // the multi-row cursor first therefore makes it the second cursor evaluated by the
+            // runtime model, while preserving its distinct parse position.
+            builder.setBetweenBoundary(new CursorFunction(select("SELECT ts FROM tab")), 42);
+            builder.setBetweenBoundary(new CursorFunction(select("SELECT 2_000::timestamp")), 17);
+            builder.clearBetweenParsing();
+            final RuntimeIntrinsicIntervalModel model = builder.build();
+            builder.clear();
+            assertModelMultiRowSubQueryError(model, 42);
         });
     }
 
@@ -165,6 +220,22 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
             positions.add(42);
             assertMultiRowSubQueryError(positions, 42);
         });
+    }
+
+    private void assertModelMultiRowSubQueryError(RuntimeIntrinsicIntervalModel model, int expectedPosition) throws SqlException {
+        try {
+            model.calculateIntervals(sqlExecutionContext);
+            Assert.fail("multi-row scalar sub-query must be rejected");
+        } catch (SqlException e) {
+            Assert.assertEquals(
+                    "error must use the sparse cursor position, or 0 when it is unavailable",
+                    expectedPosition,
+                    e.getPosition()
+            );
+            TestUtils.assertContains(e.getFlyweightMessage(), "scalar sub-query returned more than one row");
+        } finally {
+            model.close();
+        }
     }
 
     private void assertMultiRowSubQueryError(IntList positions, int expectedPosition) throws Exception {
@@ -189,31 +260,41 @@ public class RuntimeIntervalModelTest extends AbstractCairoTest {
                     intervals
             );
         }
-        final RuntimeIntervalModel model = new RuntimeIntervalModel(
+        assertModelMultiRowSubQueryError(new RuntimeIntervalModel(
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP),
                 PartitionBy.DAY,
                 intervals,
                 dynamicFunctions,
                 positions
-        );
-        try {
-            model.calculateIntervals(sqlExecutionContext);
-            Assert.fail("multi-row scalar sub-query must be rejected");
-        } catch (SqlException e) {
-            Assert.assertEquals(
-                    "error must use the sparse cursor position, or 0 when it is unavailable",
-                    expectedPosition,
-                    e.getPosition()
-            );
-            TestUtils.assertContains(e.getFlyweightMessage(), "scalar sub-query returned more than one row");
-        } finally {
-            model.close();
-        }
+        ), expectedPosition);
     }
 
     private void createTwoRowTable() throws SqlException {
         execute("create table tab as (" +
                 "select timestamp_sequence(0, 1000) ts from long_sequence(2)" +
                 ") timestamp(ts)");
+    }
+
+    private static class CloseCountingFunction extends TimestampFunction {
+        private final RuntimeException failure;
+        private int closeCount;
+
+        private CloseCountingFunction(RuntimeException failure) {
+            super(ColumnType.TIMESTAMP);
+            this.failure = failure;
+        }
+
+        @Override
+        public void close() {
+            closeCount++;
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return 0;
+        }
     }
 }

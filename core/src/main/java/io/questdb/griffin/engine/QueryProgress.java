@@ -476,9 +476,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     protected void _close() {
-        cursor.close();
-        base.close();
-        pageFrameCursor.close();
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, base);
+        failure = Misc.freeBestEffort(failure, pageFrameCursor);
+        Misc.rethrowCleanupFailure(failure);
     }
 
     class RegisteredPageFrameCursor implements PageFrameCursor {

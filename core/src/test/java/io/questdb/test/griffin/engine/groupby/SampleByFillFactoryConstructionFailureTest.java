@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFac
 import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
@@ -142,16 +143,20 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
     public void testFillNoneNotKeyedConstructorFailureKeepsPrimaryWhenCleanupThrows() throws Exception {
         assertMemoryLeak(() -> {
             final Fixture fixture = new Fixture();
-            final ThrowingCloseFunction throwingRecordFunc = new ThrowingCloseFunction("injected cleanup failure");
+            final ThrowingCloseFunction throwingRecordFunc = new ThrowingCloseFunction("injected record cleanup failure");
+            final ThrowingCloseFunction throwingTimezoneFunc = new ThrowingCloseFunction("injected timezone cleanup failure");
+            final ThrowingCloseFunction throwingSampleFromFunc = new ThrowingCloseFunction("injected FROM cleanup failure");
             fixture.recordFunctions.clear();
             fixture.recordFunctions.add(throwingRecordFunc);
             fixture.recordFunctions.add(fixture.recordFunc);
+            final CloseCountingBaseFactory base = fixture.base();
+            base.closeFailure = "injected base cleanup failure";
 
             final Throwable e = Assert.assertThrows(Throwable.class, () ->
                     new SampleByFillNoneNotKeyedRecordCursorFactory(
                             new TargetFailingAssembler(GroupByFunctionsUpdater.class, UPDATER_FAILURE),
                             configuration,
-                            fixture.base(),
+                            base,
                             fixture.sampler(),
                             fixture.groupByMetadata,
                             new ObjList<>(),
@@ -159,11 +164,11 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                             1,
                             1,
                             ColumnType.TIMESTAMP,
-                            fixture.timezoneNameFunc,
+                            throwingTimezoneFunc,
                             0,
                             fixture.offsetFunc,
                             0,
-                            fixture.sampleFromFunc,
+                            throwingSampleFromFunc,
                             0,
                             fixture.sampleToFunc,
                             0
@@ -172,13 +177,18 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
 
             TestUtils.assertContains(e.getMessage(), UPDATER_FAILURE);
             Assert.assertEquals(1, e.getSuppressed().length);
-            TestUtils.assertContains(e.getSuppressed()[0].getMessage(), "injected cleanup failure");
+            final Throwable cleanupFailure = e.getSuppressed()[0];
+            TestUtils.assertContains(cleanupFailure.getMessage(), "injected record cleanup failure");
+            Assert.assertEquals(3, cleanupFailure.getSuppressed().length);
+            TestUtils.assertContains(cleanupFailure.getSuppressed()[0].getMessage(), "injected base cleanup failure");
+            TestUtils.assertContains(cleanupFailure.getSuppressed()[1].getMessage(), "injected timezone cleanup failure");
+            TestUtils.assertContains(cleanupFailure.getSuppressed()[2].getMessage(), "injected FROM cleanup failure");
             Assert.assertEquals(1, throwingRecordFunc.closeCount);
             Assert.assertEquals("later record functions must close despite the earlier failure", 1, fixture.recordFunc.closeCount);
-            Assert.assertEquals(1, fixture.baseFactory.closeCount);
-            Assert.assertEquals(1, fixture.timezoneNameFunc.closeCount);
+            Assert.assertEquals(1, base.closeCount);
+            Assert.assertEquals(1, throwingTimezoneFunc.closeCount);
             Assert.assertEquals(1, fixture.offsetFunc.closeCount);
-            Assert.assertEquals(1, fixture.sampleFromFunc.closeCount);
+            Assert.assertEquals(1, throwingSampleFromFunc.closeCount);
             Assert.assertEquals(1, fixture.sampleToFunc.closeCount);
         });
     }
@@ -402,6 +412,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
         assertMemoryLeak(() -> {
             final Fixture fixture = new Fixture();
             final CloseCountingBaseFactory base = fixture.base();
+            final ThrowingCloseFunction throwingTimezoneFunc = new ThrowingCloseFunction("injected timezone cleanup failure");
+            final ThrowingCloseFunction throwingSampleFromFunc = new ThrowingCloseFunction("injected FROM cleanup failure");
             base.closeFailure = "injected base cleanup failure";
 
             final Throwable e = Assert.assertThrows(Throwable.class, () ->
@@ -411,7 +423,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                             fixture.groupByMetadata,
                             new ObjList<>(),
                             fixture.baseMetadata,
-                            fixture.timezoneNameFunc,
+                            throwingTimezoneFunc,
                             0,
                             fixture.offsetFunc,
                             0,
@@ -428,7 +440,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                                 }
                             },
                             16,
-                            fixture.sampleFromFunc,
+                            throwingSampleFromFunc,
                             0,
                             fixture.sampleToFunc,
                             0
@@ -437,11 +449,15 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
 
             TestUtils.assertContains(e.getMessage(), SYMBOL_FILTER_FAILURE);
             Assert.assertEquals(1, e.getSuppressed().length);
-            TestUtils.assertContains(e.getSuppressed()[0].getMessage(), "injected base cleanup failure");
+            final Throwable cleanupFailure = e.getSuppressed()[0];
+            TestUtils.assertContains(cleanupFailure.getMessage(), "injected base cleanup failure");
+            Assert.assertEquals(2, cleanupFailure.getSuppressed().length);
+            TestUtils.assertContains(cleanupFailure.getSuppressed()[0].getMessage(), "injected timezone cleanup failure");
+            TestUtils.assertContains(cleanupFailure.getSuppressed()[1].getMessage(), "injected FROM cleanup failure");
             Assert.assertEquals(1, base.closeCount);
-            Assert.assertEquals(1, fixture.timezoneNameFunc.closeCount);
+            Assert.assertEquals(1, throwingTimezoneFunc.closeCount);
             Assert.assertEquals(1, fixture.offsetFunc.closeCount);
-            Assert.assertEquals(1, fixture.sampleFromFunc.closeCount);
+            Assert.assertEquals(1, throwingSampleFromFunc.closeCount);
             Assert.assertEquals(1, fixture.sampleToFunc.closeCount);
 
             // A second owner may still hold the base after the failed construction. Its close
@@ -510,6 +526,75 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         0
                 )
         );
+    }
+
+    @Test
+    public void testUnifiedFillCloseContinuesAfterThrowingChildren() throws Exception {
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("value", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+            metadata.setTimestampIndex(1);
+            final CloseCountingBaseFactory base = new CloseCountingBaseFactory(metadata);
+            base.closeFailure = "injected base cleanup failure";
+            final ThrowingCloseFunction fromFunc = new ThrowingCloseFunction("injected FROM cleanup failure");
+            final CloseCountingFunction toFunc = new CloseCountingFunction();
+            final CloseCountingFunction offsetFunc = new CloseCountingFunction();
+            final ThrowingCloseFunction timezoneFunc = new ThrowingCloseFunction("injected timezone cleanup failure");
+            final ThrowingCloseFunction constantFill = new ThrowingCloseFunction("injected constant cleanup failure");
+            final IntList fillModes = new IntList();
+            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+            fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+            final ObjList<Function> constantFills = new ObjList<>();
+            constantFills.add(constantFill);
+            constantFills.add(null);
+
+            final SampleByFillRecordCursorFactory factory = new SampleByFillRecordCursorFactory(
+                    configuration,
+                    metadata,
+                    base,
+                    fromFunc,
+                    toFunc,
+                    0,
+                    1,
+                    'h',
+                    new SimpleTimestampSampler(100L, ColumnType.TIMESTAMP),
+                    fillModes,
+                    constantFills,
+                    1,
+                    ColumnType.TIMESTAMP,
+                    null,
+                    new ArrayColumnTypes(),
+                    new ArrayColumnTypes(),
+                    new IntList(),
+                    new IntList(),
+                    offsetFunc,
+                    0,
+                    timezoneFunc,
+                    0,
+                    new IntList(),
+                    new IntList(),
+                    new IntList(),
+                    false
+            );
+
+            final Throwable e = Assert.assertThrows(Throwable.class, factory::close);
+            TestUtils.assertContains(e.getMessage(), "injected base cleanup failure");
+            Assert.assertEquals(3, e.getSuppressed().length);
+            TestUtils.assertContains(e.getSuppressed()[0].getMessage(), "injected FROM cleanup failure");
+            TestUtils.assertContains(e.getSuppressed()[1].getMessage(), "injected timezone cleanup failure");
+            TestUtils.assertContains(e.getSuppressed()[2].getMessage(), "injected constant cleanup failure");
+            Assert.assertEquals(1, base.closeCount);
+            Assert.assertEquals(1, fromFunc.closeCount);
+            Assert.assertEquals(1, toFunc.closeCount);
+            Assert.assertEquals(1, offsetFunc.closeCount);
+            Assert.assertEquals(1, timezoneFunc.closeCount);
+            Assert.assertEquals(1, constantFill.closeCount);
+
+            factory.close();
+            Assert.assertEquals(1, base.closeCount);
+            Assert.assertEquals(1, constantFill.closeCount);
+        });
     }
 
     private void assertConstructionFailureClosesAdoptedResources(

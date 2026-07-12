@@ -67,6 +67,7 @@ public class RuntimeIntervalModelBuilderTest {
             builder.setBetweenBoundary(hi, 0);
             Assert.fail("injected failure expected");
         } catch (RuntimeException e) {
+            Assert.assertFalse(builder.isBetweenBoundaryFunctionConsumed());
             // WhereClauseParser.translateBetweenToTimestampModel catch: frees the incoming func
             Misc.free(hi);
         }
@@ -89,6 +90,68 @@ public class RuntimeIntervalModelBuilderTest {
         Assert.assertEquals(1, hi2.closeCount);
         Assert.assertEquals("retry must not close the rolled-back endpoint again", 1, lo.closeCount);
         Assert.assertEquals("retry must not close the freed endpoint again", 1, hi.closeCount);
+    }
+
+    @Test
+    public void testBetweenNullBoundaryCleanupContinuesAfterAdoptedFailure() {
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        ThrowingCloseFunction adoptedFailure = new ThrowingCloseFunction("adopted");
+        CloseCountingFunction adoptedTail = new CloseCountingFunction();
+        ThrowingCloseFunction pendingFailure = new ThrowingCloseFunction("pending");
+        builder.intersectRuntimeTimestamp(adoptedFailure, 0);
+        builder.intersectRuntimeTimestamp(adoptedTail, 0);
+        builder.setBetweenBoundary(pendingFailure, 0);
+
+        try {
+            builder.setBetweenBoundary(Numbers.LONG_NULL);
+            Assert.fail("adopted close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(adoptedFailure.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{pendingFailure.failure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, adoptedFailure.closeCount);
+        Assert.assertEquals(1, adoptedTail.closeCount);
+        Assert.assertEquals(1, pendingFailure.closeCount);
+        Assert.assertTrue(builder.isEmptySet());
+
+        builder.clear();
+        Assert.assertEquals(1, adoptedFailure.closeCount);
+        Assert.assertEquals(1, adoptedTail.closeCount);
+        Assert.assertEquals(1, pendingFailure.closeCount);
+
+        CloseCountingFunction reused = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(reused, 0);
+        builder.clear();
+        Assert.assertEquals(1, reused.closeCount);
+    }
+
+    @Test
+    public void testBetweenNullBoundaryIncomingCleanupContinuesAfterAdoptedFailure() {
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        ThrowingCloseFunction adoptedFailure = new ThrowingCloseFunction("adopted");
+        CloseCountingFunction adoptedTail = new CloseCountingFunction();
+        ThrowingCloseFunction incomingFailure = new ThrowingCloseFunction("incoming");
+        builder.intersectRuntimeTimestamp(adoptedFailure, 0);
+        builder.intersectRuntimeTimestamp(adoptedTail, 0);
+        builder.setBetweenBoundary(Numbers.LONG_NULL);
+
+        try {
+            builder.setBetweenBoundary(incomingFailure, 0);
+            Assert.fail("adopted close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(adoptedFailure.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{incomingFailure.failure}, e.getSuppressed());
+            Assert.assertTrue(builder.isBetweenBoundaryFunctionConsumed());
+        }
+        Assert.assertEquals(1, adoptedFailure.closeCount);
+        Assert.assertEquals(1, adoptedTail.closeCount);
+        Assert.assertEquals(1, incomingFailure.closeCount);
+        Assert.assertTrue(builder.isEmptySet());
+
+        builder.clear();
+        Assert.assertEquals(1, adoptedFailure.closeCount);
+        Assert.assertEquals(1, adoptedTail.closeCount);
+        Assert.assertEquals(1, incomingFailure.closeCount);
     }
 
     @Test
@@ -133,6 +196,53 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
+    public void testBetweenRollbackCloseFailureSuppressesOntoCallerPrimary() {
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        RuntimeException primary = new RuntimeException("parse");
+        ThrowingCloseFunction pendingFailure = new ThrowingCloseFunction("pending");
+        builder.setBetweenBoundary(pendingFailure, 0);
+
+        Assert.assertSame(primary, builder.clearBetweenParsing(primary));
+        Assert.assertArrayEquals(new Throwable[]{pendingFailure.failure}, primary.getSuppressed());
+        Assert.assertEquals(1, pendingFailure.closeCount);
+        Assert.assertSame(primary, builder.clearBetweenParsing(primary));
+        Assert.assertEquals(1, pendingFailure.closeCount);
+    }
+
+    @Test
+    public void testBetweenRollbackContinuesAfterPendingCloseFailure() {
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        ThrowingCloseFunction adoptedFailure = new ThrowingCloseFunction("adopted");
+        CloseCountingFunction adoptedTail = new CloseCountingFunction();
+        ThrowingCloseFunction pendingFailure = new ThrowingCloseFunction("pending");
+        builder.intersectRuntimeTimestamp(adoptedFailure, 0);
+        builder.intersectRuntimeTimestamp(adoptedTail, 0);
+        builder.setBetweenBoundary(pendingFailure, 0);
+
+        try {
+            builder.clear();
+            Assert.fail("pending close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(pendingFailure.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{adoptedFailure.failure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, pendingFailure.closeCount);
+        Assert.assertEquals(1, adoptedFailure.closeCount);
+        Assert.assertEquals(1, adoptedTail.closeCount);
+
+        // Cleanup detached every reference before invoking user close methods.
+        builder.clear();
+        Assert.assertEquals(1, pendingFailure.closeCount);
+        Assert.assertEquals(1, adoptedFailure.closeCount);
+        Assert.assertEquals(1, adoptedTail.closeCount);
+
+        CloseCountingFunction reused = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(reused, 0);
+        builder.clear();
+        Assert.assertEquals(1, reused.closeCount);
+    }
+
+    @Test
     public void testBetweenSemiDynamicIncomingAdoptionIsAtomicUnderAllocationFailure() {
         // Constant first endpoint, dynamic second endpoint: an allocation failure in the
         // capacity reservation must leave the incoming function owned by the caller
@@ -146,6 +256,7 @@ public class RuntimeIntervalModelBuilderTest {
             builder.setBetweenBoundary(hi, 0);
             Assert.fail("injected failure expected");
         } catch (RuntimeException e) {
+            Assert.assertFalse(builder.isBetweenBoundaryFunctionConsumed());
             // WhereClauseParser.translateBetweenToTimestampModel catch: frees the incoming func
             Misc.free(hi);
         }
@@ -315,6 +426,66 @@ public class RuntimeIntervalModelBuilderTest {
     }
 
     @Test
+    public void testEmptySetBetweenDynamicCleanupConsumesBothEndpoints() {
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        builder.intersectEmpty();
+        ThrowingCloseFunction pendingFailure = new ThrowingCloseFunction("pending");
+        ThrowingCloseFunction incomingFailure = new ThrowingCloseFunction("incoming");
+        builder.setBetweenBoundary(pendingFailure, 0);
+
+        try {
+            builder.setBetweenBoundary(incomingFailure, 0);
+            Assert.fail("pending close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(pendingFailure.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{incomingFailure.failure}, e.getSuppressed());
+            Assert.assertTrue(builder.isBetweenBoundaryFunctionConsumed());
+        }
+        Assert.assertEquals(1, pendingFailure.closeCount);
+        Assert.assertEquals(1, incomingFailure.closeCount);
+
+        builder.clearBetweenParsing();
+        builder.clear();
+        Assert.assertEquals(1, pendingFailure.closeCount);
+        Assert.assertEquals(1, incomingFailure.closeCount);
+    }
+
+    @Test
+    public void testEmptySetBetweenSemiDynamicCleanupConsumesEndpoint() {
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        builder.intersectEmpty();
+        ThrowingCloseFunction pendingFailure = new ThrowingCloseFunction("pending");
+        builder.setBetweenBoundary(pendingFailure, 0);
+
+        try {
+            builder.setBetweenBoundary(1_000_000L);
+            Assert.fail("pending close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(pendingFailure.failure, e);
+        }
+        Assert.assertEquals(1, pendingFailure.closeCount);
+
+        builder.clearBetweenParsing();
+        builder.clear();
+        Assert.assertEquals(1, pendingFailure.closeCount);
+
+        builder = newBuilder();
+        builder.intersectEmpty();
+        ThrowingCloseFunction incomingFailure = new ThrowingCloseFunction("incoming");
+        builder.setBetweenBoundary(1_000_000L);
+        try {
+            builder.setBetweenBoundary(incomingFailure, 0);
+            Assert.fail("incoming close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(incomingFailure.failure, e);
+            Assert.assertTrue(builder.isBetweenBoundaryFunctionConsumed());
+        }
+        builder.clearBetweenParsing();
+        builder.clear();
+        Assert.assertEquals(1, incomingFailure.closeCount);
+    }
+
+    @Test
     public void testEmptySetConsumesBetweenFunctions() {
         // dynamic + dynamic endpoints against an already-empty model
         RuntimeIntervalModelBuilder builder = newBuilder();
@@ -418,6 +589,38 @@ public class RuntimeIntervalModelBuilderTest {
         builder.setBetweenBoundary(lo, 0);
         builder.freeAndClear();
         Assert.assertEquals(1, lo.closeCount);
+    }
+
+    @Test
+    public void testFreeAndClearContinuesAfterAdoptedCloseFailure() {
+        RuntimeIntervalModelBuilder builder = newBuilder();
+        ThrowingCloseFunction firstFailure = new ThrowingCloseFunction("first");
+        ThrowingCloseFunction secondFailure = new ThrowingCloseFunction("second");
+        CloseCountingFunction tail = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(firstFailure, 0);
+        builder.intersectRuntimeTimestamp(secondFailure, 0);
+        builder.intersectRuntimeTimestamp(tail, 0);
+
+        try {
+            builder.freeAndClear();
+            Assert.fail("first adopted close failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(firstFailure.failure, e);
+            Assert.assertArrayEquals(new Throwable[]{secondFailure.failure}, e.getSuppressed());
+        }
+        Assert.assertEquals(1, firstFailure.closeCount);
+        Assert.assertEquals(1, secondFailure.closeCount);
+        Assert.assertEquals(1, tail.closeCount);
+
+        builder.freeAndClear();
+        Assert.assertEquals(1, firstFailure.closeCount);
+        Assert.assertEquals(1, secondFailure.closeCount);
+        Assert.assertEquals(1, tail.closeCount);
+
+        CloseCountingFunction reused = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(reused, 0);
+        builder.freeAndClear();
+        Assert.assertEquals(1, reused.closeCount);
     }
 
     @Test
@@ -557,6 +760,20 @@ public class RuntimeIntervalModelBuilderTest {
     private static class CursorPositionsExposingBuilder extends RuntimeIntervalModelBuilder {
         IntList cursorFunctionPositionsCopy() {
             return copyCursorFunctionPositions();
+        }
+    }
+
+    private static class ThrowingCloseFunction extends CloseCountingFunction {
+        private final RuntimeException failure;
+
+        private ThrowingCloseFunction(String message) {
+            failure = new RuntimeException(message);
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            throw failure;
         }
     }
 

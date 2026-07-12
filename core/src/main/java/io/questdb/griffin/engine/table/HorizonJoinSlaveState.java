@@ -72,6 +72,12 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         factory = Misc.free(factory);
     }
 
+    RecordCursorFactory detachFactory() {
+        final RecordCursorFactory factory = this.factory;
+        this.factory = null;
+        return factory;
+    }
+
     public @Nullable ColumnTypes getAsOfJoinKeyTypes() {
         return asOfJoinKeyTypes;
     }

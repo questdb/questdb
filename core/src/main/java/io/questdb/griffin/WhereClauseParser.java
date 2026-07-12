@@ -537,6 +537,7 @@ public final class WhereClauseParser implements Mutable {
         ExpressionNode lo = between.args.getQuick(1);
         ExpressionNode hi = between.args.getQuick(0);
 
+        Throwable failure = null;
         try {
             model.setBetweenNegated(isNegated);
             boolean isBetweenTranslated = translateBetweenToTimestampModel(timestampDriver, model, functionParser, metadata, executionContext, lo);
@@ -548,8 +549,15 @@ public final class WhereClauseParser implements Mutable {
                 between.intrinsicValue = IntrinsicModel.TRUE;
                 return true;
             }
+        } catch (Throwable th) {
+            failure = th;
+            throw th;
         } finally {
-            model.clearBetweenTempParsing();
+            if (failure != null) {
+                model.clearBetweenTempParsing(failure);
+            } else {
+                model.clearBetweenTempParsing();
+            }
         }
 
         return false;
@@ -3034,21 +3042,37 @@ public final class WhereClauseParser implements Mutable {
             return true;
         } else if (isFunc(node)) {
             final Function func = functionParser.parseFunction(node, metadata, executionContext);
+            boolean isRetained = false;
+            Throwable failure = null;
             try {
                 checkFunctionCanBeTimestamp(metadata, executionContext, func, node.position);
                 if (func.isConstant()) {
-                    long timestamp = getTimestampFromConstFunction(timestampDriver, func, node.position, false);
+                    final long timestamp = getTimestampFromConstFunction(timestampDriver, func, node.position, false);
                     model.setBetweenBoundary(timestamp);
-                    Misc.free(func);
                     return true;
                 } else if (func.isRuntimeConstant()) {
-                    model.setBetweenBoundary(func, node.position);
-                    return true;
+                    try {
+                        model.setBetweenBoundary(func, node.position);
+                        isRetained = true;
+                        return true;
+                    } catch (Throwable th) {
+                        // A pre-adoption failure leaves func caller-owned. A terminal handoff marks
+                        // it consumed before invoking throwing cleanup, so this catch must not
+                        // close it again.
+                        isRetained = model.isBetweenBoundaryFunctionConsumed();
+                        throw th;
+                    }
                 }
-                Misc.free(func);
             } catch (Throwable th) {
-                Misc.free(func);
+                failure = th;
                 throw th;
+            } finally {
+                if (!isRetained) {
+                    final Throwable cleanupFailure = Misc.freeBestEffort(failure, func);
+                    if (failure == null) {
+                        Misc.rethrowCleanupFailure(cleanupFailure);
+                    }
+                }
             }
         }
         return false;

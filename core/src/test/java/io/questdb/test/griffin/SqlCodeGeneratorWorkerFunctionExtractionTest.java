@@ -214,6 +214,48 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
     }
 
     @Test
+    public void testCloneCompilationFailurePreservesPrimaryAndClosesEveryWorkerList() throws Exception {
+        assertMemoryLeak(() -> {
+            final CountingFunctionParser parser = new CountingFunctionParser(4, 1);
+            final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, 4);
+            final ObjectPool<ExpressionNode> expressionNodePool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
+            final CountingFunction unsafeOwnerFunction = new CountingFunction(false);
+            final ObjList<Function> ownerFunctions = new ObjList<>();
+            ownerFunctions.add(unsafeOwnerFunction);
+            try (SqlCodeGenerator codeGenerator = new SqlCodeGenerator(
+                    configuration,
+                    parser,
+                    new PostOrderTreeTraversalAlgo(),
+                    queryColumnPool,
+                    expressionNodePool
+            )) {
+                final ObjList<QueryColumn> queryColumns = new ObjList<>();
+                queryColumns.add(new QueryColumn().of("unsafe", expressionNodePool.next().of(ExpressionNode.LITERAL, "unsafe", 0, 0)));
+
+                final IntList flags = new IntList();
+                flags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL);
+
+                try {
+                    compilePerWorkerFunctions(codeGenerator, queryColumns, ownerFunctions, 4, flags);
+                    Assert.fail();
+                } catch (RuntimeException e) {
+                    Assert.assertSame(parser.failure, e);
+                    Assert.assertArrayEquals(new Throwable[]{parser.closeFailure}, e.getSuppressed());
+                }
+                Assert.assertEquals(4, parser.parseCount);
+                Assert.assertEquals(3, parser.functions.size());
+                Assert.assertEquals(0, unsafeOwnerFunction.closeCount);
+                for (int i = 0, n = parser.functions.size(); i < n; i++) {
+                    Assert.assertEquals("clone " + i, 1, parser.functions.getQuick(i).closeCount);
+                }
+            } finally {
+                Misc.freeObjList(ownerFunctions);
+            }
+            Assert.assertEquals(1, unsafeOwnerFunction.closeCount);
+        });
+    }
+
+    @Test
     public void testCompilesOnlyThreadUnsafeFunctionsPerWorker() throws Exception {
         assertMemoryLeak(() -> {
             final CountingFunctionParser parser = new CountingFunctionParser();
@@ -421,6 +463,114 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
     }
 
     @Test
+    public void testNonKeyedMixedSafeUnsafeAggregatesReturnNullCorrectly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT CASE WHEN x = 1 THEN NULL ELSE 'value' END::STRING s FROM long_sequence(100_000))");
+
+            assertQuery("SELECT count() c0, count() c1, count() c2, count() c3, count(s) c4, count() c5, count() c6, count() c7, first(s) f FROM x")
+                    .withPlanContaining("Async Group By")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("c0\tc1\tc2\tc3\tc4\tc5\tc6\tc7\tf\n100000\t100000\t100000\t100000\t99999\t100000\t100000\t100000\t\n");
+        });
+    }
+
+    @Test
+    public void testNonKeyedWideProjectionClonesOnlyUnsafeAggregatePerWorker() throws Exception {
+        assertMemoryLeak(() -> {
+            final int safeAggregateCount = 64;
+            final int workerCount = 3;
+            final CountingFunctionParser parser = new CountingFunctionParser();
+            final ObjectPool<QueryColumn> queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, safeAggregateCount + 1);
+            final ObjectPool<ExpressionNode> expressionNodePool = new ObjectPool<>(ExpressionNode.FACTORY, safeAggregateCount + 1);
+            final ObjList<QueryColumn> queryColumns = new ObjList<>(safeAggregateCount + 1);
+            final ObjList<GroupByFunction> ownerFunctions = new ObjList<>(safeAggregateCount + 1);
+            final ObjList<Function> innerProjectionFunctions = new ObjList<>(safeAggregateCount + 1);
+            final IntList projectionFunctionFlags = new IntList(safeAggregateCount + 1);
+            for (int i = 0; i < safeAggregateCount; i++) {
+                queryColumns.add(new QueryColumn().of(
+                        "safe" + i,
+                        expressionNodePool.next().of(ExpressionNode.FUNCTION, "aggSafe" + i, 0, 0)
+                ));
+                final CountingGroupByFunction function = new CountingGroupByFunction(true, i);
+                ownerFunctions.add(function);
+                innerProjectionFunctions.add(function);
+                projectionFunctionFlags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY);
+            }
+            queryColumns.add(new QueryColumn().of(
+                    "unsafe",
+                    expressionNodePool.next().of(ExpressionNode.FUNCTION, "aggUnsafe", 0, 0)
+            ));
+            final CountingGroupByFunction unsafeOwner = new CountingGroupByFunction(false, safeAggregateCount);
+            ownerFunctions.add(unsafeOwner);
+            innerProjectionFunctions.add(unsafeOwner);
+            projectionFunctionFlags.add(GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY);
+
+            try (SqlCodeGenerator codeGenerator = new SqlCodeGenerator(
+                    configuration,
+                    parser,
+                    new PostOrderTreeTraversalAlgo(),
+                    queryColumnPool,
+                    expressionNodePool
+            )) {
+                final ObjList<ObjList<GroupByFunction>> workerFunctions = codeGenerator.compileWorkerGroupByFunctionsConditionallyForTesting(
+                        null,
+                        queryColumns,
+                        innerProjectionFunctions,
+                        workerCount,
+                        null,
+                        projectionFunctionFlags
+                );
+                try {
+                    Assert.assertNotNull(workerFunctions);
+                    Assert.assertEquals(workerCount, parser.parseCount);
+                    Assert.assertEquals(workerCount, parser.functions.size());
+                    for (int worker = 0; worker < workerCount; worker++) {
+                        final ObjList<GroupByFunction> functions = workerFunctions.getQuick(worker);
+                        Assert.assertEquals(ownerFunctions.size(), functions.size());
+                        for (int i = 0; i < safeAggregateCount; i++) {
+                            Assert.assertSame(ownerFunctions.getQuick(i), functions.getQuick(i));
+                            Assert.assertFalse(PerWorkerFunctionList.isOwned(functions, i));
+                        }
+                        Assert.assertSame(parser.functions.getQuick(worker), functions.getQuick(safeAggregateCount));
+                        Assert.assertTrue(PerWorkerFunctionList.isOwned(functions, safeAggregateCount));
+                        Assert.assertEquals(safeAggregateCount, functions.getQuick(safeAggregateCount).getValueIndex());
+                        PerWorkerFunctionList.init(functions, ownerFunctions, null, null);
+                        PerWorkerFunctionList.clear(functions);
+                    }
+                    for (int i = 0; i < safeAggregateCount; i++) {
+                        final CountingGroupByFunction owner = (CountingGroupByFunction) ownerFunctions.getQuick(i);
+                        Assert.assertEquals(0, owner.initCount);
+                        Assert.assertEquals(0, owner.clearCount);
+                    }
+                    Assert.assertEquals(0, unsafeOwner.initCount);
+                    Assert.assertEquals(0, unsafeOwner.clearCount);
+                    Assert.assertEquals(workerCount, unsafeOwner.offerCount);
+                    for (int i = 0; i < safeAggregateCount; i++) {
+                        Assert.assertEquals(0, ((CountingGroupByFunction) ownerFunctions.getQuick(i)).offerCount);
+                    }
+                    for (int i = 0; i < workerCount; i++) {
+                        Assert.assertEquals(1, parser.functions.getQuick(i).initCount);
+                        Assert.assertEquals(1, parser.functions.getQuick(i).clearCount);
+                    }
+                } finally {
+                    for (int i = 0, n = workerFunctions.size(); i < n; i++) {
+                        PerWorkerFunctionList.close(workerFunctions.getQuick(i));
+                    }
+                }
+                for (int i = 0, n = parser.functions.size(); i < n; i++) {
+                    Assert.assertEquals(1, parser.functions.getQuick(i).closeCount);
+                }
+                for (int i = 0, n = ownerFunctions.size(); i < n; i++) {
+                    Assert.assertEquals(0, ((CountingGroupByFunction) ownerFunctions.getQuick(i)).closeCount);
+                }
+            } finally {
+                Misc.freeObjList(ownerFunctions);
+            }
+        });
+    }
+
+    @Test
     public void testPartitionsRetainedFunctionsInProjectionOrder() throws Exception {
         assertMemoryLeak(() -> {
             final CountingFunctionParser parser = new CountingFunctionParser();
@@ -576,9 +726,16 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
         int clearCount;
         int closeCount;
         int initCount;
+        int offerCount;
+        private final RuntimeException closeFailure;
         private final boolean isThreadSafe;
 
         private CountingFunction(boolean isThreadSafe) {
+            this(isThreadSafe, null);
+        }
+
+        private CountingFunction(boolean isThreadSafe, RuntimeException closeFailure) {
+            this.closeFailure = closeFailure;
             this.isThreadSafe = isThreadSafe;
         }
 
@@ -590,6 +747,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
         @Override
         public void close() {
             closeCount++;
+            if (closeFailure != null) {
+                throw closeFailure;
+            }
         }
 
         @Override
@@ -606,11 +766,18 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
         public boolean isThreadSafe() {
             return isThreadSafe;
         }
+
+        @Override
+        public void offerStateTo(Function that) {
+            offerCount++;
+        }
     }
 
     private static class CountingFunctionParser extends FunctionParser {
+        private final RuntimeException closeFailure = new RuntimeException("close failure");
         private final RuntimeException failure = new RuntimeException("expected");
         private final int failAt;
+        private final int throwingCloseAt;
         private final ObjList<CountingFunction> functions = new ObjList<>();
         private int parseCount;
 
@@ -619,8 +786,13 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
         }
 
         private CountingFunctionParser(int failAt) {
+            this(failAt, Integer.MAX_VALUE);
+        }
+
+        private CountingFunctionParser(int failAt, int throwingCloseAt) {
             super(configuration, new FunctionFactoryCache(configuration, Collections.emptyList()));
             this.failAt = failAt;
+            this.throwingCloseAt = throwingCloseAt;
         }
 
         @Override
@@ -635,7 +807,7 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
             }
             final CountingFunction function = Chars.startsWith(node.token, "agg")
                     ? new CountingGroupByFunction(false, -1)
-                    : new CountingFunction("safe".contentEquals(node.token));
+                    : new CountingFunction("safe".contentEquals(node.token), parseCount == throwingCloseAt ? closeFailure : null);
             functions.add(function);
             return function;
         }

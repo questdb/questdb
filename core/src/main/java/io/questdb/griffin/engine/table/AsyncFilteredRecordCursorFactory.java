@@ -198,9 +198,26 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public void halfClose() {
-        Misc.free(frameSequence);
-        cursor.freeRecords();
-        negativeLimitCursor.freeRecords();
+        Throwable cleanupFailure = Misc.freeBestEffort(null, frameSequence);
+        try {
+            cursor.freeRecords();
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
+        try {
+            negativeLimitCursor.freeRecords();
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
@@ -328,9 +345,19 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(negativeLimitRows);
-        halfClose();
-        Misc.free(filter);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, negativeLimitRows);
+        try {
+            halfClose();
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 }

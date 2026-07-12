@@ -70,6 +70,29 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
+    AsyncFilterContext(
+            CairoConfiguration configuration,
+            AsyncHorizonJoinResources resources,
+            int slotCount,
+            int filteredMemoryRecordCount,
+            long ownerMemoryPoolMaxBytes,
+            long perWorkerMemoryPoolMaxBytes
+    ) {
+        this(
+                configuration,
+                resources.takeCompiledFilter(),
+                resources.takeBindVarMemory(),
+                resources.takeBindVarFunctions(),
+                resources.takeFilter(),
+                resources.getFilterUsedColumnIndexes(),
+                resources.takePerWorkerFilters(),
+                slotCount,
+                filteredMemoryRecordCount,
+                ownerMemoryPoolMaxBytes,
+                perWorkerMemoryPoolMaxBytes
+        );
+    }
+
     public AsyncFilterContext(
             CairoConfiguration configuration,
             @Nullable CompiledFilter compiledFilter,
@@ -127,7 +150,7 @@ public class AsyncFilterContext implements Closeable {
                 frameFilteredMemoryRecords = null;
             }
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -153,23 +176,23 @@ public class AsyncFilterContext implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(compiledFilter);
-        Misc.free(bindVarMemory);
-        Misc.freeObjList(bindVarFunctions);
-        Misc.free(ownerFilter);
-        Misc.freeObjList(perWorkerFilters);
-        Misc.free(ownerMemoryPool);
-        Misc.freeObjList(perWorkerMemoryPools);
-        Misc.free(ownerFilteredRows);
-        Misc.freeObjList(perWorkerFilteredRows);
-        Misc.free(ownerDataAddresses);
-        Misc.freeObjList(perWorkerDataAddresses);
-        Misc.free(ownerAuxAddresses);
-        Misc.freeObjList(perWorkerAuxAddresses);
-        if (frameFilteredMemoryRecords != null) {
-            Misc.freeObjList(frameFilteredMemoryRecords);
-        }
-        Misc.free(ownerPageFrameFilteredMemoryRecord);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, compiledFilter);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, bindVarMemory);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, bindVarFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFilter);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilters);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerMemoryPool);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerMemoryPools);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFilteredRows);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilteredRows);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerDataAddresses);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerDataAddresses);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAuxAddresses);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAuxAddresses);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, frameFilteredMemoryRecords);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPageFrameFilteredMemoryRecord);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     public DirectLongList getAuxAddresses(int slotId) {

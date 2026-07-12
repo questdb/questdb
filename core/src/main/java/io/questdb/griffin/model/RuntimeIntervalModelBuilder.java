@@ -76,6 +76,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     private boolean betweenNegated;
     private CairoConfiguration configuration;
     private boolean intervalApplied = false;
+    private boolean isBetweenBoundaryFunctionConsumed;
     private boolean isOwnershipTransferred;
     private int partitionBy;
     private TimestampDriver timestampDriver;
@@ -93,14 +94,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void clear() {
         if (isOwnershipTransferred) {
             // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them.
-            // Run clearBetweenParsing() while dynamicRangeList still holds the adopted functions,
-            // so it does not mistake an adopted boundary function for a pending one and close it.
+            // Only a still-pending BETWEEN endpoint remains builder-owned.
             isOwnershipTransferred = false;
-            clearBetweenParsing();
+            final Throwable failure = clearBetweenParsing(null);
             staticIntervals.clear();
             cursorFunctionPositions.clear();
             dynamicRangeList.clear();
             intervalApplied = false;
+            Misc.rethrowCleanupFailure(failure);
         } else {
             // no build(): the accumulated functions are orphaned, free them here
             freeAndClear();
@@ -113,15 +114,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * otherwise this double-frees Functions still owned by the built model.
      */
     public void freeAndClear() {
-        isOwnershipTransferred = false;
-        // Run clearBetweenParsing() while dynamicRangeList still holds the adopted functions: it
-        // closes a pending boundary function exactly once and leaves adopted ones to the list free
-        // below.
-        clearBetweenParsing();
-        Misc.freeObjListAndClear(dynamicRangeList);
-        cursorFunctionPositions.clear();
-        staticIntervals.clear();
-        intervalApplied = false;
+        Misc.rethrowCleanupFailure(freeAndClear(null));
     }
 
     /**
@@ -132,19 +125,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * from it) owns it.
      */
     public void clearBetweenParsing() {
-        if (betweenBoundaryFunc != null) {
-            // setBetweenBoundary drops the rollback reference immediately after a handoff
-            // commits, and the handoff itself is atomic (see reserveEncodedIntervals), so a
-            // non-null field always denotes a pending, not-yet-adopted function that this
-            // rollback owns. Closing it directly avoids an O(n) list scan per rollback; the
-            // assert keeps the invariant checked in tests.
-            assert dynamicRangeList.indexOf(betweenBoundaryFunc) < 0;
-            betweenBoundaryFunc.close();
+        Misc.rethrowCleanupFailure(clearBetweenParsing(null));
+    }
+
+    /**
+     * Primary-aware variant for error paths. It detaches all BETWEEN parsing state before close,
+     * then suppresses a close failure onto {@code primary} instead of replacing that failure.
+     */
+    public Throwable clearBetweenParsing(Throwable primary) {
+        final Function pendingFunction = betweenBoundaryFunc;
+        if (pendingFunction != null) {
+            // A non-null field denotes a pending, not-yet-adopted function. Handoffs reserve all
+            // capacity before adoption and drop this reference only after the append commits.
+            assert dynamicRangeList.indexOf(pendingFunction) < 0;
         }
-        betweenBoundarySet = false;
-        betweenBoundaryFunc = null;
-        betweenBoundaryFuncPosition = 0;
-        betweenBoundary = Numbers.LONG_NULL;
+        resetBetweenParsingState();
+        return Misc.freeBestEffort(primary, pendingFunction);
     }
 
     public boolean hasIntervalFilters() {
@@ -193,9 +189,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectEmpty() {
-        // free the runtime functions gathered so far; ownership has not been transferred via build()
-        freeAndClear();
+        // Finish the empty-state transition even when an adopted function throws during cleanup.
+        final Throwable failure = freeAndClear(null);
         intervalApplied = true;
+        Misc.rethrowCleanupFailure(failure);
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
@@ -301,6 +298,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    /**
+     * Reports the ownership result of the most recent Function boundary handoff. A caller retains
+     * ownership when {@link #setBetweenBoundary(Function, int)} throws with this value false. When
+     * this value is true, the builder adopted or closed the function, including terminal cleanup
+     * paths whose close operation threw.
+     */
+    public boolean isBetweenBoundaryFunctionConsumed() {
+        return isBetweenBoundaryFunctionConsumed;
+    }
+
     public boolean isEmptySet() {
         return intervalApplied && staticIntervals.size() == 0;
     }
@@ -359,56 +366,102 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (!betweenBoundarySet) {
             betweenBoundary = timestamp;
             betweenBoundarySet = true;
-        } else {
-            if (betweenBoundaryFunc == null) {
-                // Constant interval
-                long lo = Math.min(timestamp, betweenBoundary);
-                long hi = Math.max(timestamp, betweenBoundary);
-                if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
-                    if (!betweenNegated) {
-                        intersectEmpty();
-                    }
-                    // else {
-                    // NOT BETWEEN with NULL
-                    // to be consistent with non-designated filtering
-                    // do no filtering
-                    //  }
-                } else {
-                    if (!betweenNegated) {
-                        intersect(lo, hi);
-                    } else {
-                        subtractInterval(lo, hi);
-                    }
-                }
-            } else {
-                // The callee either fully adopts/frees the pending endpoint or throws without
-                // touching it, so the rollback reference is dropped only after the handoff
-                // commits. On a throw, clearBetweenParsing() still owns and closes the endpoint.
-                intersectBetweenSemiDynamic(betweenBoundaryFunc, betweenBoundaryFuncPosition, timestamp);
-                betweenBoundaryFunc = null;
-            }
-            betweenBoundarySet = false;
+            return;
         }
+
+        if (betweenBoundaryFunc == null) {
+            // No Function ownership changes on this branch, so reset temporary parsing state
+            // before an empty-model cleanup can throw.
+            final long pendingTimestamp = betweenBoundary;
+            resetBetweenParsingState();
+            final long lo = Math.min(timestamp, pendingTimestamp);
+            final long hi = Math.max(timestamp, pendingTimestamp);
+            if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
+                if (!betweenNegated) {
+                    intersectEmpty();
+                }
+                // NOT BETWEEN with NULL does no filtering, consistent with row filtering.
+            } else if (!betweenNegated) {
+                intersect(lo, hi);
+            } else {
+                subtractInterval(lo, hi);
+            }
+            return;
+        }
+
+        final Function pendingFunction = betweenBoundaryFunc;
+        final int pendingFunctionPosition = betweenBoundaryFuncPosition;
+        if (timestamp == Numbers.LONG_NULL || isEmptySet()) {
+            // This terminal handoff consumes the pending endpoint. Detach it before any adopted
+            // cleanup or endpoint close can throw, then complete all cleanup best-effort.
+            resetBetweenParsingState();
+            Throwable failure = null;
+            if (timestamp == Numbers.LONG_NULL && !betweenNegated) {
+                failure = freeAndClear(null);
+                intervalApplied = true;
+            }
+            failure = Misc.freeBestEffort(failure, pendingFunction);
+            Misc.rethrowCleanupFailure(failure);
+            return;
+        }
+
+        // Reservation failure is pre-adoption: keep the pending endpoint attached for rollback.
+        intersectBetweenSemiDynamic(pendingFunction, pendingFunctionPosition, timestamp);
+        resetBetweenParsingState();
     }
 
     public void setBetweenBoundary(Function timestamp, int functionPosition) {
+        isBetweenBoundaryFunctionConsumed = false;
         if (!betweenBoundarySet) {
             betweenBoundaryFunc = timestamp;
             betweenBoundaryFuncPosition = functionPosition;
             betweenBoundarySet = true;
-        } else {
-            if (betweenBoundaryFunc == null) {
-                intersectBetweenSemiDynamic(timestamp, functionPosition, betweenBoundary);
-            } else {
-                // The callee either fully adopts/frees both endpoints or throws without touching
-                // either, so the rollback reference is dropped only after the handoff commits.
-                // On a throw, the caller still owns the incoming function and
-                // clearBetweenParsing() still owns and closes the pending one.
-                intersectBetweenDynamic(timestamp, functionPosition, betweenBoundaryFunc, betweenBoundaryFuncPosition);
-                betweenBoundaryFunc = null;
-            }
-            betweenBoundarySet = false;
+            isBetweenBoundaryFunctionConsumed = true;
+            return;
         }
+
+        if (betweenBoundaryFunc == null) {
+            if (betweenBoundary == Numbers.LONG_NULL || isEmptySet()) {
+                // The incoming endpoint is consumed before cleanup begins. This flag tells the
+                // parser not to close it again if a close operation below throws.
+                isBetweenBoundaryFunctionConsumed = true;
+                final boolean isNullBoundary = betweenBoundary == Numbers.LONG_NULL;
+                resetBetweenParsingState();
+                Throwable failure = null;
+                if (isNullBoundary && !betweenNegated) {
+                    failure = freeAndClear(null);
+                    intervalApplied = true;
+                }
+                failure = Misc.freeBestEffort(failure, timestamp);
+                Misc.rethrowCleanupFailure(failure);
+                return;
+            }
+
+            // Reservation failure is pre-adoption, so the caller still owns timestamp.
+            intersectBetweenSemiDynamic(timestamp, functionPosition, betweenBoundary);
+            isBetweenBoundaryFunctionConsumed = true;
+            resetBetweenParsingState();
+            return;
+        }
+
+        final Function pendingFunction = betweenBoundaryFunc;
+        final int pendingFunctionPosition = betweenBoundaryFuncPosition;
+        if (isEmptySet()) {
+            // Consume and detach both endpoints before closing either one. Pending-first order
+            // defines deterministic primary/suppression topology.
+            isBetweenBoundaryFunctionConsumed = true;
+            resetBetweenParsingState();
+            Throwable failure = Misc.freeBestEffort(null, pendingFunction);
+            failure = Misc.freeBestEffort(failure, timestamp);
+            Misc.rethrowCleanupFailure(failure);
+            return;
+        }
+
+        // Reservation failure is pre-adoption: the incoming endpoint stays caller-owned and the
+        // pending endpoint remains attached for clearBetweenParsing().
+        intersectBetweenDynamic(timestamp, functionPosition, pendingFunction, pendingFunctionPosition);
+        isBetweenBoundaryFunctionConsumed = true;
+        resetBetweenParsingState();
     }
 
     public void setBetweenNegated(boolean isNegated) {
@@ -661,13 +714,20 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return false;
     }
 
+    private Throwable freeAndClear(Throwable primary) {
+        isOwnershipTransferred = false;
+        // Detach the pending endpoint and every adopted slot before invoking user close methods.
+        Throwable failure = clearBetweenParsing(primary);
+        failure = Misc.freeObjListBestEffort(failure, dynamicRangeList);
+        dynamicRangeList.clear();
+        cursorFunctionPositions.clear();
+        staticIntervals.clear();
+        intervalApplied = false;
+        return failure;
+    }
+
     private void intersectBetweenDynamic(Function funcValue1, int funcPosition1, Function funcValue2, int funcPosition2) {
-        if (isEmptySet()) {
-            // the model is already an empty set, but this builder owns both incoming functions
-            Misc.free(funcValue1);
-            Misc.free(funcValue2);
-            return;
-        }
+        assert !isEmptySet();
 
         // Reserve capacity for the whole operation before mutating any list or adopting either
         // function: a growth failure here leaves both functions with their previous owners and
@@ -687,32 +747,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private void intersectBetweenSemiDynamic(Function funcValue, int funcPosition, long constValue) {
-        if (constValue == Numbers.LONG_NULL) {
-            // The caller drops its rollback reference only after this method returns, so the
-            // incoming function may still be referenced by betweenBoundaryFunc. Detach it before
-            // emptying the model: the freeAndClear() inside intersectEmpty() must not close it
-            // ahead of the single Misc.free() below.
-            if (betweenBoundaryFunc == funcValue) {
-                betweenBoundaryFunc = null;
-            }
-            if (!betweenNegated) {
-                intersectEmpty();
-            }
-            // else {
-            // NOT BETWEEN with NULL
-            // to be consistent with non-designated filtering
-            // do no filtering
-            // }
-            // either way the interval never encodes, so this builder owns the incoming function
-            Misc.free(funcValue);
-            return;
-        }
-
-        if (isEmptySet()) {
-            // the model is already an empty set, but this builder owns the incoming function
-            Misc.free(funcValue);
-            return;
-        }
+        assert constValue != Numbers.LONG_NULL;
+        assert !isEmptySet();
 
         // Reserve capacity for the whole operation before mutating any list or adopting the
         // function: a growth failure here leaves the function with its previous owner and the
@@ -732,6 +768,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
         addDynamicFunction(expr, 0);
         intervalApplied = true;
+    }
+
+    private void resetBetweenParsingState() {
+        betweenBoundarySet = false;
+        betweenBoundaryFunc = null;
+        betweenBoundaryFuncPosition = 0;
+        betweenBoundary = Numbers.LONG_NULL;
     }
 
     private void subtractCompiledTickExpr(CompiledTickExpression expr) {

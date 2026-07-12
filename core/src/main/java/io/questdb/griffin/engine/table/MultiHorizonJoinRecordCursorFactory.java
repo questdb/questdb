@@ -136,7 +136,7 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
                     columnIndexes
             );
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -189,13 +189,15 @@ public class MultiHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.freeObjList(keyFunctions);
-        Misc.free(masterFactory);
-        Misc.freeObjList(slaveStates);
-        Misc.free(horizonJoinMetadata);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, slaveStates);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
         // recordFunctions includes groupByFunctions (same object references)
-        Misc.freeObjList(recordFunctions);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class MultiHorizonJoinRecordCursor implements RecordCursor {

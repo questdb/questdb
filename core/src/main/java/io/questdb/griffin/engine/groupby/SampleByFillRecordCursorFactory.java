@@ -201,8 +201,8 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
         } catch (Throwable th) {
             // Free what this constructor allocated. Caller still owns its inputs
             // (base, fromFunc, toFunc, constantFills, offsetFunc, tzFunc).
-            Misc.free(keysMap);
-            Misc.free(localNonKeyedPrevCache);
+            Misc.freeBestEffort(th, keysMap);
+            Misc.freeBestEffort(th, localNonKeyedPrevCache);
             throw th;
         }
         this.nonKeyedPrevCache = localNonKeyedPrevCache;
@@ -234,7 +234,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            cursor.close();
+            Misc.freeBestEffort(th, cursor);
             throw th;
         }
     }
@@ -278,14 +278,15 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.free(base);
-        Misc.free(fromFunc);
-        Misc.free(toFunc);
-        Misc.free(offsetFunc);
-        Misc.free(tzFunc);
-        Misc.free(nonKeyedPrevCache);
-        Misc.freeObjList(constantFills);
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, base);
+        failure = Misc.freeBestEffort(failure, fromFunc);
+        failure = Misc.freeBestEffort(failure, toFunc);
+        failure = Misc.freeBestEffort(failure, offsetFunc);
+        failure = Misc.freeBestEffort(failure, tzFunc);
+        failure = Misc.freeBestEffort(failure, nonKeyedPrevCache);
+        failure = Misc.freeObjListBestEffort(failure, constantFills);
+        Misc.rethrowCleanupFailure(failure);
     }
 
     private boolean hasAnyConstantOrNullFill() {
@@ -491,11 +492,14 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public void close() {
-            baseCursor = Misc.free(baseCursor);
+            final RecordCursor cursor = baseCursor;
+            baseCursor = null;
+            Throwable failure = Misc.freeBestEffort(null, cursor);
             if (isOpen) {
                 isOpen = false;
-                Misc.free(keysMap);
+                failure = Misc.freeBestEffort(failure, keysMap);
             }
+            Misc.rethrowCleanupFailure(failure);
         }
 
         @Override

@@ -82,17 +82,10 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Transient @NotNull ListColumnFilter groupByColumnFilter,
             @NotNull ObjList<Function> keyFunctions,
-            @Nullable ObjList<ObjList<Function>> perWorkerKeyFunctions,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            AsyncHorizonJoinResources resources,
             long masterTsScale,
             long slaveTsScale,
             int workerCount
@@ -112,13 +105,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                 columnSources,
                 columnIndexes,
                 ownerGroupByFunctions,
-                perWorkerGroupByFunctions,
-                compiledFilter,
-                bindVarMemory,
-                bindVarFunctions,
-                ownerFilter,
-                filterUsedColumnIndexes,
-                perWorkerFilters,
+                resources,
                 masterTsScale,
                 slaveTsScale,
                 workerCount
@@ -127,7 +114,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
         try {
             // Store key functions for init() and close()
             this.ownerKeyFunctions = keyFunctions;
-            this.perWorkerKeyFunctions = perWorkerKeyFunctions;
+            this.perWorkerKeyFunctions = resources.takePerWorkerKeyFunctions();
 
             // Create per-worker map sinks to support expression keys
             // Each worker needs its own sink with its own key functions
@@ -186,7 +173,7 @@ public class AsyncHorizonJoinAtom extends BaseAsyncHorizonJoinAtom {
                     workerCount
             );
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }

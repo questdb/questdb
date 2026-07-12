@@ -152,7 +152,7 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
                     slaveTsScale
             );
         } catch (Throwable th) {
-            close();
+            Misc.freeBestEffort(th, this);
             throw th;
         }
     }
@@ -200,13 +200,15 @@ public class HorizonJoinRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.freeObjList(keyFunctions);
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(horizonJoinMetadata);
+        Throwable cleanupFailure = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, keyFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
         // recordFunctions includes groupByFunctions (same object references)
-        Misc.freeObjList(recordFunctions);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, recordFunctions);
+        Misc.rethrowCleanupFailure(cleanupFailure);
     }
 
     private static class HorizonJoinRecordCursor implements RecordCursor {

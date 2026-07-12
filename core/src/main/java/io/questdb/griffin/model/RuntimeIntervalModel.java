@@ -119,7 +119,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     @Override
     public void close() {
-        Misc.freeObjList(dynamicRangeList);
+        Misc.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, dynamicRangeList));
     }
 
     public ObjList<Function> getDynamicRangeList() {
