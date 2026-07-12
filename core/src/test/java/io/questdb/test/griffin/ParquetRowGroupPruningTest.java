@@ -4745,6 +4745,45 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFractionalDoubleBoundStillPrunes() throws Exception {
+        // The fix for the fractional false-prune must not surrender pruning: a fractional bound
+        // rounds the way its op preserves ("c6 < 1.5" is "c6 < 2", "c6 > 4.5" is "c6 > 4"), which
+        // selects the same rows as the double comparison and still skips a group that lies wholly
+        // outside it.
+        assertMemoryLeak(() -> {
+            // Parquet group saturated at 5, native row at 1: "< 1.5" ("< 2") must skip the group.
+            createBoundarySaturatedPartialParquet(5, 1);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.5", "c6\n1\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 <= 1.5", "c6\n1\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // Parquet group saturated at 1, native row at 5: "> 4.5" ("> 4") must skip the group.
+            createBoundarySaturatedPartialParquet(1, 5);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 > 4.5", "c6\n5\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 >= 4.5", "c6\n5\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // The 64-bit stats slot rounds the same way, below the 2^53 precision ceiling.
+            createBoundarySaturatedPartialParquetTyped("LONG", "5", "1");
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.5", "c6\n1\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        });
+    }
+
+    @Test
     public void testLongConstantBelowIntRangePushdownNotFalsePruned() throws Exception {
         // Parquet partition saturated at INT_MIN+1 (-2147483647). A below-INT-range
         // LONG bound saturates in the INT stats slot; c > -5e9 matches every row, so
@@ -4755,8 +4794,16 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             assertNativeMatchesPartialParquet("c6 > -5_000_000_000", "c6\n-2147483647\n0\n");
             assertNativeMatchesPartialParquet("c6 >= -5_000_000_000", "c6\n-2147483647\n0\n");
 
-            // Control: no INT value is below the bound; empty result, group may prune.
-            assertNativeMatchesPartialParquet("c6 < -5_000_000_000", "c6\n");
+            // The other direction is unsatisfiable for every INT row, so every group prunes: "<"
+            // pushes the saturated INT_MIN bound (min >= INT_MIN always holds) and "<=" rewrites
+            // to it. The DOUBLE spelling of the bound takes the same route.
+            for (String bound : new String[]{"-5_000_000_000", "-5e9"}) {
+                for (String op : new String[]{"<", "<="}) {
+                    ParquetRowGroupFilter.resetRowGroupsSkipped();
+                    assertNativeMatchesPartialParquet("c6 " + op + ' ' + bound, "c6\n");
+                    Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+                }
+            }
         });
     }
 
@@ -4771,8 +4818,16 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             assertNativeMatchesPartialParquet("c6 < 5_000_000_000", "c6\n2147483647\n0\n");
             assertNativeMatchesPartialParquet("c6 <= 5_000_000_000", "c6\n2147483647\n0\n");
 
-            // Control: no INT value exceeds the bound; empty result, group may prune.
-            assertNativeMatchesPartialParquet("c6 > 5_000_000_000", "c6\n");
+            // The other direction is unsatisfiable for every INT row, so every group prunes: ">"
+            // pushes the saturated INT_MAX bound (max <= INT_MAX always holds) and ">=" rewrites
+            // to it. The DOUBLE spelling of the bound takes the same route.
+            for (String bound : new String[]{"5_000_000_000", "5e9"}) {
+                for (String op : new String[]{">", ">="}) {
+                    ParquetRowGroupFilter.resetRowGroupsSkipped();
+                    assertNativeMatchesPartialParquet("c6 " + op + ' ' + bound, "c6\n");
+                    Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+                }
+            }
         });
     }
 

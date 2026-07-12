@@ -339,6 +339,29 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
+     * Returns true when reading this function at long width is the same as reading it at INT
+     * width and widening, i.e. {@code getLong(rec) == Numbers.intToLong(getInt(rec))} for every
+     * record. Only meaningful for a BYTE / SHORT / INT typed function.
+     * <p>
+     * It holds for every INT function that inherits
+     * {@link io.questdb.griffin.engine.functions.IntFunction}'s getLong() - columns, constants,
+     * casts, CASE, bind variables. The INT arithmetic functions (+ - * / % unary minus, abs and
+     * the bitwise ops) override getLong() to compute at long width, so an overflowing expression
+     * wraps mod 2^32 under getInt() but keeps its full value under getLong(); those return false.
+     * <p>
+     * A caller that compares such a function against values of both widths - see
+     * {@link io.questdb.griffin.engine.functions.bool.InLongFunctionFactory} - has to read the key
+     * once per width when this is false, and reads it once when it is true.
+     * <p>
+     * Any new INT-typed function that overrides getLong() must override this method as well.
+     *
+     * @return true if getLong() and getInt() carry the same value
+     */
+    default boolean isIntWidthStable() {
+        return true;
+    }
+
+    /**
      * Returns true if this function is non-deterministic.
      *
      * @return true if non-deterministic

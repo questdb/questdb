@@ -536,6 +536,33 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testInNullElementKeepsNarrowKeyVectorized() throws Exception {
+        // A NULL element used to widen the key to i64 (it is neither INT- nor LONG-typed, so the
+        // per-element width fell through to I8), which emits sx_i64 - an opcode AVX2 does not
+        // implement - and dropped the whole filter to the scalar path. Both widths select the same
+        // rows for a plain narrow-int key: its getInt() carries INT_NULL exactly when the row is
+        // null, and serializeNull emits the INT_NULL immediate. So the pairing stays at I4 and the
+        // filter keeps its vectorized exec hint.
+        int options = serialize("anint IN (1, 2, null)", false, false, false);
+        assertIR("(i32 -2147483648L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(ret)");
+        assertOptionsHint("anint IN (1, 2, null)", options, OptionsHint.SINGLE_SIZE);
+
+        // (BYTE and SHORT keys never reach here with a NULL element: serializeNull rejects the
+        // filter outright, since neither type is nullable.)
+
+        // A genuinely wide element still widens the key, which does force scalar mode.
+        options = serialize("anint IN (1, 5_000_000_000)", false, false, false);
+        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 1L)(i32 anint)(=)(||)(ret)");
+        assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.SCALAR);
+
+        // An arithmetic key can wrap onto -2^31 without being null, so its two widths are not
+        // interchangeable and it keeps widening against a NULL element (the Java filter reads it
+        // with getLong() there, matching what sx_i64 emits). The INT element next to it still wraps.
+        serialize("anint * 2 IN (1, null)");
+        assertIR("(i32 -2147483648L)(i64 2L)(i32 anint)(sx_i64)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
+    }
+
+    @Test
     public void testInShortCircuit() throws Exception {
         // IN() short-circuit is enabled when:
         // 1. We're in a pure AND chain with mixed column sizes (scalar mode)

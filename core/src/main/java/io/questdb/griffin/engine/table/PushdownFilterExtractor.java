@@ -78,6 +78,8 @@ public class PushdownFilterExtractor implements Mutable {
     public static final int OP_IS_NULL = 5;
     public static final int OP_LE = 2;
     public static final int OP_LT = 1;
+    // Not an op the native side knows about: it marks a condition that cannot be pushed down.
+    public static final int OP_UNSUPPORTED = -1;
 
     private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
     private final ObjList<ExpressionNode> orValues = new ObjList<>();

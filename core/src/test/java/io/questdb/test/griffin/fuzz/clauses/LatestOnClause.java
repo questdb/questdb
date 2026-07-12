@@ -56,11 +56,14 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * designated TIMESTAMP" - so the caller routes here only when the source
  * carries one. The clause skips the table alias (like {@link SampleByClause})
  * so the timestamp literal and the bare key list stay unqualified. Partition
- * keys are drawn from the non-array columns other than the timestamp, biased
- * to none in particular so every key type (SYMBOL, STRING, the numeric and
- * temporal families, BOOLEAN, CHAR, the identifier family, DECIMAL) gets
- * exercised; when the table happens to expose no such column the timestamp
- * itself is used, which is a valid if degenerate single-row-per-partition key.
+ * keys are drawn from the columns the engine accepts as latest-by keys (see
+ * {@link ColumnKind#isLatestByKey()}) other than the timestamp, biased to none
+ * in particular so every accepted key type (SYMBOL, STRING, the numeric and
+ * temporal families, BOOLEAN, CHAR, the identifier family) gets exercised;
+ * DECIMAL and ARRAY are not among them - the code generator rejects both - so
+ * drawing one would only emit SQL that fails to compile. When the table happens
+ * to expose no accepted key column the timestamp itself is used, which is a
+ * valid if degenerate single-row-per-partition key.
  * The {@code WHERE} is woven the usual way, so the FUNCTION fault rides it; the
  * latest-by cursors filter serially (no parallel reduce), so a fired fault
  * always surfaces rather than being discarded on a worker.
@@ -183,15 +186,17 @@ public final class LatestOnClause {
     }
 
     private static ObjList<FuzzColumn> partitionCandidates(FuzzTable table) {
-        // Any non-array column other than the designated timestamp is a
-        // meaningful partition key; arrays are not comparable as keys and the
-        // timestamp would make every row its own partition (kept only as the
-        // last-resort fallback in appendPartitionBy).
+        // Any column the engine accepts as a latest-by key, other than the designated timestamp,
+        // is a meaningful partition key. ColumnKind#isLatestByKey drops the kinds the code
+        // generator rejects outright (DECIMAL and ARRAY): drawing one would only produce SQL that
+        // fails to compile and gets skipped, spending the LATEST ON band on nothing. The
+        // timestamp itself is dropped here too - it would make every row its own partition - and
+        // kept only as the last-resort fallback in appendPartitionBy.
         ObjList<FuzzColumn> out = new ObjList<>();
         String tsCol = table.getTsColumnName();
         for (int i = 0, n = table.getColumnCount(); i < n; i++) {
             FuzzColumn c = table.getColumn(i);
-            if (c.getType().getKind() == ColumnKind.ARRAY) {
+            if (!c.getType().getKind().isLatestByKey()) {
                 continue;
             }
             if (c.getName().equals(tsCol)) {

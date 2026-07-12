@@ -44,6 +44,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -662,8 +663,19 @@ public class SwitchFunctionFactory implements FunctionFactory {
      * to the else value without an explicit check.
      */
     private static class SymbolSwitchConstIntFunction extends IntFunction {
+        // The wide getters serve the same two constants, so widen them once here rather than
+        // per row. A no-ELSE branch yields elseValue == INT_NULL, and Numbers.intToLong /
+        // intToDouble / intToFloat map that onto the matching wide NULL exactly as the base
+        // IntFunction getters do; a raw ternary over the int constants would instead widen
+        // INT_NULL to -2147483648 / -2.147e9 and corrupt a wide-type CAST reading these getters.
+        private final double doubleElseValue;
+        private final double doubleThenValue;
         private final int elseValue;
+        private final float floatElseValue;
+        private final float floatThenValue;
         private final SymbolFunction keyFunction;
+        private final long longElseValue;
+        private final long longThenValue;
         private final String strKey;
         private final int thenValue;
         private int resolvedKey;
@@ -678,6 +690,27 @@ public class SwitchFunctionFactory implements FunctionFactory {
             this.strKey = strKey;
             this.thenValue = thenValue;
             this.elseValue = elseValue;
+            this.longThenValue = Numbers.intToLong(thenValue);
+            this.longElseValue = Numbers.intToLong(elseValue);
+            this.doubleThenValue = Numbers.intToDouble(thenValue);
+            this.doubleElseValue = Numbers.intToDouble(elseValue);
+            this.floatThenValue = Numbers.intToFloat(thenValue);
+            this.floatElseValue = Numbers.intToFloat(elseValue);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? longThenValue : longElseValue;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? doubleThenValue : doubleElseValue;
+        }
+
+        @Override
+        public float getFloat(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? floatThenValue : floatElseValue;
         }
 
         @Override
@@ -685,14 +718,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
             return keyFunction.getInt(rec) == resolvedKey ? thenValue : elseValue;
         }
 
-        // getDouble()/getLong()/getFloat()/getDate()/getTimestamp() are
-        // intentionally NOT overridden: a no-ELSE branch yields elseValue ==
-        // INT_NULL, and the base IntFunction widens it through Numbers.intToLong
-        // / intToDouble / intToFloat, mapping INT_NULL to the matching wide NULL.
-        // A raw ternary here would widen INT_NULL to -2147483648 / -2.147e9 and
-        // corrupt wide-type CASTs that read these getters. The IntFunction base
-        // getters (getLong/getDouble/getFloat/getDate/getTimestamp) map INT_NULL
-        // to the matching wide NULL; that widening must not be bypassed here.
+        @Override
+        public long getLong(Record rec) {
+            return keyFunction.getInt(rec) == resolvedKey ? longThenValue : longElseValue;
+        }
+
+        // getTimestamp() is not overridden: IntFunction routes it to getLong(), which is widened
+        // above.
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
@@ -700,6 +732,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
             final StaticSymbolTable symbolTable = keyFunction.getStaticSymbolTable();
             assert symbolTable != null;
             resolvedKey = symbolTable.keyOf(strKey);
+        }
+
+        @Override
+        public boolean isIntWidthStable() {
+            // getLong() serves Numbers.intToLong of the same constant getInt() serves, which is
+            // precisely what the base IntFunction getter computes per row. Only the widening moved.
+            return true;
         }
 
         @Override

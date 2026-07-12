@@ -123,6 +123,11 @@ public class MulIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isIntWidthStable() {
+            return false;
+        }
+
+        @Override
         public boolean isOperator() {
             return true;
         }

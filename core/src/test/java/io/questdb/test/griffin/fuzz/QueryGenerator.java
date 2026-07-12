@@ -99,7 +99,7 @@ public final class QueryGenerator {
         if (pick < 30 && !injectFaultFn) {
             GeneratedQuery posting = PostingClause.tryGenerate(rnd, t, ctx);
             if (posting != null) {
-                return posting;
+                return posting.withShape(QueryShape.POSTING);
             }
         }
 
@@ -110,10 +110,10 @@ public final class QueryGenerator {
             if (source.getTable().getTsColumnName() == null) {
                 return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
             }
-            return SampleByClause.generate(rnd, source, ctx, injectFaultFn);
+            return SampleByClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.SAMPLE_BY);
         }
         if (pick < 70) {
-            return GroupByClause.generate(rnd, source, ctx, injectFaultFn);
+            return GroupByClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.GROUP_BY);
         }
         // pick in [70, 100) is SIMPLE. When window fuzzing is enabled, carve the
         // upper band [85, 100) into WINDOW; when LATEST ON fuzzing is enabled,
@@ -123,10 +123,10 @@ public final class QueryGenerator {
         // functions order by the designated timestamp and LATEST ON names it, so
         // a source without one falls through to SIMPLE in both cases.
         if (windowEnabled && pick >= 85 && source.getTable().getTsColumnName() != null) {
-            return WindowClause.generate(rnd, source, ctx, injectFaultFn);
+            return WindowClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.WINDOW);
         }
         if (latestOnEnabled && pick >= 78 && pick < 85 && source.getTable().getTsColumnName() != null) {
-            return LatestOnClause.generate(rnd, source, ctx, injectFaultFn);
+            return LatestOnClause.generate(rnd, source, ctx, injectFaultFn).withShape(QueryShape.LATEST_ON);
         }
         return SimpleClause.generate(rnd, source, ctx, injectFaultFn);
     }
@@ -151,14 +151,14 @@ public final class QueryGenerator {
         int kinds = 1 + (horizonJoinEnabled ? 1 : 0) + (windowJoinEnabled ? 1 : 0);
         int joinPick = kinds > 1 ? rnd.nextInt(kinds) : 0;
         if (joinPick == 0) {
-            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn);
+            return TemporalJoinClause.generate(rnd, FuzzSource.direct(t), FuzzSource.direct(other), ctx, injectFaultFn).withShape(QueryShape.TEMPORAL_JOIN);
         }
         if (horizonJoinEnabled && joinPick == 1) {
-            return HorizonJoinClause.generate(rnd, t, other, ctx, injectFaultFn);
+            return HorizonJoinClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.HORIZON_JOIN);
         }
         // The remaining slot is WINDOW: either joinPick == 2 (both kinds on) or
         // joinPick == 1 with only WINDOW enabled.
-        return WindowJoinClause.generate(rnd, t, other, ctx, injectFaultFn);
+        return WindowJoinClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.WINDOW_JOIN);
     }
 
     private static FuzzSource pickSource(Rnd rnd, FuzzTable realTable) {

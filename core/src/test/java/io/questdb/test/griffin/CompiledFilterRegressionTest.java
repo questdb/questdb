@@ -1404,6 +1404,27 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorMixedWidthListOnPlainNarrowKey() throws Exception {
+        // A plain INT column reads the same number through getInt() and getLong() (only INT
+        // arithmetic wraps mod 2^32 under one and not the other), so InLongFunctionFactory holds a
+        // mixed-width IN list in a single set and probes the key once per row instead of twice.
+        // The rows pin what that must select: the NULL element matches the NULL row, the wide
+        // element matches nothing an INT column can hold, and the narrow elements still match.
+        assertMemoryLeak(() -> {
+            execute("create table x as (select cast(v as int) i32 " +
+                    "from (select 1 v union all select 2 v union all select -2_147_483_647 v union all select null v))");
+            assertJitMatchesJava("x where i32 in (1, 2, null)", true, "i32\n1\n2\nnull\n");
+            assertJitMatchesJava("x where i32 in (1, 5_000_000_000)", true, "i32\n1\n");
+            assertJitMatchesJava("x where i32 in (1, 2, null, 5_000_000_000)", true, "i32\n1\n2\nnull\n");
+            assertJitMatchesJava("x where i32 not in (1, 2, null)", true, "i32\n-2147483647\n");
+            // A numeric string element is read at the width its value carries as a literal. The JIT
+            // declines a string constant against a numeric column, so this one runs on the Java
+            // filter, which is exactly the path the single merged set changed.
+            assertJitMatchesJava("x where i32 in ('-2147483647', '5000000000')", false, "i32\n-2147483647\n");
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowFoldMatchesJavaOnLongColumn() throws Exception {
         // An overflowing INT arithmetic fold inside an IN() list against a LONG column: the
         // Java filter reads the IN element at long width (10^12), so the JIT must too. The

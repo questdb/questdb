@@ -102,6 +102,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     private static final int INITIAL_LIST_CAPACITY = 16;
     private final AbstractWindowJoinFastRecordCursor cursor;
     private final boolean includePrevailing;
+    private final long indexLookaheadMargin;
     private final Function joinFilter;
     private final JoinRecordMetadata joinMetadata;
     private final RecordCursorFactory masterFactory;
@@ -141,6 +142,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
             this.includePrevailing = includePrevailing;
             this.windowLo = windowLo;
             this.windowHi = windowHi;
+            this.indexLookaheadMargin = indexLookaheadMargin(windowLo, windowHi);
             this.value = new SimpleMapValue(columnTypes.getColumnCount());
             final int columnSplit = masterFactory.getMetadata().getColumnCount();
             var masterMetadata = masterFactory.getMetadata();
@@ -336,35 +338,42 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     /**
-     * Upper timestamp bound for building the per-symbol slave index.
+     * How far past the window's own upper bound ({@code masterTimestamp + windowHi}) the
+     * per-symbol slave index reaches, so that the following master rows reuse it instead of
+     * rebuilding it. Derived from the window bounds alone, so the factory computes it once and
+     * {@link #indexLookaheadHi(long)} adds it to each master row's bound.
      * <p>
-     * The index reaches {@code INDEX_LOOKAHEAD - 1} extra margins past the window's own upper
-     * bound ({@code masterTimestamp + windowHi}) so that the following master rows reuse it
-     * instead of rebuilding it. It must never reach below that bound - doing so would drop the
-     * window's most recent rows.
-     * <p>
-     * The margin is the larger of the window's forward reach ({@code windowHi}) and its span
-     * ({@code windowLo + windowHi}), which is the reach the rebuild has to pay for anyway. Taking
-     * the span alone starves a purely future window ({@code windowLo < 0}, where {@code windowHi}
-     * is the larger of the two); taking {@code windowHi} alone starves every window that reaches
-     * back further than it reaches forward - {@code 4 HOURS PRECEDING AND CURRENT ROW} and the
-     * past-only {@code 4 HOURS PRECEDING AND 2 HOURS PRECEDING} get no margin at all (the rebuild
-     * gate fires for every master row), and {@code 4 HOURS PRECEDING AND 1 HOUR FOLLOWING} rebuilds
-     * every hour while each rebuild rescans five, a 6x slave over-read. The max amortizes the
-     * rebuild over the rows the index already holds in both directions.
+     * The margin is {@code INDEX_LOOKAHEAD - 1} times the larger of the window's forward reach
+     * ({@code windowHi}) and its span ({@code windowLo + windowHi}), which is the reach the
+     * rebuild has to pay for anyway. Taking the span alone starves a purely future window
+     * ({@code windowLo < 0}, where {@code windowHi} is the larger of the two); taking
+     * {@code windowHi} alone starves every window that reaches back further than it reaches
+     * forward - {@code 4 HOURS PRECEDING AND CURRENT ROW} and the past-only {@code 4 HOURS
+     * PRECEDING AND 2 HOURS PRECEDING} get no margin at all (the rebuild gate fires for every
+     * master row), and {@code 4 HOURS PRECEDING AND 1 HOUR FOLLOWING} rebuilds every hour while
+     * each rebuild rescans five, a 6x slave over-read. The max amortizes the rebuild over the
+     * rows the index already holds in both directions.
      * <p>
      * The SQL code generator rejects a frame whose hi is below its lo, so the margin is
-     * non-negative here; it only goes non-positive on a zero-width window (nothing to amortize
-     * over) or if the span overflows. Fall back to the bare window bound in both cases.
+     * non-negative; it only goes non-positive on a zero-width window (nothing to amortize over)
+     * or if the span overflows, and {@code indexLookaheadHi} then falls back to the bare window
+     * bound.
      */
-    private static long indexLookaheadHi(long masterTimestamp, long windowLo, long windowHi) {
+    private static long indexLookaheadMargin(long windowLo, long windowHi) {
+        return Math.max(windowHi, windowLo + windowHi) * (INDEX_LOOKAHEAD - 1);
+    }
+
+    /**
+     * Upper timestamp bound for building the per-symbol slave index. It must never reach below
+     * the window's own upper bound ({@code masterTimestamp + windowHi}) - doing so would drop the
+     * window's most recent rows. See {@link #indexLookaheadMargin(long, long)}.
+     */
+    private long indexLookaheadHi(long masterTimestamp) {
         final long windowTimestampHi = masterTimestamp + windowHi;
-        final long span = windowLo + windowHi;
-        final long margin = Math.max(windowHi, span) * (INDEX_LOOKAHEAD - 1);
-        if (margin <= 0) {
+        if (indexLookaheadMargin <= 0) {
             return windowTimestampHi;
         }
-        final long lookaheadHi = windowTimestampHi + margin;
+        final long lookaheadHi = windowTimestampHi + indexLookaheadMargin;
         // Saturate rather than wrap: the horizon must stay at or above the window's upper bound.
         return lookaheadHi < windowTimestampHi ? Long.MAX_VALUE : lookaheadHi;
     }
@@ -551,13 +560,14 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 return false;
             }
 
-            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowLo, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
+                // Only the index rebuild reads the lookahead horizon; the reuse path never does.
+                final long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp), masterTimestampScale);
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
@@ -843,14 +853,15 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 return false;
             }
 
-            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowLo, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
             if (masterTimestampHi > lastSlaveTimestamp) {
+                // Only the index rebuild reads the lookahead horizon; the reuse path never does.
+                final long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp), masterTimestampScale);
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
@@ -1097,13 +1108,14 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 return false;
             }
 
-            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowLo, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
 
             if (masterTimestampHi > lastSlaveTimestamp) {
+                // Only the index rebuild reads the lookahead horizon; the reuse path never does.
+                final long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp), masterTimestampScale);
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;
@@ -1341,14 +1353,15 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                 return false;
             }
 
-            // We build the timestamp interval over which we will aggregate the matching slave rows [slaveTimestampLo; slaveTimestampHi]
+            // Aggregate the slave rows over [slaveTimestampLo; masterTimestampHi]; the index behind them spans the wider lookahead horizon.
             long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             long slaveTimestampLo = scaleTimestamp(masterTimestamp - windowLo, masterTimestampScale);
-            long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp, windowLo, windowHi), masterTimestampScale);
             long masterTimestampHi = scaleTimestamp(masterTimestamp + windowHi, masterTimestampScale);
             final Record slaveRecord = slaveTimeFrameHelper.getRecord();
 
             if (masterTimestampHi > lastSlaveTimestamp) {
+                // Only the index rebuild reads the lookahead horizon; the reuse path never does.
+                final long slaveTimestampHi = scaleTimestamp(indexLookaheadHi(masterTimestamp), masterTimestampScale);
                 slaveData.clear();
                 slaveAllocator.clear();
                 lastSlaveTimestamp = Long.MIN_VALUE;

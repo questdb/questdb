@@ -650,8 +650,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * TIMESTAMP, NULL). serializeIn reads both the element and the key at this
      * width, so an overflowing INT-arith element wraps with the key while a
      * coexisting LONG element widens only its own key=element pairing.
+     * <p>
+     * A NULL element against a key that is not an arithmetic subtree is the one
+     * case where both widths select the same rows, so it takes the cheaper I4:
+     * the key's getInt() carries INT_NULL exactly when the row is NULL (only INT
+     * arithmetic can wrap onto -2^31 without being null), and serializeNull emits
+     * the INT_NULL immediate, so the I4 compare matches the same rows the I8 one
+     * does - without the SX_I64 on the key that would force the whole filter out
+     * of the vectorized path (see maybeEmitI64Widening). {@code i32 IN (1, 2, NULL)}
+     * therefore keeps AVX2.
      */
-    private int inKeyElementWidth(ExpressionNode element) {
+    private int inKeyElementWidth(ExpressionNode inKey, ExpressionNode element) {
+        if (inKey.type != ExpressionNode.OPERATION && isNullConstant(element)) {
+            return I4_TYPE;
+        }
         final int elementType = genuineArithType(element);
         return (elementType == I1_TYPE || elementType == I2_TYPE || elementType == I4_TYPE) ? I4_TYPE : I8_TYPE;
     }
@@ -679,6 +691,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> true;
             default -> false;
         };
+    }
+
+    private static boolean isNullConstant(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
     }
 
     // Stands for PredicateType.NUMERIC
@@ -2137,7 +2153,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // Single value: short-circuit, unrolled version of the below loop
                 // Two values: short-circuit, unrolled version of the below loop
                 if (widthSensitiveKey) {
-                    inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
+                    inKeyWidthOverride = inKeyElementWidth(inKey, predicateContext.inOperationNode.rhs);
                 }
                 traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
                 traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
@@ -2154,7 +2170,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // Read both the element and the key at this pairing's width so a coexisting
                     // LONG element cannot widen an overflowing INT-arith element the key wraps.
                     if (widthSensitiveKey) {
-                        inKeyWidthOverride = inKeyElementWidth(args.get(i));
+                        inKeyWidthOverride = inKeyElementWidth(inKey, args.get(i));
                     }
                     traverseAlgo.traverse(args.get(i), this);
                     traverseAlgo.traverse(args.getLast(), this);
@@ -2177,7 +2193,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Non-short-circuit mode: use traditional boolean ORs
         if (args.size() < 3) {
             if (widthSensitiveKey) {
-                inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
+                inKeyWidthOverride = inKeyElementWidth(inKey, predicateContext.inOperationNode.rhs);
             }
             traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
             traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
@@ -2190,7 +2206,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // Read both the element and the key at this pairing's width (see the short-circuit
             // loop above and inKeyElementWidth).
             if (widthSensitiveKey) {
-                inKeyWidthOverride = inKeyElementWidth(args.get(i));
+                inKeyWidthOverride = inKeyElementWidth(inKey, args.get(i));
             }
             traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);

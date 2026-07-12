@@ -253,6 +253,32 @@ public class IntArithmeticOverflowFoldingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProductOverflowingToLongNullWrapsLikeColumn() throws Exception {
+        // functionToConstant0 folded a constant INT expression to the shared NULL constant whenever
+        // its getLong() read LONG_NULL. That test is not a test for nullness: getLong() computes at
+        // long width, so a deep enough INT chain lands on -2^63 without being null at all.
+        // 1073741824 * 8 * 1073741824 is exactly 2^63 there, while getInt() wraps it to a plain 0 -
+        // the same 0 the column path produces. Folding it to NULL printed null for the literal form
+        // and 0 for the column form. The fold now needs the sentinel at BOTH widths, which only a
+        // genuine null carries.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, c INT)");
+            execute("INSERT INTO t VALUES (1_073_741_824, 8, 1_073_741_824)");
+
+            // (1073741824 * 8) wraps to 0 at INT width, and 0 * 1073741824 stays 0.
+            assertQuery("SELECT 1_073_741_824 * 8 * 1_073_741_824 AS v").noLeakCheck().expectSize().returns("v\n0\n");
+            assertQuery("SELECT a * b * c AS v FROM t").noLeakCheck().expectSize().returns("v\n0\n");
+
+            // The wide cast reads getLong(), which is -2^63 == LONG_NULL on both paths.
+            assertQuery("SELECT (1_073_741_824 * 8 * 1_073_741_824)::LONG AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+            assertQuery("SELECT (a * b * c)::LONG AS v FROM t").noLeakCheck().expectSize().returns("v\nnull\n");
+
+            // A genuine NULL still folds to the NULL constant: the sentinel shows at both widths.
+            assertQuery("SELECT NULL::INT * 8 AS v").noLeakCheck().expectSize().returns("v\nnull\n");
+        });
+    }
+
+    @Test
     public void testRuntimeConstDivisionWrapsLikeColumnAndLiteral() throws Exception {
         // IntRuntimeConstFunction memoizes a composite runtime-const INT subtree. For + - *
         // (int) getLong() == getInt() (a modular ring homomorphism: the low 32 bits of the

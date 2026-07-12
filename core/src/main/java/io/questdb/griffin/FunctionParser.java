@@ -1415,14 +1415,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     int intConst = function.getInt(null);
                     long longConst = function.getLong(null);
-                    // Only a genuine null widens to LONG_NULL via getLong(); fold that to
-                    // the shared NULL constant. An INT arithmetic that lands on -2^31 is
-                    // not null: getInt() shows null but getLong()/getTimestamp() must widen
-                    // like the column/bind path. That happens two ways, both left unfolded:
-                    // overflow wrap (2147483647 + 1: intConst != longConst) and genuine
-                    // -2^31 (~2147483647, -1073741824 * 2: intConst == longConst == INT_NULL).
-                    // Folding either to IntConstant.NULL would read LONG_NULL under a wider cast.
-                    if (longConst == Numbers.LONG_NULL) {
+                    // A genuine null reads as the sentinel at BOTH widths: every INT function
+                    // maps INT_NULL onto LONG_NULL in getLong(), and the arithmetic overrides
+                    // propagate a LONG_NULL operand. Fold only that to the shared NULL constant.
+                    //
+                    // LONG_NULL alone does not prove nullness: getLong() computes at long width,
+                    // so a deep enough INT chain can land on -2^63 (1073741824 * 8 * 1073741824
+                    // is exactly 2^63) while getInt() wraps to a plain 0 - the same 0 the column
+                    // path produces. Folding that to NULL would print null where c1 * c2 * c3
+                    // over the same values prints 0.
+                    //
+                    // An INT arithmetic that lands on -2^31 is not null either: getInt() shows
+                    // the sentinel but getLong()/getTimestamp() must widen like the column/bind
+                    // path. That happens two ways, both left unfolded: overflow wrap
+                    // (2147483647 + 1: intConst != longConst) and genuine -2^31 (~2147483647,
+                    // -1073741824 * 2: intConst == longConst == INT_NULL). Folding either to
+                    // IntConstant.NULL would read LONG_NULL under a wider cast.
+                    if (intConst == Numbers.INT_NULL && longConst == Numbers.LONG_NULL) {
                         return IntConstant.NULL;
                     } else if (intConst == longConst && intConst != Numbers.INT_NULL) {
                         // Clean in-range value: both getters agree and it is not the sentinel.

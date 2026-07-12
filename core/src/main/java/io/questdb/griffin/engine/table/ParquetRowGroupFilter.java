@@ -201,6 +201,9 @@ public final class ParquetRowGroupFilter {
                 final int columnType = condition.getColumnType();
                 final long valuesOffset = filterValues.getAppendOffset();
                 boolean supported = true;
+                // The op the filter list carries. Only the INT arm rewrites it, and only for a
+                // single-value comparison whose bound no INT row can satisfy (see unsatisfiableIntOp).
+                int effectiveOp = opType;
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BYTE:
                         for (int j = 0; j < valueCount; j++) {
@@ -227,7 +230,7 @@ public final class ParquetRowGroupFilter {
                                     break;
                                 case ColumnType.FLOAT:
                                 case ColumnType.DOUBLE:
-                                    if (!tryPutIntFromDouble(filterValues, f.getDouble(null))) {
+                                    if (!tryPutIntFromDouble(filterValues, f.getDouble(null), opType)) {
                                         supported = false;
                                     }
                                     break;
@@ -251,7 +254,7 @@ public final class ParquetRowGroupFilter {
                                     break;
                                 case ColumnType.FLOAT:
                                 case ColumnType.DOUBLE:
-                                    if (!tryPutIntFromDouble(filterValues, f.getDouble(null))) {
+                                    if (!tryPutIntFromDouble(filterValues, f.getDouble(null), opType)) {
                                         supported = false;
                                     }
                                     break;
@@ -273,19 +276,35 @@ public final class ParquetRowGroupFilter {
                                 // An out-of-INT-range LONG bound saturates in the 32-bit stats
                                 // slot and would false-prune a group whose INT stats sit on the
                                 // boundary (all INT_MAX vs "< 5e9"). Unlike BYTE/SHORT, INT stats
-                                // can reach it, so decline pushdown and let the row-level filter
-                                // evaluate it -- a superset scan is always safe.
+                                // can reach it, so it takes the op no INT row satisfies (prune
+                                // every group) or declines -- see unsatisfiableIntOp.
                                 long v = f.getLong(null);
                                 if (v != Numbers.LONG_NULL && (v < Integer.MIN_VALUE || v > Integer.MAX_VALUE)) {
-                                    supported = false;
-                                    break;
+                                    effectiveOp = unsatisfiableIntOp(opType, valueCount, v > 0);
+                                    if (effectiveOp == PushdownFilterExtractor.OP_UNSUPPORTED) {
+                                        supported = false;
+                                        break;
+                                    }
+                                    filterValues.putInt(unsatisfiableIntBound(v > 0));
+                                    continue;
                                 }
                                 filterValues.putInt(clampLongToInt(v));
                             } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
-                                if (!tryPutIntFromDouble(filterValues, f.getDouble(null))) {
+                                final double b = integralBound(f.getDouble(null), opType);
+                                if (Numbers.isNull(b)) {
                                     supported = false;
                                     break;
                                 }
+                                if (b < Integer.MIN_VALUE || b > Integer.MAX_VALUE) {
+                                    effectiveOp = unsatisfiableIntOp(opType, valueCount, b > 0);
+                                    if (effectiveOp == PushdownFilterExtractor.OP_UNSUPPORTED) {
+                                        supported = false;
+                                        break;
+                                    }
+                                    filterValues.putInt(unsatisfiableIntBound(b > 0));
+                                    continue;
+                                }
+                                filterValues.putInt((int) b);
                             } else {
                                 // INT (and narrower) compare at INT precision; getInt() wraps
                                 // overflowing INT arithmetic like the native scan.
@@ -323,7 +342,7 @@ public final class ParquetRowGroupFilter {
                                 // getLong() throws on a FLOAT/DOUBLE function, and the row-level filter
                                 // compares this column at double width, so the bound takes the same
                                 // guard as the LONG arm.
-                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null))) {
+                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
                                     supported = false;
                                     break;
                                 }
@@ -337,7 +356,7 @@ public final class ParquetRowGroupFilter {
                         for (int j = 0; j < valueCount; j++) {
                             Function f = valueFunctions.getQuick(j);
                             if (f.getType() == ColumnType.FLOAT || f.getType() == ColumnType.DOUBLE) {
-                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null))) {
+                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
                                     supported = false;
                                     break;
                                 }
@@ -355,7 +374,7 @@ public final class ParquetRowGroupFilter {
                             } else if (vType == ColumnType.FLOAT || vType == ColumnType.DOUBLE) {
                                 // Same as the TIMESTAMP arm: getLong() throws on a FLOAT/DOUBLE
                                 // function, and the row-level filter compares at double width.
-                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null))) {
+                                if (!tryPutLongFromDouble(filterValues, f.getDouble(null), opType)) {
                                     supported = false;
                                     break;
                                 }
@@ -483,7 +502,7 @@ public final class ParquetRowGroupFilter {
                     continue;
                 }
 
-                filterList.add(encodeColumnCountAndOp(columnIndex, valueCount, opType));
+                filterList.add(encodeColumnCountAndOp(columnIndex, valueCount, effectiveOp));
                 filterList.add(valuesOffset);
                 filterList.add(columnType);
             }
@@ -530,19 +549,44 @@ public final class ParquetRowGroupFilter {
         return (columnIndex & 0xFFFFFFFFL) | ((long) (count & 0x00FFFFFF) << 32) | ((long) (op & 0xFF) << 56);
     }
 
+    /**
+     * Rounds a FLOAT/DOUBLE bound to the integral bound that selects exactly the same integer
+     * rows, so a fractional bound still prunes instead of declining pushdown. For an integer
+     * column {@code i < 1.5} is {@code i < 2} and {@code i > 1.5} is {@code i > 1}, so each op
+     * rounds the way that cannot tighten the predicate: {@code <} and {@code >=} take the ceiling,
+     * {@code <=} and {@code >} take the floor. An integral bound comes back unchanged under every
+     * op, so an exact bound keeps pushing as it did.
+     * <p>
+     * Every other op declines a fractional bound by returning NaN. EQ (and the IN list that shares
+     * its op code) has no rounding that preserves it: a fractional bound equals no integer row at
+     * all, and the pruner cannot express "no group matches". BETWEEN never reaches here with a
+     * FLOAT/DOUBLE bound - QuestDB only accepts it over a TIMESTAMP column, against TIMESTAMP
+     * bounds - and declining is the safe answer if that ever changes. A NULL (NaN) bound stays NaN
+     * and declines as well.
+     */
+    private static double integralBound(double d, int opType) {
+        return switch (opType) {
+            case PushdownFilterExtractor.OP_LT, PushdownFilterExtractor.OP_GE -> Math.ceil(d);
+            case PushdownFilterExtractor.OP_LE, PushdownFilterExtractor.OP_GT -> Math.floor(d);
+            default -> d == Math.floor(d) ? d : Double.NaN;
+        };
+    }
+
     // Appends a FLOAT/DOUBLE bound into an INT stats slot (BYTE/SHORT/INT columns), or reports
     // that the bound cannot be pushed down. Row group pruning runs before the row-level filter,
     // so the pushed integer must equal the double exactly: (int) truncates a fractional bound
     // toward zero and saturates an out-of-range one, and either would false-prune a group whose
-    // stats sit on the resulting boundary (all-1 vs "< 1.5", all-INT_MAX vs "< 5e9"). Only an
-    // in-range integral double round-trips back through (double); anything else declines pushdown
-    // and lets the row-level filter evaluate it -- a superset scan is always safe.
-    private static boolean tryPutIntFromDouble(MemoryCARWImpl filterValues, double d) {
-        int i = (int) d;
-        if (Numbers.isNull(d) || (double) i != d) {
+    // stats sit on the resulting boundary (all-1 vs "< 1.5", all-INT_MAX vs "< 5e9"). integralBound
+    // rounds a fractional bound in the direction the op preserves, so "< 1.5" still pushes as
+    // "< 2"; a bound outside the INT slot has no in-range equivalent under every op, so it declines
+    // and lets the row-level filter evaluate it -- a superset scan is always safe. (The INT arm
+    // handles its own out-of-range bounds, where the column's range makes them decidable.)
+    private static boolean tryPutIntFromDouble(MemoryCARWImpl filterValues, double d, int opType) {
+        final double b = integralBound(d, opType);
+        if (Numbers.isNull(b) || b < Integer.MIN_VALUE || b > Integer.MAX_VALUE) {
             return false;
         }
-        filterValues.putInt(i);
+        filterValues.putInt((int) b);
         return true;
     }
 
@@ -556,13 +600,58 @@ public final class ParquetRowGroupFilter {
     // bound (long) 1e16 == 10000000000000000 excludes its group. Decline instead -- a superset scan is
     // always safe. The 2^53 ceiling also subsumes the Long.MIN_VALUE bound (which would push the
     // LONG_NULL sentinel as a real value) and the Long.MAX_VALUE one (where (long) 2^63 saturates yet
-    // still round-trips).
-    private static boolean tryPutLongFromDouble(MemoryCARWImpl filterValues, double d) {
-        long l = (long) d;
-        if (Numbers.isNull(d) || Math.abs(d) >= MAX_EXACT_INTEGRAL_DOUBLE || (double) l != d) {
+    // still round-trips). Below 2^53 a rounded bound is exact across the whole LONG range: every long
+    // outside [-2^53, 2^53] widens to a double of magnitude at least 2^53, so it sits on the same
+    // side of the bound as the rounded long does.
+    private static boolean tryPutLongFromDouble(MemoryCARWImpl filterValues, double d, int opType) {
+        final double b = integralBound(d, opType);
+        if (Numbers.isNull(b) || Math.abs(b) >= MAX_EXACT_INTEGRAL_DOUBLE) {
             return false;
         }
-        filterValues.putLong(l);
+        filterValues.putLong((long) b);
         return true;
+    }
+
+    // The in-range bound that goes with unsatisfiableIntOp's rewritten op. INT_MIN is the native
+    // side's NULL sentinel (it declines to prune on it), so the below-range bound saturates one
+    // above it; every group whose min stat holds a real value still prunes.
+    private static int unsatisfiableIntBound(boolean isAboveRange) {
+        return isAboveRange ? Integer.MAX_VALUE : Integer.MIN_VALUE + 1;
+    }
+
+    /**
+     * Maps a comparison whose bound lies outside the INT range onto the (op, bound) pair that
+     * prunes every row group, or {@link PushdownFilterExtractor#OP_UNSUPPORTED} to decline
+     * pushdown. The caller pushes {@link #unsatisfiableIntBound} as the value.
+     * <p>
+     * No INT row can be greater than a bound above INT_MAX - not even a NULL one, since the
+     * row-level comparison rejects NULL - so the predicate matches nothing and every group can go.
+     * {@code >} does that with the bound saturated to INT_MAX: a group is dropped when its max is
+     * at most the bound, and an INT max always is. {@code >=} has no bound with that property - a
+     * group whose max is exactly INT_MAX survives {@code >= INT_MAX} - so it rewrites to
+     * {@code > INT_MAX}, which selects the same (empty) row set. Below INT_MIN the picture mirrors,
+     * with one wrinkle: the native side reads a pushed INT_MIN as the NULL sentinel and declines to
+     * prune on it, so the bound saturates to INT_MIN + 1 instead. {@code < INT_MIN + 1} drops every
+     * group whose min is at least INT_MIN + 1 - every group whose stats hold a real value - and
+     * {@code <=} rewrites to it.
+     * <p>
+     * The opposite direction ({@code <} / {@code <=} above INT_MAX, {@code >} / {@code >=} below
+     * INT_MIN) holds for every INT row: there is nothing to prune, and the saturated bound would
+     * false-prune a boundary group, so it declines. EQ (an IN list carries more than one value)
+     * and BETWEEN (two bounds) decline as well - the op travels with the whole condition, so only
+     * a lone bound can rewrite it, which {@code valueCount} enforces.
+     */
+    private static int unsatisfiableIntOp(int opType, int valueCount, boolean isAboveRange) {
+        if (valueCount != 1) {
+            return PushdownFilterExtractor.OP_UNSUPPORTED;
+        }
+        if (isAboveRange) {
+            return opType == PushdownFilterExtractor.OP_GT || opType == PushdownFilterExtractor.OP_GE
+                    ? PushdownFilterExtractor.OP_GT
+                    : PushdownFilterExtractor.OP_UNSUPPORTED;
+        }
+        return opType == PushdownFilterExtractor.OP_LT || opType == PushdownFilterExtractor.OP_LE
+                ? PushdownFilterExtractor.OP_LT
+                : PushdownFilterExtractor.OP_UNSUPPORTED;
     }
 }

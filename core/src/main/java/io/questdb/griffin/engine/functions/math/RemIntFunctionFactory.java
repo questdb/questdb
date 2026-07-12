@@ -96,6 +96,11 @@ public class RemIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isIntWidthStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(left).val('%').val(right);
         }

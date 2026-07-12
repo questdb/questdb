@@ -85,5 +85,10 @@ public class AbsIntFunctionFactory implements FunctionFactory {
         public String getName() {
             return "abs";
         }
+
+        @Override
+        public boolean isIntWidthStable() {
+            return false;
+        }
     }
 }

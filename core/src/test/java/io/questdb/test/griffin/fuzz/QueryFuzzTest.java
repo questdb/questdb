@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
@@ -162,6 +163,15 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // Per-constant chance, in percent, of substituting a bindable literal
     // with a bind variable inside the bind variant.
     private static final int CONSTANT_BIND_PROBABILITY_PCT = 50;
+    // Lowest share, in percent, of a shape's differential queries that must actually run rather
+    // than be skipped on an expected error. Skips are normal - a fuzzed expression can overflow, a
+    // cast can be inconvertible - and how often they happen swings with the randomly generated
+    // tables, so this only catches a generator that has stopped producing compilable SQL at all:
+    // without it, a shape whose SQL drifts out of step with the engine leaves the run green with
+    // every one of its queries counted as skipped. Over a 1500-query run the shapes land between
+    // 66% (GROUP BY, WINDOW) and 100% (posting index) accepted, so 25% leaves wide headroom; read
+    // the per-shape line runFuzz logs to see where a shape actually sits.
+    private static final int MIN_ACCEPTED_PCT_PER_SHAPE = 25;
     // Fault-injected queries a run needs before runFuzz asserts that at least one
     // fault actually fired. Below this count a zero-fire run is a small-sample
     // artifact (a fault arms at a random trigger point and a short query can run
@@ -169,6 +179,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // means the injector is disarmed. A default run injects ~15 (100 queries at a
     // 15% fault probability), so the floor holds for every unshrunk run.
     private static final int MIN_FAULT_QUERIES_FOR_FIRE_FLOOR = 5;
+    // Differential queries a shape needs before runFuzz holds it to MIN_ACCEPTED_PCT_PER_SHAPE.
+    // Below this count the accepted rate is too noisy to assert on. The narrow bands (LATEST ON
+    // draws 7 in 100 queries, the joins 5) stay under it on a default 100-query run and come under
+    // the floor on a longer soak.
+    private static final int MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR = 25;
     // Per-query chance, in percent, of generating a bind-variable variant.
     private static final int QUERY_BIND_PROBABILITY_PCT = 20;
     // Name of the query (SQL) worker pool. Its worker threads are named
@@ -654,6 +669,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
         int faultGen = 0;
         int skipped = 0;
         int serial = 0;
+        // Per-shape differential-query counts, so a generator that emits nothing the engine can
+        // compile cannot hide behind the aggregate (see MIN_ACCEPTED_PCT_PER_SHAPE). Fault queries
+        // run a different oracle and are left out of both counts.
+        final int[] generatedByShape = new int[QueryShape.values().length];
+        final int[] skippedByShape = new int[QueryShape.values().length];
         ObjList<QueryRunner.Result> failures = new ObjList<>();
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < config.getNumQueries(); q++) {
@@ -706,6 +726,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         }
                     }
                 } else {
+                    generatedByShape[query.shape().ordinal()]++;
                     // With small probability, regenerate the same query with a
                     // BindContext threaded through so a fraction of bindable
                     // typed constants emit as ?::TYPE bind variables. The Rnd
@@ -763,6 +784,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 }
                 if (result.isSkipped()) {
                     skipped++;
+                    if (faultType == null) {
+                        skippedByShape[query.shape().ordinal()]++;
+                    }
                     LOG.info().$("fuzz skip (").$safe(result.getSkipReason()).$("): ").$safe(query.sql()).$();
                 } else if (result.isFailed()) {
                     LOG.error().$("fuzz failure on query: ").$safe(query.sql())
@@ -786,9 +810,31 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", FUNCTION ").$(runner.getFaultsFired(FaultType.FUNCTION)).$('/').$(runner.getFaultsArmed(FaultType.FUNCTION))
                 .$(" (fired/armed)")
                 .$();
+        LogRecord shapeLog = LOG.info().$("fuzz shapes (accepted/generated): ");
+        for (QueryShape shape : QueryShape.values()) {
+            final int generated = generatedByShape[shape.ordinal()];
+            shapeLog.$(shape.name()).$(' ')
+                    .$(generated - skippedByShape[shape.ordinal()]).$('/').$(generated).$(' ');
+        }
+        shapeLog.$();
 
         if (failures.size() > 0) {
             throw buildFailure(failures);
+        }
+        // Guard each generator against emitting SQL the engine cannot compile. A shape whose
+        // generator drifts out of step with the engine's rules still leaves the run green: every
+        // query it emits raises an expected error, gets counted as skipped, and asserts nothing.
+        for (QueryShape shape : QueryShape.values()) {
+            final int generated = generatedByShape[shape.ordinal()];
+            if (generated < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+                continue;
+            }
+            final int accepted = generated - skippedByShape[shape.ordinal()];
+            Assert.assertTrue(
+                    "the " + shape.name() + " generator ran only " + accepted + " of its " + generated
+                            + " queries; the rest were skipped on expected errors, so it looks out of step with the engine",
+                    100L * accepted >= (long) MIN_ACCEPTED_PCT_PER_SHAPE * generated
+            );
         }
         // Guard the fault injector against a silent disarm. It has several ways to
         // stop biting while the run stays green and tests nothing but the happy path:

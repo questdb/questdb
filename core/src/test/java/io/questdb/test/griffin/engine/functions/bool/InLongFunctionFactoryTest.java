@@ -177,19 +177,109 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testMergedPlanDeduplicatesCrossWidthValue() throws Exception {
-        // A narrow-int key IN() list that partitions a repeated value across the INT-width and
-        // long-width sets (5 as an INT literal, 5::long as a LONG element) must still render the
-        // value once in EXPLAIN, matching the single hash-set plan. Needs >= 3 elements so the
-        // const path builds the sets (a 2-element list routes to the two-const form). Before the
-        // dedup the merge rendered [5,5,7].
-        assertQuery("select * from x where i in (5, 5::long, 7)")
+        // An INT arithmetic key wraps mod 2^32 under getInt() where getLong() widens, so it is read
+        // once per element width and the INT-width and long-width sets stay apart. A value present
+        // in both (6 as an INT literal, 6::long as a LONG element) must still render once in
+        // EXPLAIN, matching the single hash-set plan. Needs >= 3 elements so the const path builds
+        // the sets (a 2-element list routes to the two-const form). Before the dedup the merge
+        // rendered [6,6,8].
+        assertQuery("select * from x where i * 2 in (6, 6::long, 8)")
                 .ddl("create table x as (select x::int i from long_sequence(10))")
-                .withPlanContaining("i in [5,7]")
+                .withPlanContaining("in [6,8]")
                 .returns("""
                         i
-                        5
-                        7
+                        3
+                        4
                         """);
+    }
+
+    @Test
+    public void testNarrowKeyMixedWidthBindVariables() throws Exception {
+        // The runtime-const path allocates its sets from the element TYPES (all STRING here) but
+        // fills them by VALUE, so which set actually holds anything is only known after init().
+        // The key is a plain INT column: it reads the same number at both widths, so every element
+        // lands in one set whatever its value, and the key is probed once per row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT cast(v AS INT) i32 FROM " +
+                    "(SELECT 1 v UNION ALL SELECT 2 v UNION ALL SELECT -2_147_483_647 v UNION ALL SELECT null v))");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "1");
+            bindVariableService.setStr("b1", "5000000000");
+            assertQuery("SELECT i32 FROM x WHERE i32 IN (:b0, :b1) ORDER BY i32")
+                    .noLeakCheck()
+                    .returns("""
+                            i32
+                            1
+                            """);
+
+            // Rebind to two INT-range values: the wide set stays empty for this cursor.
+            bindVariableService.setStr("b0", "2");
+            bindVariableService.setStr("b1", "-2147483647");
+            assertQuery("SELECT i32 FROM x WHERE i32 IN (:b0, :b1) ORDER BY i32")
+                    .noLeakCheck()
+                    .returns("""
+                            i32
+                            -2147483647
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNarrowKeyMixedWidthConstList() throws Exception {
+        // A plain INT column reads the same number through getInt() and getLong(), so a mixed-width
+        // IN list collapses into one set and one probe per row. The rows pin what that selects: a
+        // NULL element matches the NULL row, a LONG element matches nothing an INT column holds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT cast(v AS INT) i32 FROM " +
+                    "(SELECT 1 v UNION ALL SELECT 2 v UNION ALL SELECT -2_147_483_647 v UNION ALL SELECT null v))");
+
+            assertQuery("SELECT i32 FROM x WHERE i32 IN (1, 2, null) ORDER BY i32")
+                    .noLeakCheck()
+                    .returns("""
+                            i32
+                            null
+                            1
+                            2
+                            """);
+            assertQuery("SELECT i32 FROM x WHERE i32 IN (1, 2, 5_000_000_000) ORDER BY i32")
+                    .noLeakCheck()
+                    .returns("""
+                            i32
+                            1
+                            2
+                            """);
+            // The plan renders one merged, sorted list either way.
+            assertQuery("SELECT i32 FROM x WHERE i32 IN (1, 2, 5_000_000_000)")
+                    .noLeakCheck()
+                    .assertsPlanContaining("filter: i32 in [1,2,5000000000]");
+        });
+    }
+
+    @Test
+    public void testNarrowKeyMixedWidthVarList() throws Exception {
+        // The var path: one element varies per row, so the list cannot be pre-hashed. The constant
+        // elements next to it are still folded at construction rather than re-parsed per row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT cast(v AS INT) i32, cast(v + 1 AS INT) other FROM " +
+                    "(SELECT 1 v UNION ALL SELECT 2 v UNION ALL SELECT -2_147_483_647 v))");
+
+            assertQuery("SELECT i32 FROM x WHERE i32 IN (other, '5000000000', 2) ORDER BY i32")
+                    .noLeakCheck()
+                    .returns("""
+                            i32
+                            2
+                            """);
+            assertQuery("SELECT i32 FROM x WHERE i32 IN (other - 1, 5_000_000_000) ORDER BY i32")
+                    .noLeakCheck()
+                    .returns("""
+                            i32
+                            -2147483647
+                            1
+                            2
+                            """);
+        });
     }
 
     @Test

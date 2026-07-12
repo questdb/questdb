@@ -111,6 +111,11 @@ public class DivIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isIntWidthStable() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(left).val('/').val(right);
         }

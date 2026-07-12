@@ -497,6 +497,13 @@ public interface RuntimeConstFunction extends UnaryFunction {
             value = arg.getInt(null);
             longValue = arg.getLong(null);
         }
+
+        @Override
+        public boolean isIntWidthStable() {
+            // The wrapper caches whatever the arg reports at each width, so it diverges
+            // exactly where the arg does.
+            return arg.isIntWidthStable();
+        }
     }
 
     final class LongRuntimeConstFunction extends LongFunction implements RuntimeConstFunction {
