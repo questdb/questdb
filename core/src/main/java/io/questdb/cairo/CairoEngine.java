@@ -80,6 +80,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.LocalDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -278,6 +279,12 @@ public class CairoEngine implements Closeable, WriterSource {
     // constructor body after `this` is available. Enterprise overrides via setDurableAckRegistry.
     private volatile @NotNull DurableAckRegistry durableAckRegistry;
     private FrameFactory frameFactory;
+    // Governs the adaptive apply-side durable epoch (ApplyWal2TableJob.maybeAdvanceDurableEpoch).
+    // OSS default ALWAYS_ON; Enterprise installs REPLICA_SKIP while a node is a live replica and
+    // restores ALWAYS_ON when that tenure ends. volatile: swapped by EntCairoEngine role
+    // transitions on the lifecycle thread, read by apply worker threads. Fail-safe: the default and
+    // any non-replica state is ALWAYS_ON. Matches the sibling volatile durableAckRegistry.
+    private volatile @NotNull LocalDurabilityPolicy localDurabilityPolicy = LocalDurabilityPolicy.ALWAYS_ON;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
     // FactoryProvider that produces it is not bound until config.init(engine, ...)
@@ -1033,6 +1040,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return getTableMetadata(tableToken, desiredVersion);
         }
         return getSequencerMetadata(tableToken, desiredVersion);
+    }
+
+    public @NotNull LocalDurabilityPolicy getLocalDurabilityPolicy() {
+        return localDurabilityPolicy;
     }
 
     public @NotNull MatViewGraph getMatViewGraph() {
@@ -2100,6 +2111,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
         this.durableAckRegistry = durableAckRegistry;
+    }
+
+    public void setLocalDurabilityPolicy(@NotNull LocalDurabilityPolicy localDurabilityPolicy) {
+        this.localDurabilityPolicy = localDurabilityPolicy;
     }
 
     @TestOnly
