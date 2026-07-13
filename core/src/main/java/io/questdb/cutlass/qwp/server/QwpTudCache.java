@@ -77,6 +77,7 @@ public class QwpTudCache implements QuietCloseable {
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
+    private volatile int cachedTableCount;
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
     private Path path;
@@ -151,6 +152,7 @@ public class QwpTudCache implements QuietCloseable {
                 Misc.free(tud);
             }
             tableUpdateDetails.clear();
+            cachedTableCount = 0;
             isDistressed = false;
         }
     }
@@ -159,6 +161,7 @@ public class QwpTudCache implements QuietCloseable {
     public void close() {
         reset();
         tableUpdateDetails.clear();
+        cachedTableCount = 0;
         ddlMem = Misc.free(ddlMem);
         path = Misc.free(path);
         symbolCachePool = Misc.free(symbolCachePool);
@@ -180,79 +183,71 @@ public class QwpTudCache implements QuietCloseable {
      * to record which client messages still need an object-store upload.
      */
     public void commitAll(CommittedTxnConsumer consumer) throws Throwable {
-        boolean droppedTableFound;
-        do {
-            droppedTableFound = false;
-            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = keys.get(i);
-                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                try {
-                    if (!tud.isDropped()) {
-                        final boolean willAdvance = consumer != null && !tud.isFirstRow();
-                        tud.commit(false);
-                        if (willAdvance && !tud.isDropped()) {
-                            consumer.accept(
-                                    tud.getTableToken().getTableName(),
-                                    tud.getTableToken().getDirName(),
-                                    tud.getLastSeqTxn()
-                            );
-                        }
-                    }
-                } catch (CommitFailedException e) {
-                    if (!e.isTableDropped()) {
-                        throw e.getReason();
-                    } else {
-                        tud.setIsDropped();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            try {
+                if (!tud.isDropped()) {
+                    final boolean willAdvance = consumer != null && !tud.isFirstRow();
+                    tud.commit(false);
+                    if (willAdvance && !tud.isDropped()) {
+                        consumer.accept(
+                                tud.getTableToken().getTableName(),
+                                tud.getTableToken().getDirName(),
+                                tud.getLastSeqTxn()
+                        );
                     }
                 }
-
-                if (tud.isDropped()) {
-                    tableUpdateDetails.remove(tableName);
-                    Misc.free(tud);
-                    droppedTableFound = true;
-                    break;
+            } catch (CommitFailedException e) {
+                if (!e.isTableDropped()) {
+                    throw e.getReason();
                 }
+                tud.setIsDropped();
             }
-        } while (droppedTableFound);
+
+            if (tud.isDropped()) {
+                tableUpdateDetails.removeAtQuick(tableUpdateDetails.keyIndex(tableName), i);
+                cachedTableCount = tableUpdateDetails.size();
+                Misc.free(tud);
+            } else {
+                i++;
+            }
+        }
     }
 
     public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
-        boolean droppedTableFound;
-        do {
-            droppedTableFound = false;
-            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = keys.get(i);
-                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                try {
-                    if (!tud.isDropped() && !tud.isFirstRow()) {
-                        final long seqTxnBefore = tud.getLastSeqTxn();
-                        tud.commitIfMaxUncommittedRowsCountReached();
-                        if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
-                            consumer.accept(
-                                    tud.getTableToken().getTableName(),
-                                    tud.getTableToken().getDirName(),
-                                    tud.getLastSeqTxn()
-                            );
-                        }
-                    }
-                } catch (CommitFailedException e) {
-                    if (!e.isTableDropped()) {
-                        throw e.getReason();
-                    } else {
-                        tud.setIsDropped();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            try {
+                if (!tud.isDropped() && !tud.isFirstRow()) {
+                    final long seqTxnBefore = tud.getLastSeqTxn();
+                    tud.commitIfMaxUncommittedRowsCountReached();
+                    if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
+                        consumer.accept(
+                                tud.getTableToken().getTableName(),
+                                tud.getTableToken().getDirName(),
+                                tud.getLastSeqTxn()
+                        );
                     }
                 }
-
-                if (tud.isDropped()) {
-                    tableUpdateDetails.remove(tableName);
-                    Misc.free(tud);
-                    droppedTableFound = true;
-                    break;
+            } catch (CommitFailedException e) {
+                if (!e.isTableDropped()) {
+                    throw e.getReason();
                 }
+                tud.setIsDropped();
             }
-        } while (droppedTableFound);
+
+            if (tud.isDropped()) {
+                tableUpdateDetails.removeAtQuick(tableUpdateDetails.keyIndex(tableName), i);
+                cachedTableCount = tableUpdateDetails.size();
+                Misc.free(tud);
+            } else {
+                i++;
+            }
+        }
     }
 
     /**
@@ -262,94 +257,80 @@ public class QwpTudCache implements QuietCloseable {
      * (e.g. UDP receivers) where there is no client to report the error to.
      */
     public void commitAllBestEffort() {
-        boolean droppedTableFound;
-        do {
-            droppedTableFound = false;
-            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = keys.get(i);
-                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                try {
-                    if (!tud.isDropped()) {
-                        tud.commit(false);
-                    }
-                } catch (CommitFailedException e) {
-                    if (e.isTableDropped()) {
-                        tud.setIsDropped();
-                    } else {
-                        LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
-                    }
-                } catch (Throwable t) {
-                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            try {
+                if (!tud.isDropped()) {
+                    tud.commit(false);
                 }
-
-                // A writer distressed by a dropped table does not always surface as
-                // CommitFailedException.isTableDropped() - it can throw a plain
-                // CairoException, caught above. Left in the cache, its commit is
-                // retried on every interval forever (a busy error-log storm). Evict
-                // when the cached token is no longer the current table for its name;
-                // this name->token check stays correct even after the dropped table's
-                // dir is purged from the registry (unlike isTableDropped()).
-                if (!tud.isDropped() && engine.getTableTokenIfExists(tud.getTableToken().getTableName()) != tud.getTableToken()) {
+            } catch (CommitFailedException e) {
+                if (e.isTableDropped()) {
                     tud.setIsDropped();
+                } else {
+                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
                 }
-
-                if (tud.isDropped()) {
-                    tableUpdateDetails.remove(tableName);
-                    Misc.free(tud);
-                    droppedTableFound = true;
-                    break;
-                }
+            } catch (Throwable t) {
+                LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
             }
-        } while (droppedTableFound);
+
+            // A distressed writer can throw a plain CairoException after DROP.
+            // The commit loop would otherwise retry and log it forever. The name
+            // registry still detects the stale token after it purges the old dir.
+            if (!tud.isDropped() && isTableTokenStale(tud)) {
+                tud.setIsDropped();
+            }
+
+            if (tud.isDropped()) {
+                tableUpdateDetails.removeAtQuick(tableUpdateDetails.keyIndex(tableName), i);
+                cachedTableCount = tableUpdateDetails.size();
+                Misc.free(tud);
+            } else {
+                i++;
+            }
+        }
     }
 
     public long commitWalTables(long wallClockMillis) {
         long minTableNextCommitTime = Long.MAX_VALUE;
-        boolean droppedTableFound;
-        do {
-            droppedTableFound = false;
-            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                Utf8Sequence tableName = keys.get(i);
-                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
-                try {
-                    if (!tud.isDropped()) {
-                        long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
-                        wallClockMillis = tud.getMillisecondClock().getTicks();
-                        if (tableNextCommitTime < minTableNextCommitTime) {
-                            minTableNextCommitTime = tableNextCommitTime;
-                        }
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+            try {
+                if (!tud.isDropped()) {
+                    long tableNextCommitTime = tud.commitIfIntervalElapsed(wallClockMillis);
+                    wallClockMillis = tud.getMillisecondClock().getTicks();
+                    if (tableNextCommitTime < minTableNextCommitTime) {
+                        minTableNextCommitTime = tableNextCommitTime;
                     }
-                } catch (CommitFailedException e) {
-                    if (e.isTableDropped()) {
-                        tud.setIsDropped();
-                    } else {
-                        LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
-                    }
-                } catch (Throwable t) {
-                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
                 }
-
-                // A writer distressed by a dropped table does not always surface as
-                // CommitFailedException.isTableDropped() - it can throw a plain
-                // CairoException, caught above. Left in the cache, its commit is
-                // retried on every interval forever (a busy error-log storm). Evict
-                // when the cached token is no longer the current table for its name;
-                // this name->token check stays correct even after the dropped table's
-                // dir is purged from the registry (unlike isTableDropped()).
-                if (!tud.isDropped() && engine.getTableTokenIfExists(tud.getTableToken().getTableName()) != tud.getTableToken()) {
+            } catch (CommitFailedException e) {
+                if (e.isTableDropped()) {
                     tud.setIsDropped();
+                } else {
+                    LOG.error().$("commit error [table=").$(tableName).$(", e=").$(e.getReason()).I$();
                 }
-
-                if (tud.isDropped()) {
-                    tableUpdateDetails.remove(tableName);
-                    Misc.free(tud);
-                    droppedTableFound = true;
-                    break;
-                }
+            } catch (Throwable t) {
+                LOG.error().$("commit error [table=").$(tableName).$(", e=").$(t.getMessage()).I$();
             }
-        } while (droppedTableFound);
+
+            // A distressed writer can throw a plain CairoException after DROP.
+            // The commit loop would otherwise retry and log it forever. The name
+            // registry still detects the stale token after it purges the old dir.
+            if (!tud.isDropped() && isTableTokenStale(tud)) {
+                tud.setIsDropped();
+            }
+
+            if (tud.isDropped()) {
+                tableUpdateDetails.removeAtQuick(tableUpdateDetails.keyIndex(tableName), i);
+                cachedTableCount = tableUpdateDetails.size();
+                Misc.free(tud);
+            } else {
+                i++;
+            }
+        }
         return minTableNextCommitTime;
     }
 
@@ -363,21 +344,13 @@ public class QwpTudCache implements QuietCloseable {
         int key = tableUpdateDetails.keyIndex(tableNameUtf8);
         if (key < 0) {
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(key);
-            // The cache is keyed by table name, so a cached TUD can outlive its
-            // table: a DROP (and any later re-CREATE, or a rename) leaves it bound
-            // to the old table's WAL writer. Reusing that stale writer distresses
-            // it and the datagram's rows are silently lost. Verify the cached token
-            // is still the current one for this name and, if not, evict and rebuild
-            // against the current table below. This name->token check stays correct
-            // even after the dropped table's dir is purged from the registry (when
-            // isTableDropped() would no longer report it as dropped).
-            if (engine.getTableTokenIfExists(tud.getTableToken().getTableName()) == tud.getTableToken()) {
+            if (!isTableTokenStale(tud)) {
                 return tud;
             }
+
             tableUpdateDetails.removeAt(key);
+            cachedTableCount = tableUpdateDetails.size();
             Misc.free(tud);
-            // removeAt invalidated the negative hit index; recompute the insertion
-            // index for the rebuild path (putAt) below.
             key = tableUpdateDetails.keyIndex(tableNameUtf8);
         }
 
@@ -418,6 +391,7 @@ public class QwpTudCache implements QuietCloseable {
                     maxUncommittedRows
             );
             tableUpdateDetails.putAt(key, tableNameCopy, tud);
+            cachedTableCount = tableUpdateDetails.size();
             return tud;
         } catch (Throwable th) {
             Misc.free(tud != null ? tud : walWriter);
@@ -433,6 +407,7 @@ public class QwpTudCache implements QuietCloseable {
             Misc.free(tud);
         }
         tableUpdateDetails.clear();
+        cachedTableCount = 0;
     }
 
     public void setDistressed() {
@@ -440,11 +415,10 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Number of tables currently held in the cache. Exposed for monitoring and
-     * tests (e.g. verifying that dropped tables are evicted rather than retained).
+     * Number of tables currently held in the cache.
      */
     public int size() {
-        return tableUpdateDetails.size();
+        return cachedTableCount;
     }
 
     /**
@@ -511,6 +485,12 @@ public class QwpTudCache implements QuietCloseable {
                     .put(']');
         }
         return tableToken;
+    }
+
+    private boolean isTableTokenStale(WalTableUpdateDetails tud) {
+        TableToken cachedToken = tud.getTableToken();
+        return engine.getTableTokenIfExists(cachedToken.getTableName()) != cachedToken
+                && engine.getTableTokenByDirName(cachedToken.getDirName()) == null;
     }
 
     /**
