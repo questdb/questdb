@@ -226,6 +226,29 @@ public class IPv4GroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullIPv4BatchKeepsHigherRowIdNonNull() {
+        GroupByFunction function = newLastNotNullIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullIPv4BatchReplacesStoredNull pins from the other side.
+            long ptr = allocateInts(ipv4("9.9.9.9"));
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(ipv4("9.9.9.9"), function.getIPv4(value));
+
+            ptr = allocateInts(ipv4("10.0.0.7"));
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(ipv4("9.9.9.9"), function.getIPv4(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullIPv4BatchReplacesStoredNull() {
         GroupByFunction function = newLastNotNullIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {

@@ -372,6 +372,30 @@ public class GeoHashGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullGeoHashBatchByteKeepsHigherRowIdNonNull() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
+        GroupByFunction function = newLastNotNullGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullGeoHashBatchByteReplacesStoredNull pins from the other side.
+            long ptr = allocateBytes((byte) 9);
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(9, function.getGeoByte(value));
+
+            ptr = allocateBytes((byte) 7);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(9, function.getGeoByte(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullGeoHashBatchByteReplacesStoredNull() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOBYTE_MAX_BITS);
         GroupByFunction function = newLastNotNullGeoHashFunction(GeoByteColumn.newInstance(COLUMN_INDEX, type));
@@ -421,6 +445,30 @@ public class GeoHashGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullGeoHashBatchIntKeepsHigherRowIdNonNull() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOINT_MAX_BITS);
+        GroupByFunction function = newLastNotNullGeoHashFunction(GeoIntColumn.newInstance(COLUMN_INDEX, type));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullGeoHashBatchIntReplacesStoredNull pins from the other side.
+            long ptr = allocateInts(9);
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(9, function.getGeoInt(value));
+
+            ptr = allocateInts(7);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(9, function.getGeoInt(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullGeoHashBatchIntReplacesStoredNull() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOINT_MAX_BITS);
         GroupByFunction function = newLastNotNullGeoHashFunction(GeoIntColumn.newInstance(COLUMN_INDEX, type));
@@ -450,6 +498,30 @@ public class GeoHashGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullGeoHashBatchLongKeepsHigherRowIdNonNull() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOLONG_MAX_BITS);
+        GroupByFunction function = newLastNotNullGeoHashFunction(GeoLongColumn.newInstance(COLUMN_INDEX, type));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullGeoHashBatchLongReplacesStoredNull pins from the other side.
+            long ptr = allocateLongs(9);
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(9, function.getGeoLong(value));
+
+            ptr = allocateLongs(7);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(9, function.getGeoLong(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullGeoHashBatchLongReplacesStoredNull() {
         int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOLONG_MAX_BITS);
         GroupByFunction function = newLastNotNullGeoHashFunction(GeoLongColumn.newInstance(COLUMN_INDEX, type));
@@ -460,6 +532,30 @@ public class GeoHashGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 1, 10);
 
             Assert.assertEquals(7, function.getGeoLong(value));
+        }
+    }
+
+    @Test
+    public void testLastNotNullGeoHashBatchShortKeepsHigherRowIdNonNull() {
+        int type = ColumnType.getGeoHashTypeWithBits(ColumnType.GEOSHORT_MAX_BITS);
+        GroupByFunction function = newLastNotNullGeoHashFunction(GeoShortColumn.newInstance(COLUMN_INDEX, type));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullGeoHashBatchShortReplacesStoredNull pins from the other side.
+            long ptr = allocateShorts((short) 9);
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(9, function.getGeoShort(value));
+
+            ptr = allocateShorts((short) 7);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(9, function.getGeoShort(value));
         }
     }
 

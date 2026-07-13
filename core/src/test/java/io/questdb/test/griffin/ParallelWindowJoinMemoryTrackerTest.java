@@ -81,6 +81,23 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // Many small page frames so the master scan fans out across the worker pool.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
+        // A slot-leak test can only observe a leak on a slot a worker actually took. With the default
+        // threshold of 16, WorkStealingStrategyFactory hands a 4-worker pool the
+        // AlwaysWorkStealingStrategy, whose owner never spins before reducing a frame itself, so on
+        // few frames it can win most of them and the workers are left with too few to reliably
+        // acquire. Dropping the threshold to 1 selects the adaptive strategy - the owner steals only
+        // after it has spun - which keeps the acquire off the timing of the box.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        // The filtering reducers populate the frame while already holding a slot, and only over a
+        // parquet master does that populate charge the per-query tracker, so
+        // testWindowJoinReleasesWorkerSlotsOnBreach runs those eight over a converted partition too.
+        // A parquet scan cuts its page frames on row group boundaries, so the row group size, not
+        // CAIRO_SQL_PAGE_FRAME_MAX_ROWS, is what decides how many frames that master fans out into:
+        // at the default the whole partition would be a single frame for the owner to reduce alone,
+        // and no worker would ever take the slot the test is there to watch. 5_000 gives the 40k-row
+        // master eight frames against four workers. The compression codec is left at its default,
+        // which already compresses.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 5_000);
         super.setUp();
     }
 
@@ -290,8 +307,19 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
         // compile-time flags: dynamic bounds, INCLUDE/EXCLUDE PREVAILING, a join filter, a vectorizable
         // aggregate, and a stolen master filter. So every row below pins its reducer by name - covering
         // one says nothing about the other fifteen, and a re-routed query would still breach, still
-        // release, and cover the wrong method. Reverting the try/finally in any one reducer turns
-        // exactly the row that names it red.
+        // release, and cover the wrong method.
+        //
+        // Which master a row needs follows from where in the reducer the breach has to land. The eight
+        // aggregate* reducers size the temporary lists while holding the slot, and the of() chunk
+        // malloc is the first thing they charge to the tracker, so a native master faults them. The
+        // eight filterAndAggregate* ones already sized those lists inside the try before this fix;
+        // what the fix moved in is populateFrameMemory(), which on a native frame decodes nothing and
+        // so charges nothing - a native master cannot fault it at all, and the row would stay green
+        // with the fix reverted. Those eight therefore run twice, once per master: over a parquet
+        // master the populate decodes a real column and the breach lands on the moved call, and over
+        // the native master it lands further down, on the temporary lists, which have to stay inside
+        // the try just as they do in the aggregate* family. Reverting the try/finally in any one
+        // reducer turns exactly the row that names it red.
         //
         // 40k master rows over small (1k-row) frames give ~40 page frames, so there is work for the
         // pool to pick up. It does not by itself guarantee any worker gets a slot - the first breach
@@ -304,6 +332,7 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         createTrades(engine, sqlExecutionContext, 40_000, 8);
+                        createParquetTrades(engine, sqlExecutionContext, 40_000, 8);
                         createPrices(engine, sqlExecutionContext, 1_000, 8);
                         // A fixed window, and a dynamic one: a bound that reads a master column cannot
                         // be folded to a constant, which is what makes the window dynamic.
@@ -342,6 +371,14 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                         // The same eight with a WHERE over the master. The parallel filter factory
                         // hands it to the atom, which routes the reduce to the filterAndAggregate
                         // family; without the steal these would cover the eight above a second time.
+                        //
+                        // Each of the eight runs twice, once per master, because the two masters breach
+                        // at different points in the same reducer and neither alone covers it. Over the
+                        // native master the breach lands on the temporary lists, as it does for the
+                        // aggregate* family above; those calls sit inside the try and must stay there.
+                        // Over the parquet master it lands earlier, on populateFrameMemory(), which is
+                        // the call this fix moved in - and the only one a native frame cannot fault,
+                        // since it decodes nothing there and so charges the tracker nothing.
                         final String where = " WHERE t.qty > 0";
                         assertReducerReleasesSlots(compiler, sqlExecutionContext,
                                 scalar + fixed + " EXCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE");
@@ -360,6 +397,35 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                                 vect + dynamic + " INCLUDE PREVAILING" + where, "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING");
                         assertReducerReleasesSlots(compiler, sqlExecutionContext,
                                 vect + "ON t.sym = p.sym " + dynamic + " INCLUDE PREVAILING" + where,
+                                "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED");
+
+                        // And the same eight over the parquet master. The ts predicate is interval-
+                        // extracted off the designated timestamp, so it pins the scan to the converted
+                        // partition without becoming a master filter of its own; t.s != 'zzz' is the
+                        // master filter that routes to this family. Filtering on the wide VARCHAR is
+                        // belt and braces: the limit is far below any decoded column, so the populate
+                        // would fault on the narrow ones too, but a filter over the widest column keeps
+                        // the row faulting even if that limit is ever loosened.
+                        final String pqScalar = "SELECT t.ts, array_agg(p.price) FROM parquet_trades t WINDOW JOIN prices p ";
+                        final String pqVect = "SELECT t.ts, sum(p.price) FROM parquet_trades t WINDOW JOIN prices p ";
+                        final String pqWhere = " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'";
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqScalar + fixed + " EXCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + fixed + " EXCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_VECT");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqScalar + fixed + " INCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + fixed + " INCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_VECT_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + "ON p.price > 0 " + fixed + " INCLUDE PREVAILING" + pqWhere,
+                                "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + dynamic + " EXCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_DYNAMIC");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + dynamic + " INCLUDE PREVAILING" + pqWhere, "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING");
+                        assertReducerReleasesSlots(compiler, sqlExecutionContext,
+                                pqVect + "ON t.sym = p.sym " + dynamic + " INCLUDE PREVAILING" + pqWhere,
                                 "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED");
 
                         // ON a symbol with a fixed window: the symbol equality is extracted, which
@@ -451,6 +517,29 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
                 Assert.assertTrue("expected rows at iteration " + i, rows > 0);
             }
         }
+    }
+
+    /**
+     * A master whose first partition is parquet, carrying a wide VARCHAR the scan has to decode.
+     * The filtering reducers populate the frame while already holding a per-worker slot, and that
+     * decode is the only tracked allocation they make there - on a native master the same call
+     * charges nothing, so it cannot breach the limit and cannot fault the slot release.
+     */
+    private static void createParquetTrades(CairoEngine engine, SqlExecutionContext ctx, int rows, int symbols) throws Exception {
+        engine.execute(
+                "CREATE TABLE parquet_trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE, s VARCHAR) timestamp(ts) PARTITION BY DAY",
+                ctx
+        );
+        // Same shape as trades, plus a ~256-byte value per row, which is what the filtering queries
+        // filter on: the widest column is the one whose decode a reducer is least likely to skip.
+        engine.execute(
+                "INSERT INTO parquet_trades SELECT (x * 1_000_000)::timestamp, (x % " + symbols + ")::symbol, x::double,"
+                        + " rpad(x::varchar, 256, 'a') FROM long_sequence(" + rows + ")",
+                ctx
+        );
+        // A row in a later partition seals the first one, which is what CONVERT needs.
+        engine.execute("INSERT INTO parquet_trades VALUES ('1970-01-02T00:00:00.000000Z', '0', -1, 'z')", ctx);
+        engine.execute("ALTER TABLE parquet_trades CONVERT PARTITION TO PARQUET LIST '1970-01-01'", ctx);
     }
 
     private static void createPrices(CairoEngine engine, SqlExecutionContext ctx, int rows, int symbols) throws Exception {

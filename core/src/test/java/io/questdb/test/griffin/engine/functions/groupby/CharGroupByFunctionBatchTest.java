@@ -187,6 +187,29 @@ public class CharGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullCharBatchKeepsHigherRowIdNonNull() {
+        LastNotNullCharGroupByFunction function = new LastNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullCharBatchReplacesStoredNull pins from the other side.
+            long ptr = allocateChars('q');
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals('q', function.getChar(value));
+
+            ptr = allocateChars('z');
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals('q', function.getChar(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullCharBatchReplacesStoredNull() {
         LastNotNullCharGroupByFunction function = new LastNotNullCharGroupByFunction(new CharColumn(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {

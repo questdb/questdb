@@ -274,11 +274,14 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
         //
         // A native master cannot fault these sites at all: navigateTo() makes no per-query-tracked
         // allocation there, so the breach lands later, inside the try, and the slot comes back on
-        // its own. That is why this coverage lives here rather than in the join tracker tests, and
-        // why every query below reads s (the wide VARCHAR) rather than v: with late materialization
-        // navigateTo() decodes only the columns the query needs, so a projection or filter over a
-        // narrow column would defer the wide decode past the acquire and never fault the code
-        // under test.
+        // its own. That is why every query below reads s (the wide VARCHAR) rather than v: with late
+        // materialization navigateTo() decodes only the columns the query needs, so a projection or
+        // filter over a narrow column would defer the wide decode past the acquire and never fault
+        // the code under test.
+        //
+        // ParallelWindowJoinMemoryTrackerTest covers the window join's own sixteen reducers by name,
+        // over both masters, for the same reason. The window-join row below overlaps its
+        // FILTER_AND_AGGREGATE_PREVAILING row and is kept as the horizon joins' next-door neighbour.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -333,8 +336,10 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
                                         + horizon + " WHERE t.ts < '1970-01-02' AND t.s != 'zzz'",
                                 AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
                         // Window join: only the filtered reducers populate the frame while holding the
-                        // slot; the unfiltered ones do it before the acquire and leak on the temporary
-                        // lists instead, which ParallelWindowJoinMemoryTrackerTest covers.
+                        // slot, so only they can leak on the decode. The unfiltered ones populate
+                        // before the acquire and leak on the temporary lists instead. Both families,
+                        // and each of the sixteen reducers by name, are covered in
+                        // ParallelWindowJoinMemoryTrackerTest.
                         TestUtils.assertNoSlotLeakOnBreach(compiler, sqlExecutionContext,
                                 "SELECT t.ts, array_agg(p.price) FROM tab t WINDOW JOIN px p "
                                         + "RANGE BETWEEN 2 seconds PRECEDING AND 2 seconds FOLLOWING "

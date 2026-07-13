@@ -301,6 +301,29 @@ public class DateGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullDateBatchKeepsHigherRowIdNonNull() {
+        LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullDateBatchReplacesStoredNull pins from the other side.
+            long ptr = allocateDates(epochDay(9));
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(epochDay(9), function.getDate(value));
+
+            ptr = allocateDates(epochDay(2));
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(epochDay(9), function.getDate(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullDateBatchReplacesStoredNull() {
         LastNotNullDateGroupByFunction function = new LastNotNullDateGroupByFunction(DateColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {

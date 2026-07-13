@@ -466,6 +466,29 @@ public class DoubleGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullDoubleBatchKeepsHigherRowIdNonNull() {
+        LastNotNullDoubleGroupByFunction function = new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullDoubleBatchReplacesStoredNull pins from the other side.
+            long ptr = allocateDoubles(9.5);
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(9.5, function.getDouble(value), 0.0);
+
+            ptr = allocateDoubles(4.25);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(9.5, function.getDouble(value), 0.0);
+        }
+    }
+
+    @Test
     public void testLastNotNullDoubleBatchReplacesStoredNull() {
         LastNotNullDoubleGroupByFunction function = new LastNotNullDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {

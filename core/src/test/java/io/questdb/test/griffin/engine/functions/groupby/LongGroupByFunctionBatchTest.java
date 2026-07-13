@@ -380,6 +380,29 @@ public class LongGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullLongBatchKeepsHigherRowIdNonNull() {
+        LastNotNullLongGroupByFunction function = new LastNotNullLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullLongBatchReplacesStoredNull pins from the other side.
+            long ptr = allocateLongs(99L);
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(99L, function.getLong(value));
+
+            ptr = allocateLongs(42L);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(99L, function.getLong(value));
+        }
+    }
+
+    @Test
     public void testLastNotNullLongBatchReplacesStoredNull() {
         LastNotNullLongGroupByFunction function = new LastNotNullLongGroupByFunction(LongColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {

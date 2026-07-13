@@ -295,6 +295,29 @@ public class FloatGroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullFloatBatchKeepsHigherRowIdNonNull() {
+        LastNotNullFloatGroupByFunction function = new LastNotNullFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
+            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
+            // stored non-null has to survive such a batch. The stored-value term is what decides it:
+            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
+            // NULL is replaceable from below, which
+            // testLastNotNullFloatBatchReplacesStoredNull pins from the other side.
+            long ptr = allocateFloats(9.5f);
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(9.5f, function.getFloat(value), 0.0f);
+
+            ptr = allocateFloats(4.25f);
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(9.5f, function.getFloat(value), 0.0f);
+        }
+    }
+
+    @Test
     public void testLastNotNullFloatBatchReplacesStoredNull() {
         LastNotNullFloatGroupByFunction function = new LastNotNullFloatGroupByFunction(FloatColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {

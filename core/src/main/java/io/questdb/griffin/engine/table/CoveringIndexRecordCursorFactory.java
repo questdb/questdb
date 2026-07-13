@@ -34,6 +34,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
@@ -1803,6 +1804,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
         private final RecordMetadata metadata;
+        private final BorrowedArray nullArray = new BorrowedArray();
         private final int[] queryColToIncludeIdx;
         private CoveringRowCursor cursor;
         private SymbolTable[] includeSymbolTables;
@@ -1820,9 +1822,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public ArrayView getArray(int col, int columnType) {
             int includeIdx = getIncludeIdx(col);
             if (includeIdx >= 0 && cursor != null) {
-                return cursor.getCoveredArray(includeIdx, columnType);
+                ArrayView array = cursor.getCoveredArray(includeIdx, columnType);
+                if (array != null) {
+                    return array;
+                }
+                // The sidecar reader returns a Java null when the sidecar it would read is not
+                // there to be read - a tombstoned or not-yet-opened slot publishes a zero end
+                // offset. That is a NULL array's worth of information, so hand out a NULL
+                // ArrayView, not nothing: getArray() has callers that dereference it straight
+                // away (PGUtils, the record sinks), and they have no null to check.
             }
-            return null;
+            nullArray.ofNull();
+            return nullArray;
         }
 
         @Override
