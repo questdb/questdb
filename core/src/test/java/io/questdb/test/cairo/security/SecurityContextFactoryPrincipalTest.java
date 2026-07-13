@@ -41,18 +41,26 @@ import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.Timeout;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntConsumer;
 
 public class SecurityContextFactoryPrincipalTest {
 
     // must match AbstractPrincipalAwareSecurityContext.MAX_CACHED_PRINCIPALS
     private static final int CACHE_CAP = 256;
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(60, TimeUnit.SECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @Test
     public void testAllowAllFactoryAnonymousReturnsSingleton() {
@@ -117,69 +125,30 @@ public class SecurityContextFactoryPrincipalTest {
 
     @Test
     public void testForPrincipalConcurrentAlternatingPrincipalsNeverLeak() throws Exception {
-        // every thread alternates between two principals on the shared singleton. Even while another
-        // thread is mid-publish swapping in a freshly grown cache, every call must return a context
-        // reporting exactly its own requested principal.
-        final int threadCount = 4;
+        // every thread alternates between two principals. Even while another thread is mid-publish swapping
+        // in a freshly grown cache, every call must return a context reporting exactly its own principal.
         final int iterations = 50_000;
-        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-        final AtomicInteger errors = new AtomicInteger();
-        final ObjList<Thread> threads = new ObjList<>();
-        for (int t = 0; t < threadCount; t++) {
-            final Thread thread = new Thread(() -> {
-                try {
-                    barrier.await();
-                    for (int i = 0; i < iterations; i++) {
-                        final String principal = (i & 1) == 0 ? "alice" : "bob";
-                        SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
-                        if (!Chars.equals(principal, context.getPrincipal())) {
-                            errors.incrementAndGet();
-                        }
-                    }
-                } catch (Throwable th) {
-                    errors.incrementAndGet();
-                }
-            });
-            threads.add(thread);
-            thread.start();
-        }
-        for (int t = 0; t < threadCount; t++) {
-            threads.getQuick(t).join();
-        }
-        Assert.assertEquals(0, errors.get());
+        final AllowAllSecurityContext root = freshAllowAll();
+        runConcurrently(4, t -> {
+            for (int i = 0; i < iterations; i++) {
+                final String principal = (i & 1) == 0 ? "alice" : "bob";
+                TestUtils.assertEquals(principal, root.forPrincipal(principal).getPrincipal());
+            }
+        });
     }
 
     @Test
     public void testForPrincipalConcurrentReportsOwnPrincipal() throws Exception {
-        // the per-principal cache on the shared singleton is published copy-on-write; under contention
-        // every caller must still get a context reporting its own principal, never another thread's
-        final int threadCount = 4;
+        // the per-principal cache is published copy-on-write; under contention every caller must still get a
+        // context reporting its own principal, never another thread's
         final int iterations = 50_000;
-        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-        final AtomicInteger errors = new AtomicInteger();
-        final ObjList<Thread> threads = new ObjList<>();
-        for (int t = 0; t < threadCount; t++) {
+        final AllowAllSecurityContext root = freshAllowAll();
+        runConcurrently(4, t -> {
             final String principal = "user" + t;
-            final Thread thread = new Thread(() -> {
-                try {
-                    barrier.await();
-                    for (int i = 0; i < iterations; i++) {
-                        SecurityContext context = AllowAllSecurityContext.INSTANCE.forPrincipal(principal);
-                        if (!Chars.equals(principal, context.getPrincipal())) {
-                            errors.incrementAndGet();
-                        }
-                    }
-                } catch (Throwable th) {
-                    errors.incrementAndGet();
-                }
-            });
-            threads.add(thread);
-            thread.start();
-        }
-        for (int t = 0; t < threadCount; t++) {
-            threads.getQuick(t).join();
-        }
-        Assert.assertEquals(0, errors.get());
+            for (int i = 0; i < iterations; i++) {
+                TestUtils.assertEquals(principal, root.forPrincipal(principal).getPrincipal());
+            }
+        });
     }
 
     @Test
@@ -193,33 +162,13 @@ public class SecurityContextFactoryPrincipalTest {
         final SecurityContext warmed = root.forPrincipal(principal);
         Assert.assertNotSame(root, warmed);
 
-        final int threadCount = 4;
         final int iterations = 50_000;
-        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-        final AtomicInteger errors = new AtomicInteger();
-        final ObjList<Thread> threads = new ObjList<>();
-        for (int t = 0; t < threadCount; t++) {
-            final Thread thread = new Thread(() -> {
-                try {
-                    barrier.await();
-                    for (int i = 0; i < iterations; i++) {
-                        SecurityContext context = root.forPrincipal(principal);
-                        // the warmed entry is never evicted, so the same cached instance must come back
-                        if (context != warmed || !Chars.equals(principal, context.getPrincipal())) {
-                            errors.incrementAndGet();
-                        }
-                    }
-                } catch (Throwable th) {
-                    errors.incrementAndGet();
-                }
-            });
-            threads.add(thread);
-            thread.start();
-        }
-        for (int t = 0; t < threadCount; t++) {
-            threads.getQuick(t).join();
-        }
-        Assert.assertEquals(0, errors.get());
+        runConcurrently(4, t -> {
+            for (int i = 0; i < iterations; i++) {
+                // the warmed entry is never evicted, so the same cached instance must come back
+                Assert.assertSame(warmed, root.forPrincipal(principal));
+            }
+        });
     }
 
     @Test
@@ -395,39 +344,17 @@ public class SecurityContextFactoryPrincipalTest {
         // cache is warmed, every one of its repeated calls must return the *same* cached instance. The
         // old single-entry cache thrashed here (each thread's context evicted by the others); the
         // per-principal cache must keep them all live with zero eviction.
-        final int threadCount = 6;
         final int iterations = 20_000;
         final AllowAllSecurityContext root = freshAllowAll();
-        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-        final AtomicInteger errors = new AtomicInteger();
-        final ObjList<Thread> threads = new ObjList<>();
-        for (int t = 0; t < threadCount; t++) {
+        runConcurrently(6, t -> {
             final String principal = "tenant" + t;
-            final Thread thread = new Thread(() -> {
-                try {
-                    barrier.await();
-                    final SecurityContext mine = root.forPrincipal(principal);
-                    if (!Chars.equals(principal, mine.getPrincipal())) {
-                        errors.incrementAndGet();
-                    }
-                    for (int i = 0; i < iterations; i++) {
-                        SecurityContext context = root.forPrincipal(principal);
-                        // no eviction: this thread's cached context must come back unchanged every time
-                        if (context != mine || !Chars.equals(principal, context.getPrincipal())) {
-                            errors.incrementAndGet();
-                        }
-                    }
-                } catch (Throwable th) {
-                    errors.incrementAndGet();
-                }
-            });
-            threads.add(thread);
-            thread.start();
-        }
-        for (int t = 0; t < threadCount; t++) {
-            threads.getQuick(t).join();
-        }
-        Assert.assertEquals(0, errors.get());
+            final SecurityContext mine = root.forPrincipal(principal);
+            TestUtils.assertEquals(principal, mine.getPrincipal());
+            for (int i = 0; i < iterations; i++) {
+                // no eviction: this thread's cached context must come back unchanged every time
+                Assert.assertSame(mine, root.forPrincipal(principal));
+            }
+        });
     }
 
     @Test
@@ -438,27 +365,9 @@ public class SecurityContextFactoryPrincipalTest {
         final int threadCount = 8;
         final AllowAllSecurityContext root = freshAllowAll();
         final String principal = "racy";
-        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
         final SecurityContext[] results = new SecurityContext[threadCount];
-        final AtomicInteger errors = new AtomicInteger();
-        final ObjList<Thread> threads = new ObjList<>();
-        for (int t = 0; t < threadCount; t++) {
-            final int idx = t;
-            final Thread thread = new Thread(() -> {
-                try {
-                    barrier.await();
-                    results[idx] = root.forPrincipal(principal);
-                } catch (Throwable th) {
-                    errors.incrementAndGet();
-                }
-            });
-            threads.add(thread);
-            thread.start();
-        }
-        for (int t = 0; t < threadCount; t++) {
-            threads.getQuick(t).join();
-        }
-        Assert.assertEquals(0, errors.get());
+        runConcurrently(threadCount, t -> results[t] = root.forPrincipal(principal));
+
         for (int t = 0; t < threadCount; t++) {
             TestUtils.assertEquals(principal, results[t].getPrincipal());
             Assert.assertSame("all racing callers must converge on one cached instance", results[0], results[t]);
@@ -637,6 +546,40 @@ public class SecurityContextFactoryPrincipalTest {
     private static TestReadOnlySecurityContext freshReadOnly() {
         // see freshAllowAll()
         return new TestReadOnlySecurityContext();
+    }
+
+    /**
+     * Runs {@code worker} on {@code threadCount} threads released together by a barrier, joins them, and
+     * rethrows the first failure any of them hit.
+     * <p>
+     * Workers use ordinary JUnit assertions. An AssertionError thrown on a spawned thread would otherwise be
+     * swallowed and reported as a bare error count -- no message, no stack trace, no failing value. On the
+     * tests defending a lock-free security cache that is exactly the diagnostic you need.
+     */
+    private static void runConcurrently(int threadCount, IntConsumer worker) throws Exception {
+        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+        final AtomicReference<Throwable> firstError = new AtomicReference<>();
+        final ObjList<Thread> threads = new ObjList<>();
+        for (int t = 0; t < threadCount; t++) {
+            final int index = t;
+            final Thread thread = new Thread(() -> {
+                try {
+                    barrier.await();
+                    worker.accept(index);
+                } catch (Throwable th) {
+                    firstError.compareAndSet(null, th);
+                }
+            });
+            threads.add(thread);
+            thread.start();
+        }
+        for (int t = 0; t < threadCount; t++) {
+            threads.getQuick(t).join();
+        }
+        final Throwable error = firstError.get();
+        if (error != null) {
+            throw new AssertionError("a worker thread failed: " + error, error);
+        }
     }
 
     private static PrincipalContext principal(CharSequence name) {
