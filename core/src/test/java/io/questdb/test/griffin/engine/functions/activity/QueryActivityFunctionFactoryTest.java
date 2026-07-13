@@ -30,17 +30,31 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
@@ -226,6 +240,231 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryActivitySnapshotUnderChurn() throws Exception {
+        // A reader runs query_activity() in a tight loop while several producers
+        // register and unregister queries, recycling pooled Entry objects under
+        // the reader. The optimistic snapshot in QueryActivityRecord.of()/copy()
+        // must never expose a torn query string nor crash: every producer row the
+        // reader accepts must carry one of the complete, known producer texts.
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final int producerCount = 4;
+            final int iterations = 20_000;
+
+            // Producer texts alternate between a short and a long, distinctly-keyed
+            // string so recycling an entry changes the StringSink length and
+            // exercises copy()'s shrink/grow rejection. They start with 'A'/'B' so
+            // the reader's own "SELECT ... query_activity()" text can never be
+            // mistaken for a producer row.
+            final String[][] producerTexts = new String[producerCount][2];
+            final Set<String> validQueries = new HashSet<>();
+            for (int p = 0; p < producerCount; p++) {
+                final StringBuilder longText = new StringBuilder();
+                for (int k = 0, n = 40 + p * 7; k < n; k++) {
+                    longText.append('B').append(p);
+                }
+                producerTexts[p][0] = "A" + p;
+                producerTexts[p][1] = longText.toString();
+                validQueries.add(producerTexts[p][0]);
+                validQueries.add(producerTexts[p][1]);
+            }
+
+            final AtomicInteger runningProducers = new AtomicInteger(producerCount);
+            final AtomicLong producerRowsObserved = new AtomicLong();
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+            final CyclicBarrier startBarrier = new CyclicBarrier(producerCount + 1);
+            final ObjList<Thread> threads = new ObjList<>();
+
+            for (int p = 0; p < producerCount; p++) {
+                final int slot = p;
+                final Thread thread = new Thread(() -> {
+                    try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                        startBarrier.await();
+                        for (int i = 0; i < iterations && fault.get() == null; i++) {
+                            final long queryId = registry.register(producerTexts[slot][i & 1], context);
+                            // brief window for the reader to snapshot the entry
+                            for (int j = 0; j < 8; j++) {
+                                Os.pause();
+                            }
+                            registry.unregister(queryId, context);
+                        }
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    } finally {
+                        runningProducers.decrementAndGet();
+                    }
+                }, "producer-" + slot);
+                threads.add(thread);
+            }
+
+            final Thread reader = new Thread(() -> {
+                try (
+                        SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        RecordCursorFactory factory = CairoEngine.select(compiler, "SELECT query_id, worker_pool, username, state, query FROM query_activity()", context)
+                ) {
+                    startBarrier.await();
+                    while (runningProducers.get() > 0 && fault.get() == null) {
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                // force every snapshot column to be materialized
+                                record.getLong(0);
+                                record.getStrA(1);
+                                record.getStrA(2);
+                                record.getStrA(3);
+                                final CharSequence query = record.getStrA(4);
+                                if (query == null) {
+                                    continue;
+                                }
+                                final String text = Chars.toString(query);
+                                // producer texts are "A<digit>" or "B<digit>...": require the
+                                // leading digit so an unrelated registry entry (e.g. an internal
+                                // "ALTER ...") is never mistaken for a producer row, and charAt(1)
+                                // stays in bounds.
+                                if (text.length() >= 2 && (text.charAt(0) == 'A' || text.charAt(0) == 'B')
+                                        && text.charAt(1) >= '0' && text.charAt(1) <= '9') {
+                                    if (!validQueries.contains(text)) {
+                                        throw new AssertionError("query_activity exposed a torn query: '" + text + "'");
+                                    }
+                                    producerRowsObserved.incrementAndGet();
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    fault.compareAndSet(null, t);
+                }
+            }, "query_activity_reader");
+            threads.add(reader);
+
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).start();
+            }
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join(120_000);
+                Assert.assertFalse("worker thread hung", threads.getQuick(i).isAlive());
+            }
+
+            if (fault.get() != null) {
+                throw new AssertionError("worker thread failed", fault.get());
+            }
+            Assert.assertTrue("reader never observed a live query", producerRowsObserved.get() > 0);
+        });
+    }
+
+    @Test
+    public void testQueryActivityRejectsGrowingStringSnapshot() throws Exception {
+        assertInjectedPoolNameRejected("SELECT growing pool name", new GrowingCharSequence("pool"));
+    }
+
+    @Test
+    public void testQueryActivityRejectsRowWhenEntryRetiresDuringCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final CountDownLatch copyStarted = new CountDownLatch(1);
+            final CountDownLatch releaseCopy = new CountDownLatch(1);
+            final AtomicBoolean sawRow = new AtomicBoolean(true);
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl readerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final String query = "SELECT retiring during copy";
+                final long queryId = registry.register(query, ownerContext);
+                setPoolName(registry.getEntry(queryId), new BlockingCharSequence("pool", copyStarted, releaseCopy));
+
+                final Thread readerThread = new Thread(() -> {
+                    try {
+                        sawRow.set(queryActivityHasRow(query, readerContext));
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    }
+                }, "query_activity_reader");
+
+                readerThread.start();
+                try {
+                    Assert.assertTrue("query_activity did not start copying the row", copyStarted.await(5, TimeUnit.SECONDS));
+                    registry.unregister(queryId, ownerContext);
+                } finally {
+                    releaseCopy.countDown();
+                    readerThread.join(5_000);
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+                Assert.assertFalse("reader thread hung", readerThread.isAlive());
+                if (fault.get() != null) {
+                    throw new AssertionError("reader failed", fault.get());
+                }
+                Assert.assertFalse(sawRow.get());
+            }
+        });
+    }
+
+    @Test
+    public void testQueryActivityRejectsShrinkingStringSnapshot() throws Exception {
+        assertInjectedPoolNameRejected("SELECT shrinking pool name", new ShrinkingCharSequence());
+    }
+
+    @Test
+    public void testQueryActivitySkipsCancellingEntry() throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            final CountDownLatch cancellerInGuard = new CountDownLatch(1);
+            final CountDownLatch releaseCanceller = new CountDownLatch(1);
+            final CountDownLatch cancellerDone = new CountDownLatch(1);
+            final AtomicBoolean cancelResult = new AtomicBoolean();
+            final AtomicReference<Throwable> fault = new AtomicReference<>();
+
+            // The owner principal blocks the first time cancel() evaluates
+            // Chars.equals(entry.principal, cancellerPrincipal): that comparison
+            // reads entry.principal.length() inside the first CANCELLING guard, so
+            // the entry stays CANCELLING while the reader snapshots the registry.
+            // query_activity() must reject the non-active lifecycle and skip the row.
+            final BlockingCharSequence ownerPrincipal = new BlockingCharSequence("owner", cancellerInGuard, releaseCanceller);
+
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(new CharSequencePrincipalSecurityContext(ownerPrincipal));
+                    SqlExecutionContextImpl cancelContext = new SqlExecutionContextImpl(engine, 1).with(new PrincipalSecurityContext("admin"));
+                    SqlExecutionContextImpl readerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final String query = "SELECT cancelling query";
+                final long queryId = registry.register(query, ownerContext);
+                final Thread cancellerThread = new Thread(() -> {
+                    try {
+                        cancelResult.set(registry.cancel(queryId, cancelContext));
+                    } catch (Throwable t) {
+                        fault.compareAndSet(null, t);
+                    } finally {
+                        cancellerDone.countDown();
+                    }
+                }, "query_activity_canceller");
+
+                cancellerThread.start();
+                try {
+                    Assert.assertTrue("canceller did not enter the CANCELLING guard", cancellerInGuard.await(5, TimeUnit.SECONDS));
+                    assertQueryActivityDoesNotReturn(query, readerContext);
+                } finally {
+                    releaseCanceller.countDown();
+                    Assert.assertTrue("canceller did not finish", cancellerDone.await(5, TimeUnit.SECONDS));
+                    cancellerThread.join(5_000);
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+                Assert.assertFalse("canceller thread hung", cancellerThread.isAlive());
+                if (fault.get() != null) {
+                    throw new AssertionError("canceller failed", fault.get());
+                }
+                // Once released, the cross-user admin cancel runs to completion.
+                Assert.assertTrue("admin cancel should succeed after release", cancelResult.get());
+            }
+        });
+    }
+
+    @Test
     public void testQueryIdToCancelMustBeNonNegativeInteger() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("cancel ")
@@ -266,10 +505,162 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                 .fails(13, "Query cancellation is disabled");
     }
 
+    private void assertInjectedPoolNameRejected(String query, CharSequence poolName) throws Exception {
+        assertMemoryLeak(() -> {
+            final QueryRegistry registry = engine.getQueryRegistry();
+            try (
+                    SqlExecutionContextImpl ownerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl readerContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final long queryId = registry.register(query, ownerContext);
+                try {
+                    setPoolName(registry.getEntry(queryId), poolName);
+                    assertQueryActivityDoesNotReturn(query, readerContext);
+                } finally {
+                    if (registry.getEntry(queryId) != null) {
+                        registry.unregister(queryId, ownerContext);
+                    }
+                }
+            }
+        });
+    }
+
+    private void assertQueryActivityDoesNotReturn(String query, SqlExecutionContextImpl context) throws SqlException {
+        Assert.assertFalse(queryActivityHasRow(query, context));
+    }
+
+    private boolean queryActivityHasRow(String query, SqlExecutionContextImpl context) throws SqlException {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = CairoEngine.select(compiler, "SELECT query_id FROM query_activity() WHERE query = '" + query + "'", context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            return cursor.hasNext();
+        }
+    }
+
+    private static void await(CountDownLatch latch, String message) {
+        try {
+            Assert.assertTrue(message, latch.await(5, TimeUnit.SECONDS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(message, e);
+        }
+    }
+
+    private static void setPoolName(QueryRegistry.Entry entry, CharSequence poolName) throws Exception {
+        Assert.assertNotNull(entry);
+        final Field field = QueryRegistry.Entry.class.getDeclaredField("poolName");
+        field.setAccessible(true);
+        field.set(entry, poolName);
+    }
+
     private static class AdminContext extends AllowAllSecurityContext {
         @Override
         public String getPrincipal() {
             return "admin";
+        }
+    }
+
+    private static class BlockingCharSequence implements CharSequence {
+        private final AtomicBoolean blocked = new AtomicBoolean();
+        private final CountDownLatch entered;
+        private final CountDownLatch release;
+        private final String value;
+
+        private BlockingCharSequence(String value, CountDownLatch entered, CountDownLatch release) {
+            this.value = value;
+            this.entered = entered;
+            this.release = release;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return value.charAt(index);
+        }
+
+        @Override
+        public int length() {
+            if (blocked.compareAndSet(false, true)) {
+                entered.countDown();
+                await(release, "blocked char sequence was not released");
+            }
+            return value.length();
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return value.subSequence(start, end);
+        }
+    }
+
+    private static class CharSequencePrincipalSecurityContext extends AllowAllSecurityContext {
+        private final CharSequence principal;
+
+        private CharSequencePrincipalSecurityContext(CharSequence principal) {
+            this.principal = principal;
+        }
+
+        @Override
+        public CharSequence getPrincipal() {
+            return principal;
+        }
+    }
+
+    private static class GrowingCharSequence implements CharSequence {
+        private final AtomicInteger lengthCalls = new AtomicInteger();
+        private final String value;
+
+        private GrowingCharSequence(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public char charAt(int index) {
+            return value.charAt(index);
+        }
+
+        @Override
+        public int length() {
+            return value.length() + Math.min(lengthCalls.getAndIncrement(), 1);
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return value.subSequence(start, end);
+        }
+    }
+
+    private static class PrincipalSecurityContext extends AllowAllSecurityContext {
+        private final String principal;
+
+        private PrincipalSecurityContext(String principal) {
+            this.principal = principal;
+        }
+
+        @Override
+        public String getPrincipal() {
+            return principal;
+        }
+    }
+
+    private static class ShrinkingCharSequence implements CharSequence {
+        @Override
+        public char charAt(int index) {
+            if (index > 0) {
+                throw new IndexOutOfBoundsException();
+            }
+            return 'x';
+        }
+
+        @Override
+        public int length() {
+            return 2;
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
         }
     }
 
