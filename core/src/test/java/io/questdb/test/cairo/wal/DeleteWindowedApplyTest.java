@@ -564,8 +564,10 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
      * {@code TableWriterReplaceRangeDirectTest#testReplaceRangeSurvivorsWithDecimalColumn}, but through the full
      * windowed WAL-apply path.
      * <p>
-     * Fixture: a single BY DAY partition, rows O3-SCRAMBLED within the day (ts permuted by a coprime multiply so
-     * the apply genuinely sorts them out of order), a varchar and a string column each with a surviving NULL
+     * Fixture: a single BY DAY partition, rows inserted out of designated-timestamp order (ts permuted by a
+     * coprime multiply) so the INSERT's WAL apply O3-sorts them into the partition; the survivor-replace copier
+     * under test then stages the surviving var-size values, which arrive ts-ordered from the survivor cursor
+     * (the O3 survivor sort itself is exercised elsewhere). A varchar and a string column each with a surviving NULL
      * (x=7 -> null varchar, x=13 -> null string; both odd, so both survive the delete and flow through the
      * copier). {@code rows.per.step=1} tiles the single day into many windows; {@code delete where x % 2 = 0}
      * partially survives each window. Assert content AND order against the NOT-predicate oracle + exact survivor count.
