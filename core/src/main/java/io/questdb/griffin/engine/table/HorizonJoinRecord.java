@@ -70,6 +70,20 @@ public class HorizonJoinRecord implements Record {
     }
 
     @Override
+    public int getArrayDimLen(int col, int columnType, int dim) {
+        // Forward, so a page-frame source keeps its direct shape-header read. Record's default would
+        // fall back to getArray() and materialize an ArrayView for every row.
+        Record src = getSourceRecord(col);
+        return src != null ? src.getArrayDimLen(columnIndices[col], columnType, dim) : Numbers.INT_NULL;
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        Record src = getSourceRecord(col);
+        return src != null ? src.getArrayDouble1d2d(columnIndices[col], columnType, idx0, idx1) : Double.NaN;
+    }
+
+    @Override
     public @Nullable BinarySequence getBin(int col) {
         Record src = getSourceRecord(col);
         return src != null ? src.getBin(columnIndices[col]) : null;

@@ -299,15 +299,12 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testAccessConstantNullIndexFreesArrayLiteral() throws Exception {
-        assertMemoryLeak(() -> {
-            // A constant NULL index folds the whole access to a NULL constant, which keeps neither
-            // argument, so the factory has to free the array itself. A constant array literal holds
-            // its shape and values in native memory, so dropping that free leaks it.
-            assertQuery("SELECT ARRAY[[1.0, 2], [3.0, 4]][1, NULL::long] x FROM long_sequence(1)")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("x\nnull\n");
-        });
+        // A constant NULL index folds the whole access to a NULL constant, which keeps neither
+        // argument, so the factory has to free the array itself. A constant array literal holds
+        // its shape and values in native memory, so dropping that free leaks it.
+        assertQuery("SELECT ARRAY[[1.0, 2], [3.0, 4]][1, NULL::long] x FROM long_sequence(1)")
+                .expectSize()
+                .returns("x\nnull\n");
     }
 
     @Test
@@ -834,6 +831,47 @@ public class ArrayTest extends AbstractCairoTest {
             try (DirectArray array = new DirectArray(configuration)) {
                 array.clear();
             }
+        });
+    }
+
+    @Test
+    public void testArrayConsumersOverSampleByFillPrevGap() throws Exception {
+        // SAMPLE BY ... FILL(PREV) fills a gap from the preceding bucket, but the buckets before a
+        // key's first row have nothing to carry forward. The record has no array to hand out for
+        // those, so every array consumer must see a NULL array there instead of reaching into an
+        // ArrayView that is not there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, s SYMBOL, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            // Key 'b' starts two buckets late, so its 00:00 and 00:01 buckets have no prevailing row.
+            execute("INSERT INTO tango VALUES " +
+                    "('2023-01-01T00:00:00.000000Z', 'a', ARRAY[1.0, 2.0]), " +
+                    "('2023-01-01T00:02:00.000000Z', 'b', ARRAY[3.0, 4.0, 5.0])");
+            final String filled = "SELECT ts, s, first(arr) a FROM tango SAMPLE BY 1m FILL(PREV) ORDER BY s, ts";
+            // array_sum() reads the array through the ArrayView route, with no column index to take
+            // the direct accessor, so it is the consumer that sees the gap record head-on.
+            assertQuery("SELECT s, array_sum(a) total FROM (" + filled + ")")
+                    .noLeakCheck()
+                    .returns("""
+                            s\ttotal
+                            a\t3.0
+                            a\t3.0
+                            a\t3.0
+                            b\tnull
+                            b\tnull
+                            b\t12.0
+                            """);
+            // dim_length() takes the direct accessor instead, the other of the two routes.
+            assertQuery("SELECT s, dim_length(a, 1) len FROM (" + filled + ")")
+                    .noLeakCheck()
+                    .returns("""
+                            s\tlen
+                            a\t2
+                            a\t2
+                            a\t2
+                            b\tnull
+                            b\tnull
+                            b\t3
+                            """);
         });
     }
 
@@ -2953,6 +2991,59 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("len\n2\nnull\nnull\n");
+        });
+    }
+
+    @Test
+    public void testLengthOverConstantFalseWindowJoin() throws Exception {
+        // A WINDOW JOIN whose ON clause folds to a constant false wraps the master in an
+        // ExtraNullColumnCursorFactory, which splices a synthetic NULL column in for every
+        // aggregate of the vacant right side. That record has no array to hand out for the
+        // spliced columns, so both direct array accessors have to report the array as NULL
+        // instead of reaching into an ArrayView that is not there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES " +
+                    "('2023-01-01T09:10:00.000000Z', 'AAA', 100.0), " +
+                    "('2023-01-01T09:11:00.000000Z', 'BBB', 200.0)");
+            execute("INSERT INTO prices VALUES ('2023-01-01T09:00:00.000000Z', 'AAA', 1.0)");
+            final String join = "SELECT t.ts ts, array_agg(p.price) arr FROM trades t " +
+                    "WINDOW JOIN prices p ON (0 = 1) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING";
+            // dim_length() over the spliced aggregate: the getArrayDimLen() accessor.
+            assertQuery("SELECT ts, dim_length(arr, 1) len FROM (" + join + ")")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tlen
+                            2023-01-01T09:10:00.000000Z\tnull
+                            2023-01-01T09:11:00.000000Z\tnull
+                            """);
+            // Indexing the same spliced aggregate: the getArrayDouble1d2d() accessor, which
+            // reads the array the same way and so shares the fault.
+            assertQuery("SELECT ts, arr[1] x FROM (" + join + ")")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx
+                            2023-01-01T09:10:00.000000Z\tnull
+                            2023-01-01T09:11:00.000000Z\tnull
+                            """);
+            // Both accessors above are guarded in Record itself, so they would still return NULL
+            // even if the record handed out a Java null. array_sum() takes the ArrayView route,
+            // which reads the record's array unguarded, and so is the one that pins the record.
+            assertQuery("SELECT ts, array_sum(arr) total FROM (" + join + ")")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\ttotal
+                            2023-01-01T09:10:00.000000Z\tnull
+                            2023-01-01T09:11:00.000000Z\tnull
+                            """);
         });
     }
 

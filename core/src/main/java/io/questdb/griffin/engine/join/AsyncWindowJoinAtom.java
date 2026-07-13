@@ -569,6 +569,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         return slaveTsScale;
     }
 
+    @Override
+    @TestOnly
+    public long getSlotAcquireCount() {
+        return perWorkerLocks.getAcquireCount();
+    }
+
     public @Nullable TimestampDriver getTimestampDriver() {
         return timestampDriver;
     }

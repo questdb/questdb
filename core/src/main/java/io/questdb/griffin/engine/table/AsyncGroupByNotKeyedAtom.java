@@ -262,6 +262,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
         return perWorkerMapValues;
     }
 
+    @Override
+    @TestOnly
+    public long getSlotAcquireCount() {
+        return perWorkerLocks.getAcquireCount();
+    }
+
     public boolean hasNonBatchFunctions() {
         return hasNonBatchFunctions;
     }

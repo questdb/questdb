@@ -543,6 +543,12 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
         return perWorkerSlaveTimeFrameHelpers.getQuick(slotId * slaveCount + slaveIndex);
     }
 
+    @Override
+    @TestOnly
+    public long getSlotAcquireCount() {
+        return perWorkerLocks.getAcquireCount();
+    }
+
     public MultiHorizonJoinSymbolTableSource getSymbolTableSource() {
         return horizonJoinSymbolTableSource;
     }

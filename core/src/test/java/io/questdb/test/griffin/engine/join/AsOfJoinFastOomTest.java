@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.test.AbstractOomSweepTest;
-import org.junit.Assert;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
@@ -66,20 +66,6 @@ public class AsOfJoinFastOomTest extends AbstractOomSweepTest {
         );
     }
 
-    // Pins the query to the factory whose getCursor() the sweep is meant to fault. The EXPLAIN type
-    // name cannot do this: "AsOf Join Fast" is emitted by both the keyed and the no-key fast factory
-    // and is a substring of "Filtered AsOf Join Fast", which is itself emitted by two more, so a name
-    // guard passes for four different factories. Match the class instead.
-    private static void assertFactoryClass(RecordCursorFactory factory, Class<?> expected) {
-        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
-            if (f.getClass() == expected) {
-                return;
-            }
-        }
-        Assert.fail("query did not compile to " + expected.getSimpleName()
-                + "; top of the factory chain was " + factory.getClass().getSimpleName());
-    }
-
     private void assertNoLeakOnCursorOom(String query, Class<? extends RecordCursorFactory> expectedFactory) throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -97,9 +83,13 @@ public class AsOfJoinFastOomTest extends AbstractOomSweepTest {
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
-            // Confirm the query really exercises the cursor under test.
+            // Confirm the query really exercises the cursor under test. The EXPLAIN type name cannot
+            // do this: "AsOf Join Fast" is emitted by both the keyed and the no-key fast factory, and
+            // is a substring of "Filtered AsOf Join Fast", so a name guard passes for four different
+            // factories. Match the class instead - these factories are siblings, so no subclass of one
+            // can pass for another.
             try (RecordCursorFactory factory = select(query)) {
-                assertFactoryClass(factory, expectedFactory);
+                TestUtils.assertFactoryInTree(factory, expectedFactory, query);
             }
 
             assertCursorOpenOomSweep(query);

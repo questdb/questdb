@@ -159,6 +159,10 @@ public final class TestUtils {
     public static final boolean INVALID = true;
     public static final boolean VALID = false;
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
+    // Breach the query enough times that a leaked slot is missing from every later iteration, and
+    // keep going, up to a bound, until a worker has actually taken one. See assertNoSlotLeakOnBreach.
+    private static final int MAX_BREACH_ITERATIONS = 200;
+    private static final int MIN_BREACH_ITERATIONS = 6;
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
 
     private TestUtils() {
@@ -906,17 +910,7 @@ public final class TestUtils {
      * @param context what is being asserted, for the failure message
      */
     public static void assertNoSlotLeak(RecordCursorFactory factory, CharSequence context) {
-        StatefulAtom atom = null;
-        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
-            atom = f.getAtom();
-            if (atom != null) {
-                break;
-            }
-        }
-        Assert.assertNotNull(
-                "no parallel factory with an atom in the tree, top was " + factory.getClass().getSimpleName() + ": " + context,
-                atom
-        );
+        final StatefulAtom atom = findAtom(factory, context);
         final int slots = atom.getAcquiredSlotCount();
         Assert.assertTrue(
                 atom.getClass().getSimpleName() + " holds no per-worker locks, so this query cannot"
@@ -927,18 +921,20 @@ public final class TestUtils {
     }
 
     /**
-     * Compiles the query once and re-executes that single cached factory more times than a 4-worker
-     * pool has slots. Every execution must breach the per-query memory limit, and every execution
-     * must leave the atom holding no per-worker slots.
+     * Compiles the query once and re-executes that single cached factory. Every execution must breach
+     * the per-query memory limit, and every execution must leave the atom holding no per-worker slots.
      * <p>
-     * Re-executing the cached factory is what makes the leak observable. A single execution hides
-     * it: the first error cancels the frame sequence, and the reducers that already leaked a slot
-     * are never asked for another one. The leak also accumulates - PerWorkerLocks has no reset - so
-     * a slot lost in any iteration is still missing in every later one, which is what keeps this
-     * robust against an iteration where the owner thread happens to reduce every frame itself.
+     * Re-executing the cached factory is what makes the leak observable. A single execution hides it:
+     * the first error cancels the frame sequence, and the reducers that already leaked a slot are
+     * never asked for another one. The leak also accumulates - PerWorkerLocks has no reset - so a slot
+     * lost in any iteration is still missing in every later one.
      * <p>
-     * The query must therefore produce many more page frames than the owner can steal while it
-     * waits, or no pool worker ever acquires a slot and the assertion passes for the wrong reason.
+     * Iterating is also how the test earns its oracle. Zero held slots is what a clean run leaves
+     * behind, but it is equally what a run leaves behind where nobody took a slot at all: the first
+     * error cancels the sequence, so only the frames already in flight are reduced, the owner thread
+     * takes no slot (it reduces with its own state), and on a busy or small box the owner can win all
+     * of them. Frame count does not rule that out - cancellation makes it a race, not a headcount. So
+     * the loop keeps breaching until the atom reports an actual acquire, and only then trusts the zero.
      *
      * @param compiler        the compiler to compile the query with, once
      * @param ctx             the execution context
@@ -956,7 +952,13 @@ public final class TestUtils {
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
             assertFactoryInTree(factory, expectedFactory, query);
-            for (int i = 0; i < 6; i++) {
+            final StatefulAtom atom = findAtom(factory, query);
+            Assert.assertTrue(
+                    atom.getClass().getSimpleName() + " holds no per-worker locks, so this query cannot"
+                            + " exercise the slot-leak path: " + query,
+                    atom.getSlotAcquireCount() >= 0
+            );
+            for (int i = 0; i < MAX_BREACH_ITERATIONS; i++) {
                 try (RecordCursor cursor = factory.getCursor(ctx)) {
                     //noinspection StatementWithEmptyBody
                     while (cursor.hasNext()) {
@@ -970,7 +972,17 @@ public final class TestUtils {
                 // The cursor is closed by now, so the frame sequence has been awaited and no worker
                 // is inside a locked section.
                 assertNoSlotLeak(factory, "iteration " + i + " of: " + query);
+                if (i + 1 >= MIN_BREACH_ITERATIONS && atom.getSlotAcquireCount() > 0) {
+                    return;
+                }
+                // No worker has taken a slot yet, so a zero held-slot count still proves nothing.
+                // Yield, and breach again.
+                Os.sleep(1);
             }
+            Assert.fail("no worker acquired a slot in " + MAX_BREACH_ITERATIONS + " breached executions"
+                    + " of: " + query + ". The first error cancels the frame sequence, so only the frames"
+                    + " already in flight get reduced; if the owner thread wins all of them the atom never"
+                    + " sees an acquire and the zero held-slot count above is vacuous");
         }
     }
 
@@ -1685,6 +1697,24 @@ public final class TestUtils {
                 execute(connection, sql);
             }
         }
+    }
+
+    /**
+     * Returns the first atom found walking down the factory tree, failing when there is none.
+     */
+    public static StatefulAtom findAtom(RecordCursorFactory factory, CharSequence context) {
+        StatefulAtom atom = null;
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            atom = f.getAtom();
+            if (atom != null) {
+                break;
+            }
+        }
+        Assert.assertNotNull(
+                "no parallel factory with an atom in the tree, top was " + factory.getClass().getSimpleName() + ": " + context,
+                atom
+        );
+        return atom;
     }
 
     @NotNull

@@ -144,6 +144,12 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     }
 
     @Override
+    @TestOnly
+    public long getSlotAcquireCount() {
+        return perWorkerLocks != null ? perWorkerLocks.getAcquireCount() : -1;
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
         filter.init(symbolTableSource, executionContext);

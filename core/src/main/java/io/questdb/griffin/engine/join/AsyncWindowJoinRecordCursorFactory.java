@@ -250,6 +250,63 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         this.workerCount = workerCount;
     }
 
+    /**
+     * Names the reduce phase {@code reducer} implements, for a test that has to pin the route a
+     * query takes. See {@link #getReducer()}. Returns null for a reducer this factory never picks.
+     */
+    @TestOnly
+    public static String reducerName(PageFrameReducer reducer) {
+        if (reducer == AGGREGATE) {
+            return "AGGREGATE";
+        }
+        if (reducer == AGGREGATE_DYNAMIC) {
+            return "AGGREGATE_DYNAMIC";
+        }
+        if (reducer == AGGREGATE_DYNAMIC_PREVAILING) {
+            return "AGGREGATE_DYNAMIC_PREVAILING";
+        }
+        if (reducer == AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED) {
+            return "AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED";
+        }
+        if (reducer == AGGREGATE_PREVAILING) {
+            return "AGGREGATE_PREVAILING";
+        }
+        if (reducer == AGGREGATE_PREVAILING_JOIN_FILTERED) {
+            return "AGGREGATE_PREVAILING_JOIN_FILTERED";
+        }
+        if (reducer == AGGREGATE_VECT) {
+            return "AGGREGATE_VECT";
+        }
+        if (reducer == AGGREGATE_VECT_PREVAILING) {
+            return "AGGREGATE_VECT_PREVAILING";
+        }
+        if (reducer == FILTER_AND_AGGREGATE) {
+            return "FILTER_AND_AGGREGATE";
+        }
+        if (reducer == FILTER_AND_AGGREGATE_DYNAMIC) {
+            return "FILTER_AND_AGGREGATE_DYNAMIC";
+        }
+        if (reducer == FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING) {
+            return "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING";
+        }
+        if (reducer == FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED) {
+            return "FILTER_AND_AGGREGATE_DYNAMIC_PREVAILING_JOIN_FILTERED";
+        }
+        if (reducer == FILTER_AND_AGGREGATE_PREVAILING) {
+            return "FILTER_AND_AGGREGATE_PREVAILING";
+        }
+        if (reducer == FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED) {
+            return "FILTER_AND_AGGREGATE_PREVAILING_JOIN_FILTERED";
+        }
+        if (reducer == FILTER_AND_AGGREGATE_VECT) {
+            return "FILTER_AND_AGGREGATE_VECT";
+        }
+        if (reducer == FILTER_AND_AGGREGATE_VECT_PREVAILING) {
+            return "FILTER_AND_AGGREGATE_VECT_PREVAILING";
+        }
+        return null;
+    }
+
     @Override
     public PageFrameSequence<AsyncWindowJoinAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
@@ -286,6 +343,17 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             cursor.close();
             throw th;
         }
+    }
+
+    /**
+     * Returns the reduce phase this factory routed to. A slot-leak test needs it: sixteen reducers
+     * each own their acquire/release pair, which one runs follows from five compile-time flags the
+     * query's output never reveals, and a test pinning only the factory class would follow the
+     * optimizer silently onto a reducer other than the one it meant to cover.
+     */
+    @TestOnly
+    public PageFrameReducer getReducer() {
+        return frameSequence.getReducer();
     }
 
     @Override
@@ -1561,7 +1629,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
@@ -1714,7 +1781,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -1899,7 +1965,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
@@ -2079,7 +2144,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
@@ -2348,7 +2412,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
@@ -2510,7 +2573,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
@@ -2671,7 +2733,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
 
-
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
 
@@ -2820,7 +2881,6 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final AsyncWindowJoinAtom atom = task.getFrameSequence(AsyncWindowJoinAtom.class).getAtom();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
-
 
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();

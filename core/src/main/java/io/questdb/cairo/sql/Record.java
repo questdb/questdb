@@ -83,7 +83,10 @@ public interface Record {
      */
     default int getArrayDimLen(int col, int columnType, int dim) {
         ArrayView array = getArray(col, columnType);
-        if (array.isNull()) {
+        // A record with no array to hand out should return a NULL ArrayView, but the contract is not
+        // enforced and some return a Java null instead (the covered-index sidecar reader does, on its
+        // defensive paths). Tolerate it here rather than abort the query on a NULL array.
+        if (array == null || array.isNull()) {
             return Numbers.INT_NULL;
         }
         return array.getDimLen(dim - 1);
@@ -109,7 +112,8 @@ public interface Record {
      */
     default double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
         ArrayView array = getArray(col, columnType);
-        if (array.isNull() || idx0 >= array.getDimLen(0)) {
+        // See getArrayDimLen() for why a Java null is tolerated here.
+        if (array == null || array.isNull() || idx0 >= array.getDimLen(0)) {
             return Double.NaN;
         }
         if (array.getDimCount() == 1) {

@@ -63,6 +63,21 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
     }
 
     /**
+     * Returns how many times this atom's reducers have acquired a per-worker slot, or -1 when the
+     * atom guards no per-worker state at all. The tally only grows, so unlike
+     * {@link #getAcquiredSlotCount()} it tells a query that released every slot it took from one
+     * that never took a slot - both hold zero at the end. The owner thread reduces with its own
+     * state and acquires nothing, so a run where the owner drained every frame leaves the atom at
+     * zero having exercised nothing. A leak test asserts this is non-zero to rule that out.
+     *
+     * @return the number of slot acquisitions, or -1 when this atom holds no per-worker locks
+     */
+    @TestOnly
+    default long getSlotAcquireCount() {
+        return -1;
+    }
+
+    /**
      * Initializes state required for filtering, such as child atoms, symbol table sources,
      * bind variable values, circuit breakers, etc.
      *

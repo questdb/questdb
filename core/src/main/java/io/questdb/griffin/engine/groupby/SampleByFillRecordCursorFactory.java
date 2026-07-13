@@ -33,6 +33,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -1157,18 +1158,28 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
          * SAMPLE BY FILL, and the inherited UOE flags any upstream regression.
          */
         private class FillRecord implements Record {
+            private final BorrowedArray nullArray = new BorrowedArray();
 
             @Override
             public ArrayView getArray(int col, int columnType) {
                 return switch (currentDispatchCode[col]) {
                     case DISPATCH_BASE -> baseRecord.getArray(col, columnType);
                     case DISPATCH_KEY_SLOT -> keysMapRecord.getArray(dispatchSlot[col], columnType);
-                    case DISPATCH_PREV_SLOT ->
-                            hasPrevForCurrentGap ? prevRecord.getArray(dispatchSlot[col], columnType) : null;
+                    case DISPATCH_PREV_SLOT -> {
+                        if (hasPrevForCurrentGap) {
+                            yield prevRecord.getArray(dispatchSlot[col], columnType);
+                        }
+                        // Buckets before a key's first row have nothing to carry forward. Hand out a
+                        // NULL ArrayView, not a Java null: consumers from the array functions to the
+                        // RecordChain an ORDER BY materializes into all read the array unguarded.
+                        nullArray.ofNull();
+                        yield nullArray;
+                    }
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getArray(null);
                     default -> {
                         assert false : "unexpected dispatch code: " + currentDispatchCode[col];
-                        yield null;
+                        nullArray.ofNull();
+                        yield nullArray;
                     }
                 };
             }

@@ -39,6 +39,10 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * Used to synchronize access to list-like collections used by worker threads.
  */
 public class PerWorkerLocks {
+    // Offset of the per-slot acquire tally within the slot's padding. The tally shares the slot's
+    // cache line, which the acquiring thread has just taken exclusively with the CAS in acquireSlot,
+    // and only that thread writes it, so counting costs a store to a line it already owns.
+    private static final int ACQUIRE_COUNT_OFFSET = 1;
     // Reserve extra int array elements to avoid false sharing. A cache line is assumed to take 64 bytes.
     private static final int INTS_PER_SLOT = 64 / Integer.BYTES;
     private final AtomicIntegerArray locks;
@@ -61,6 +65,7 @@ public class PerWorkerLocks {
             for (int i = 0; i < workerCount; i++) {
                 int id = (i + workerId) % workerCount;
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
+                    tallyAcquire(id);
                     return id;
                 }
             }
@@ -75,12 +80,29 @@ public class PerWorkerLocks {
             for (int i = 0; i < workerCount; i++) {
                 int id = (i + carrierId) % workerCount;
                 if (locks.compareAndSet(INTS_PER_SLOT * id, 0, 1)) {
+                    tallyAcquire(id);
                     return id;
                 }
             }
             Os.pause();
         }
         throw CairoException.nonCritical().put("query aborted").setInterruption(true);
+    }
+
+    /**
+     * Returns how many times a slot has been acquired since this instance was created. Unlike
+     * {@link #getAcquiredSlotCount()} this tally never goes down, so it answers what a held-slot
+     * count cannot: whether a worker ever entered the locked section at all. A leak test needs
+     * that, because zero held slots is also what a run leaves behind where nobody took one - the
+     * owner thread reduced every frame itself, say.
+     */
+    @TestOnly
+    public long getAcquireCount() {
+        long count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            count += Integer.toUnsignedLong(locks.get(INTS_PER_SLOT * i + ACQUIRE_COUNT_OFFSET));
+        }
+        return count;
     }
 
     /**
@@ -104,5 +126,15 @@ public class PerWorkerLocks {
         if (slot > -1) {
             locks.set(INTS_PER_SLOT * slot, 0);
         }
+    }
+
+    /**
+     * Counts one acquisition of {@code slot}. Only the thread that just won the slot's CAS runs
+     * this, so the read-modify-write needs no atomicity; a lazy store is enough to publish it to
+     * a reader that inspects the tally once the workers are done.
+     */
+    private void tallyAcquire(int slot) {
+        final int idx = INTS_PER_SLOT * slot + ACQUIRE_COUNT_OFFSET;
+        locks.lazySet(idx, locks.get(idx) + 1);
     }
 }

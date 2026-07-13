@@ -102,6 +102,19 @@ final class KeyedBatchTestUtils {
     private static final long PRIME_BASE_ROW_ID = 2000;
     private static final boolean[] PRIME_IS_NEW = {true, true, true, true};
     private static final long[] PRIME_ROWS = {0, 2, 4, 6};
+    // Every batch above pairs each entry with exactly ONE row, so none of them covers a key that
+    // several rows of the same batch land on - what a low-cardinality key does in production, where
+    // a 2048-row frame collapses onto a handful of entries. Nor can they tell one scan direction
+    // from another. This batch covers it: four entries, two rows each, ascending rows, over fresh
+    // regions so the first row to reach an entry creates it, as probeBatch marks it.
+    //
+    //   entry 0 <- rows 0, 3: non-null then NULL. last_not_null keeps the non-null; last takes NULL.
+    //   entry 1 <- rows 1, 4: two non-nulls, so the later wins for last, the earlier for first.
+    //   entry 2 <- rows 2, 6: a NULL creates the entry, then a non-null must replace that stored NULL.
+    //   entry 3 <- rows 5, 7: two non-nulls on an entry created later in the same batch.
+    private static final long REPEATED_BASE_ROW_ID = 4000;
+    private static final boolean[] REPEATED_IS_NEW = {true, true, true, false, false, true, false, false};
+    private static final long[] REPEATED_ROWS = {0, 1, 2, 3, 4, 5, 6, 7};
     private static final long TEST_BASE_ROW_ID = 3000;
     private static final boolean[] TEST_IS_NEW = {false, false, false, false, true, true, true, true};
     private static final long[] TEST_ROWS = {3, 1, 6, 5, 0, 1, 2, 5};
@@ -334,6 +347,29 @@ final class KeyedBatchTestUtils {
             } finally {
                 Unsafe.free(baseA, regionBytes, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(baseB, regionBytes, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            // Repeated-entry batch, on its own pair of regions so that an entry can be created and
+            // then revisited within the one batch. See REPEATED_ROWS for what each entry covers.
+            final long baseC = allocEtalonRegion(function, ENTRY_COUNT, valueSize, flyweightA);
+            final long baseD = allocEtalonRegion(function, ENTRY_COUNT, valueSize, flyweightB);
+            try {
+                final long[] repeatedOffsets = {
+                        0, valueSize, 2 * valueSize, 0,
+                        valueSize, 3 * valueSize, 2 * valueSize, 3 * valueSize
+                };
+                final long repeatedBatch = buildBatchBuffer(REPEATED_ROWS, repeatedOffsets, REPEATED_IS_NEW);
+                try {
+                    runReferencePath(function, record, flyweightA, baseC, repeatedBatch, REPEATED_ROWS.length, REPEATED_BASE_ROW_ID);
+                    function.computeKeyedBatch(record, flyweightB, baseD, repeatedBatch, REPEATED_ROWS.length, REPEATED_BASE_ROW_ID);
+                } finally {
+                    Unsafe.free(repeatedBatch, (long) REPEATED_ROWS.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+
+                assertBytesEqual(baseC, baseD, regionBytes);
+            } finally {
+                Unsafe.free(baseC, regionBytes, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(baseD, regionBytes, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }

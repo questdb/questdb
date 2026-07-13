@@ -62,6 +62,31 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAcquireCountOnlyGrows() {
+        // The companion oracle: unlike the held-slot count, this tally survives the release, which is
+        // what lets a leak test tell "took a slot and gave it back" apart from "never took one". A
+        // tally kept in the lock int itself, rather than in the slot's padding, would read back 0
+        // here once every slot was released.
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4);
+        Assert.assertEquals(0, locks.getAcquireCount());
+
+        final int first = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        Assert.assertEquals(1, locks.getAcquireCount());
+        final int second = locks.acquireSlot(1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        Assert.assertEquals(2, locks.getAcquireCount());
+
+        locks.releaseSlot(first);
+        locks.releaseSlot(second);
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+        Assert.assertEquals(2, locks.getAcquireCount());
+
+        // Re-acquiring the same slot keeps counting.
+        locks.releaseSlot(locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+        Assert.assertEquals(3, locks.getAcquireCount());
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
     public void testAcquiresEverySlot() {
         final int workerCount = 4;
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, workerCount);
