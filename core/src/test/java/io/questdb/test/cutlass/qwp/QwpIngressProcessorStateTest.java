@@ -1210,6 +1210,41 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCommitAllBestEffortEvictsStaleTableAfterRawCairoException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE be_raw (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("be_raw"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                int[] commitAttempts = {0};
+                replaceWriterWithRawCairoException(tud, commitAttempts);
+                execute("DROP TABLE be_raw");
+
+                cache.commitAllBestEffort();
+                Assert.assertEquals(1, commitAttempts[0]);
+                Assert.assertEquals(0, getCacheSize(cache));
+                Assert.assertEquals(0, cache.size());
+
+                cache.commitAllBestEffort();
+                Assert.assertEquals("evicted TUD must not be retried", 1, commitAttempts[0]);
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllBestEffortHandlesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE be_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1368,6 +1403,53 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                         tableName, dirName);
                 Assert.assertEquals(tud.getLastSeqTxn(), capturedSeq[0]);
                 Assert.assertTrue("seqTxn must have advanced", capturedSeq[0] > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllPreservesPartialProgressBeforeNonDropFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE partial_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE partial_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE partial_survivor (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails droppedTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("partial_drop"), null, null, 3
+                );
+                WalTableUpdateDetails failingTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("partial_fail"), null, null, 3
+                );
+                WalTableUpdateDetails survivorTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("partial_survivor"), null, null, 3
+                );
+                Assert.assertNotNull(droppedTud);
+                Assert.assertNotNull(failingTud);
+                Assert.assertNotNull(survivorTud);
+
+                droppedTud.setIsDropped();
+                replaceWriterWithFake(failingTud, false);
+
+                try {
+                    cache.commitAll();
+                    Assert.fail("commitAll() should have re-thrown the non-drop failure");
+                } catch (CairoException e) {
+                    Assert.assertFalse(e.isTableDropped());
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+
+                Assert.assertEquals(2, getCacheSize(cache));
+                Assert.assertEquals(2, cache.size());
+                Assert.assertNull(getCachedTud(cache, "partial_drop"));
+                Assert.assertSame(failingTud, getCachedTud(cache, "partial_fail"));
+                Assert.assertSame(survivorTud, getCachedTud(cache, "partial_survivor"));
             }
         });
     }
@@ -1536,6 +1618,47 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     throw new AssertionError("unexpected throwable", t);
                 }
                 Assert.assertFalse("consumer must be skipped when no rows to commit", invoked[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testCommitAllStopsBeforeLaterDroppedTableOnNonDropFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE stop_fail (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE stop_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails failingTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("stop_fail"), null, null, 2
+                );
+                WalTableUpdateDetails droppedTud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("stop_drop"), null, null, 2
+                );
+                Assert.assertNotNull(failingTud);
+                Assert.assertNotNull(droppedTud);
+
+                replaceWriterWithFake(failingTud, false);
+                droppedTud.setIsDropped();
+
+                try {
+                    cache.commitAll();
+                    Assert.fail("commitAll() should stop at the non-drop failure");
+                } catch (CairoException e) {
+                    Assert.assertFalse(e.isTableDropped());
+                } catch (Throwable t) {
+                    throw new AssertionError("unexpected throwable type", t);
+                }
+
+                Assert.assertEquals(2, getCacheSize(cache));
+                Assert.assertEquals(2, cache.size());
+                Assert.assertSame(failingTud, getCachedTud(cache, "stop_fail"));
+                Assert.assertSame(droppedTud, getCachedTud(cache, "stop_drop"));
             }
         });
     }
@@ -1721,6 +1844,41 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCommitWalTablesEvictsStaleTableAfterRawCairoException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE interval_raw (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("interval_raw"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+
+                int[] commitAttempts = {0};
+                replaceWriterWithRawCairoException(tud, commitAttempts);
+                execute("DROP TABLE interval_raw");
+
+                cache.commitWalTables(Long.MAX_VALUE);
+                Assert.assertEquals(1, commitAttempts[0]);
+                Assert.assertEquals(0, getCacheSize(cache));
+                Assert.assertEquals(0, cache.size());
+
+                cache.commitWalTables(Long.MAX_VALUE);
+                Assert.assertEquals("evicted TUD must not be retried", 1, commitAttempts[0]);
             }
         });
     }
@@ -2929,6 +3087,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         return ((LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>) field.get(cache)).size();
     }
 
+    @SuppressWarnings("unchecked")
+    private static WalTableUpdateDetails getCachedTud(QwpTudCache cache, String tableName) throws Exception {
+        Field field = QwpTudCache.class.getDeclaredField("tableUpdateDetails");
+        field.setAccessible(true);
+        return ((LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails>) field.get(cache)).get(new Utf8String(tableName));
+    }
+
     private static @NotNull QwpTableBlockCursor getQwpTableBlockCursor(long addr) throws QwpParseException {
         final QwpArrayColumnCursor arrayCursor = new QwpArrayColumnCursor();
         arrayCursor.of(addr, 2, 1, QwpConstants.TYPE_DOUBLE_ARRAY);
@@ -2967,6 +3132,27 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                         }
                         throw CairoException.nonCritical().put("simulated commit failure");
                     }
+                    case "close", "rollback" -> null;
+                    default -> throw new UnsupportedOperationException(method.getName());
+                }
+        ));
+    }
+
+    private static void replaceWriterWithRawCairoException(WalTableUpdateDetails tud, int[] commitAttempts) throws Exception {
+        Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
+        writerField.setAccessible(true);
+
+        Misc.free((TableWriterAPI) writerField.get(tud));
+        writerField.set(tud, Proxy.newProxyInstance(
+                TableWriterAPI.class.getClassLoader(),
+                new Class[]{TableWriterAPI.class},
+                (_, method, _) -> switch (method.getName()) {
+                    case "getUncommittedRowCount" -> {
+                        commitAttempts[0]++;
+                        throw CairoException.nonCritical().put("simulated raw commit failure");
+                    }
+                    case "getWalId" -> 1;
+                    case "getSegmentId" -> 0;
                     case "close", "rollback" -> null;
                     default -> throw new UnsupportedOperationException(method.getName());
                 }

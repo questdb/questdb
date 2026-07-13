@@ -1378,138 +1378,6 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUdpReinsertAfterDropDoesNotDistressStaleCachedWriter() throws Exception {
-        // Repro for the QwpTudCache stale-TUD bug. The cache is keyed by table
-        // NAME, so after a table is autocreated via UDP, dropped, and written
-        // again through the SAME receiver, getTableUpdateDetails() returns the
-        // cached TUD still bound to the dropped table's WAL writer. That writer
-        // is distressed on reuse ("WAL writer is distressed and cannot be used
-        // any more"), the datagram's rows are silently lost, and the stale TUD
-        // is never evicted (it keeps failing every commit cycle). Expected: the
-        // second insert lands into a fresh table.
-        assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("reinsert_after_drop")
-                            .symbol("host", "h0")
-                            .doubleColumn("v", 1.0)
-                            .at(1_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-                drainWalQueue();
-                assertQuery("SELECT count() FROM reinsert_after_drop")
-                        .noLeakCheck()
-                        .returnsOnce("count\n1\n");
-
-                // Drop the table out from under the receiver's cached TUD.
-                execute("DROP TABLE reinsert_after_drop");
-                drainWalQueue();
-
-                // Write again through the SAME receiver -> stale cached TUD for
-                // the (now recreated) table name.
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("reinsert_after_drop")
-                            .symbol("host", "h1")
-                            .doubleColumn("v", 2.0)
-                            .at(2_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-                drainWalQueue();
-
-                assertQuery("SELECT count() FROM reinsert_after_drop")
-                        .noLeakCheck()
-                        .returnsOnce("count\n1\n");
-            }
-        });
-    }
-
-    @Test
-    public void testUdpDroppedTableIsEvictedFromCacheNotRetriedForever() throws Exception {
-        // Repro for the QwpTudCache retry-storm bug. When a cached table is
-        // dropped and NOT written again, its TUD stays in the cache bound to the
-        // dropped table's distressed writer. A writer distressed by a dropped
-        // table does not always surface as CommitFailedException.isTableDropped()
-        // - it can throw a plain CairoException - so the existing eviction (which
-        // only triggers on isTableDropped()) never fires, and every subsequent
-        // commit cycle re-attempts and re-logs the failure forever. Expected: the
-        // dropped table's TUD is evicted on the next commit cycle.
-        assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("storm_dropped")
-                            .symbol("host", "h0")
-                            .doubleColumn("v", 1.0)
-                            .at(1_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-                drainWalQueue();
-                assertQuery("SELECT count() FROM storm_dropped")
-                        .noLeakCheck()
-                        .returnsOnce("count\n1\n");
-                Assert.assertEquals("dropped table should be cached before the drop", 1, receiver.getCachedTableCount());
-
-                // Drop the table but do NOT write it again. The stale TUD lingers
-                // in the cache until a commit cycle evicts it.
-                execute("DROP TABLE storm_dropped");
-                drainWalQueue();
-
-                // Drive a commit cycle by writing an unrelated table. With
-                // maxUncommittedDatagrams=1 this datagram forces commitAllBestEffort,
-                // which iterates the stale storm_dropped TUD and must evict it.
-                try (QwpUdpSender sender = newSender()) {
-                    sender.table("storm_other")
-                            .symbol("host", "h1")
-                            .doubleColumn("v", 2.0)
-                            .at(2_000_000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-                drainReceiver(receiver);
-                drainWalQueue();
-
-                // Only storm_other remains; storm_dropped was evicted (not retained
-                // and retried forever).
-                Assert.assertEquals("dropped table's stale TUD should be evicted", 1, receiver.getCachedTableCount());
-                assertQuery("SELECT count() FROM storm_other")
-                        .noLeakCheck()
-                        .returnsOnce("count\n1\n");
-            }
-        });
-    }
-
-    @Test
-    public void testUdpRepeatedDropRecreateChurnAlwaysLands() throws Exception {
-        // The original footgun: a table repeatedly autocreated via UDP and
-        // dropped under the SAME name through one long-lived receiver. Before the
-        // fix, the first drop poisoned the name's cache entry permanently and
-        // every later write was silently lost. Expected: every churn iteration
-        // lands its row into a fresh table.
-        assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
-                for (int iter = 0; iter < 3; iter++) {
-                    try (QwpUdpSender sender = newSender()) {
-                        sender.table("churn_repeat")
-                                .symbol("host", "h" + iter)
-                                .doubleColumn("v", iter)
-                                .at(1_000_000L + iter, ChronoUnit.MICROS);
-                        sender.flush();
-                    }
-                    drainReceiver(receiver);
-                    drainWalQueue();
-                    assertQuery("SELECT count() FROM churn_repeat")
-                            .noLeakCheck()
-                            .returnsOnce("count\n1\n");
-
-                    execute("DROP TABLE churn_repeat");
-                    drainWalQueue();
-                }
-            }
-        });
-    }
-
-    @Test
     public void testUdpDropEvictsOnlyDroppedTableCoCachedTableSurvives() throws Exception {
         // A dropped table must be evicted without disturbing other tables cached
         // in the same receiver: the survivor keeps its data and remains writable.
@@ -1540,7 +1408,9 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 Assert.assertEquals("only the survivor remains cached", 1, receiver.getCachedTableCount());
                 assertQuery("SELECT count() FROM surv_keep")
                         .noLeakCheck()
-                        .returnsOnce("count\n2\n");
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n2\n");
             }
         });
     }
@@ -1555,30 +1425,8 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
         // eviction never fires - only the new token-staleness guard evicts it. We
         // co-cache an active table so the interval timer keeps calling
         // commitWalTables, which must then evict the dropped table.
-        final QwpUdpReceiverConfiguration conf = new DefaultQwpUdpReceiverConfiguration() {
-            @Override
-            public long getCommitInterval() {
-                return 100;
-            }
-
-            @Override
-            public int getMaxUncommittedDatagrams() {
-                return Integer.MAX_VALUE; // only the interval timer commits
-            }
-
-            @Override
-            public int getPort() {
-                return PORT;
-            }
-
-            @Override
-            public boolean isOwnThread() {
-                return false;
-            }
-        };
-
         assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = receiverFactory.create(conf, engine)) {
+            try (QwpUdpReceiver receiver = receiverFactory.create(TIMER_COMMIT_CONF, engine)) {
                 try (QwpUdpSender sender = newSender()) {
                     sender.table("timer_active").symbol("host", "a0").doubleColumn("v", 1.0).at(1_000_000L, ChronoUnit.MICROS);
                     sender.flush();
@@ -1589,8 +1437,12 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 TestUtils.assertEventually(() -> {
                     receiver.runSerially();
                     drainWalQueue();
-                    assertQuery("SELECT count() FROM timer_drop").noLeakCheck().returnsOnce("count\n1\n");
-                    assertQuery("SELECT count() FROM timer_active").noLeakCheck().returnsOnce("count\n1\n");
+                    assertQuery("SELECT count() FROM timer_drop").noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess().returns("count\n1\n");
+                    assertQuery("SELECT count() FROM timer_active").noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess().returns("count\n1\n");
                 }, 10);
                 Assert.assertEquals("both tables cached", 2, receiver.getCachedTableCount());
 
@@ -1610,7 +1462,206 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                 drainWalQueue();
                 assertQuery("SELECT count() FROM timer_active")
                         .noLeakCheck()
-                        .returnsOnce("count\n2\n");
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpDroppedTableIsEvictedFromCacheNotRetriedForever() throws Exception {
+        // A fully committed TUD has zero pending rows, so commit() returns without
+        // surfacing CommitFailedException.isTableDropped(). The token check must
+        // still evict the dropped table on the next commit cycle.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("storm_dropped")
+                            .symbol("host", "h0")
+                            .doubleColumn("v", 1.0)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM storm_dropped")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+                Assert.assertEquals("dropped table should be cached before the drop", 1, receiver.getCachedTableCount());
+
+                // Drop the table but do NOT write it again. The stale TUD lingers
+                // in the cache until a commit cycle evicts it.
+                execute("DROP TABLE storm_dropped");
+                drainWalQueue();
+
+                // Drive a commit cycle by writing an unrelated table. With
+                // maxUncommittedDatagrams=1 this datagram forces commitAllBestEffort,
+                // which iterates the stale storm_dropped TUD and must evict it.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("storm_other")
+                            .symbol("host", "h1")
+                            .doubleColumn("v", 2.0)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                // Only storm_other remains; storm_dropped was evicted (not retained
+                // and retried forever).
+                Assert.assertEquals("dropped table's stale TUD should be evicted", 1, receiver.getCachedTableCount());
+                assertQuery("SELECT count() FROM storm_other")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpExternallyRecreatedTableReplacesStaleCachedWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("recreate_external")
+                            .longColumn("v", 1L)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                execute("DROP TABLE recreate_external");
+                execute("CREATE TABLE recreate_external (v LONG, timestamp TIMESTAMP) " +
+                        "TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("recreate_external")
+                            .longColumn("v", 2L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT v FROM recreate_external")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n2\n");
+        });
+    }
+
+    @Test
+    public void testUdpMultipleDroppedTablesEvictedInSingleCommitCycle() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    for (int i = 0; i < 3; i++) {
+                        sender.table("multi_drop_" + i)
+                                .longColumn("v", i)
+                                .at(1_000_000L + i, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                }
+                drainReceiver(receiver);
+                Assert.assertEquals(3, receiver.getCachedTableCount());
+
+                for (int i = 0; i < 3; i++) {
+                    execute("DROP TABLE multi_drop_" + i);
+                }
+                drainWalQueue();
+
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("multi_drop_survivor")
+                            .longColumn("v", 1L)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                Assert.assertEquals(1, receiver.getCachedTableCount());
+            }
+        });
+    }
+
+    @Test
+    public void testUdpReinsertAfterDropDoesNotDistressStaleCachedWriter() throws Exception {
+        // After DROP, the name-keyed cache can retain a TUD bound to the old WAL
+        // writer. The next datagram must evict that TUD and create a fresh writer.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("reinsert_after_drop")
+                            .symbol("host", "h0")
+                            .doubleColumn("v", 1.0)
+                            .at(1_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM reinsert_after_drop")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+
+                // Drop the table out from under the receiver's cached TUD.
+                execute("DROP TABLE reinsert_after_drop");
+                drainWalQueue();
+
+                // Write again through the same receiver. This datagram recreates
+                // the table after the cache evicts the stale TUD.
+                try (QwpUdpSender sender = newSender()) {
+                    sender.table("reinsert_after_drop")
+                            .symbol("host", "h1")
+                            .doubleColumn("v", 2.0)
+                            .at(2_000_000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                drainReceiver(receiver);
+                drainWalQueue();
+
+                assertQuery("SELECT count() FROM reinsert_after_drop")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUdpRepeatedDropRecreateChurnAlwaysLands() throws Exception {
+        // The original footgun: a table repeatedly autocreated via UDP and
+        // dropped under the SAME name through one long-lived receiver. Before the
+        // fix, the first drop poisoned the name's cache entry permanently and
+        // every later write was silently lost. Expected: every churn iteration
+        // lands its row into a fresh table.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                for (int iter = 0; iter < 3; iter++) {
+                    try (QwpUdpSender sender = newSender()) {
+                        sender.table("churn_repeat")
+                                .symbol("host", "h" + iter)
+                                .doubleColumn("v", iter)
+                                .at(1_000_000L + iter, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                    drainReceiver(receiver);
+                    drainWalQueue();
+                    assertQuery("SELECT count() FROM churn_repeat")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n1\n");
+
+                    execute("DROP TABLE churn_repeat");
+                    drainWalQueue();
+                }
             }
         });
     }
