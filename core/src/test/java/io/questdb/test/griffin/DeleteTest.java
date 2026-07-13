@@ -910,6 +910,46 @@ public class DeleteTest extends AbstractCairoTest {
     }
 
     /**
+     * D6-Minor: a DISJOINT MULTI-INTERVAL timestamp DELETE, EXECUTED end-to-end with a row-level oracle.
+     * {@code ts < d2 OR ts >= d4} over a BY DAY table spanning d1..d5 is two disjoint timestamp intervals, so it
+     * is NOT a single pure interval (classification already pinned by
+     * {@link #testMixedOrArbitraryDeleteNotClassifiedAsPureInterval}, which only asserts routing) and takes the
+     * whole-range survivor-replace path. Both OUTER intervals must be deleted and only the MIDDLE band
+     * {@code [d2, d4)} (days 2-3) survive. Distinct from {@link #testDeleteOrPredicateThroughNegation}, whose OR
+     * is a residual {@code x}-column disjunction: this pins the multi-INTERVAL timestamp disjunction's executed
+     * result, the case that previously had only a classification-only test.
+     */
+    @Test
+    public void testDeleteDisjointMultiIntervalOrMatchesOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            // Hourly rows across 5 daily partitions (x=1..119): day1 x=1..23, day2 x=24..47, day3 x=48..71,
+            // day4 x=72..95, day5 x=96..119.
+            execute("create table t as (select (x*3600*1000000L)::timestamp ts, x " +
+                    "from long_sequence(119)) timestamp(ts) partition by DAY WAL");
+            drainWalQueue();
+            // Independent oracle snapshot, never touched by the DELETE.
+            execute("create table t_ref as (select * from t)");
+
+            // Two disjoint intervals: ts < day2 (day1) OR ts >= day4 (days 4-5). Only the middle band
+            // [day2, day4) (days 2-3) survives - both outer intervals go.
+            execute("DELETE FROM t WHERE ts < '1970-01-02T00:00:00.000000Z' OR ts >= '1970-01-04T00:00:00.000000Z'");
+            drainWalQueue();
+
+            // Independent oracle: survivors == the reference minus rows matching EITHER interval. A bug in the
+            // disjoint-interval survivor negation shows up here as a row difference.
+            assertSqlCursors(
+                    "select * from t_ref where not (ts < '1970-01-02T00:00:00.000000Z' or ts >= '1970-01-04T00:00:00.000000Z')",
+                    "select * from t"
+            );
+            // Exact surviving band: x in [24, 71] (days 2-3), 48 rows, nothing from the outer intervals.
+            assertQuery("select min(x), max(x), count() from t").noRandomAccess().expectSize().returns("""
+                    min\tmax\tcount
+                    24\t71\t48
+                    """);
+        });
+    }
+
+    /**
      * B3: zero-match and empty-table PURE-TIME-RANGE deletes through the REAL classifier -> executor path
      * (not the raw {@code replaceRange} primitive). Exercises {@code OperationExecutor.deleteTimeRange}'s
      * clamp-to-populated-range math ({@code max(lo,minTs)}, {@code min(hiExcl,maxTs+1)},

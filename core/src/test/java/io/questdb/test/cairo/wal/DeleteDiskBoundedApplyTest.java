@@ -244,6 +244,93 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * D6-Important (whole-PR level-3): the DEFAULT (atomic) route's Parquet convert->replace TWO-COMMIT crash
+     * window. {@code executeDelete}'s atomic route does {@code convertParquetPartitionsForDelete} - its own
+     * physical commit #1 at the STILL-CURRENT durable seqTxn {@code S-1}, un-tiering every Parquet partition to
+     * native (verified: {@code produceNativeFromParquet} writes native columns via {@code ff.openAppend} and
+     * reads the Parquet via {@code mapRO}) - and THEN {@code replaceWithSurvivors} (commit #2, the ONLY advance to
+     * {@code S}, whose O3 partition writes go via {@code ff.openRW}). A crash AFTER commit #1 but BEFORE commit #2
+     * must leave the table SUSPENDED at durable {@code S-1} with the convert landed and the data fully intact (the
+     * convert is format-only, the delete never applied); the re-run's re-issued convert on the now-native
+     * partitions is an idempotent no-op and the replace then completes. The disk-bounded route's analogous window
+     * is covered by {@link #testPerWindowCommitReappliesIdempotentlyAfterMidLoopCrash}; this is the atomic
+     * route's coverage, which was missing.
+     * <p>
+     * Injection point (distinct from the convert's {@code openAppend}): {@code openRW=-1} on day-4 fires only in
+     * the REPLACE's O3 write to day-4, after commit #1 has landed - never during the convert. Self-verifying: the
+     * test asserts commit #1 DID land (no Parquet partition remains at {@code S-1}) and commit #2 did NOT (durable
+     * still {@code S-1}, data == full pre-delete snapshot).
+     */
+    @Test
+    public void testAtomicRouteConvertCommitThenReplaceCrashSuspendsAtSMinus1() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, "false"); // DEFAULT atomic route (convert pre-pass + one replace bracket)
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // tiny step -> the day-4 replace is its own window
+
+        // Fails the FIRST openRW targeting day-4 while armed. The convert (commit #1) writes native columns via
+        // openAppend and reads Parquet via mapRO, so this openRW=-1 fires only later, in the replace's O3 write to
+        // day-4 - i.e. strictly AFTER commit #1 has landed.
+        final boolean[] armed = {false};
+        final boolean[] faulted = {false};
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armed[0] && !faulted[0] && Utf8s.containsAscii(name, "1970-01-04")) {
+                    faulted[0] = true;
+                    return -1; // fail the replace's native O3 write to day-4, after the convert commit
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            createParquetFixture(); // days 1-5 Parquet, day 6 native; t_ref = full pre-delete native snapshot
+            final TableToken tt = engine.verifyTableName("t");
+            final long writerTxnBefore = writerTxn(tt);
+            final long seqTxnBefore = seqTxn(tt);
+
+            execute("delete from t where " + PRED);
+            Assert.assertEquals("sequencer must have exactly one new (delete) txn", seqTxnBefore + 1, seqTxn(tt));
+
+            // Crash between commit #1 (convert) and commit #2 (replace): arm the fault and drain.
+            armed[0] = true;
+            drainWalQueue();
+            armed[0] = false;
+
+            Assert.assertTrue("the replace-write fault must have actually fired", faulted[0]);
+            Assert.assertTrue("a crash before the replace commit must suspend the table",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // Durable seqTxn is STILL S-1: commit #1 (convert) persisted at S-1, commit #2 (replace) never ran.
+            Assert.assertEquals("durable seqTxn must remain S-1 (the replace commit never landed)",
+                    writerTxnBefore, writerTxn(tt));
+
+            // The TWO-COMMIT structure is observable: commit #1 (Parquet->native convert) DID land - no Parquet
+            // partition remains at S-1, proving the convert committed before the replace faulted.
+            Assert.assertEquals(
+                    "commit #1 (Parquet->native convert) must have landed at S-1: no Parquet partition should remain",
+                    0,
+                    count("select count(*) from table_partitions('t') where isParquet")
+            );
+            // Data fully intact: the convert is format-only and the delete never applied, so the table still
+            // equals the full pre-delete snapshot (nothing deleted yet).
+            assertSqlCursors("select * from t_ref", "select * from t");
+
+            // Crash-restart model: resume + re-drain. The re-run's convert on now-native partitions is an
+            // idempotent no-op, and the replace (openRW no longer armed) completes commit #2 (S-1 -> S).
+            execute("alter table t resume wal");
+            drainWalQueue();
+
+            Assert.assertFalse("re-apply must leave the table healthy (not suspended)",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            Assert.assertEquals("durable seqTxn must have advanced by exactly 1 for the delete (S-1 -> S)",
+                    writerTxnBefore + 1, writerTxn(tt));
+            Assert.assertEquals("durable seqTxn must match the sequencer after full apply",
+                    seqTxn(tt), writerTxn(tt));
+            // Final state == the exact NOT-predicate oracle: the re-run's convert-no-op + replace reached it.
+            assertSqlCursors("select * from t_ref where not (" + PRED + ")", "select * from t");
+        });
+    }
+
     // Happy path: arbitrary DELETE over the all-Parquet (except mandatory-native active day 6) table with a tiny
     // rows-per-step, so it tiles into MANY per-window commits. Final state == NOT-predicate oracle, table healthy.
     @Test
