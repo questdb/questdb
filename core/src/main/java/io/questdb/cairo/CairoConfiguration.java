@@ -387,6 +387,19 @@ public interface CairoConfiguration {
      */
     int getLiveViewPartitionCompactThreshold();
 
+    /**
+     * @return the byte limit applied to one live view's persistent per-partition state:
+     * the anchor map plus each anchored window function's partition map. Unlike a query
+     * or a materialized-view refresh, this state outlives the refresh cycle that built
+     * it, so the tracker's lifetime matches the view's cached state rather than one
+     * refresh attempt. {@code 0} means unlimited; only the global RSS limit applies.
+     * <p>
+     * The limit is the only backstop for a view whose ANCHOR cannot drive frontier
+     * compaction (a LONG/INT anchor, or any anchor not provably monotone with the base
+     * scan order): such a view retains every partition key it has ever seen.
+     */
+    long getLiveViewRefreshMemoryLimitBytes();
+
     int getLiveViewRefreshTurnMaxCommits();
 
     long getLiveViewRefreshTurnMaxDurationMicros();

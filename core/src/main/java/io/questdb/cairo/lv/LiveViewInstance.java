@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -210,6 +211,13 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long headBackfillCpKey = Numbers.LONG_NULL;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
+    // Per-view tracker for the persistent per-partition state: the anchor map (owned by
+    // anchorWindow) and each anchored function's partition map (owned by compiledFactory).
+    // That state outlives the cycle that built it, so the tracker's lifetime is the cached
+    // state, not one refresh attempt. Acquired when the anchor window is built, released by
+    // freeCachedRefreshState(). Null when the view has no anchored window; a limit of 0
+    // (the default) accounts but never throws. Mutated only under the refresh latch.
+    private MemoryTracker memoryTracker;
     // Restart-restore single-shot flag. The refresh worker flips it true on
     // the first cycle after CREATE / restart, regardless of whether a head
     // .cp was found - one attempt is the contract, no retries. Mutated only
@@ -458,9 +466,7 @@ public class LiveViewInstance implements QuietCloseable {
         if (!isClosed) {
             isClosed = true;
             freeBackfillBaseReader();
-            compiledFactory = Misc.free(compiledFactory);
-            anchorWindow = Misc.free(anchorWindow);
-            anchorFunction = Misc.free(anchorFunction);
+            freeCachedRefreshState();
             inMemoryTier = Misc.free(inMemoryTier);
         }
     }
@@ -783,6 +789,16 @@ public class LiveViewInstance implements QuietCloseable {
         return lvRowsTotal;
     }
 
+    /**
+     * @return the per-view tracker charged for the anchor map and the anchored window
+     * functions' partition maps, or null when the view has no anchored window yet. The
+     * refresh worker binds it into the SQL execution context so the window cursor's
+     * lazily created function maps allocate against it.
+     */
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public long getO3RejectedCount() {
         return o3RejectedCount;
     }
@@ -996,9 +1012,7 @@ public class LiveViewInstance implements QuietCloseable {
      * Must be called on the refresh worker under the refresh latch.
      */
     public void prepareForBaseSchemaRecompile() {
-        compiledFactory = Misc.free(compiledFactory);
-        anchorWindow = Misc.free(anchorWindow);
-        anchorFunction = Misc.free(anchorFunction);
+        freeCachedRefreshState();
         // Drop the cached row copier with the factory it was built for. Its cache key is
         // the LV's own WAL metadata version, which a base-side schema change never moves,
         // so it would otherwise survive the recompile and copy the new factory's records
@@ -1254,6 +1268,15 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Hands the view its per-view {@link MemoryTracker}. The refresh worker acquires it
+     * before the window machinery exists, so the maps allocate against it from their first
+     * byte. See {@link #memoryTracker}.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
+    }
+
+    /**
      * Sets the read-only-replica publish-stall retry floor. See {@link #leadRetryAfterUs}.
      */
     public void setLeadRetryAfterUs(long leadRetryAfterUs) {
@@ -1387,9 +1410,7 @@ public class LiveViewInstance implements QuietCloseable {
             if (!isClosed) {
                 isClosed = true;
                 freeBackfillBaseReader();
-                compiledFactory = Misc.free(compiledFactory);
-                anchorWindow = Misc.free(anchorWindow);
-                anchorFunction = Misc.free(anchorFunction);
+                freeCachedRefreshState();
                 inMemoryTier = Misc.free(inMemoryTier);
             }
         } finally {
@@ -1428,9 +1449,7 @@ public class LiveViewInstance implements QuietCloseable {
         }
         try {
             freeBackfillBaseReader();
-            compiledFactory = Misc.free(compiledFactory);
-            anchorWindow = Misc.free(anchorWindow);
-            anchorFunction = Misc.free(anchorFunction);
+            freeCachedRefreshState();
             inMemoryTier = Misc.free(inMemoryTier);
         } finally {
             refreshLatch.set(false);
@@ -1471,5 +1490,21 @@ public class LiveViewInstance implements QuietCloseable {
                 return;
             }
         }
+    }
+
+    /**
+     * Frees the cached refresh state in the one order {@link #memoryTracker} tolerates.
+     * compiledFactory owns the functions' partition maps and anchorWindow owns the anchor
+     * map; both charge the tracker, so it can only be closed once they have released their
+     * memory. Closing it early returns it to the pool with a non-zero balance, and
+     * PerQueryMemoryTracker.init() then trips its recycle assert in whichever unrelated
+     * query next acquires it. Every teardown path routes through here, so the order is
+     * stated once.
+     */
+    private void freeCachedRefreshState() {
+        compiledFactory = Misc.free(compiledFactory);
+        anchorWindow = Misc.free(anchorWindow);
+        anchorFunction = Misc.free(anchorFunction);
+        memoryTracker = Misc.free(memoryTracker);
     }
 }

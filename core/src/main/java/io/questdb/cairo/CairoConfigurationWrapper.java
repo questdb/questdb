@@ -524,6 +524,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewRefreshMemoryLimitBytes() {
+        return getDelegate().getLiveViewRefreshMemoryLimitBytes();
+    }
+
+    @Override
     public int getLiveViewRefreshTurnMaxCommits() {
         return getDelegate().getLiveViewRefreshTurnMaxCommits();
     }

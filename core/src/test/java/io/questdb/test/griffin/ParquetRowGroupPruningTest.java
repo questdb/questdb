@@ -29,6 +29,9 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -89,6 +92,98 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("val\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+        });
+    }
+
+    @Test
+    public void testCalculateSizeAndSkipRowsOnPushdownPrunedPageFrameCursor() throws Exception {
+        // Pushdown pruning drops whole non-matching row groups at the page-frame
+        // level, but the metadata-only size/skip fast paths account at the
+        // PARTITION-frame level, which is blind to that pruning: they would count
+        // physical rows the cursor never yields. Both PageFrameRecordCursorImpl
+        // .calculateSize() and .skipRows() therefore gate on hasActivePushdownFilter().
+        //
+        // Neither gate is reachable through a plain SELECT: a residual filter factory
+        // always wraps the pushdown-carrying page-frame factory, and the wrapper's own
+        // calculateSize()/skipRows() walk rows. The live view refresh job unwraps it -
+        // filterFactory.getBaseFactory(), re-applying the WHERE above - and drives the
+        // raw cursor, whose own filter is therefore null while pushdown is active. That
+        // job calls skipRows() (covered end-to-end by LiveViewParquetBaseTest); it does
+        // not call calculateSize(), so the calculateSize() gate is a contract-level
+        // sibling with no production caller yet. This test builds that same raw-cursor
+        // shape and pins BOTH gates, so neither can be dropped unnoticed.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
+                    FROM long_sequence(5000)
+                    """);
+            // Second partition makes 2024-01-01 a non-active partition so it converts.
+            execute("""
+                    INSERT INTO x VALUES
+                    (8000, '2024-01-02T02:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0 WITH (bloom_filter_columns = 'val')");
+
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            try (RecordCursorFactory filterFactory = select("SELECT * FROM x WHERE val = 42")) {
+                // The residual filter lives in the wrapper; the pushdown conditions sit
+                // on the page-frame factory beneath it. Do not close the base separately -
+                // the wrapper owns it.
+                // Strip the QueryProgress wrapper that engine.select() adds; the refresh
+                // job compiles its own factory and never sees it.
+                RecordCursorFactory residualFilterFactory = filterFactory;
+                if (residualFilterFactory instanceof QueryProgress) {
+                    residualFilterFactory = residualFilterFactory.getBaseFactory();
+                }
+                // The residual WHERE lives in the wrapper, so unwrapping it once lands on
+                // the page-frame factory whose cursor carries no filter of its own while
+                // pushdown pruning is active. (Only the wrapper's getFilter() is load
+                // bearing here: PageFrameRecordCursorFactory does not override getFilter(),
+                // so asserting null on the base would prove nothing.)
+                Assert.assertNotNull(residualFilterFactory.getFilter());
+                final RecordCursorFactory pageFrameFactory = residualFilterFactory.getBaseFactory();
+                Assert.assertNotNull(pageFrameFactory);
+
+                // Walk the raw cursor to establish what it actually yields.
+                long walked = 0;
+                try (RecordCursor cursor = pageFrameFactory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        walked++;
+                    }
+                }
+                // Pruning really dropped row groups, so the scan yields far fewer than the
+                // 5001 physical rows. Without this the size assertion below would be vacuous.
+                Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 1);
+                Assert.assertTrue("pruned scan must yield a strict subset [walked=" + walked + ']', walked > 0 && walked < 5_001);
+
+                // calculateSize() must agree with the walk. Without the pushdown gate the
+                // metadata-only path reports every physical row, including the pruned ones.
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                try (RecordCursor cursor = pageFrameFactory.getCursor(sqlExecutionContext)) {
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                }
+                Assert.assertEquals(walked, counter.get());
+
+                // The same gate in skipRows(). The skip target must exceed the parquet
+                // partition's PHYSICAL row count (5000), because the pruning-blind
+                // accounting only kicks in when FullFwdPartitionFrameCursor.next(skipTarget)
+                // takes its whole-partition skeleton branch (hi <= skipTarget), which
+                // reports the physical count without decoding or pruning. A smaller target
+                // would decode and prune on the way past, making both paths agree and the
+                // assertion vacuous.
+                counter.set(5_001);
+                try (RecordCursor cursor = pageFrameFactory.getCursor(sqlExecutionContext)) {
+                    cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                    // Gated: the walk skips only the rows the cursor yields, leaving the
+                    // rest of the request unspent. Un-gated: the skeleton branch charges
+                    // all 5001 physical rows and the counter lands on 0.
+                    Assert.assertEquals(5_001 - walked, counter.get());
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
         });
     }
 

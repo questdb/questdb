@@ -79,6 +79,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -515,6 +516,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // never dispatched. Leaving the factory uncached makes the next
                 // refresh recompile and retry; a persistent failure trips the
                 // flush-retry budget and invalidates the view.
+                // Acquire the per-view tracker before any window machinery exists, so the
+                // anchor map and the window functions' partition maps (bound through the
+                // execution context at cursor open) are both charged from their first byte.
+                // This sits here, not in ensureAnchorFunction, because an UNANCHORED view has
+                // no anchor window at all - and so no frontier compaction either - yet still
+                // keeps one accumulator per partition key across cycles. It needs the cap most.
+                if (instance.getMemoryTracker() == null) {
+                    instance.setMemoryTracker(engine.getMemoryTrackerProvider().acquire(
+                            executionContext.getSecurityContext(),
+                            instance.getLiveViewToken().getTableId(),
+                            MemoryTrackerWorkload.LIVE_VIEW_REFRESH
+                    ));
+                }
                 ensureAnchorFunction(instance, factory);
                 instance.setCompiledFactory(factory);
                 committed = true;
@@ -593,6 +607,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .put(instance.getDefinition().getViewName())
                         .put(']');
             }
+            // The tracker was acquired by ensureCompiledFactory before it called us, so the
+            // anchor map allocates against it from its first byte.
             window = LiveViewWindow.build(
                     engine.getConfiguration(),
                     compiler.getAsm(),
@@ -601,7 +617,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     spec.partitionColumnNames,
                     fn,
                     anchoredFunctions,
-                    isAnchorMonotoneWithBaseOrder(anchorNode, projectedMeta)
+                    isAnchorMonotoneWithBaseOrder(anchorNode, projectedMeta),
+                    instance.getMemoryTracker()
             );
             // Commit the anchor Function and window together, only after the full
             // machinery builds. A failure before this point must not leave a
@@ -3771,7 +3788,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return true;
         } catch (CairoException ce) {
             final int errno = ce.getErrno();
-            if (errno == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD
+            if (errno == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH
                     || errno == CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH) {
                 // Version mismatch is a real compatibility break, not
                 // corruption. Stash the reason on the instance so the caller
@@ -4053,20 +4070,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .put(storedFactoryName)
                     .put(']');
         }
+        // A version outside [snapshotMinSupportedVersion(), snapshotFormatVersion()]
+        // signals a real compatibility break (operator DROP+CREATE is the
+        // recovery), not structural corruption. Tag the throws so the catch site
+        // invalidates the LV rather than unlinking and replaying from head-miss.
+        // Mirrors the file-level range check in LiveViewCheckpointReader.of().
         if (formatVersion < match.snapshotMinSupportedVersion()) {
-            // Below-min versions signal a real compatibility break (operator
-            // DROP+CREATE is the recovery), not structural corruption. Tag
-            // the throw so the catch site invalidates the LV rather than
-            // unlinking and replaying from head-miss. Above-current versions
-            // are tolerated: future writers may emit blocks readers do not
-            // understand yet.
-            throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD)
+            throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH)
                     .put("live view function snapshot version too old, factory=")
                     .put(storedFactoryName)
                     .put(", read=")
                     .put(formatVersion)
                     .put(", minSupported=")
                     .put(match.snapshotMinSupportedVersion());
+        }
+        if (formatVersion > match.snapshotFormatVersion()) {
+            // A newer writer laid this state out to a shape this build has no
+            // decoder for - restorePartitionState() reads the current fixed
+            // layout and never dispatches on a higher version. Accepting the
+            // block would silently rehydrate the accumulators from foreign
+            // bytes. A downgraded binary reaches exactly this: the newer
+            // binary's CRC-valid .cp is still the head on disk.
+            throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH)
+                    .put("live view function snapshot version too new, factory=")
+                    .put(storedFactoryName)
+                    .put(", read=")
+                    .put(formatVersion)
+                    .put(", maxSupported=")
+                    .put(match.snapshotFormatVersion());
         }
 
         final long payloadStart = offset;
@@ -5244,6 +5275,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // the on-disk tier is fed by the global apply job from replicated WAL. The enterprise
         // subclass overrides isLeadReconstruction() to select it; the primary default is false.
         final boolean leadReconstruction = isLeadReconstruction();
+        // Bind the view so the shared context's getMemoryTracker() resolves to THIS view's
+        // tracker; the window cursor reads it at open() to charge the functions' partition
+        // maps. The finally clears it, so the worker's next view cannot charge this one.
+        executionContext.ofRefreshingInstance(instance);
         try {
             // A definition-less stub (torn / too-new _lv or _lv.s) must never refresh -
             // it has no definition to drive from. Both refresh entry paths already
@@ -5537,6 +5572,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 invalidationReason = handleRefreshFailure(instance, t, leadReconstruction);
             }
         } finally {
+            executionContext.ofRefreshingInstance(null);
             instance.unlockAfterRefresh();
             instance.tryCloseIfDropped();
             // If this view was invalidated concurrently while this cycle held
@@ -5641,6 +5677,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", retryCount=").$(instance.getFlushRetryCount())
                     .$(", error=").$(t).I$();
             return null;
+        }
+        // A breach of THIS view's configured limit means its working set does not fit the
+        // budget the operator set. Retrying re-allocates into the same ceiling and ends at
+        // the generic budget message anyway, throwing away the one diagnostic that says why.
+        // Invalidate now, carrying the tracker's own message (limit, usage, workload).
+        //
+        // Match the breach PHRASE, not the workload name: Unsafe stamps the workload into the
+        // native-OOM message too ("sun.misc.Unsafe.allocateMemory() OutOfMemoryError
+        // [workload=...]"), which fires whatever the limit is. Treating that as a limit breach
+        // would permanently invalidate a view on a transient host OOM - a behaviour change for
+        // every user on the default limit of 0. "query memory limit exceeded" is emitted only
+        // by the per-query limit check (Java and Rust alike); the native-OOM and global-RSS
+        // messages do not carry it, so both keep the retry budget. The limit > 0 gate makes
+        // the default config structurally unable to reach this path.
+        if (t instanceof CairoException ce
+                && ce.isOutOfMemory()
+                && engine.getConfiguration().getLiveViewRefreshMemoryLimitBytes() > 0
+                && Chars.contains(ce.getFlyweightMessage(), "query memory limit exceeded")) {
+            LOG.critical().$("live view exceeded its refresh memory limit, invalidating [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$safe(ce.getFlyweightMessage()).I$();
+            return Chars.toString(ce.getFlyweightMessage());
         }
         int retryCount = instance.getFlushRetryCount();
         long retryStartUs = instance.getFlushRetryStartUs();

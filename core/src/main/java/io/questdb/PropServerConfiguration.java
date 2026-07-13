@@ -319,6 +319,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long liveViewInMemoryBufferInitialBytes;
     private final long liveViewInMemoryMaxMicros;
     private final int liveViewPartitionCompactThreshold;
+    private final long liveViewRefreshMemoryLimitBytes;
     private final int liveViewRefreshTurnMaxCommits;
     private final long liveViewRefreshTurnMaxDurationMicros;
     private final boolean lineHttpEnabled;
@@ -1685,6 +1686,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
+            this.liveViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -4191,6 +4193,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getLiveViewPartitionCompactThreshold() {
             return liveViewPartitionCompactThreshold;
+        }
+
+        @Override
+        public long getLiveViewRefreshMemoryLimitBytes() {
+            return liveViewRefreshMemoryLimitBytes;
         }
 
         @Override

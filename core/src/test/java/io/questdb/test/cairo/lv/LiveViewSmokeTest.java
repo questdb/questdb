@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -70,6 +71,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -14973,6 +14975,198 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointDurationTriggerWritesCheckpoint() throws Exception {
+        // The steady-state checkpoint fires on EITHER a row cadence or a duration cadence.
+        // Every other test drives the row cadence, so pin the duration one on its own: set
+        // the row cadence out of reach and the duration cadence to 1ms, then advance the
+        // clock. A checkpoint written with rowsSinceLastCheckpointWritten below the row
+        // cadence can only have come from the duration trigger.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 1_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // First commit: the head .cp is written because none exists yet (firstCp),
+                // not because of either cadence.
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long firstHead = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, firstHead);
+
+                // Push the clock past the 1ms duration cadence, then commit a single row -
+                // far below the 1m row cadence, so rowTrigger cannot fire.
+                setCurrentMicros(currentMicros + 1_000_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T01:00:00.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertTrue(
+                        "the row cadence must not have been reachable [rows=" + instance.getRowsSinceLastCheckpointWritten() + ']',
+                        instance.getRowsSinceLastCheckpointWritten() < 1_000_000
+                );
+                Assert.assertNotEquals(
+                        "the duration trigger must have written a fresh head checkpoint",
+                        firstHead,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testMemoryLimitBelowLimitRefreshesNormally() throws Exception {
+        // The tracker must not fire below its limit: a modest view under a generous cap
+        // refreshes and produces correct output. Guards against a limit that is charged
+        // per-cycle rather than per-view, or a tracker that never releases.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 64 * 1024 * 1024);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
+                    "('2026-06-01T01:00:00.000000Z', 'a', 2.0), " +
+                    "('2026-06-01T02:00:00.000000Z', 'b', 5.0)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse("a view below its memory limit must stay valid", instance.isInvalid());
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n" +
+                    "2026-06-01T02:00:00.000000Z\tb\t5.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testMemoryLimitInvalidatesUnanchoredView() throws Exception {
+        // An UNANCHORED view has no anchor window, so it has no frontier compaction machinery
+        // at all - strictly worse than the LONG-anchor case. Only a BOUNDED frame may go
+        // without an ANCHOR (SqlParser rejects a bare unbounded window), but a bounded frame
+        // still keeps per-partition state that scales with the partition cardinality. The
+        // tracker must therefore be acquired for these views too, not only for anchored ones,
+        // or the limit silently protects nothing here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1024 * 1024);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)");
+
+            execute("""
+                    INSERT INTO base (ts, sym, x)
+                    SELECT timestamp_sequence('2026-06-01', 1_000),
+                           'k' || x::STRING,
+                           x::DOUBLE
+                    FROM long_sequence(200_000)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertTrue(
+                    "an unanchored view above its memory limit must be invalidated, not left to grow",
+                    instance.isInvalid()
+            );
+            final CharSequence reason = instance.getStateReader().getInvalidationReason();
+            Assert.assertNotNull(reason);
+            Assert.assertTrue(
+                    "the invalidation reason must name the memory limit [reason=" + reason + ']',
+                    Chars.contains(reason, "query memory limit exceeded")
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testMemoryLimitInvalidatesNonCompactableView() throws Exception {
+        // The worst case for live-view state growth: a LONG ANCHOR. Frontier compaction
+        // only runs for an anchor provably monotone with the base scan order, and that
+        // allowlist (the designated timestamp, timestamp_floor/date_trunc, dateadd with a
+        // fixed-duration period) is TIMESTAMP-typed throughout - so a LONG anchor can never
+        // compact and the view retains every partition key it has ever seen. CREATE accepts
+        // such an anchor, so without a cap the state grows until the process dies.
+        //
+        // The per-view memory tracker is that cap: a high-cardinality PARTITION BY must
+        // breach it and invalidate the view with a diagnosable reason, rather than OOM the
+        // node. Untracked (the pre-fix state) these maps allocate against nothing, no
+        // breach is possible, and the view stays valid while it grows.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1024 * 1024);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, sid LONG, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // ANCHOR EXPRESSION sid: a bare LONG column. Legal at CREATE, never monotone
+            // with the base order, so compact() is structurally disabled for this view.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sid, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION sid)");
+
+            // 200k distinct partition keys, none ever evictable.
+            execute("""
+                    INSERT INTO base (ts, sym, sid, x)
+                    SELECT timestamp_sequence('2026-06-01', 1_000),
+                           'k' || x::STRING,
+                           x,
+                           x::DOUBLE
+                    FROM long_sequence(200_000)
+                    """);
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertTrue(
+                    "a non-compactable view above its memory limit must be invalidated, not left to grow",
+                    instance.isInvalid()
+            );
+            final CharSequence reason = instance.getStateReader().getInvalidationReason();
+            Assert.assertNotNull(reason);
+            Assert.assertTrue(
+                    "the invalidation reason must name the memory limit [reason=" + reason + ']',
+                    Chars.contains(reason, "memory limit exceeded")
+            );
+            Assert.assertTrue(
+                    "the reason must name the live-view workload [reason=" + reason + ']',
+                    Chars.contains(reason, "LIVE_VIEW_REFRESH")
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestoreFileVersionMismatchInvalidatesView() throws Exception {
         // File-level formatVersion mismatch in the head .cp is a real
         // compatibility break (not corruption); the restore path must mark
@@ -15048,6 +15242,144 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // The .cp file must survive: unlike the corruption branch, the
             // version-mismatch route does not unlink derived state, so an
             // operator can inspect it before DROP+CREATE.
+            try (Path cpPath = new Path()) {
+                cpPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(reloaded.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+                Assert.assertTrue(
+                        "head .cp must be preserved across the version-mismatch invalidation",
+                        engine.getConfiguration().getFilesFacade().exists(cpPath.$())
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestoreFunctionVersionTooNewInvalidatesView() throws Exception {
+        // A FUNCTION_SNAPSHOT block whose formatVersion sits ABOVE the version
+        // this build writes cannot be decoded: restorePartitionState() reads a
+        // fixed layout and no forward decoder exists. Accepting such a block
+        // rehydrates the accumulators from bytes a newer writer laid out to a
+        // different shape. A downgraded binary reaches this on a CRC-valid .cp
+        // the newer binary left behind, so the reader must gate the upper bound
+        // of the supported range, not just the lower one. The block below is
+        // valid in every other respect - factory name, key-shape header and CRC
+        // all match the running function - so only the version gate can reject
+        // it. Mirrors testRestoreVersionMismatchInvalidatesView, which covers
+        // the too-old half of the same range check.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
+                    "('2026-06-01T01:00:00.000000Z', 'a', 2.0)");
+            drainWalQueue();
+
+            final String fnFactoryName;
+            final int fnTooNewVersion;
+            final long headLvSeqTxn;
+            final IntList keyColumnTypes = new IntList();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
+                final WindowFunction fn = instance.getAnchorWindow().getFunctions().getQuick(0);
+                final Class<?> fnClass = fn.getClass();
+                final Class<?> enclosing = fnClass.getEnclosingClass();
+                fnFactoryName = (enclosing != null ? enclosing : fnClass).getName();
+                // One above what this build writes - the version a future
+                // writer would stamp after bumping the state layout.
+                fnTooNewVersion = fn.snapshotFormatVersion() + 1;
+                final ColumnTypes keyTypes = fn.getSnapshotKeyColumnTypes();
+                Assert.assertNotNull(keyTypes);
+                for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
+                    keyColumnTypes.add(keyTypes.getColumnType(i));
+                }
+            }
+
+            // The LV materialised the cumulative sums to its on-disk tier
+            // before the head .cp is swapped underneath it.
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\ts\n" +
+                    "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                    "2026-06-01T01:00:00.000000Z\ta\t3.0\n");
+
+            // Replace the head .cp: same lvSeqTxn, correct factory name, and a
+            // key-shape header that matches the running function exactly. The
+            // payload (partitionCount=0) is one the CURRENT layout decodes
+            // cleanly, so a reader that does not gate the upper bound accepts
+            // the block and restores empty accumulator state without a word.
+            try (Path lvDir = new Path()) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                lvDir.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken()).slash();
+
+                try (Path cpPath = new Path()) {
+                    cpPath.of(lvDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+                    engine.getConfiguration().getFilesFacade().removeQuiet(cpPath.$());
+                }
+
+                try (LiveViewCheckpointWriter w = new LiveViewCheckpointWriter(engine.getConfiguration())) {
+                    w.of(lvDir.$(), headLvSeqTxn);
+                    w.writeManifestBlock(new LiveViewCheckpointManifest()
+                            .setLvSeqTxn(headLvSeqTxn)
+                            .setLvRowPosition(0)
+                            .setBaseSeqTxn(0)
+                            .setMaxTimestamp(0)
+                            .setKind(LiveViewCheckpointManifest.KIND_STEADY)
+                            .addWindowName("w"));
+                    final MemoryA fnSink = w.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
+                    fnSink.putStr("w");
+                    fnSink.putStr(fnFactoryName);
+                    fnSink.putInt(fnTooNewVersion); // above snapshotFormatVersion()
+                    fnSink.putInt(keyColumnTypes.size());
+                    for (int i = 0, n = keyColumnTypes.size(); i < n; i++) {
+                        fnSink.putInt(keyColumnTypes.getQuick(i));
+                    }
+                    fnSink.putLong(0); // partitionCount
+                    w.endBlock();
+                    w.commit(Numbers.LONG_NULL);
+                }
+            }
+
+            // Restart: clear the registry and rebuild from on-disk. The
+            // startup sweep re-stamps the head lvSeqTxn from the filename.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(headLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+            Assert.assertFalse("LV must still be valid pre-refresh", reloaded.isInvalid());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            Assert.assertTrue(
+                    "version-too-new in the head .cp must invalidate the LV",
+                    reloaded.isInvalid()
+            );
+            final CharSequence reason = reloaded.getStateReader().getInvalidationReason();
+            Assert.assertNotNull(reason);
+            // Pin the FUNCTION_SNAPSHOT path: the file-level check emits its own
+            // "version too new" message, so match the function-block wording.
+            Assert.assertTrue(
+                    "invalidation reason mentions function-snapshot version-too-new [reason=" + reason + ']',
+                    Chars.contains(reason, "function snapshot version too new")
+            );
+
+            // The .cp survives: like every other version break, the
+            // compatibility route does not unlink derived state, so an operator
+            // can inspect the file before DROP+CREATE.
             try (Path cpPath = new Path()) {
                 cpPath.of(engine.getConfiguration().getDbRoot())
                         .concat(reloaded.getLiveViewToken())

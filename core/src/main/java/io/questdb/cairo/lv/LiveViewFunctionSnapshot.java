@@ -70,7 +70,8 @@ public final class LiveViewFunctionSnapshot {
      * rehydrates each partition. A header mismatch throws {@link CairoException}
      * with errno 0 (structural corruption that passed CRC) so the caller unlinks the
      * head checkpoint and head-miss-replays rather than invalidating the view -
-     * distinct from a version-too-old break, which invalidates.
+     * distinct from a version break (a recorded version outside the function's
+     * supported range, in either direction), which invalidates.
      * <p>
      * After the last partition the consumed byte count must reconcile with
      * {@code payloadLength} - the restore-side mirror of the writer's

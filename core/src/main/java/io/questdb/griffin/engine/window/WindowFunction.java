@@ -535,6 +535,11 @@ public interface WindowFunction extends Function {
      * FUNCTION_SNAPSHOT block header so future builds can dispatch through
      * {@link #restorePartitionState(MemoryR, long, MapValue, int)} to the correct decoder. Bump
      * on any state-layout change.
+     * <p>
+     * This doubles as the highest version this build can <em>read</em>: a build that could decode
+     * a layout would also write it. The live view layer rejects a recorded version above this
+     * value rather than decoding foreign bytes with the current layout - the case a downgraded
+     * binary hits when a newer binary left a CRC-valid head checkpoint behind.
      */
     default int snapshotFormatVersion() {
         return 0;

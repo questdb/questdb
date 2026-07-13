@@ -31,6 +31,8 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.MemoryTracker;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Execution context used by {@link LiveViewRefreshJob} when compiling and running
@@ -41,6 +43,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
 
     private TableReader baseTableReader;
+    private LiveViewInstance refreshingInstance;
 
     public LiveViewRefreshSqlExecutionContext(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine, sharedQueryWorkerCount);
@@ -50,6 +53,18 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
 
     public void clearReader() {
         this.baseTableReader = null;
+    }
+
+    /**
+     * Resolves to the tracker of the view being refreshed, so the anchored functions'
+     * partition maps - which WindowRecordCursorFactory binds at cursor open - allocate
+     * against the view that owns them. The lookup must be dynamic: the worker acquires the
+     * tracker part-way through the cycle (when it builds the anchor window), so a value
+     * snapshotted at cycle start would still be null and the maps would go untracked.
+     */
+    @Override
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return refreshingInstance != null ? refreshingInstance.getMemoryTracker() : super.getMemoryTracker();
     }
 
     @Override
@@ -93,5 +108,12 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
 
     public void of(TableReader baseTableReader) {
         this.baseTableReader = baseTableReader;
+    }
+
+    /**
+     * Binds the view whose refresh cycle is running, or null to clear it.
+     */
+    public void ofRefreshingInstance(@Nullable LiveViewInstance refreshingInstance) {
+        this.refreshingInstance = refreshingInstance;
     }
 }

@@ -627,6 +627,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewRefreshMemoryLimitBytes() {
+        return 0;
+    }
+
+    @Override
     public long getMatViewRefreshMemoryLimitBytes() {
         return 0;
     }

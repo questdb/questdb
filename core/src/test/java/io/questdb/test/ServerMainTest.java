@@ -666,6 +666,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.live.view.in.memory.buffer.initial.bytes\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES\t65536\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.in.memory.max\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_MAX\t3600000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.partition.compact.threshold\tQDB_CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.refresh.memory.limit.bytes\tQDB_CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "cairo.live.view.refresh.turn.max.commits\tQDB_CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS\t64\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.refresh.turn.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS\t50000\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.crash.files\tQDB_CAIRO_MAX_CRASH_FILES\t100\tdefault\tfalse\tfalse\n" +

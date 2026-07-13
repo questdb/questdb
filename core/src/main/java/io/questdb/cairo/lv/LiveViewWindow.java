@@ -49,11 +49,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Per-row driver that wires a named WINDOW's ANCHOR clause to live-view window
@@ -114,6 +116,9 @@ public class LiveViewWindow implements QuietCloseable {
     // that reads any other column (for example a non-designated TIMESTAMP) can
     // dip back into an already-evicted bucket, so it must keep every partition.
     private final boolean isAnchorMonotone;
+    // Per-view tracker charged for the anchor map and its compaction scratch. Owned by
+    // LiveViewInstance, which closes it only after this window has freed both maps.
+    private final @Nullable MemoryTracker memoryTracker;
     // Static reference to the anchor map's key-column types. Held so compact()
     // can allocate a replacement Map with the same shape without re-deriving
     // it from build()-time inputs.
@@ -161,7 +166,8 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull Map anchorMap,
             @NotNull RecordSink partitionKeySink,
             @NotNull ObjList<WindowFunction> functions,
-            boolean isAnchorMonotone
+            boolean isAnchorMonotone,
+            @Nullable MemoryTracker memoryTracker
     ) {
         this.cairoConfiguration = cairoConfiguration;
         this.windowName = windowName;
@@ -172,6 +178,7 @@ public class LiveViewWindow implements QuietCloseable {
         this.partitionKeySink = partitionKeySink;
         this.functions = functions;
         this.isAnchorMonotone = isAnchorMonotone;
+        this.memoryTracker = memoryTracker;
         this.compactThreshold = cairoConfiguration.getLiveViewPartitionCompactThreshold();
         // Frontier compaction is sound only when the anchor advances monotonically
         // with the WAL stream. A TIMESTAMP anchor derived from the ascending
@@ -191,6 +198,23 @@ public class LiveViewWindow implements QuietCloseable {
      */
     public static ColumnTypes anchorMapValueTypes() {
         return AnchorMapValueTypes.INSTANCE;
+    }
+
+    /**
+     * Creates an anchor-shaped map charged to the per-view tracker. Built lazily
+     * ({@code openOnInit=false}) so the tracker is bound before the first allocation: a
+     * malloc that predates the bind would be charged to nobody while its free is credited
+     * AGAINST the tracker, driving the balance negative.
+     */
+    private static Map createTrackedAnchorMap(
+            @NotNull CairoConfiguration configuration,
+            @NotNull ColumnTypes keyTypes,
+            @Nullable MemoryTracker memoryTracker
+    ) {
+        Map map = MapFactory.createUnorderedMap(configuration, keyTypes, anchorMapValueTypes(), false, false);
+        map.setMemoryTracker(memoryTracker);
+        map.reopen();
+        return map;
     }
 
     /**
@@ -221,7 +245,8 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull ObjList<String> partitionColumnNames,
             @NotNull Function anchorExpression,
             @NotNull ObjList<WindowFunction> functions,
-            boolean isAnchorMonotone
+            boolean isAnchorMonotone,
+            @Nullable MemoryTracker memoryTracker
     ) {
         int n = partitionColumnNames.size();
         if (n == 0) {
@@ -271,7 +296,7 @@ public class LiveViewWindow implements QuietCloseable {
         // compact() hands each function the rebuilt anchor map to probe membership
         // via MapRecord.copyToKey, which casts to the concrete impl key -- the impls
         // must match.
-        Map map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, anchorMapValueTypes());
+        Map map = createTrackedAnchorMap(configuration, mapKeyTypes, memoryTracker);
         int returnType = anchorExpression.getType();
         int tag = ColumnType.tagOf(returnType);
         if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
@@ -285,7 +310,7 @@ public class LiveViewWindow implements QuietCloseable {
                     .put("ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(returnType));
         }
-        return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions, isAnchorMonotone);
+        return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions, isAnchorMonotone, memoryTracker);
     }
 
     @Override
@@ -613,8 +638,10 @@ public class LiveViewWindow implements QuietCloseable {
         }
         final long cutoff = prevFrontier;
         if (scratchAnchorMap == null) {
-            // Allocate the reusable second anchor map once; subsequent sweeps reuse it.
-            scratchAnchorMap = MapFactory.createUnorderedMap(cairoConfiguration, partitionKeyTypes, anchorMapValueTypes());
+            // Allocate the reusable second anchor map once; subsequent sweeps reuse it. The
+            // sweep ping-pongs it with anchorMap, so it outlives the sweep and is charged to
+            // the same per-view tracker.
+            scratchAnchorMap = createTrackedAnchorMap(cairoConfiguration, partitionKeyTypes, memoryTracker);
         } else {
             // Clear before rebuild (not after swap) so the scratch stays consistent
             // even if a prior sweep threw mid-rebuild.
