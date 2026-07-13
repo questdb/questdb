@@ -4037,6 +4037,74 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalCheckpointInvalidatesMatViewOnBaseTableDeleteInGap() throws Exception {
+        // F-A: the incremental-checkpoint mat-view state rewrite (DatabaseCheckpointAgent.updateMatViewRefreshIntervals)
+        // must treat a base-table DELETE (or TRUNCATE) sitting in the UNREFRESHED WAL gap as an invalidating barrier.
+        // Instead of advancing the checkpoint's persisted refreshIntervalsBaseTxn past it (which would resume a
+        // restored view past the delete with stale pre-delete rows - the bug), it persists the view's checkpoint
+        // state as INVALID with reason "delete operation" and holds the pre-barrier refreshIntervalsBaseTxn. This is
+        // the delete-in-gap counterpart of testIncrementalCheckpointPrepareRefreshesMatViewIntervals (the no-barrier
+        // sibling that DOES advance), read from the exact persisted checkpoint state file a restore consumes.
+        assertMemoryLeak(() -> {
+            execute("create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+            drainWalQueue();
+
+            // Refresh the view once over committed data so it has a real last-refresh base txn (R > -1).
+            execute("insert into base_price values ('BTC', 100.0, '2024-01-01T00:00:00.000000Z')");
+            execute("insert into base_price values ('BTC', 200.0, '2024-01-01T01:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            TableToken baseTableToken = engine.verifyTableName("base_price");
+            TableToken matViewToken = engine.verifyTableName("price_1h");
+
+            // DELETE an aggregated row and apply ONLY the base WAL (drainWalQueue, NOT the mat-view refresh job),
+            // so the delete sits in the gap past the view's last-refresh base txn at checkpoint time.
+            execute("delete from base_price where price = 100.0");
+            drainWalQueue();
+            long seqTxnAfterDelete = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getSeqTxn();
+
+            // Incremental checkpoint: reaches updateMatViewRefreshIntervals, which scans the gap and finds the delete.
+            engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
+
+            // Read the mat view state from the checkpoint (the artifact a restore rehydrates from).
+            try (
+                    Path checkpointPath = new Path();
+                    io.questdb.cairo.file.BlockFileReader reader = new io.questdb.cairo.file.BlockFileReader(configuration)
+            ) {
+                checkpointPath.of(configuration.getCheckpointRoot())
+                        .concat(configuration.getDbDirectory())
+                        .concat(matViewToken)
+                        .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+
+                reader.of(checkpointPath.$());
+                io.questdb.cairo.mv.MatViewStateReader stateReader = new io.questdb.cairo.mv.MatViewStateReader();
+                stateReader.of(reader, matViewToken);
+
+                Assert.assertTrue(
+                        "checkpoint mat view state must be INVALID after a base-table DELETE in the WAL gap (not silently valid-stale)",
+                        stateReader.isInvalid()
+                );
+                Assert.assertEquals(
+                        "checkpoint mat view invalidation reason must be the delete-barrier reason",
+                        "delete operation",
+                        Chars.toString(stateReader.getInvalidationReason())
+                );
+                // Must NOT advance refreshIntervalsBaseTxn past the delete barrier: the pre-barrier base txn is held
+                // so a restored-then-repaired view re-derives correctly. (The no-barrier sibling test advances it to
+                // the checkpoint base txn; here it must stay strictly behind.)
+                Assert.assertTrue(
+                        "refreshIntervalsBaseTxn must not be advanced past the delete barrier",
+                        stateReader.getRefreshIntervalsBaseTxn() < seqTxnAfterDelete
+                );
+            }
+
+            execute("checkpoint release");
+        });
+    }
+
+    @Test
     public void testRecoverCheckpointForDefaultCheckpointId() throws Exception {
         testRecoverCheckpoint("", "id1", false, false);
     }

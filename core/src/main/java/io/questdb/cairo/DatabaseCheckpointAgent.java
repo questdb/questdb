@@ -42,6 +42,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -665,11 +666,43 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 TableToken baseTableToken = engine.verifyTableName(baseTableName);
                 intervals.clear();
                 walTxnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, mvLastRefreshTxn, checkpointBaseSeqTxn);
-                // Known gap (tracked follow-up): this path rewrites the checkpoint state with the base txn
-                // advanced to checkpointBaseSeqTxn without consulting walTxnRangeLoader.hasTruncate(). If the
-                // scanned gap holds a truncate, restoring from this checkpoint resumes the view past the
-                // truncate with stale pre-truncate rows. The barrier primitive this loader now exposes can
-                // wire this up the same way the refresh path does; it is left for a follow-up.
+                // A TRUNCATE or DELETE in the scanned base WAL gap (mvLastRefreshTxn, checkpointBaseSeqTxn]
+                // carries no data interval, so the interval-merge below would advance this checkpoint's
+                // persisted refreshIntervalsBaseTxn PAST the barrier - a view restored from the checkpoint
+                // would then resume an incremental refresh past the barrier and keep stale pre-barrier rows.
+                // Instead persist the view's checkpoint state as INVALID and hold the pre-barrier
+                // refreshIntervalsBaseTxn, mirroring MatViewRefreshJob.findRefreshIntervals and CairoEngine's
+                // cold-load backstop so all three WalTxnRangeLoader consumers treat a gap barrier identically.
+                // Only for a view that has actually refreshed before (lastRefreshBaseTxn > -1); a never-refreshed
+                // view has no stale rows to retain (the loop entry already skips mvLastRefreshTxn < 0). This
+                // closes the gap for BOTH truncate and delete; hasTruncate() takes precedence when both fall in
+                // the same gap (either alone is sufficient to invalidate).
+                if ((walTxnRangeLoader.hasTruncate() || walTxnRangeLoader.hasDelete())
+                        && matViewStateReader.getLastRefreshBaseTxn() > -1) {
+                    final CharSequence barrierReason = walTxnRangeLoader.hasTruncate()
+                            ? "truncate operation"
+                            : DeleteOperation.MAT_VIEW_INVALIDATION_REASON;
+                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                    matViewFileWriter.of(path.$());
+                    MatViewState.append(
+                            matViewStateReader.getLastRefreshTimestampUs(),
+                            matViewStateReader.getLastRefreshBaseTxn(),
+                            true,
+                            barrierReason,
+                            matViewStateReader.getLastPeriodHi(),
+                            matViewStateReader.getRefreshIntervals(),
+                            // Do NOT advance past the barrier; keep the pre-barrier base txn so a
+                            // restored-then-repaired (full-refreshed) view re-derives correctly.
+                            matViewStateReader.getRefreshIntervalsBaseTxn(),
+                            matViewFileWriter
+                    );
+                    LOG.info().$("materialized view base table barrier in checkpoint WAL gap, checkpoint state marked invalid [view=").$(matViewToken)
+                            .$(", reason=").$(barrierReason)
+                            .$(", fromTxn=").$(mvLastRefreshTxn)
+                            .$(", toTxn=").$(checkpointBaseSeqTxn)
+                            .I$();
+                    continue;
+                }
 
                 if (intervals.size() > 0) {
                     // Merge with existing intervals
