@@ -289,6 +289,15 @@ public class LiveViewInstance implements QuietCloseable {
     // accumulators over that band without staging it (a plain drain would re-stage rows disk
     // already holds, double-counting size()), then clears the seam once caught up. LONG_NULL means
     // "not catching up". In-RAM only; mutated under the refresh latch only.
+    // Read-only-replica lead catch-up seam, tie quota: how many rows the on-disk (LV table) tier holds
+    // AT leadReconcileSeamTs. The seam is a single timestamp, but output rows can tie it across the
+    // flush boundary -- the primary flushed some of them and a later base commit produced more at the
+    // same ts. Suppressing every tied row would drop the genuinely un-flushed ones from the replica's
+    // result set until the next flush; staging every tied row would double-count the durable ones.
+    // reconcileLeadWithDisk counts the durable ties off the LV reader when it arms the seam, and
+    // drainAppliedBaseForLead suppresses exactly that many rows at the seam ts and stages the rest.
+    // 0 when no seam is armed. In-RAM only; mutated under the refresh latch only.
+    private long leadReconcileSeamDurableTies;
     private long leadReconcileSeamTs = Numbers.LONG_NULL;
     // Read-only-replica publish-stall back-off: a wall-clock retry floor armed when a lead publish
     // stalls (both in-mem tier slots reader-pinned, so a read-only replica cannot flush the lead).
@@ -722,6 +731,15 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getLeadO3CatchupSeqTxn() {
         return leadO3CatchupSeqTxn;
+    }
+
+    /**
+     * @return how many rows the LV's on-disk tier holds at {@link #getLeadReconcileSeamTs()} -- the
+     * number of rows the drain must suppress at the seam ts before staging the rest as genuine lead.
+     * 0 when no seam is armed. See {@link #leadReconcileSeamDurableTies}.
+     */
+    public long getLeadReconcileSeamDurableTies() {
+        return leadReconcileSeamDurableTies;
     }
 
     /**
@@ -1258,6 +1276,13 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setLeadO3CatchupSeqTxn(long leadO3CatchupSeqTxn) {
         this.leadO3CatchupSeqTxn = leadO3CatchupSeqTxn;
+    }
+
+    /**
+     * Sets the durable tie count at the lead catch-up seam. See {@link #leadReconcileSeamDurableTies}.
+     */
+    public void setLeadReconcileSeamDurableTies(long leadReconcileSeamDurableTies) {
+        this.leadReconcileSeamDurableTies = leadReconcileSeamDurableTies;
     }
 
     /**

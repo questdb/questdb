@@ -301,7 +301,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // caller runs the primary path, and reconcileLeadWithDisk is a no-op. This job never runs a replica
     // path itself; only the enterprise subclass does.
 
-    protected boolean deferReplicaLeadWork(LiveViewInstance instance) {
+    /**
+     * Reports whether a read-only replica must hold this view's lead work back this tick -- an O3
+     * symbol catch-up barrier, or a publish-stall / refresh-failure retry floor. Called twice per
+     * tick, and the distinction matters:
+     * <ul>
+     *     <li>{@code authoritative == false} -- the {@link #scanForLaggingViews} pre-check, which runs
+     *     OUTSIDE the refresh latch purely so a gated view costs a clock read instead of a re-drain.
+     *     It must be side-effect free: with one job per live-view worker and every worker scanning
+     *     every view, a pre-latch clear could erase a gate another worker armed under the latch
+     *     microseconds earlier.</li>
+     *     <li>{@code authoritative == true} -- the {@link #refreshInstance} check, which runs UNDER
+     *     the refresh latch and is the one that decides. A gate satisfied here is cleared here, so
+     *     the check-and-clear is atomic against the workers that arm gates (all of which arm under
+     *     the same latch).</li>
+     * </ul>
+     * The primary default declines both. EntLiveViewRefreshJob overrides it.
+     */
+    protected boolean deferReplicaLeadWork(LiveViewInstance instance, boolean authoritative) {
         return false;
     }
 
@@ -398,6 +415,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long appendedRows
     ) throws SqlException {
         return false;
+    }
+
+    /**
+     * Signals the end of one lead-refresh cycle -- drain plus publish, however it ended (published,
+     * stalled, or threw). Runs under the refresh latch. A read-only replica overrides it to release
+     * the native backing of the window-state snapshot it took for the publish-stall rollback: that
+     * snapshot is scoped to exactly this cycle, so a worker that holds onto it retains its largest
+     * ever snapshot for the process lifetime. No-op on a primary, which takes no such snapshot.
+     */
+    protected void onLeadRefreshCycleEnd() {
     }
 
     /**
@@ -970,17 +997,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // applied reader is consistent. The primary default returns false, so the raw-WAL drain
             // below runs. Either source lands its result in drainResult, which finishLeadRefresh then
             // publishes as the un-flushed lead.
-            if (!drainLeadOverride(
-                    instance, windowFactory, baseToken, cursorTimestampIndex,
-                    viewLowerBoundTimestamp, fromSeqTxn, populateTier
-            )) {
-                drainBaseWal(
-                        instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
-                        cursorTimestampIndex, viewLowerBoundTimestamp, filter, fromSeqTxn, toSeqTxn,
-                        null, null, populateTier, latestSeenTsSnapshot
-                );
+            try {
+                if (!drainLeadOverride(
+                        instance, windowFactory, baseToken, cursorTimestampIndex,
+                        viewLowerBoundTimestamp, fromSeqTxn, populateTier
+                )) {
+                    drainBaseWal(
+                            instance, windowFactory, baseToken, baseMetadata, baseTimestampIndex,
+                            cursorTimestampIndex, viewLowerBoundTimestamp, filter, fromSeqTxn, toSeqTxn,
+                            null, null, populateTier, latestSeenTsSnapshot
+                    );
+                }
+                finishLeadRefresh(instance, windowFactory, baseToken, populateTier);
+            } finally {
+                // The publish decision is made; a replica's rollback snapshot is dead either way.
+                onLeadRefreshCycleEnd();
             }
-            finishLeadRefresh(instance, windowFactory, baseToken, populateTier);
             return;
         }
 
@@ -2287,6 +2319,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * catalogue reflects the timestamp column's dedup flag, which is set exactly when
      * the table is dedup-enabled (mirrors {@code TableWriter.isDeduplicationEnabled()}).
      */
+    /**
+     * Reports whether the apply-lag back-off still holds this view back this tick. The wall-clock floor
+     * is only an anti-spin bound; the real precondition is the base applying past the seqTxn that forced
+     * the defer, so an O(1) tracker read short-circuits the floor the moment apply catches up -- which is
+     * also what lets a frozen test clock, which never crosses the floor, converge.
+     * <p>
+     * {@code authoritative} callers run under the refresh latch and clear a floor they find satisfied;
+     * pre-latch callers pass {@code false} and mutate nothing. Every arming site runs under the latch, so
+     * the authoritative check-and-clear cannot erase an episode a peer worker armed concurrently.
+     */
+    private boolean isApplyLagDeferred(LiveViewInstance instance, boolean authoritative) {
+        final long deferUntilUs = instance.getApplyLagDeferUntilUs();
+        if (deferUntilUs == Numbers.LONG_NULL) {
+            return false;
+        }
+        final LiveViewDefinition definition = instance.getDefinition();
+        final TableToken baseToken = definition != null ? definition.getBaseTableToken() : null;
+        final boolean applyCaughtUp = baseToken != null
+                && engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn()
+                >= instance.getApplyLagDeferTargetSeqTxn();
+        if (!applyCaughtUp && engine.getConfiguration().getMicrosecondClock().getTicks() < deferUntilUs) {
+            return true;
+        }
+        if (authoritative) {
+            instance.setApplyLagDeferUntilUs(Numbers.LONG_NULL);
+        }
+        return false;
+    }
+
     private boolean isDedupBase(LiveViewInstance instance) {
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
         try (MetadataCacheReader metaRO = engine.getMetadataCache().readLock()) {
@@ -4909,8 +4970,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .I$();
             }
             // Replica anti-spin: skip a view whose lead loop armed a publish-stall back-off that has not
-            // elapsed, so the worker idles instead of re-draining into the same stall every tick.
-            if (leadOnly && deferReplicaLeadWork(instance)) {
+            // elapsed, so the worker idles instead of re-draining into the same stall every tick. This is
+            // a side-effect-free pre-check only -- the gate that decides is the authoritative one
+            // refreshInstance runs under the refresh latch.
+            if (leadOnly && deferReplicaLeadWork(instance, false)) {
                 continue;
             }
             // Promote-hydrate consistency guard (primary only). A role migration onto a
@@ -5205,23 +5268,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // reads. Skip re-entering the full window recompute until the floor elapses so the
         // worker does not hot-spin the drain every tick; apply advances on its own, so a tick
         // past the floor converges. Cheap guard before the latch - a deferred view costs a
-        // clock read, not a re-drain. Covers both refresh entry paths.
-        final long deferUntilUs = instance.getApplyLagDeferUntilUs();
-        if (deferUntilUs != Numbers.LONG_NULL
-                && engine.getConfiguration().getMicrosecondClock().getTicks() < deferUntilUs) {
-            // The wall-clock floor is only an anti-spin bound; the real precondition is the base
-            // applying past the seqTxn that forced the defer. Re-check it cheaply (an O(1) tracker
-            // read). If apply has caught up, the lag is resolved - clear the floor and drain now
-            // instead of waiting out the fixed floor, which a frozen test clock never crosses. If
-            // it still lags, skip cheaply as before so the drain does not hot-spin.
-            final LiveViewDefinition definition = instance.getDefinition();
-            final TableToken baseToken = definition != null ? definition.getBaseTableToken() : null;
-            if (baseToken == null
-                    || engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn()
-                    < instance.getApplyLagDeferTargetSeqTxn()) {
-                return;
-            }
-            instance.setApplyLagDeferUntilUs(Numbers.LONG_NULL);
+        // clock read, not a re-drain. Covers both refresh entry paths. Side-effect free: the
+        // floor is cleared only by the authoritative under-latch check below.
+        if (isApplyLagDeferred(instance, false)) {
+            return;
         }
         // Live-view WAL apply back-off: the refresh worker drives the view's OWN WAL apply
         // inline (applyWalDirect) after committing a flushed lead or a coupled-drain batch.
@@ -5281,6 +5331,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // waitForUnfrozen() without racing the agent's copy - do not move a rewrite
             // ahead of this guard or out of the latch hold.
             if (instance.isFreezeInProgress()) {
+                return;
+            }
+            // Authoritative apply-lag gate, under the refresh latch, and the only place the floor is
+            // cleared. The pre-latch check above races: a worker that reads a satisfied floor there can
+            // be descheduled, and by the time it clears the field another worker has already run a full
+            // cycle under the latch, hit the lag again, and armed a NEWER floor -- which the stale clear
+            // then erases, dropping this view back into a re-drain-every-tick loop. Arming happens under
+            // this latch too (the LiveViewApplyLagException catch below), so checking and clearing here
+            // is atomic against it.
+            if (isApplyLagDeferred(instance, true)) {
                 return;
             }
             boolean attempted = false;
@@ -5389,6 +5449,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final boolean flushDue = lastFlushUs == Numbers.LONG_NULL || nowUs - lastFlushUs >= flushEveryMicros;
                 if (leadEligible) {
                     if (leadReconstruction) {
+                        // Authoritative replica lead gate, under the refresh latch. The pre-latch check in
+                        // scanForLaggingViews is a cheap skip only: with one job per live-view worker and
+                        // every worker scanning every view, worker B can clear that check while worker A
+                        // still holds the latch, and A can arm a gate (an O3 symbol catch-up barrier, say)
+                        // before it releases. B would then drain straight through the barrier A just
+                        // raised. Re-check here, where arming and checking serialise on the same latch.
+                        if (deferReplicaLeadWork(instance, true)) {
+                            return;
+                        }
                         if (!isLeadRollbackSupported(instance, getWindowFactory(instance))) {
                             // The replica cannot safely reconstruct this view's lead: a stalled publish
                             // would leave the window state advanced with no way to roll it back (the
