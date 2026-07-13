@@ -100,10 +100,11 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // Pushdown pruning drops whole non-matching row groups at the page-frame
         // level, but the metadata-only size/skip fast paths account at the
         // PARTITION-frame level, which is blind to that pruning: they would count
-        // physical rows the cursor never yields. Both PageFrameRecordCursorImpl
-        // .calculateSize() and .skipRows() therefore gate on hasActivePushdownFilter().
+        // physical rows the cursor never yields. All three of PageFrameRecordCursorImpl
+        // .calculateSize(), .skipRows() and .size() therefore gate on
+        // hasActivePushdownFilter().
         //
-        // Neither gate is reachable through a plain SELECT: a residual filter factory
+        // No gate is reachable through a plain SELECT: a residual filter factory
         // always wraps the pushdown-carrying page-frame factory, and the wrapper's own
         // calculateSize()/skipRows() walk rows. The live view refresh job unwraps it -
         // filterFactory.getBaseFactory(), re-applying the WHERE above - and drives the
@@ -182,6 +183,19 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                     // all 5001 physical rows and the counter lands on 0.
                     Assert.assertEquals(5_001 - walked, counter.get());
                     Assert.assertFalse(cursor.hasNext());
+                }
+
+                // size() is the third member of the family. It is an entity cursor here, so
+                // un-gated it would hand back the partition-frame physical count (5001) -
+                // the same pruning-blind number the two gates above reject. A size() must
+                // either be exact or -1 (unknown); the pruned scan cannot know it up front,
+                // so -1 is the only sound answer.
+                try (RecordCursor cursor = pageFrameFactory.getCursor(sqlExecutionContext)) {
+                    final long size = cursor.size();
+                    Assert.assertTrue(
+                            "size() must be exact or unknown, never the pruning-blind physical count [size=" + size + ", walked=" + walked + ']',
+                            size == -1 || size == walked
+                    );
                 }
             }
         });

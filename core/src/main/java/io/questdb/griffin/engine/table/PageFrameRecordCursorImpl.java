@@ -200,6 +200,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public long size() {
+        // Same gate as calculateSize() and skipRows(): pushdown pruning drops whole
+        // non-matching parquet row groups, so frameCursor.size() reports physical rows
+        // the cursor never yields. Report unknown size instead of that over-count.
+        if (frameCursor.hasActivePushdownFilter()) {
+            return -1;
+        }
         return entityCursor ? frameCursor.size() : -1;
     }
 
