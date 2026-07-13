@@ -86,4 +86,24 @@ public interface DurableAckRegistry {
      */
     default void onTableDropped(TableToken tableToken) {
     }
+
+    /**
+     * Whether this server can offer the given {@link DurabilityTier}. Availability is server-level;
+     * an offered tier may still report -1 for a table that cannot satisfy it (e.g. a NOSYNC table
+     * under the LOCAL tier). Default: no tier available; concrete registries override.
+     */
+    default boolean isTierAvailable(int tier) {
+        return false;
+    }
+
+    /** The strongest tier this server can offer, or {@link DurabilityTier#NONE}. */
+    default int strongestAvailableTier() {
+        if (isTierAvailable(DurabilityTier.REPLICATED)) {
+            return DurabilityTier.REPLICATED;
+        }
+        if (isTierAvailable(DurabilityTier.LOCAL)) {
+            return DurabilityTier.LOCAL;
+        }
+        return DurabilityTier.NONE;
+    }
 }

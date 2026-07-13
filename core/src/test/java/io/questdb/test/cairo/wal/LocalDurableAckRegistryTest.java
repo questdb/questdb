@@ -27,7 +27,9 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.LocalDurableAckRegistry;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.test.AbstractCairoTest;
@@ -376,6 +378,22 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
                     -1L, noOp.getLocalDurableSeqTxn("some~dir")
             );
             Assert.assertFalse("DefaultDurableAckRegistry must not be enabled", noOp.isEnabled());
+        });
+    }
+
+    // ---- (9) DurableAckRegistry tier availability ----
+
+    /**
+     * (9) LocalDurableAckRegistry reports the LOCAL tier as available (and only that tier),
+     * so strongestAvailableTier() resolves to LOCAL.
+     */
+    @Test
+    public void testTierAvailability() throws Exception {
+        assertMemoryLeak(() -> {
+            LocalDurableAckRegistry registry = new LocalDurableAckRegistry(engine);
+            Assert.assertTrue(registry.isTierAvailable(DurabilityTier.LOCAL));
+            Assert.assertFalse(registry.isTierAvailable(DurabilityTier.REPLICATED));
+            Assert.assertEquals(DurabilityTier.LOCAL, registry.strongestAvailableTier());
         });
     }
 }

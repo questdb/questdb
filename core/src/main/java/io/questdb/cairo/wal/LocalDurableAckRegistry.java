@@ -56,11 +56,15 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
     }
 
     /**
-     * Returns the highest locally-fdatasync'd seqTxn for the given table, or -1 if the table is
-     * unknown, uses NOSYNC commit mode, or has not yet committed a local-durable txn.
+     * Shared local-fsync tier lookup: resolves {@code tableDirName} to a {@link TableToken} via
+     * the engine's table name registry, then reads
+     * {@link SeqTxnTracker#getLocalDurableSeqTxn()} from the sequencer API. Returns -1 if the
+     * table is unknown, uses NOSYNC commit mode, or has not yet committed a local-durable txn.
+     *
+     * <p>Extracted so Enterprise's upload-backed registry can compose the local tier without
+     * depending on a {@link LocalDurableAckRegistry} instance.
      */
-    @Override
-    public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+    public static long resolveLocalDurableSeqTxn(CairoEngine engine, CharSequence tableDirName) {
         TableToken token = engine.getTableTokenByDirName(tableDirName);
         if (token == null) {
             return -1L;
@@ -73,6 +77,15 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
             // and the tracker fetch — harmless, return -1.
             return -1L;
         }
+    }
+
+    /**
+     * Returns the highest locally-fdatasync'd seqTxn for the given table, or -1 if the table is
+     * unknown, uses NOSYNC commit mode, or has not yet committed a local-durable txn.
+     */
+    @Override
+    public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+        return resolveLocalDurableSeqTxn(engine, tableDirName);
     }
 
     /**
@@ -90,5 +103,14 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
     @Override
     public boolean isEnabled() {
         return true;
+    }
+
+    /**
+     * Only the {@link DurabilityTier#LOCAL} tier is available in OSS — there is no upload
+     * pipeline to offer {@link DurabilityTier#REPLICATED}.
+     */
+    @Override
+    public boolean isTierAvailable(int tier) {
+        return tier == DurabilityTier.LOCAL;
     }
 }
