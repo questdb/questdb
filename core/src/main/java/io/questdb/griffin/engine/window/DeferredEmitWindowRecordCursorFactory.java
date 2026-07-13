@@ -83,7 +83,7 @@ import java.util.Arrays;
  * <p>
  * Phase 6 constraints enforced at construction:
  * <ul>
- *   <li>Every window function's value must fit in 8 bytes (Long, Double, Date, Timestamp, Int).</li>
+ *   <li>Every window function's value must fit in 8 bytes (Long, Double, Date, Timestamp).</li>
  *   <li>At least one window function must have positive lookahead (otherwise the planner uses
  *       {@link WindowRecordCursorFactory} directly).</li>
  *   <li>{@code ringCapacity * leadCount <= 64} so the per-slot LEAD-pending bits fit in a single
@@ -95,7 +95,9 @@ import java.util.Arrays;
  * trio. Per-partition state is stored as the value layout built by {@link #buildPartitionValueTypes(int)}
  * (5 base longs: slotsByteOffset, ringHead, ringTail, ringCount, pendingFilled, plus 3 longs per LAG
  * function). The cursor enforces the runtime partition cardinality cap from
- * {@code cairo.sql.window.streaming.max.partitions}.
+ * {@code cairo.sql.window.streaming.max.partitions}. Partitioned mode emits in partition-major
+ * resolution order and does not preserve base scan order, so any query without an outer
+ * {@code ORDER BY} may observe a different row order when streaming is enabled.
  * <p>
  * Memory bound: pending native memory is {@code O(partitions × (maxLookahead + Σ lag_offsets))}, not
  * {@code O(partitions × maxLookahead)} — each streaming LAG eagerly reserves an {@code offset}-sized
@@ -1009,10 +1011,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             @Override
             public float getFloat(int col) {
-                int off = columnToSlotOffset[col];
-                if (off != -1) {
-                    return Float.intBitsToFloat((int) Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off));
-                }
+                assert columnToSlotOffset[col] == -1 : "streaming window columns cannot have FLOAT type";
                 return functions.getQuick(col).getFloat(baseRec);
             }
 
@@ -1043,10 +1042,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             @Override
             public int getInt(int col) {
-                int off = columnToSlotOffset[col];
-                if (off != -1) {
-                    return (int) Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
-                }
+                assert columnToSlotOffset[col] == -1 : "streaming window columns cannot have INT type";
                 return functions.getQuick(col).getInt(baseRec);
             }
 

@@ -274,6 +274,7 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
         // robust if the constant filter is ever widened.
         private long defaultLongValue;
         private final ColumnTypes keyTypes;
+        private long memoryBaseAddress;
 
         public StreamingLagOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -323,6 +324,7 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
             // super's close/reset frees map and memory but leaves the references non-null.
             map = null;
             memory = null;
+            memoryBaseAddress = 0;
         }
 
         @Override
@@ -352,19 +354,22 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
             // First touch of this partition: allocate its slice in the ring memory and record the
             // returned page-relative offset.
             if (count == 0L && startOffset == 0L) {
-                startOffset = memory.appendAddressFor(offset * Long.BYTES) - memory.getPageAddress(0);
+                final long ringAddress = memory.appendAddressFor(offset * Long.BYTES);
+                memoryBaseAddress = memory.getPageAddress(0);
+                startOffset = ringAddress - memoryBaseAddress;
             }
 
+            final long valueAddress = memoryBaseAddress + startOffset + firstIdx * Long.BYTES;
             long lagValue;
             if (count < offset) {
                 lagValue = defaultLongValue;
             } else {
-                lagValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
+                lagValue = Unsafe.getUnsafe().getLong(valueAddress);
             }
             long l = arg.getLong(record);
             // ignoreNulls is always false in streaming dispatch (rejected by tryNewStreamingInstance);
             // the buffer always advances and respect-NULL semantics fall out automatically.
-            memory.putLong(startOffset + firstIdx * Long.BYTES, l);
+            Unsafe.getUnsafe().putLong(valueAddress, l);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
 
             firstIdx++;

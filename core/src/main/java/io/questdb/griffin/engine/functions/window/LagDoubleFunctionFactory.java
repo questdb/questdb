@@ -253,6 +253,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         // Resolved in init() after super.init() runs defaultValue.init(); see LagLongFunctionFactory.
         private double defaultDoubleValue;
         private final ColumnTypes keyTypes;
+        private long memoryBaseAddress;
 
         public StreamingLagOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -298,6 +299,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             // super's close/reset frees map and memory but leaves the references non-null.
             map = null;
             memory = null;
+            memoryBaseAddress = 0;
         }
 
         @Override
@@ -320,17 +322,20 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             long count = Unsafe.getUnsafe().getLong(partitionStateAddr + 2L * Long.BYTES);
 
             if (count == 0L && startOffset == 0L) {
-                startOffset = memory.appendAddressFor(offset * Double.BYTES) - memory.getPageAddress(0);
+                final long ringAddress = memory.appendAddressFor(offset * Double.BYTES);
+                memoryBaseAddress = memory.getPageAddress(0);
+                startOffset = ringAddress - memoryBaseAddress;
             }
 
+            final long valueAddress = memoryBaseAddress + startOffset + firstIdx * Double.BYTES;
             double lagValue;
             if (count < offset) {
                 lagValue = defaultDoubleValue;
             } else {
-                lagValue = memory.getDouble(startOffset + firstIdx * Double.BYTES);
+                lagValue = Unsafe.getUnsafe().getDouble(valueAddress);
             }
             double d = arg.getDouble(record);
-            memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+            Unsafe.getUnsafe().putDouble(valueAddress, d);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
 
             firstIdx++;

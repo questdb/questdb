@@ -252,6 +252,7 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
         // Resolved in init() after super.init() runs defaultValue.init(); see LagLongFunctionFactory.
         private long defaultDateValue;
         private final ColumnTypes keyTypes;
+        private long memoryBaseAddress;
 
         public StreamingLagOverPartitionFunction(
                 CairoConfiguration configuration,
@@ -297,6 +298,7 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
             // super's close/reset frees map and memory but leaves the references non-null.
             map = null;
             memory = null;
+            memoryBaseAddress = 0;
         }
 
         @Override
@@ -319,17 +321,20 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
             long count = Unsafe.getUnsafe().getLong(partitionStateAddr + 2L * Long.BYTES);
 
             if (count == 0L && startOffset == 0L) {
-                startOffset = memory.appendAddressFor(offset * Long.BYTES) - memory.getPageAddress(0);
+                final long ringAddress = memory.appendAddressFor(offset * Long.BYTES);
+                memoryBaseAddress = memory.getPageAddress(0);
+                startOffset = ringAddress - memoryBaseAddress;
             }
 
+            final long valueAddress = memoryBaseAddress + startOffset + firstIdx * Long.BYTES;
             long lagValue;
             if (count < offset) {
                 lagValue = defaultDateValue;
             } else {
-                lagValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
+                lagValue = Unsafe.getUnsafe().getLong(valueAddress);
             }
             long l = arg.getDate(record);
-            memory.putLong(startOffset + firstIdx * Long.BYTES, l);
+            Unsafe.getUnsafe().putLong(valueAddress, l);
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), lagValue);
 
             firstIdx++;
