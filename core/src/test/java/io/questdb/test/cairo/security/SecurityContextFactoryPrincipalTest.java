@@ -26,6 +26,7 @@ package io.questdb.test.cairo.security;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.AbstractPrincipalAwareSecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.AllowAllSecurityContextFactory;
 import io.questdb.cairo.security.DenyAllSecurityContext;
@@ -246,15 +247,11 @@ public class SecurityContextFactoryPrincipalTest {
 
     @Test
     public void testForPrincipalWithNullCurrentPrincipalDoesNotThrow() {
-        // forPrincipal compares the requested principal against getPrincipal(); a subclass that reports
-        // a null principal must not NPE (Chars.equals is @NotNull). It derives a context for the
-        // requested principal instead of matching the singleton.
-        AllowAllSecurityContext nullPrincipal = new AllowAllSecurityContext() {
-            @Override
-            public CharSequence getPrincipal() {
-                return null;
-            }
-        };
+        // forPrincipal compares the requested principal against getPrincipal(); a context that reports a
+        // null principal must not NPE (Chars.equals is @NotNull). It derives a context for the requested
+        // principal instead of matching the root.
+        final TestAllowAllSecurityContext nullPrincipal = new TestAllowAllSecurityContext(false, null);
+        Assert.assertNull(nullPrincipal.getPrincipal());
         SecurityContext derived = nullPrincipal.forPrincipal("foo");
         Assert.assertNotSame(nullPrincipal, derived);
         TestUtils.assertEquals("foo", derived.getPrincipal());
@@ -485,9 +482,50 @@ public class SecurityContextFactoryPrincipalTest {
 
     @Test
     public void testForPrincipalPreservesRuntimeType() {
-        // derived contexts must keep their concrete runtime type, not be downgraded
-        Assert.assertTrue(freshAllowAll().forPrincipal("u") instanceof AllowAllSecurityContext);
-        Assert.assertTrue(freshReadOnly().forPrincipal("u") instanceof ReadOnlySecurityContext);
+        // A subclass that overrides newPrincipalContext must come back as ITSELF. Asserting `instanceof
+        // AllowAllSecurityContext` cannot detect a downgrade -- a plain AllowAllSecurityContext satisfies it
+        // too -- so compare the exact runtime class.
+        final TestAllowAllSecurityContext allowAll = freshAllowAll();
+        Assert.assertSame(TestAllowAllSecurityContext.class, allowAll.forPrincipal("u").getClass());
+
+        final TestReadOnlySecurityContext readOnly = freshReadOnly();
+        Assert.assertSame(TestReadOnlySecurityContext.class, readOnly.forPrincipal("u").getClass());
+
+        // the roots themselves derive to their own concrete type
+        Assert.assertSame(AllowAllSecurityContext.class, AllowAllSecurityContext.INSTANCE.forPrincipal("u").getClass());
+        Assert.assertSame(ReadOnlySecurityContext.class, ReadOnlySecurityContext.INSTANCE.forPrincipal("u").getClass());
+    }
+
+    @Test
+    public void testForPrincipalRejectsSubclassThatDropsItsOverrides() {
+        // A subclass that overrides authorize* but forgets newPrincipalContext inherits the supertype's
+        // implementation, so forPrincipal hands back a plain AllowAllSecurityContext and every override is
+        // dropped -- the derived context ALLOWS what the base DENIES. forPrincipal must reject that rather
+        // than silently downgrade a security check. QuestDB runs with -ea (see the surefire argLine).
+        Assert.assertTrue(
+                "this test requires assertions to be enabled (-ea)",
+                AbstractPrincipalAwareSecurityContext.class.desiredAssertionStatus()
+        );
+        final AllowAllSecurityContext denyingHttp = new AllowAllSecurityContext() {
+            @Override
+            public void authorizeHttp() {
+                throw CairoException.authorization().put("HTTP denied");
+            }
+        };
+        // the override is honoured on the base context...
+        try {
+            denyingHttp.authorizeHttp();
+            Assert.fail("expected the subclass override to deny");
+        } catch (CairoException e) {
+            Assert.assertTrue(e.getFlyweightMessage().toString().contains("HTTP denied"));
+        }
+        // ...and deriving it must not be allowed to throw that away
+        try {
+            denyingHttp.forPrincipal("alice");
+            Assert.fail("expected forPrincipal to reject a subclass that does not override newPrincipalContext");
+        } catch (AssertionError e) {
+            Assert.assertTrue(e.getMessage(), e.getMessage().contains("must override newPrincipalContext"));
+        }
     }
 
     @Test
@@ -537,16 +575,17 @@ public class SecurityContextFactoryPrincipalTest {
         }
     }
 
-    private static AllowAllSecurityContext freshAllowAll() {
-        // a fresh instance (not the shared singleton) so each test gets an isolated, empty principal cache
-        return new AllowAllSecurityContext() {
-        };
+    private static TestAllowAllSecurityContext freshAllowAll() {
+        // a fresh instance (not the shared singleton) so each test gets an isolated, empty principal cache.
+        // It is a named subclass that overrides newPrincipalContext, i.e. it honours the contract forPrincipal
+        // asserts on -- an anonymous `new AllowAllSecurityContext() {}` would inherit the supertype's
+        // newPrincipalContext and be downgraded away from itself on the first derivation.
+        return new TestAllowAllSecurityContext();
     }
 
-    private static ReadOnlySecurityContext freshReadOnly() {
-        // a fresh instance (not the shared singleton) so each test gets an isolated, empty principal cache
-        return new ReadOnlySecurityContext() {
-        };
+    private static TestReadOnlySecurityContext freshReadOnly() {
+        // see freshAllowAll()
+        return new TestReadOnlySecurityContext();
     }
 
     private static PrincipalContext principal(CharSequence name) {
@@ -566,5 +605,43 @@ public class SecurityContextFactoryPrincipalTest {
                 return name;
             }
         };
+    }
+
+    /**
+     * A well-behaved subclass: it overrides {@code newPrincipalContext} to return its own type, so
+     * {@code forPrincipal} preserves it. Used as an isolated (non-singleton) cache root by most tests, and
+     * as the positive case in {@link #testForPrincipalPreservesRuntimeType()}.
+     */
+    private static class TestAllowAllSecurityContext extends AllowAllSecurityContext {
+        private TestAllowAllSecurityContext() {
+            super();
+        }
+
+        private TestAllowAllSecurityContext(boolean settingsReadOnly, CharSequence principal) {
+            super(settingsReadOnly, principal);
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            return new TestAllowAllSecurityContext(settingsReadOnly, principal);
+        }
+    }
+
+    /**
+     * The read-only counterpart of {@link TestAllowAllSecurityContext}.
+     */
+    private static class TestReadOnlySecurityContext extends ReadOnlySecurityContext {
+        private TestReadOnlySecurityContext() {
+            super();
+        }
+
+        private TestReadOnlySecurityContext(boolean settingsReadOnly, CharSequence principal) {
+            super(settingsReadOnly, principal);
+        }
+
+        @Override
+        protected SecurityContext newPrincipalContext(CharSequence principal) {
+            return new TestReadOnlySecurityContext(settingsReadOnly, principal);
+        }
     }
 }

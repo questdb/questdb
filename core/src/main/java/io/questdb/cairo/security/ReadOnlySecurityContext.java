@@ -35,10 +35,12 @@ import io.questdb.griffin.engine.functions.catalogue.Constants;
  * <p>
  * A subclass that overrides an {@code authorize*} or identity method (e.g. the mat view refresh context,
  * which lets writes through to its own view) MUST also override {@link #newPrincipalContext} to return
- * its own type. This class's {@code newPrincipalContext} returns a plain {@code ReadOnlySecurityContext},
- * so {@code forPrincipal} on a subclass that does not override it would silently drop the override and
- * downgrade the context to plain read-only. No factory calls {@code forPrincipal} on a subclass today, so
- * this is a latent trap rather than a live bug.
+ * its own type, or return {@code this} if it is identity-invariant (as {@link DenyAllSecurityContext}
+ * does). This class's {@code newPrincipalContext} returns a plain {@code ReadOnlySecurityContext}, so
+ * {@code forPrincipal} on a subclass that does neither would drop the override and downgrade the context
+ * to plain read-only. {@code forPrincipal} asserts against that (see
+ * {@code AbstractPrincipalAwareSecurityContext.newCheckedPrincipalContext}), so a subclass that forgets
+ * fails loudly under {@code -ea} instead of quietly losing its restrictions.
  */
 public class ReadOnlySecurityContext extends AbstractReadOnlySecurityContext {
     public static final ReadOnlySecurityContext INSTANCE = new ReadOnlySecurityContext(false, Constants.USER_NAME);

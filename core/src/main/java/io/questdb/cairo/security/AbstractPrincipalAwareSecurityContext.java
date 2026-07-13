@@ -74,9 +74,14 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
      * {@value #MAX_CACHED_PRINCIPALS} entries, beyond which further principals degrade to
      * allocate-per-call rather than growing without bound.
      * <p>
-     * The method is {@code final} and routes instance creation through
-     * {@link #newPrincipalContext(CharSequence)} so subclasses preserve their runtime type
-     * instead of being silently downgraded.
+     * The method is {@code final} and routes instance creation through the overridable
+     * {@link #newPrincipalContext(CharSequence)}. That does not by itself preserve a subclass's
+     * runtime type: a subclass of a concrete context that does not override
+     * {@code newPrincipalContext} inherits its supertype's implementation and is silently
+     * downgraded, dropping every {@code authorize*} and identity override it declared -- turning a
+     * context that DENIES an operation into one that ALLOWS it. An assertion in
+     * {@link #newCheckedPrincipalContext(CharSequence)} rejects that, so the requirement is enforced
+     * rather than merely documented (QuestDB runs with {@code -ea}).
      */
     public final SecurityContext forPrincipal(@Transient @Nullable CharSequence principal) {
         // compare against getPrincipal(), not the raw field, so a subclass that overrides getPrincipal()
@@ -121,11 +126,11 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
             if (cache.size() >= MAX_CACHED_PRINCIPALS) {
                 // pathological principal cardinality: stop growing and fall back to allocate-per-call
                 // (the pre-cache behavior) instead of retaining contexts without bound
-                return newPrincipalContext(Chars.toString(principal));
+                return newCheckedPrincipalContext(Chars.toString(principal));
             }
         }
         final String key = Chars.toString(principal);
-        final SecurityContext context = newPrincipalContext(key);
+        final SecurityContext context = newCheckedPrincipalContext(key);
         final CharSequenceObjHashMap<SecurityContext> next = new CharSequenceObjHashMap<>();
         if (cache != null) {
             next.putAll(cache);
@@ -136,9 +141,29 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
     }
 
     /**
+     * Derives a context via {@link #newPrincipalContext(CharSequence)} and asserts that the subclass
+     * did not let itself be downgraded. A subclass of a concrete context that forgets to override
+     * {@code newPrincipalContext} inherits its supertype's implementation, so the derived context comes
+     * back as the supertype and every {@code authorize*} / identity override it declared is silently
+     * dropped -- a context that DENIES an operation would start ALLOWING it. Returning {@code this} is
+     * the other legal answer: an identity-invariant context (deny-all, SQL validation, mat view refresh)
+     * ignores the principal by design.
+     */
+    private SecurityContext newCheckedPrincipalContext(CharSequence principal) {
+        final SecurityContext context = newPrincipalContext(principal);
+        assert context == this || context.getClass() == getClass()
+                : getClass().getName() + " must override newPrincipalContext(): forPrincipal() would "
+                + "silently downgrade it to " + context.getClass().getName()
+                + ", dropping its authorize*/identity overrides";
+        return context;
+    }
+
+    /**
      * Creates the concrete context returned by {@link #forPrincipal(CharSequence)} for a new
-     * principal. The {@code principal} is already a stable copy. Subclasses must override this
-     * to return their own type so {@code forPrincipal} does not downgrade them.
+     * principal. The {@code principal} is already a stable copy. Every subclass MUST override this to
+     * return its own type, or return {@code this} if it is identity-invariant; an assertion in
+     * {@link #newCheckedPrincipalContext(CharSequence)} rejects anything else, because an inherited
+     * implementation silently downgrades the subclass and drops its overrides.
      * <p>
      * The derived context overrides only the reported principal; {@code getAuthType()} and
      * {@code isExternal()} keep their defaults ({@code AUTH_TYPE_NONE} / not external). These
