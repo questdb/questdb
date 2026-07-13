@@ -3420,7 +3420,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Delete segment 5's event file so loader.load() throws a CairoException when
-            // hasBaseTableTruncateInWalGap tries to open it during the next hydrateMatViewStateStore call.
+            // baseTableBarrierReasonInWalGap tries to open it during the next hydrateMatViewStateStore call.
             final TableToken baseTableToken = engine.getTableTokenIfExists("base");
             Assert.assertNotNull(baseTableToken);
             try (Path path = new Path()) {
@@ -3456,7 +3456,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             // Simulate the role-promote hydrate path. The truncate scan's load() will throw because
             // the WAL segment file is missing. The fix catches the exception inside
-            // hasBaseTableTruncateInWalGap and returns false, allowing enqueueIncrementalRefresh to
+            // baseTableBarrierReasonInWalGap and returns null, allowing enqueueIncrementalRefresh to
             // run. Without the fix the view is silently left unscheduled.
             engine.hydrateMatViewStateStore();
 

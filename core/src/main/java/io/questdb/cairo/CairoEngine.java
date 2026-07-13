@@ -111,6 +111,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
+import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -2503,16 +2504,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return state.getViewMetadata();
     }
 
-    // Scans the base-table WAL gap (lastRefreshBaseTxn, baseTableLastTxn] for a TRUNCATE or a DELETE, using
-    // the same range and loader an incremental refresh would use (so there is no off-by-one vs interval
-    // planning). A truncate or a delete in the gap means a resumed incremental refresh would keep stale
-    // pre-barrier rows, so the caller must invalidate the view instead. (DELETE-scoped alongside TRUNCATE;
-    // DROP/DETACH PARTITION and rows-affected UPDATE remain the tracked follow-up - see WalTxnRangeLoader.)
-    // Runs only on the cold load/hydrate path, so a transient loader is fine. The method name is kept for
-    // churn reasons though it now also detects a DELETE.
-    private boolean hasBaseTableTruncateInWalGap(TableToken baseTableToken, long lastRefreshBaseTxn, long baseTableLastTxn) {
+    // Scans the base-table WAL gap (lastRefreshBaseTxn, baseTableLastTxn] for an invalidating barrier and
+    // returns its reason string, using the same range and loader an incremental refresh would use (so there
+    // is no off-by-one vs interval planning): "truncate operation" for a TRUNCATE,
+    // DeleteOperation.MAT_VIEW_INVALIDATION_REASON ("delete operation") for a DELETE, or null when the gap
+    // holds neither. A barrier in the gap means a resumed incremental refresh would keep stale pre-barrier
+    // rows, so the caller must invalidate the view (with this exact reason) instead. (DELETE-scoped alongside
+    // TRUNCATE; DROP/DETACH PARTITION and rows-affected UPDATE remain the tracked follow-up - see
+    // WalTxnRangeLoader.) Runs only on the cold load/hydrate path, so a transient loader is fine.
+    private String baseTableBarrierReasonInWalGap(TableToken baseTableToken, long lastRefreshBaseTxn, long baseTableLastTxn) {
         if (lastRefreshBaseTxn >= baseTableLastTxn) {
-            return false;
+            return null;
         }
         // This load-time probe scans the same (lastRefreshBaseTxn, baseTableLastTxn] gap that the
         // enqueued incremental refresh re-scans to build its intervals, so the no-truncate promote path
@@ -2525,7 +2527,12 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             final LongList intervals = new LongList();
             loader.load(this, path, baseTableToken, intervals, lastRefreshBaseTxn, baseTableLastTxn);
-            return loader.hasTruncate() || loader.hasDelete();
+            // Compute the reason into a local before the transient loader closes. hasTruncate() takes
+            // precedence when both a truncate and a delete fall in the same gap (either alone invalidates).
+            final String barrierReason = loader.hasTruncate()
+                    ? "truncate operation"
+                    : (loader.hasDelete() ? DeleteOperation.MAT_VIEW_INVALIDATION_REASON : null);
+            return barrierReason;
         } catch (CairoException e) {
             // Missing or purged WAL files in the gap. Treat as "no barrier found" so the caller
             // still schedules the normal incremental refresh. The refresh path's own interval planning
@@ -2539,7 +2546,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     .$(", errno=").$(e.getErrno())
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .I$();
-            return false;
+            return null;
         }
     }
 
@@ -2622,6 +2629,14 @@ public class CairoEngine implements Closeable, WriterSource {
                     return;
                 }
                 long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
+                // Scan the base WAL gap for an invalidating barrier (truncate or delete) only for a view that
+                // has refreshed at least once; a never-refreshed view has nothing stale and must not trigger a
+                // full-history scan. The call is cheap-null when the view is ahead of / level with the base
+                // (baseTableBarrierReasonInWalGap's own >= guard returns before scanning), so computing it here
+                // does not add a scan to the ahead branch below.
+                final String barrierReason = state.getLastRefreshBaseTxn() > -1
+                        ? baseTableBarrierReasonInWalGap(baseTableToken, state.getLastRefreshBaseTxn(), baseTableLastTxn)
+                        : null;
                 if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
                     LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
                             .$safe(viewDefinition.getBaseTableName())
@@ -2630,17 +2645,18 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", baseTableTxn=").$(baseTableLastTxn)
                             .I$();
                     matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                } else if (state.getLastRefreshBaseTxn() > -1 && hasBaseTableTruncateInWalGap(baseTableToken, state.getLastRefreshBaseTxn(), baseTableLastTxn)) {
-                    // A truncate in the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] carries no
-                    // data interval, so resuming an incremental refresh would silently advance past it
-                    // and keep stale pre-truncate rows. Invalidate instead, the same way a primary
-                    // already invalidates dependents on a truncate. Only for a view that has refreshed
-                    // at least once (a never-refreshed view has nothing stale to retain).
-                    LOG.info().$("materialized view base table was truncated, invalidating on load [table=")
+                } else if (barrierReason != null) {
+                    // A truncate or delete in the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] carries no
+                    // data interval, so resuming an incremental refresh would silently advance past it and keep
+                    // stale pre-barrier rows. Invalidate instead, with the accurate barrier reason, the same way
+                    // a primary already invalidates dependents on a truncate or delete. Only for a view that has
+                    // refreshed at least once (guarded above; a never-refreshed view has nothing stale to retain).
+                    LOG.info().$("materialized view base table barrier in WAL gap, invalidating on load [table=")
                             .$safe(viewDefinition.getBaseTableName())
                             .$(", view=").$(tableToken)
+                            .$(", reason=").$(barrierReason)
                             .I$();
-                    matViewStateStore.enqueueInvalidate(tableToken, "truncate operation");
+                    matViewStateStore.enqueueInvalidate(tableToken, barrierReason);
                 } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
                     // Kickstart immediate refresh.
                     matViewStateStore.enqueueIncrementalRefresh(tableToken);
