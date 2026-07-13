@@ -1006,9 +1006,9 @@ public class LiveViewInstance implements QuietCloseable {
      * this method only updates the in-memory side.
      */
     public void markInvalid(@Nullable CharSequence reason, long invalidationTimestampUs) {
-        stateReader.setInvalid(true);
         stateReader.setInvalidationReason(reason);
         stateReader.setInvalidationTimestampUs(invalidationTimestampUs);
+        stateReader.setInvalid(true);
     }
 
     public void markAsDropped() {

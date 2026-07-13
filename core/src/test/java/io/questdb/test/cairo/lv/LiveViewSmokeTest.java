@@ -96,12 +96,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
 
 /**
- * Smoke tests: confirm the new CREATE LIVE VIEW syntax (FLUSH EVERY,
- * IN MEMORY, PARTITION BY, BACKFILL reject) is parsed and validated, and that
- * creating + dropping a live view goes through the engine end-to-end.
- * <p>
- * Asserted-wording validation tests will go in a dedicated file once the full
- * suite is rewritten in delta plan task #8.
+ * End-to-end live-view regression coverage. Focused validation, checkpoint,
+ * concurrency, O3, and in-memory suites live in dedicated classes; this class
+ * retains broad smoke and cross-cutting integration scenarios that share the
+ * legacy fixture.
  */
 public class LiveViewSmokeTest extends AbstractLiveViewTest {
 

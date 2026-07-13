@@ -24,9 +24,17 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
+import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Unit coverage for the live-view lifecycle state machine that feeds
@@ -83,5 +91,67 @@ public class LiveViewLifecycleStateTest {
         // A registry-visible, invalid instance is INVALID even if the backfill signal is still set.
         Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, false));
         Assert.assertEquals(LiveViewLifecycleState.INVALID, LiveViewLifecycleState.derive(true, true, true));
+    }
+
+    @Test
+    public void testInvalidationPayloadIsPublishedBeforeInvalidState() throws Exception {
+        final LiveViewInstance instance = new LiveViewInstance((LiveViewDefinition) null, (TableToken) null);
+        final CountDownLatch reasonCopyStarted = new CountDownLatch(1);
+        final CountDownLatch releaseReasonCopy = new CountDownLatch(1);
+        final AtomicReference<Throwable> writerError = new AtomicReference<>();
+        final CharSequence reason = new CharSequence() {
+            @Override
+            public char charAt(int index) {
+                return "boom".charAt(index);
+            }
+
+            @Override
+            public int length() {
+                reasonCopyStarted.countDown();
+                try {
+                    if (!releaseReasonCopy.await(10, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out waiting to release invalidation reason copy");
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+                return 4;
+            }
+
+            @Override
+            public CharSequence subSequence(int start, int end) {
+                return "boom".subSequence(start, end);
+            }
+
+            @Override
+            public String toString() {
+                return "boom";
+            }
+        };
+        final Thread writer = new Thread(() -> {
+            try {
+                instance.markInvalid(reason, 42);
+            } catch (Throwable th) {
+                writerError.set(th);
+            }
+        });
+
+        writer.start();
+        try {
+            Assert.assertTrue("writer did not start copying the reason", reasonCopyStarted.await(10, TimeUnit.SECONDS));
+            Assert.assertEquals(LiveViewLifecycleState.ACTIVE, instance.getLifecycleState());
+            Assert.assertNull(instance.getInvalidationReason());
+            Assert.assertEquals(Numbers.LONG_NULL, instance.getStateReader().getInvalidationTimestampUs());
+        } finally {
+            releaseReasonCopy.countDown();
+            writer.join(10_000);
+        }
+
+        Assert.assertFalse("writer did not stop", writer.isAlive());
+        Assert.assertNull(writerError.get());
+        Assert.assertEquals(LiveViewLifecycleState.INVALID, instance.getLifecycleState());
+        Assert.assertEquals("boom", instance.getInvalidationReason());
+        Assert.assertEquals(42, instance.getStateReader().getInvalidationTimestampUs());
     }
 }
