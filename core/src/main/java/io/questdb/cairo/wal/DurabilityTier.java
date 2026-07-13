@@ -27,6 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Durability tiers for the QWP durable-ack. Ordered by strength:
@@ -49,7 +50,7 @@ public final class DurabilityTier {
     }
 
     /** Parse the X-QWP-Request-Durable-Ack header value into a request intent. */
-    public static int fromHeaderValue(Utf8Sequence v) {
+    public static int fromHeaderValue(@Nullable Utf8Sequence v) {
         if (v == null) {
             return NONE;
         }
@@ -66,7 +67,7 @@ public final class DurabilityTier {
     }
 
     /** The confirmation token echoed for an explicitly-granted tier, or null. */
-    public static Utf8String responseToken(int tier) {
+    public static @Nullable Utf8String responseToken(int tier) {
         switch (tier) {
             case LOCAL:
                 return TOKEN_LOCAL;

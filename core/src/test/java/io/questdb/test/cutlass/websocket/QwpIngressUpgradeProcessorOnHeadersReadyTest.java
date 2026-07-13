@@ -507,11 +507,14 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
 
             // Backward-compat guarantee for the confirm-token refactor of
-            // QwpIngressHttpProcessor.responseSize/writeResponse: this ingress
-            // processor still drives those methods through the legacy
-            // `boolean durableAckEnabled` overloads (tier negotiation lands in
-            // a later task), so the wire bytes must be byte-identical to
-            // before the refactor -- either the exact historical
+            // QwpIngressHttpProcessor.responseSize/writeResponse: tier
+            // negotiation has landed, so this ingress processor now always
+            // drives those methods through the `Utf8Sequence` confirm-token
+            // overloads (never the legacy `boolean` ones) -- but for a legacy
+            // "true"/absent header, the negotiated DEFAULT grant resolves to
+            // the same historical RESPONSE_DURABLE_ACK_TOKEN_ENABLED token the
+            // old `boolean` overloads produced, so the wire bytes stay
+            // byte-identical: either the exact historical
             // "X-QWP-Durable-Ack: enabled" confirmation, or no such header at
             // all.
             String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);

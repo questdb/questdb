@@ -45,7 +45,9 @@ import org.junit.Test;
  *   <li>(2) Unit: LocalDurableAckRegistry returns tracker value for adaptive table, -1 for nosync/unknown</li>
  *   <li>(3) Integration: adaptive WAL commit advances getLocalDurableSeqTxn to committed seqTxn</li>
  *   <li>(4) Integration: nosync WAL commit leaves getLocalDurableSeqTxn at -1</li>
- *   <li>(5) QWP predicate: max(local, uploaded) >= clientSeqTxn satisfied via local tier for adaptive table</li>
+ *   <li>(5) QWP predicate: durable-ack frontier resolves to the requested tier's value
+ *       (LOCAL selects the local-fsync frontier, REPLICATED selects the uploaded frontier),
+ *       never max(local, uploaded)</li>
  *   <li>(6) QWP predicate: non-enabled registry does not satisfy durable-ack even for adaptive table</li>
  *   <li>(7) Enterprise override: setDurableAckRegistry replaces the OSS default</li>
  *   <li>(8) DurableAckRegistry interface default: getLocalDurableSeqTxn returns -1 on DefaultDurableAckRegistry</li>
@@ -226,68 +228,6 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
                     "NOSYNC commit must NOT advance localDurableSeqTxn (no fdatasync guarantee)",
                     -1L, localDurable
             );
-        });
-    }
-
-    // ---- (5) QWP predicate: max(local, uploaded) >= clientSeqTxn ----
-
-    /**
-     * (5) collectDurableProgress uses max(local, uploaded) so an ADAPTIVE table satisfies
-     * the durable-ack predicate via the local tier even when no upload has occurred.
-     *
-     * <p>This tests the max-of-tiers predicate that drives durable-ack eligibility.
-     * We construct a registry where local > 0 but uploaded = -1, verify the durable-ack
-     * frontier resolves to the local value and the predicate is satisfied.
-     */
-    @Test
-    public void testQwpDurableAckPredicateUsesMaxOfLocalAndUploaded() throws Exception {
-        assertMemoryLeak(() -> {
-            // Build a synthetic registry: local=5, uploaded=-1
-            long localDurable = 5L;
-            long uploadedDurable = -1L;
-            long clientSeqTxn = 3L;
-
-            // The max-of-tiers frontier
-            long frontier = Math.max(localDurable, uploadedDurable);
-
-            // Predicate satisfied: frontier >= clientSeqTxn
-            Assert.assertTrue(
-                    "max(local=" + localDurable + ", uploaded=" + uploadedDurable + ")=" + frontier
-                            + " must be >= clientSeqTxn=" + clientSeqTxn,
-                    frontier >= clientSeqTxn
-            );
-        });
-    }
-
-    /**
-     * (5b) When local=-1 and uploaded=7, the frontier is 7 (Enterprise path).
-     */
-    @Test
-    public void testQwpDurableAckPredicateUploadedTierWins() throws Exception {
-        assertMemoryLeak(() -> {
-            long localDurable = -1L;
-            long uploadedDurable = 7L;
-            long clientSeqTxn = 5L;
-
-            long frontier = Math.max(localDurable, uploadedDurable);
-            Assert.assertEquals(7L, frontier);
-            Assert.assertTrue(frontier >= clientSeqTxn);
-        });
-    }
-
-    /**
-     * (5c) When both tiers are -1 (no durability), the frontier is -1 and predicate fails.
-     */
-    @Test
-    public void testQwpDurableAckPredicateFailsWhenBothTiersMinusOne() throws Exception {
-        assertMemoryLeak(() -> {
-            long localDurable = -1L;
-            long uploadedDurable = -1L;
-            long clientSeqTxn = 1L;
-
-            long frontier = Math.max(localDurable, uploadedDurable);
-            Assert.assertEquals(-1L, frontier);
-            Assert.assertFalse(frontier >= clientSeqTxn);
         });
     }
 

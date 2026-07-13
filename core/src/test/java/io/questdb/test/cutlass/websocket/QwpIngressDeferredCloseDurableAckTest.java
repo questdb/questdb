@@ -924,8 +924,11 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         // uploaded/Enterprise tier (getDurablyUploadedSeqTxn), with no local
         // tracking -- so the connection must negotiate REPLICATED for
         // collectDurableProgress to read that tier. Real handshake tier
-        // negotiation from the X-QWP-Request-Durable-Ack header value lands in
-        // a later task; this pins the tier the same way that negotiation will.
+        // negotiation from the X-QWP-Request-Durable-Ack header value now
+        // happens in QwpIngressUpgradeProcessor; this harness builds the
+        // state directly (bypassing the handshake) and pins the tier the same
+        // way that negotiation would resolve it, to isolate
+        // collectDurableProgress's tier-selection behavior.
         state.setDurableAckTier(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
@@ -949,8 +952,11 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         // uploaded/Enterprise tier (getDurablyUploadedSeqTxn), with no local
         // tracking -- so the connection must negotiate REPLICATED for
         // collectDurableProgress to read that tier. Real handshake tier
-        // negotiation from the X-QWP-Request-Durable-Ack header value lands in
-        // a later task; this pins the tier the same way that negotiation will.
+        // negotiation from the X-QWP-Request-Durable-Ack header value now
+        // happens in QwpIngressUpgradeProcessor; this harness builds the
+        // state directly (bypassing the handshake) and pins the tier the same
+        // way that negotiation would resolve it, to isolate
+        // collectDurableProgress's tier-selection behavior.
         state.setDurableAckTier(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
