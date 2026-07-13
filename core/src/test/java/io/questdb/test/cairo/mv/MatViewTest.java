@@ -34,17 +34,22 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
@@ -258,7 +263,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertTrue(newView.isMatView());
             Assert.assertNotEquals(oldView.getDirName(), newView.getDirName());
             Assert.assertNotEquals(oldId, newView.getTableId());
-            Assert.assertNotNull(engine.getMatViewGraph().getViewDefinition(newView));
+            Assert.assertNotNull(engine.getDependentViewGraph().getViewDefinition(newView));
             assertQuery("select price from price_1h").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("price\n1.323\n");
 
             // The rebased view still refreshes from the base (a full refresh, watermark not preserved).
@@ -3387,6 +3392,67 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHydrateNeverRefreshedImmediateMatViewSchedulesRefresh() throws Exception {
+        // A view created but never refreshed has no MAT_VIEW state event, so the hydrate's
+        // readMatViewState returns false. That branch used to return without scheduling anything,
+        // leaving a valid, empty, watermark -1 view that nothing ever kickstarts - it never
+        // converged to the base table (#310). An IMMEDIATE view must get the incremental kickstart
+        // here; a timer view is driven by the timer job and must not.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_immediate", "select ts, count() cnt from base sample by 1h");
+            execute(
+                    "create materialized view mv_timer refresh every 1h deferred start '2260-12-12T12:00:00.000000Z' as (" +
+                            "select ts, count() cnt from base sample by 1h" +
+                            ") partition by DAY"
+            );
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:01')");
+            // Drain the base WAL only. Running the mat-view queue would refresh the views and persist
+            // their state, sending the hydrate down the persisted-state branch instead.
+            drainWalQueue();
+
+            final TableToken immediateToken = engine.verifyTableName("mv_immediate");
+            final TableToken timerToken = engine.verifyTableName("mv_timer");
+
+            // Positive witness: both views must genuinely lack persisted state. Without this the
+            // hydrate could reach the persisted-state kickstart further down and the test would still
+            // pass with the fix reverted.
+            assertNoPersistedMatViewState(immediateToken);
+            assertNoPersistedMatViewState(timerToken);
+
+            // CREATE already enqueued tasks; empty the queue so only the hydrate's own tasks remain.
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(task)) {
+                // drain
+            }
+
+            // Simulate the role-promote hydrate.
+            engine.hydrateMatViewStateStore();
+
+            boolean immediateScheduled = false;
+            boolean timerScheduled = false;
+            while (store.tryDequeueRefreshTask(task)) {
+                if (task.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
+                    if (immediateToken.equals(task.matViewToken)) {
+                        immediateScheduled = true;
+                    } else if (timerToken.equals(task.matViewToken)) {
+                        timerScheduled = true;
+                    }
+                }
+            }
+            Assert.assertTrue(
+                    "a never-refreshed IMMEDIATE view must be scheduled for incremental refresh on hydrate",
+                    immediateScheduled
+            );
+            Assert.assertFalse(
+                    "a timer view is driven by the timer job and must not be kickstarted on hydrate",
+                    timerScheduled
+            );
+        });
+    }
+
+    @Test
     public void testHydrateTruncateScanThrowStillSchedulesRefresh() throws Exception {
         // Verify that a missing/purged WAL file encountered during the hydrate-path truncate scan
         // does not prevent the mat-view from being scheduled for incremental refresh. The scan
@@ -4388,6 +4454,27 @@ public class MatViewTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
+        });
+    }
+
+    @Test
+    public void testInformationSchemaTablesShowsMaterializedView() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (sym varchar, price double, ts #TIMESTAMP) " +
+                            "timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            drainQueues();
+            // information_schema.tables reports the full "MATERIALIZED VIEW" table_type and
+            // is_insertable_into=false for a materialized view (mirror of the LIVE VIEW coverage
+            // in LiveViewTest#testInformationSchemaTablesShowsLiveView)
+            assertQuery("select table_type, is_insertable_into from information_schema.tables() " +
+                    "where table_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("table_type\tis_insertable_into\n" +
+                            "MATERIALIZED VIEW\tfalse\n");
         });
     }
 
@@ -6719,7 +6806,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
             // Sanity check the view is reachable via the graph before driving
             // the parser-error scenarios.
-            Assert.assertNotNull(engine.getMatViewGraph().getViewDefinition(
+            Assert.assertNotNull(engine.getDependentViewGraph().getViewDefinition(
                     engine.getTableTokenIfExists("price_1h")
             ));
 
@@ -8835,6 +8922,88 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewStatusReportsRefreshingWhileRefreshInFlight() throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch started = new SOCountDownLatch(1);
+            final SOCountDownLatch stopped = new SOCountDownLatch(1);
+            final AtomicBoolean refreshed = new AtomicBoolean(true);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            // sleep() parks the refresh mid-flight: the in-memory refresh start timestamp is
+            // set but the finish has not been persisted yet, which is exactly the window in
+            // which view_status must read 'refreshing'
+            String viewSql = "select sym, last(price) as price, ts from base_price where sleep(120000) sample by 1h";
+            createMatView(viewSql);
+            drainQueues();
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainWalQueue();
+
+            new Thread(
+                    () -> {
+                        started.countDown();
+                        try {
+                            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine, 0)) {
+                                refreshed.set(job.run());
+                            }
+                        } finally {
+                            Path.clearThreadLocals();
+                            stopped.countDown();
+                        }
+                    }, "mat_view_refresh_thread"
+            ).start();
+
+            started.await();
+
+            // wait until the refresh query is registered (parked in sleep()); once it appears
+            // in query_activity() the refresh is genuinely in flight
+            long queryId = -1;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                String activityQuery = "select query_id, query from query_activity() where query ='" + viewSql + "'";
+                try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, sqlExecutionContext)) {
+                    while (stopped.getCount() != 0) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            if (cursor.hasNext()) {
+                                queryId = cursor.getRecord().getLong(0);
+                                break;
+                            }
+                        }
+                    }
+                } catch (SqlException e) {
+                    Assert.fail(e.getMessage());
+                }
+            }
+            // Observe the 'refreshing' status while the worker is parked, then unblock it
+            // in a finally so a failed assertion cannot leave mat_view_refresh_thread parked
+            // in sleep(120000) - that would stall assertMemoryLeak teardown for up to two
+            // minutes and mask the real assertion failure with a secondary leak/close error.
+            try {
+                Assert.assertTrue(queryId > 0);
+                assertQuery("select view_name, view_status from materialized_views")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("""
+                                view_name\tview_status
+                                price_1h\trefreshing
+                                """);
+            } finally {
+                // unblock the parked refresh so the worker thread can finish
+                execute("cancel query " + queryId);
+                stopped.await();
+            }
+            Assert.assertFalse(refreshed.get());
+        });
+    }
+
+    @Test
     public void testWeeklySampleTimestampOutOfRangeIssue6089() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -8927,6 +9096,30 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.fail("Expected exception missing");
         } catch (SqlException e) {
             Assert.assertTrue(e.getMessage().contains("cannot modify materialized view"));
+        }
+    }
+
+    private static void assertNoPersistedMatViewState(TableToken viewToken) {
+        try (
+                Path path = new Path();
+                BlockFileReader blockFileReader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                MemoryCMR txnMem = Vm.getCMRInstance(configuration.getBypassWalFdCache())
+        ) {
+            path.of(configuration.getDbRoot()).concat(viewToken);
+            Assert.assertFalse(
+                    "view " + viewToken.getTableName() + " must have no persisted state, otherwise the hydrate " +
+                            "takes the persisted-state branch and this test cannot fail",
+                    WalUtils.readMatViewState(
+                            path,
+                            viewToken,
+                            configuration,
+                            txnMem,
+                            walEventReader,
+                            blockFileReader,
+                            new MatViewStateReader()
+                    )
+            );
         }
     }
 
@@ -9204,7 +9397,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             Assert.assertNotNull(viewToken);
-            final MatViewDefinition viewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+            final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(viewToken);
             Assert.assertNotNull(viewDefinition);
             final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertNotNull(viewState);

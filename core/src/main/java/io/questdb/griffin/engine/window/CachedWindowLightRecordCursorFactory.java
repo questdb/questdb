@@ -192,6 +192,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         return base.followedOrderByAdvice();
     }
 
+    public ObjList<WindowFunction> getAllWindowFunctions() {
+        return allFunctions;
+    }
+
     @Override
     public String getBaseColumnName(int idx) {
         return chainMetadata.getColumnName(idx);

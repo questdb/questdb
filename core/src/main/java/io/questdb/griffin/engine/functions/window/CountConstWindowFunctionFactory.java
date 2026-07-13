@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -36,7 +38,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -95,10 +99,12 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
+                            liveView ? CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV
+                                    : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
                     );
 
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
@@ -107,7 +113,10 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                             partitionByRecord,
                             partitionBySink,
                             null,
-                            isRecordNotNull
+                            isRecordNotNull,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -117,13 +126,15 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
+                                liveView ? CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -142,7 +153,9 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 null,
-                                isRecordNotNull
+                                isRecordNotNull,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -153,10 +166,12 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
+                            liveView ? CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV
+                                    : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
                     );
 
                     return new CountFunctionFactoryHelper.CountOverUnboundedPartitionRowsFrameFunction(
@@ -164,7 +179,10 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                             partitionByRecord,
                             partitionBySink,
                             null,
-                            isRecordNotNull
+                            isRecordNotNull,
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -187,12 +205,15 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
                 //between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
+                                liveView
+                                        ? CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV
+                                        : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
                         );
 
                         return new CountOverPartitionRowsFrameFunction(
@@ -200,7 +221,9 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 partitionByRecord,
                                 partitionBySink,
                                 rowsLo,
-                                rowsHi
+                                rowsHi,
+                                partitionByKeyTypes,
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -263,6 +286,9 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final long frameSize;
         private final long rowsHi;
         private final long rowsLo;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private long count;
 
         public CountOverPartitionRowsFrameFunction(
@@ -270,7 +296,9 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
                 long rowsLo,
-                long rowsHi
+                long rowsHi,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, null);
             if (rowsLo > Long.MIN_VALUE) {
@@ -280,6 +308,24 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
             this.rowsHi = rowsHi;
             this.rowsLo = rowsLo;
+            this.liveView = liveView;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 1;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
 
@@ -300,6 +346,8 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             long currentSize = 0;
             if (!value.isNew()) {
                 currentSize = value.getLong(0);
+            } else if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
             }
             currentSize++;
             this.count = currentSize + rowsHi;
@@ -327,6 +375,22 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES.getColumnCount();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -337,11 +401,63 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void reopen() {
             super.reopen();
+            tombstoneCount = 0;
         }
 
         @Override
         public void reset() {
             super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. count(*) tracks currentSize per partition;
+            // restoring currentSize to 0 makes the next row in the new bucket
+            // re-anchor cleanly.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -370,6 +486,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void toTop() {
             super.toTop();
+            tombstoneCount = 0;
         }
     }
 

@@ -105,9 +105,12 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
-                                boolean isView = isViewDefinitionFileExists(configuration, path, dirName);
-                                boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
-                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, isView, isMatView, walEnabled, isSystem, isProtected, isPublic);
+                                TableToken.Type type = isLiveViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.LIVE_VIEW
+                                        : isMatViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.MAT_VIEW
+                                          : isViewDefinitionFileExists(configuration, path, dirName) ? TableToken.Type.VIEW
+                                            : TableToken.Type.TABLE;
+                                boolean isWal = walEnabled || type.isImplicitlyWal();
+                                final TableToken token = new TableToken(tableName, dirName, engine.getConfiguration().getDbLogName(), tableId, type, isWal, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
@@ -171,7 +174,7 @@ public class TableConverter {
 
             final byte walType = ff.readNonNegativeByte(fd, 0);
             return switch (walType) {
-                case TABLE_TYPE_WAL, TABLE_TYPE_VIEW, TABLE_TYPE_MAT -> true;
+                case TABLE_TYPE_WAL, TABLE_TYPE_VIEW, TABLE_TYPE_MAT, TABLE_TYPE_LIVE_VIEW -> true;
                 case TABLE_TYPE_NON_WAL -> false;
                 default ->
                         throw CairoException.critical(ff.errno()).put("could not read walType from file [path=").put(path).put(']');

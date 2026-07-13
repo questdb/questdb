@@ -231,6 +231,17 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS("cairo.mat.view.refresh.max.clusters"),
     CAIRO_MAT_VIEW_MAX_REFRESH_STEP("cairo.mat.view.max.refresh.step"),
     CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD("cairo.mat.view.refresh.intervals.update.period"),
+    CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS("cairo.live.view.checkpoint.max.duration.micros"),
+    CAIRO_LIVE_VIEW_CHECKPOINT_ROWS("cairo.live.view.checkpoint.rows"),
+    CAIRO_LIVE_VIEW_ENABLED("cairo.live.view.enabled"),
+    CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX("cairo.live.view.flush.retry.max"),
+    CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS("cairo.live.view.flush.retry.max.duration.micros"),
+    CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES("cairo.live.view.in.memory.buffer.growth.bytes"),
+    CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES("cairo.live.view.in.memory.buffer.initial.bytes"),
+    CAIRO_LIVE_VIEW_IN_MEMORY_MAX("cairo.live.view.in.memory.max"),
+    CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD("cairo.live.view.partition.compact.threshold"),
+    CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS("cairo.live.view.refresh.turn.max.commits"),
+    CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS("cairo.live.view.refresh.turn.max.duration.micros"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
     CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
@@ -707,7 +718,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true),
     CAIRO_QUERY_MEMORY_LIMIT_BYTES("cairo.query.memory.limit.bytes"),
     CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.mat.view.refresh.memory.limit.bytes"),
-    CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes");
+    CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes"),
+    CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.live.view.refresh.memory.limit.bytes");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

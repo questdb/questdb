@@ -458,8 +458,11 @@ public class QwpTudCache implements QuietCloseable {
             }
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         }
-        if (tableToken != null && (tableToken.isView() || tableToken.isMatView())) {
-            return null;
+        if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
+            throw CairoException.nonCritical()
+                    .put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=")
+                    .put(tableToken.getTableName())
+                    .put(']');
         }
         return tableToken;
     }

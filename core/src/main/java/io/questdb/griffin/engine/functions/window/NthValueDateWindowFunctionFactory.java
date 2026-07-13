@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
@@ -111,9 +112,11 @@ public class NthValueDateWindowFunctionFactory extends AbstractWindowFunctionFac
                 MemoryARW memory,
                 int initialBufferSize,
                 int timestampIdx,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, n);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, n, partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -132,9 +135,11 @@ public class NthValueDateWindowFunctionFactory extends AbstractWindowFunctionFac
                 long rowsHi,
                 Function arg,
                 MemoryARW memory,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, n);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, n, partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -151,9 +156,11 @@ public class NthValueDateWindowFunctionFactory extends AbstractWindowFunctionFac
                 RecordSink partitionBySink,
                 long rowsHi,
                 Function arg,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsHi, arg, n);
+            super(map, partitionByRecord, partitionBySink, rowsHi, arg, n, partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -207,8 +214,18 @@ public class NthValueDateWindowFunctionFactory extends AbstractWindowFunctionFac
 
     static final class UnboundedPartitionDate extends NthValueWindowFunctionFactoryHelper.NthValueOverUnboundedPartitionFrameBase implements WindowDateFunction {
 
-        UnboundedPartitionDate(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n, boolean isRange) {
-            super(map, partitionByRecord, partitionBySink, arg, n, isRange);
+        UnboundedPartitionDate(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int n,
+                boolean isRange,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, n, isRange, partitionByKeyTypes, liveView, configuration);
         }
 
         @Override

@@ -310,6 +310,18 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
     private final String legacyCheckpointRoot;
+    private final long liveViewCheckpointMaxDurationMicros;
+    private final long liveViewCheckpointRows;
+    private final boolean liveViewEnabled;
+    private final int liveViewFlushRetryMax;
+    private final long liveViewFlushRetryMaxDurationMicros;
+    private final long liveViewInMemoryBufferGrowthBytes;
+    private final long liveViewInMemoryBufferInitialBytes;
+    private final long liveViewInMemoryMaxMicros;
+    private final int liveViewPartitionCompactThreshold;
+    private final long liveViewRefreshMemoryLimitBytes;
+    private final int liveViewRefreshTurnMaxCommits;
+    private final long liveViewRefreshTurnMaxDurationMicros;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -1509,6 +1521,19 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
+            // live-view config
+            this.liveViewCheckpointMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 5L * Micros.MINUTE_MICROS);
+            this.liveViewCheckpointRows = getLong(properties, env, PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000L);
+            this.liveViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            this.liveViewFlushRetryMax = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 5);
+            this.liveViewFlushRetryMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 60L * Micros.SECOND_MICROS);
+            this.liveViewInMemoryBufferGrowthBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 16L * 1024L * 1024L);
+            this.liveViewInMemoryBufferInitialBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 64L * 1024L);
+            this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
+            this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
+            this.liveViewRefreshTurnMaxCommits = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 64);
+            this.liveViewRefreshTurnMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS, 50_000L);
+
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
@@ -1661,6 +1686,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.queryMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
             this.matViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.walApplyMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES, 0);
+            this.liveViewRefreshMemoryLimitBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 0);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -4130,6 +4156,61 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getLiveViewCheckpointMaxDurationMicros() {
+            return liveViewCheckpointMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewCheckpointRows() {
+            return liveViewCheckpointRows;
+        }
+
+        @Override
+        public int getLiveViewFlushRetryMax() {
+            return liveViewFlushRetryMax;
+        }
+
+        @Override
+        public long getLiveViewFlushRetryMaxDurationMicros() {
+            return liveViewFlushRetryMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewInMemoryBufferGrowthBytes() {
+            return liveViewInMemoryBufferGrowthBytes;
+        }
+
+        @Override
+        public long getLiveViewInMemoryBufferInitialBytes() {
+            return liveViewInMemoryBufferInitialBytes;
+        }
+
+        @Override
+        public long getLiveViewInMemoryMaxMicros() {
+            return liveViewInMemoryMaxMicros;
+        }
+
+        @Override
+        public int getLiveViewPartitionCompactThreshold() {
+            return liveViewPartitionCompactThreshold;
+        }
+
+        @Override
+        public long getLiveViewRefreshMemoryLimitBytes() {
+            return liveViewRefreshMemoryLimitBytes;
+        }
+
+        @Override
+        public int getLiveViewRefreshTurnMaxCommits() {
+            return liveViewRefreshTurnMaxCommits;
+        }
+
+        @Override
+        public long getLiveViewRefreshTurnMaxDurationMicros() {
+            return liveViewRefreshTurnMaxDurationMicros;
+        }
+
+        @Override
         public boolean getLogLevelVerbose() {
             return logLevelVerbose;
         }
@@ -5252,6 +5333,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isLiveViewEnabled() {
+            return liveViewEnabled;
         }
 
         @Override

@@ -145,6 +145,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public boolean hasActivePushdownFilter() {
+        return pushdownFilterConditions != null && pushdownFilterConditions.size() > 0;
+    }
+
+    @Override
     public boolean hasIntervalFilter() {
         return partitionFrameCursor != null && partitionFrameCursor.hasIntervalFilter();
     }

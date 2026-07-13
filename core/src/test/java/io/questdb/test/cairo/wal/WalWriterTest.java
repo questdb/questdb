@@ -629,6 +629,51 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalReaderRebindSameSegmentGrowsMapping() throws Exception {
+        // WalReader.of() reuses the column mmaps when rebinding to the SAME
+        // (table, wal, segment) with only a larger rowCount - the live view drain
+        // re-opens a segment once per base commit, so many opens share a segment.
+        // Rebind one reader instance to segment 0 at rowCount 1, 2, 3: the reuse
+        // path must remap each retained fixed- and var-size column in place at the
+        // new size, so every row - including the ones newly in range - reads back
+        // correctly, and nothing leaks (assertMemoryLeak).
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createTable(testName.getMethodName());
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walName = walWriter.getWalName();
+                for (int i = 0; i < 3; i++) {
+                    TableWriter.Row row = walWriter.newRow(i * 1000L);
+                    row.putByte(0, (byte) ((i + 1) * 10));
+                    row.putStr(1, "v" + i);
+                    row.append();
+                }
+                walWriter.commit(); // one segment (segment 0), three rows
+            }
+
+            try (WalReader reader = new WalReader(engine.getConfiguration())) {
+                for (int rowCount = 1; rowCount <= 3; rowCount++) {
+                    // The 2nd and 3rd of() rebind to the same segment; only rowCount grows.
+                    reader.of(tableToken, walName, 0, rowCount);
+                    assertEquals(3, reader.getColumnCount());
+                    assertEquals(rowCount, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    for (int i = 0; i < rowCount; i++) {
+                        assertTrue("row " + i + " missing at rowCount " + rowCount, cursor.hasNext());
+                        assertEquals((i + 1) * 10, record.getByte(0));
+                        TestUtils.assertEquals("v" + i, record.getStrA(1));
+                        assertEquals(i * 1000L, record.getTimestamp(2));
+                    }
+                    assertFalse("unexpected extra row at rowCount " + rowCount, cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAddingColumnOverlapping() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
@@ -1795,7 +1840,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         while (cursor.hasNext()) {
                             assertEquals((segmentId % numOfSegments) * maxRowCount + n, record.getInt(0));
                             assertEquals(n, record.getInt(1)); // New symbol value every row
-                            assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
+                            TestUtils.assertEquals("test" + ((segmentId % numOfSegments) * maxRowCount + n), record.getSymA(1));
                             assertEquals(n, record.getRowId());
                             n++;
                         }
@@ -2770,8 +2815,8 @@ public class WalWriterTest extends AbstractCairoTest {
                         TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getStrA(22));
                         TestUtils.assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStrA(23));
 
-                        assertEquals(String.valueOf(i), record.getSymA(24));
-                        assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
+                        TestUtils.assertEquals(String.valueOf(i), record.getSymA(24));
+                        TestUtils.assertEquals(String.valueOf((char) (65 + i % 26)), record.getSymA(25));
 
                         TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getSymA(26));
                         TestUtils.assertEquals((i % 2) == 0 ? "Щось" : "Таке-Сяке", record.getStrA(27));
@@ -3341,8 +3386,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(12, record.getInt(0));
-                assertEquals("symb", record.getSymA(1));
-                assertEquals("symc", record.getSymA(2));
+                TestUtils.assertEquals("symb", record.getSymA(1));
+                TestUtils.assertEquals("symc", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -3397,7 +3442,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final Record record = cursor.getRecord();
                 assertTrue(cursor.hasNext());
                 assertEquals(133, record.getInt(0));
-                assertEquals("Таке-Сяке", record.getSymA(2));
+                TestUtils.assertEquals("Таке-Сяке", record.getSymA(2));
                 assertEquals(0, record.getRowId());
                 assertFalse(cursor.hasNext());
 
@@ -4582,14 +4627,14 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSymA(1));
+                    TestUtils.assertEquals("sym" + i, record.getSymA(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSymA(2));
+                    TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
                     assertEquals(i % 2, record.getInt(3));
-                    assertEquals("symbol" + i % 2, record.getSymA(3));
-                    assertEquals(record.getSymB(3), record.getSymA(3));
+                    TestUtils.assertEquals("symbol" + i % 2, record.getSymA(3));
+                    TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
                     assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
                     i++;
                 }
@@ -4609,12 +4654,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSymA(1));
+                    TestUtils.assertEquals("sym" + i, record.getSymA(1));
                     assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSymA(2));
+                    TestUtils.assertEquals("s" + i % 2, record.getSymA(2));
                     assertEquals(i % 3, record.getInt(3));
-                    assertEquals("symbol" + i % 3, record.getSymA(3));
-                    assertEquals(record.getSymB(3), record.getSymA(3));
+                    TestUtils.assertEquals("symbol" + i % 3, record.getSymA(3));
+                    TestUtils.assertEquals(record.getSymB(3), record.getSymA(3));
                     i++;
                 }
                 assertEquals(i, reader.size());

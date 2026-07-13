@@ -70,7 +70,14 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         prepareRowCursorFactory();
 
-        if (!frameCursor.supportsSizeCalculation() || filter != null || rowCursorFactory.isUsingIndex()) {
+        // Mirrors the slow-path gate in skipRows(): pushdown pruning drops whole non-matching
+        // parquet row groups, so the metadata-only accounting below would count physical rows
+        // the cursor never yields and over-report the size. The row-by-row walk counts exactly
+        // the rows hasNext() yields, matching the pruned scan.
+        if (!frameCursor.supportsSizeCalculation()
+                || filter != null
+                || rowCursorFactory.isUsingIndex()
+                || frameCursor.hasActivePushdownFilter()) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -193,6 +200,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public long size() {
+        // Same gate as calculateSize() and skipRows(): pushdown pruning drops whole
+        // non-matching parquet row groups, so frameCursor.size() reports physical rows
+        // the cursor never yields. Report unknown size instead of that over-count.
+        if (frameCursor.hasActivePushdownFilter()) {
+            return -1;
+        }
         return entityCursor ? frameCursor.size() : -1;
     }
 
@@ -210,7 +223,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // Use slow path when:
         // - filter is present (need to evaluate each row)
         // - using index (row order may not be sequential)
-        if (filter != null || rowCursorFactory.isUsingIndex()) {
+        // - pushdown pruning is active: the cursor drops whole non-matching parquet row groups,
+        //   so the metadata-only frame-size accounting below would count physical rows the cursor
+        //   never yields and land the skip short (re-reading already-consumed rows). The row-by-row
+        //   walk skips exactly the rows hasNext() yields, matching the pruned scan.
+        if (filter != null || rowCursorFactory.isUsingIndex() || frameCursor.hasActivePushdownFilter()) {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }

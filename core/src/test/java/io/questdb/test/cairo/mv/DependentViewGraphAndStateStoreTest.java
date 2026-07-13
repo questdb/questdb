@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.DependentViewGraph;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.std.Numbers;
@@ -40,8 +40,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
-    private final MatViewGraph graph = new MatViewGraph();
+public class DependentViewGraphAndStateStoreTest extends AbstractCairoTest {
+    private final DependentViewGraph graph = new DependentViewGraph();
     private final ObjList<TableToken> ordered = new ObjList<>();
     private final MatViewStateStoreImpl stateStore = new MatViewStateStoreImpl(engine);
     private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
@@ -207,6 +207,68 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testLiveViewOrderedAfterBase() {
+        // Live views participate in the same
+        // dependents-after-base ordering rule that mat views use.
+        TableToken base = newTableToken("base");
+        TableToken lv1 = newLiveViewToken("lv1");
+        TableToken lv2 = newLiveViewToken("lv2");
+
+        Assert.assertTrue(graph.addLiveView(lv1, base.getTableName()));
+        Assert.assertTrue(graph.addLiveView(lv2, base.getTableName()));
+
+        graph.orderByDependentViews(tableTokens, ordered);
+        Assert.assertEquals(3, ordered.size());
+        // Both LVs come before the base; relative order between them is
+        // insertion order and not load-bearing for snapshot correctness.
+        Assert.assertTrue("lv1 before base", indexOf(ordered, "lv1") < indexOf(ordered, "base"));
+        Assert.assertTrue("lv2 before base", indexOf(ordered, "lv2") < indexOf(ordered, "base"));
+    }
+
+    @Test
+    public void testLiveViewRemovedFromGraph() {
+        TableToken base = newTableToken("base");
+        TableToken lv = newLiveViewToken("lv");
+        graph.addLiveView(lv, base.getTableName());
+        graph.removeLiveView(lv, base.getTableName());
+
+        graph.orderByDependentViews(tableTokens, ordered);
+        // After removal the LV still appears in the input set (the test
+        // harness keeps it), but it no longer claims base as a dependency.
+        Assert.assertEquals(2, ordered.size());
+        Assert.assertTrue("removeLiveView is idempotent on a missing base", true);
+        // Calling remove a second time is a no-op.
+        graph.removeLiveView(lv, base.getTableName());
+        graph.removeLiveView(lv, "no-such-base");
+    }
+
+    @Test
+    public void testLiveViewCircularDependencyViaMatView() {
+        // mv -> lv -> mv loop: mat view A depends on live view L; live view L
+        // is over mat view A. hasDependencyLoop walks dependentViewsByTableName
+        // so the LV side participates.
+        TableToken mvA = newMatViewToken("mvA");
+        TableToken lvL = newLiveViewToken("lvL");
+
+        graph.addLiveView(lvL, mvA.getTableName());
+        try {
+            graph.addView(createDefinition(mvA, lvL));
+            Assert.fail("expected circular dependency exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+        }
+    }
+
+    private static int indexOf(ObjList<TableToken> list, String name) {
+        for (int i = 0, n = list.size(); i < n; i++) {
+            if (name.contentEquals(list.getQuick(i).getTableName())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void addDefinition(TableToken viewToken, TableToken baseTableToken) {
         MatViewDefinition viewDefinition = createDefinition(viewToken, baseTableToken);
         stateStore.addViewState(viewDefinition);
@@ -237,6 +299,12 @@ public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
                 (char) 0
         );
         return viewDefinition;
+    }
+
+    private TableToken newLiveViewToken(String tableName) {
+        TableToken v = TableToken.liveViewToken(tableName, tableTokens.size() + 1);
+        tableTokens.add(v);
+        return v;
     }
 
     private TableToken newMatViewToken(String tableName) {

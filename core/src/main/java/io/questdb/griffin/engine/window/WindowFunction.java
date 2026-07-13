@@ -25,14 +25,21 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -197,6 +204,23 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Exposes the per-instance partition-state {@link Map} used by the live-view
+     * tombstone-compaction routine to rebuild the function's state container.
+     * Returns {@code null} by default; window functions that maintain per-partition
+     * state in a Map keyed by the named window's PARTITION BY columns override this
+     * once they sign up for full compaction by overriding this method.
+     * <p>
+     * A function that does not override this leaves its per-function Map out of the
+     * rebuild; only the anchor-map compaction trigger runs for it. While the
+     * default returns {@code null}, the function's Map continues to grow and is
+     * reclaimed only when the live view is dropped.
+     */
+    @Nullable
+    default Map getPartitionMap() {
+        return null;
+    }
+
+    /**
      * @return pass1 scan direction.
      * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.
      */
@@ -234,6 +258,29 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * @return the partition-key {@link ColumnTypes} the live-view snapshot framework
+     * writes into the FUNCTION_SNAPSHOT key-shape header and validates on restore.
+     * Returns {@code null} for scalar (no-map) functions, which the framework treats
+     * as a single keyless partition. Partitioned functions override to return their
+     * own partition-key types.
+     */
+    @Nullable
+    default ColumnTypes getSnapshotKeyColumnTypes() {
+        return null;
+    }
+
+    /**
+     * @return the index of the first partition-key column inside the partition-state
+     * {@link Map} record's column layout ({@code [value0..valueN, key0..keyM]}), i.e.
+     * the value-slot count. The framework passes this to
+     * {@link io.questdb.cairo.lv.LiveViewSnapshotKeyCodec#writeKey} when emitting a
+     * partition's key. Default {@code 0}; partitioned functions override.
+     */
+    default int getSnapshotKeyStartIndex() {
+        return 0;
+    }
+
     @Override
     default CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
@@ -264,6 +311,27 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * @return the number of tombstoned (logically-evicted) partitions currently in
+     * the partition-state {@link Map}. The live-view snapshot framework uses it to
+     * pick the cheap {@code map.size()} live-count when no entry is tombstoned, and
+     * the two-pass count otherwise. Default {@code 0}; functions that track a
+     * per-partition tombstone bit override.
+     */
+    default long getTombstoneCount() {
+        return 0;
+    }
+
+    /**
+     * @return the value-slot index of the per-partition tombstone byte, or {@code -1}
+     * when the function tracks no tombstone bit. The snapshot framework reads this to
+     * skip tombstoned partitions when emitting. Default {@code -1}; partitioned
+     * functions in live-view mode override.
+     */
+    default int getTombstoneValueIndex() {
+        return -1;
+    }
+
     @Override
     default Utf8Sequence getVarcharA(Record rec) {
         throw new UnsupportedOperationException();
@@ -279,6 +347,26 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Rebinds every inner expression that depends on the base cursor's per-cursor state -
+     * the partition-by expressions, the function's {@code arg}, and any extra argument a
+     * subclass carries (lag/lead's {@code defaultValue}, a bivariate function's second
+     * arg) - to the new cursor, without resetting the accumulated per-partition state.
+     * <p>
+     * The live-view incremental refresh path skips the regular {@link #init} call on
+     * window functions so their cross-cycle accumulator state survives, and calls this
+     * instead. Every cycle hands the function a fresh WAL-segment-scoped
+     * SymbolTableSource, and the WAL writer re-assigns symbol keys per commit, so any
+     * binding cached against the previous cursor - a SYMBOL column's symbol table, the
+     * int key a symbol comparison resolved its constant to - names the wrong value from
+     * the second cycle on. Miss one and the window silently aggregates the wrong rows.
+     * <p>
+     * Despite the name, this is not partition-by-only: implementations must rebind every
+     * such expression they own, and overrides must call super.
+     */
+    default void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+    }
+
     default void initRecordComparator(
             SqlCodeGenerator sqlGenerator,
             RecordMetadata metadata,
@@ -291,6 +379,39 @@ public interface WindowFunction extends Function {
 
     default boolean isIgnoreNulls() {
         return false;
+    }
+
+    /**
+     * Clears the per-function tombstone bit for the partition the supplied record
+     * belongs to, if currently set. Called once per row by
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow(Record)} (post-projection,
+     * post-filter) before the row reaches the underlying cursor stack's
+     * {@link #computeNext(Record)} dispatch.
+     * <p>
+     * Decouples the "partition saw a row" signal from {@link #computeNext(Record)},
+     * which previously cancelled the tombstone bit set by {@link #resetPartition(Record)}
+     * on the same anchor-cross row. With markPartitionAlive driving the clear,
+     * the anchor-map's tombstoneCount actually grows across anchor crosses and the
+     * compaction trigger can engage in steady state.
+     * <p>
+     * Default no-op; override on every window function that tracks a per-partition
+     * tombstone bit. Implementations must be branchless on the common (no-tombstone)
+     * case -- check the function-local tombstoneCount first and bail before the
+     * Map lookup.
+     */
+    default void markPartitionAlive(Record record) {
+    }
+
+    /**
+     * Resets this function's per-partition state to empty before the live-view
+     * snapshot framework rehydrates partitions via
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}. Partitioned
+     * functions clear their {@link Map} and zero the tombstone counter here;
+     * native-memory-backed ring/deque functions also truncate their backing
+     * arena and clear their free list. Default no-op (scalar functions hold a
+     * single field that {@code restorePartitionState} overwrites directly).
+     */
+    default void onSnapshotRestoreBegin() {
     }
 
     /**
@@ -324,6 +445,68 @@ public interface WindowFunction extends Function {
      **/
     void reset();
 
+    /**
+     * Resets the per-partition accumulator for the partition the supplied record
+     * belongs to. Called by the live-view ANCHOR runtime when the anchor expression's
+     * value changes within a partition — the partition's state must be cleared to
+     * the identity value before the new bucket's first row is processed.
+     * <p>
+     * The default no-op is correct for window functions whose state is intrinsically
+     * per-row (ranking) or that do not maintain partitioned state. Window functions
+     * that key per-partition state on PARTITION BY override this to reset the matching
+     * Map entry's value bytes to identity (e.g. {@code sum -> 0}, {@code count -> 0},
+     * {@code min/max -> NaN}, etc.).
+     * <p>
+     * The function is expected to use its own {@code partitionByRecord} +
+     * {@code partitionBySink} to derive the Map key from {@code record}; for the
+     * common case of multiple functions on the same named WINDOW, all of them use
+     * the same partition shape, so the per-record cost of re-keying is just a
+     * memcpy.
+     * <p>
+     * The live-view ANCHOR runtime drives this from {@link io.questdb.cairo.lv.LiveViewInstance};
+     * non-live-view queries never invoke it.
+     */
+    default void resetPartition(Record record) {
+    }
+
+    /**
+     * Rehydrates ONE partition's accumulator state previously written by
+     * {@link #snapshotPartitionState(MemoryA, MapValue)}. The live-view snapshot
+     * framework owns iteration: it has already read the partition key and called
+     * {@code createValue()}, passing the fresh {@code value} here; for scalar
+     * (no-map) functions {@code value} is {@code null}. The function reads its own
+     * state bytes from {@code source} starting at {@code offset} and returns the
+     * advanced offset just past them. Native-memory-backed functions allocate the
+     * partition's ring/deque from their arena here.
+     * <p>
+     * The default throws — only window functions that {@link #supportsSnapshot()}
+     * override.
+     *
+     * @return the offset just past this partition's consumed state bytes
+     */
+    default long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        throw new UnsupportedOperationException(
+                "restorePartitionState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * Rebuilds the per-partition state {@link Map} to keep only partitions whose
+     * key is present in {@code survivingKeys}, dropping the rest. The live-view
+     * ANCHOR runtime ({@link io.questdb.cairo.lv.LiveViewWindow#compact()}) calls
+     * this after a frontier-gated sweep drops anchor-map partitions whose bucket
+     * has fallen behind the retained window, so each function's map stays in
+     * lockstep with the anchor map.
+     * <p>
+     * {@code survivingKeys} is the rebuilt anchor map; it shares this function's
+     * partition-by key layout and {@link Map} implementation — the caller verifies
+     * the impl match before dispatching, so the membership probe
+     * ({@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeepingMembers})
+     * never casts across impls. Default no-op for functions without per-partition state.
+     */
+    default void retainPartitions(Map survivingKeys) {
+    }
+
     /*
       Set index of record chain column used to store window function result.
      */
@@ -331,20 +514,78 @@ public interface WindowFunction extends Function {
 
     /**
      * Binds the per-query native memory tracker on this function's tracker-aware
-     * state (e.g. a per-partition map). The owning window cursor calls this before
-     * reopen() at cursor start, so the state allocates against the bound tracker and
-     * frees against it at cursor close. A null tracker degrades to global-only
-     * accounting. Default no-op for functions with no tracker-aware state.
+     * state: the per-partition map, and the ring buffers holding the frame values
+     * (both RANGE and ROWS frames, and the Max/Min monotonic deque). The owning
+     * window cursor calls this before reopen() at cursor start, so the state
+     * allocates against the bound tracker and frees against it at cursor close. A
+     * null tracker degrades to global-only accounting. Default no-op for functions
+     * with no tracker-aware state.
      * <p>
-     * Coverage limitation: ROWS-frame functions bind only their per-partition map,
-     * not the per-partition ring buffers that hold the sliding-window values. Those
-     * buffers stay global-only. A single ROWS frame is bounded by the frame literal,
-     * but under PARTITION BY ... ROWS the total ring-buffer memory scales with the
-     * partition cardinality and is not charged to the per-query counter; the bound
-     * per-partition map is only a partial backstop. RANGE-frame functions bind their
-     * tracker-aware state and are not affected.
+     * An implementation must therefore leave its ring buffer UNALLOCATED at
+     * construction and let reopen() perform the first allocation, matching the
+     * lazy-map pattern in BasePartitionedWindowFunction's constructor. A buffer
+     * filled in the constructor allocates at newInstance() time, before any cursor
+     * binds a tracker, so the malloc lands on the global counter while reset() later
+     * frees it against the bound per-query tracker - driving that counter negative.
+     * Direct callers (e.g. unit tests) must reopen() before use.
      */
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
+    /**
+     * @return the snapshot layout version this build writes. The framework records this in the
+     * FUNCTION_SNAPSHOT block header so future builds can dispatch through
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)} to the correct decoder. Bump
+     * on any state-layout change.
+     * <p>
+     * This doubles as the highest version this build can <em>read</em>: a build that could decode
+     * a layout would also write it. The live view layer rejects a recorded version above this
+     * value rather than decoding foreign bytes with the current layout - the case a downgraded
+     * binary hits when a newer binary left a CRC-valid head checkpoint behind.
+     */
+    default int snapshotFormatVersion() {
+        return 0;
+    }
+
+    /**
+     * @return the lowest snapshot {@code formatVersion} this build can
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}.
+     * A head checkpoint whose recorded version is strictly less than this value cannot be replayed;
+     * the live view layer surfaces it as {@code "checkpoint format version unsupported"} via the
+     * unified invalidation path.
+     */
+    default int snapshotMinSupportedVersion() {
+        return 0;
+    }
+
+    /**
+     * Serialises ONE partition's accumulator state into {@code sink} for later
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}. The live-view
+     * snapshot framework owns iteration and the FUNCTION_SNAPSHOT key-shape header:
+     * it has already written this partition's key, so the function writes only its
+     * own value bytes from {@code value} (the partition's {@link MapValue}; for
+     * scalar no-map functions {@code value} is {@code null} and the function reads
+     * its single field directly).
+     * <p>
+     * The default throws — only window functions that {@link #supportsSnapshot()}
+     * override.
+     */
+    default void snapshotPartitionState(MemoryA sink, MapValue value) {
+        throw new UnsupportedOperationException(
+                "snapshotPartitionState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
+     * Reports whether {@link #snapshotPartitionState(MemoryA, MapValue)} /
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)} are implemented.
+     * The live view refresh worker ANDs this across every window function in the compiled SELECT
+     * at first refresh; the LV's per-instance {@code snapshotCapability} flag is the result.
+     * Default {@code false} keeps unmigrated functions out of the checkpoint pipeline without
+     * a try/catch — the cheaper probe.
+     */
+    default boolean supportsSnapshot() {
+        return false;
     }
 
     enum Pass1ScanDirection {

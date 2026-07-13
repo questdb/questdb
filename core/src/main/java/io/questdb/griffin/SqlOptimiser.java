@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
@@ -5883,6 +5884,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableName, lo, hi);
+
         int status = executionContext.getTableStatus(path, tableToken);
 
         if (status == TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -5908,6 +5910,12 @@ public class SqlOptimiser implements Mutable {
                     throw e;
                 }
                 throw SqlException.position(tableNamePosition).put(e);
+            }
+        } else if (tableToken.isLiveView()) {
+            // live views have _meta but no column data files — read metadata directly
+            try (TableReaderMetadata metadata = new TableReaderMetadata(executionContext.getCairoEngine().getConfiguration(), tableToken)) {
+                metadata.loadMetadata();
+                enumerateColumns(model, metadata);
             }
         } else {
             try (TableReader reader = executionContext.getReader(tableToken)) {
@@ -6322,6 +6330,9 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case IQueryModel.SHOW_CREATE_TABLE:
                     tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
+                    break;
+                case IQueryModel.SHOW_CREATE_LIVE_VIEW:
+                    tableFactory = sqlParserCallback.generateShowCreateLiveViewFactory(model, executionContext, path);
                     break;
                 case IQueryModel.SHOW_CREATE_MAT_VIEW:
                     tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);

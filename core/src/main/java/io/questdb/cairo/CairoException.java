@@ -59,7 +59,23 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VERSION_MISMATCH = TXN_BLOCK_APPLY_FAILED - 1;
     public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
     public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
-    private static final int TABLE_SUSPENDED = SEQUENCER_METADATA_OPEN_FAILED - 1;
+    // Live-view head .cp restore observed a function snapshot block whose
+    // formatVersion falls outside the function's supported range
+    // [snapshotMinSupportedVersion(), snapshotFormatVersion()]. Signals a real
+    // compatibility break (not a structural corruption); the caller invalidates
+    // the LV instead of falling into head-miss replay.
+    public static final int LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH = SEQUENCER_METADATA_OPEN_FAILED - 1;
+    // Live-view head .cp open found a file-level formatVersion outside the
+    // reader's supported range. Like LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH,
+    // this signals a real compatibility break; the caller invalidates the
+    // LV rather than unlinking the .cp and replaying.
+    public static final int LV_CHECKPOINT_FILE_VERSION_MISMATCH = LV_FUNCTION_SNAPSHOT_VERSION_MISMATCH - 1;
+    // The on-disk _lv / _lv.s carry a format version newer than this build
+    // supports. The catalogue load path catches this and surfaces the view as
+    // version_unsupported rather than hiding it; distinct from structural
+    // corruption so the two map to different operator-visible outcomes.
+    public static final int LV_FILE_VERSION_UNSUPPORTED = LV_CHECKPOINT_FILE_VERSION_MISMATCH - 1;
+    private static final int TABLE_SUSPENDED = LV_FILE_VERSION_UNSUPPORTED - 1;
     public static final int PARTITION_SNAPSHOT_STALE = TABLE_SUSPENDED - 1;
     public static final int PARTITION_SNAPSHOT_ID_MISSING = PARTITION_SNAPSHOT_STALE - 1;
     public static final int NON_CRITICAL = -1;

@@ -507,6 +507,56 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewCheckpointMaxDurationMicros() {
+        return 5L * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getLiveViewCheckpointRows() {
+        return 1_000_000L;
+    }
+
+    @Override
+    public int getLiveViewFlushRetryMax() {
+        return 5;
+    }
+
+    @Override
+    public long getLiveViewFlushRetryMaxDurationMicros() {
+        return 60L * Micros.SECOND_MICROS;
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferGrowthBytes() {
+        return 16L * 1024L * 1024L;
+    }
+
+    @Override
+    public long getLiveViewInMemoryBufferInitialBytes() {
+        return 64L * 1024L;
+    }
+
+    @Override
+    public long getLiveViewInMemoryMaxMicros() {
+        return 60L * Micros.MINUTE_MICROS;
+    }
+
+    @Override
+    public int getLiveViewPartitionCompactThreshold() {
+        return 100_000;
+    }
+
+    @Override
+    public int getLiveViewRefreshTurnMaxCommits() {
+        return 64;
+    }
+
+    @Override
+    public long getLiveViewRefreshTurnMaxDurationMicros() {
+        return 50_000L;
+    }
+
+    @Override
     public boolean getLogLevelVerbose() {
         return false;
     }
@@ -574,6 +624,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMatViewRefreshMaxClusters() {
         return 32;
+    }
+
+    @Override
+    public long getLiveViewRefreshMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -1589,6 +1644,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isIOURingEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isLiveViewEnabled() {
         return true;
     }
 

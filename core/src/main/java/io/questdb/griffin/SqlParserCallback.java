@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowCreateLiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateViewRecordCursorFactory;
@@ -47,6 +48,16 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.SqlKeywords.isTtlKeyword;
 
 public interface SqlParserCallback {
+
+    static @NotNull TableToken getLiveViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.$(tableNameExpr.position, "live view does not exist [view=").put(tableNameExpr.token).put(']')
+        );
+        if (!viewToken.isLiveView()) {
+            throw SqlException.$(tableNameExpr.position, "live view name expected, got table name");
+        }
+        return viewToken;
+    }
 
     static @NotNull TableToken getMatViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
@@ -64,8 +75,10 @@ public interface SqlParserCallback {
         final TableToken tableToken = getTableToken(tableNameExpr, executionContext, path,
                 SqlException.tableDoesNotExist(tableNameExpr.position, tableNameExpr.token)
         );
-        if (tableToken.isMatView() || tableToken.isView()) {
-            throw SqlException.$(tableNameExpr.position, "table name expected, got view or materialized view name");
+        if (tableToken.isMatView() || tableToken.isView() || tableToken.isLiveView()) {
+            throw SqlException.$(tableNameExpr.position, tableToken.isLiveView()
+                    ? "table name expected, got live view name"
+                    : "table name expected, got view or materialized view name");
         }
         return tableToken;
     }
@@ -84,6 +97,11 @@ public interface SqlParserCallback {
 
     default RecordCursorFactory generateShowCreateDatabaseFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         return new ShowCreateDatabaseRecordCursorFactory(model.getShowCreateDatabaseInclude());
+    }
+
+    default RecordCursorFactory generateShowCreateLiveViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getLiveViewToken(model.getTableNameExpr(), executionContext, path);
+        return new ShowCreateLiveViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
     }
 
     default RecordCursorFactory generateShowCreateMatViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {

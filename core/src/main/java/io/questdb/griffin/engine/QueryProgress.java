@@ -514,6 +514,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public boolean hasActivePushdownFilter() {
+            return baseCursor.hasActivePushdownFilter();
+        }
+
+        @Override
         public boolean isExternal() {
             return baseCursor.isExternal();
         }

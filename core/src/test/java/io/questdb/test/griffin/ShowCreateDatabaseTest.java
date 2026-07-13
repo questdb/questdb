@@ -234,7 +234,7 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(
                 "SHOW CREATE WAREHOUSE",
                 12,
-                "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'DATABASE'"
+                "expected 'TABLE' or 'VIEW' or 'MATERIALIZED VIEW' or 'LIVE VIEW' or 'DATABASE'"
         ));
     }
 
@@ -396,6 +396,71 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             for (int i = 0, n = before.size(); i < n; i++) {
                 Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
             }
+        });
+    }
+
+    @Test
+    public void testDatabaseDumpEmitsLiveViewAndOrdersItAfterItsBase() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            node1.setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            // a_lv sorts alphabetically BEFORE its base z_base, so a name-only order would
+            // emit the live view first and its CREATE LIVE VIEW replay would fail; the
+            // dependency edge must emit z_base first.
+            execute("create table z_base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view a_lv flush every 1s as " +
+                    "select ts, x, row_number() over () as rn from z_base where x > 0");
+            drainWalQueue();
+
+            final ObjList<String> before = dumpDatabase();
+            final String dump = before.toString();
+            // The live view must round-trip as CREATE LIVE VIEW, not fall through to
+            // CREATE TABLE (the pre-fix behaviour discarded the LV definition entirely).
+            final int baseIdx = dump.indexOf("CREATE TABLE 'z_base'");
+            final int lvIdx = dump.indexOf("CREATE LIVE VIEW 'a_lv'");
+            Assert.assertTrue("base table DDL must be present", baseIdx >= 0);
+            Assert.assertTrue("live view DDL must be present", lvIdx >= 0);
+            Assert.assertFalse("live view must not be dumped as a plain table", dump.contains("CREATE TABLE 'a_lv'"));
+            Assert.assertTrue("the base table must precede the live view that reads it", baseIdx < lvIdx);
+
+            // Full round-trip: tear everything down and replay the dump verbatim.
+            execute("drop live view a_lv");
+            execute("drop table z_base");
+            drainWalQueue();
+            for (int i = 0, n = before.size(); i < n; i++) {
+                execute(before.getQuick(i));
+            }
+            drainWalQueue();
+
+            final ObjList<String> after = dumpDatabase();
+            Assert.assertEquals(before.size(), after.size());
+            for (int i = 0, n = before.size(); i < n; i++) {
+                Assert.assertEquals("statement " + i + " differs", before.getQuick(i), after.getQuick(i));
+            }
+        });
+    }
+
+    @Test
+    public void testDatabaseDumpFiltersLiveViewsCategory() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
+            node1.setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s as " +
+                    "select ts, x, row_number() over () as rn from base where x > 0");
+            drainWalQueue();
+
+            final String liveViewsOnly = dump("SHOW CREATE DATABASE INCLUDE (LIVE_VIEWS)");
+            Assert.assertTrue(liveViewsOnly, liveViewsOnly.contains("CREATE LIVE VIEW 'lv'"));
+            Assert.assertFalse(liveViewsOnly, liveViewsOnly.contains("CREATE TABLE 'base'"));
+
+            final String noLiveViews = dump("SHOW CREATE DATABASE EXCLUDE (LIVE_VIEWS)");
+            Assert.assertTrue(noLiveViews, noLiveViews.contains("CREATE TABLE 'base'"));
+            Assert.assertFalse(noLiveViews, noLiveViews.contains("CREATE LIVE VIEW 'lv'"));
+
+            // Live views are part of SCHEMA.
+            final String schema = dump("SHOW CREATE DATABASE INCLUDE (SCHEMA)");
+            Assert.assertTrue(schema, schema.contains("CREATE LIVE VIEW 'lv'"));
         });
     }
 

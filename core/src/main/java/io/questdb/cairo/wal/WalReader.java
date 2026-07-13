@@ -31,6 +31,8 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -39,11 +41,12 @@ import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -53,49 +56,33 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 public class WalReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalReader.class);
-    private final int columnCount;
-    private final ObjList<MemoryCMR> columns;
+    private final ObjList<MemoryCMR> columns = new ObjList<>();
+    private final CairoConfiguration configuration;
     private final WalDataCursor dataCursor = new WalDataCursor();
     private final FilesFacade ff;
     private final SequencerMetadata metadata;
-    private final Path path;
-    private final int rootLen;
-    private final long rowCount;
-    private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
-    private final String tableName;
-    private final WalEventCursor walEventCursor;
+    private final Path path = new Path();
+    private final ObjList<DirectSymbolMap> symbolMaps = new ObjList<>();
     private final WalEventReader walEventReader;
-    private final String walName;
+    private int columnCount;
+    private int rootLen;
+    private long rowCount;
+    private int segmentId = -1;
+    private String tableName;
+    private WalEventCursor walEventCursor;
+    private String walName;
+
+    public WalReader(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
+        this.metadata = new SequencerMetadata(configuration, true);
+        this.walEventReader = new WalEventReader(configuration);
+    }
 
     public WalReader(CairoConfiguration configuration, TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
-        this.tableName = tableToken.getTableName();
-        this.walName = Chars.toString(walName);
-        this.rowCount = rowCount;
-
-        ff = configuration.getFilesFacade();
-        path = new Path();
-        path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
-        rootLen = path.size();
-
+        this(configuration);
         try {
-            metadata = new SequencerMetadata(configuration, true);
-            metadata.open(path.slash().put(segmentId), rootLen, tableToken);
-            columnCount = metadata.getColumnCount();
-            walEventReader = new WalEventReader(configuration);
-            LOG.debug().$("open [table=").$(tableToken).I$();
-            int pathLen = path.size();
-            walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
-            path.trimTo(pathLen);
-            openSymbolMaps(walEventCursor, configuration);
-            path.slash().put(segmentId);
-            walEventCursor.reset();
-
-            final int capacity = 2 * columnCount + 2;
-            columns = new ObjList<>(capacity);
-            columns.setPos(capacity + 2);
-            columns.setQuick(0, NullMemoryCMR.INSTANCE);
-            columns.setQuick(1, NullMemoryCMR.INSTANCE);
-            dataCursor.of(this);
+            of(tableToken, walName, segmentId, rowCount);
         } catch (Throwable e) {
             close();
             throw e;
@@ -107,7 +94,11 @@ public class WalReader implements Closeable {
         Misc.free(walEventReader);
         Misc.free(metadata);
         Misc.freeObjList(columns);
+        Misc.freeObjList(symbolMaps);
         Misc.free(path);
+        // Invalidate the same-segment fast path: a reused instance must take the
+        // full rebind in of() rather than matching a freed segment.
+        segmentId = -1;
         LOG.debug().$("closed '").$safe(tableName).$('\'').$();
     }
 
@@ -132,13 +123,72 @@ public class WalReader implements Closeable {
         return dataCursor;
     }
 
+    /**
+     * Returns the open segment's schema, reflecting the actual on-disk column layout of
+     * the mapped bytes - which can be newer than the base table's applied metadata when
+     * a structural change is committed but not yet applied.
+     */
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
     public int getRealColumnCount() {
         return metadata.getRealColumnCount();
     }
 
-    public CharSequence getSymbolValue(int col, int key) {
-        IntObjHashMap<CharSequence> symbolMap = symbolMaps.getQuick(col);
-        return symbolMap.get(key);
+    /**
+     * Returns the number of symbol keys accumulated for column {@code col} in the open
+     * segment, or 0 when the column has no symbol map. {@link #openSymbolMaps} seeds the
+     * map with the base table's clean dictionary keys {@code [0, cleanSymbolCount)} and
+     * then applies every data transaction's diff entries, whose keys continue from
+     * {@code cleanSymbolCount}. The resulting key space is therefore dense, so the count
+     * doubles as an exclusive upper bound for a {@code 0..count-1} enumeration.
+     */
+    public int getSymbolCount(int col) {
+        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        return symbolMap != null ? symbolMap.size() : 0;
+    }
+
+    /**
+     * Returns the int key in {@code [0, hiExclusive)} whose stored value equals {@code value} in
+     * column {@code col}, else {@link SymbolTable#VALUE_NOT_FOUND}. The map has no reverse index,
+     * so this walks the range and compares byte-wise; callers hit it once per filter init per
+     * segment, so the linear scan is fine.
+     * <p>
+     * {@code hiExclusive} is mandatory: the map is cumulative over the whole segment (last writer
+     * wins) while callers resolve for a single txn. The WAL writer restarts local symbol ids at the
+     * committed count on every commit, so two un-applied commits in one segment give the same key to
+     * different new symbols. An unbounded scan could therefore return a key valid in a DIFFERENT txn
+     * and match this txn's rows carrying that same local id. Callers pass their clean symbol count,
+     * so the scan only resolves clean-dictionary keys (stable across every txn in the segment); a
+     * caller's own new symbols come from its per-txn diff overlay.
+     */
+    public int getSymbolKey(int col, CharSequence value, DirectString view, int hiExclusive) {
+        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        if (symbolMap == null || value == null) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+        for (int k = 0, n = Math.min(symbolMap.size(), hiExclusive); k < n; k++) {
+            CharSequence v = symbolMap.valueOf(k, view);
+            if (v != null && Chars.equals(value, v)) {
+                return k;
+            }
+        }
+        return SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    /**
+     * Binds {@code view} to the bytes stored for {@code key} in column {@code col}.
+     * The underlying bytes are stable for the current segment (the column's
+     * {@link DirectSymbolMap} is populated once per {@link #of} call and is read-only
+     * thereafter), so the returned view stays valid until the next {@link #of}
+     * rebinds this reader, until {@link #close()}, or until the caller rebinds the
+     * view itself via another call. Callers that need two simultaneous views on the
+     * same column must supply two distinct {@link DirectString} instances.
+     */
+    public CharSequence getSymbolValue(int col, int key, DirectString view) {
+        DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
+        return symbolMap != null ? symbolMap.valueOf(key, view) : null;
     }
 
     public String getTableName() {
@@ -155,6 +205,64 @@ public class WalReader implements Closeable {
 
     public String getWalName() {
         return walName;
+    }
+
+    /**
+     * Rebinds this reader to a new (table, wal, segment). Reuses internal buffers and
+     * off-heap symbol maps so a single instance can scan many segments without per-segment
+     * object allocation. Not safe to call while a previously returned data cursor, symbol
+     * view, or column pointer is still in use.
+     */
+    public WalReader of(TableToken tableToken, CharSequence walName, int segmentId, long rowCount) {
+        // Detect a rebind to the exact same (table, wal, segment) - only rowCount
+        // grew. The live view drain re-opens the same segment once per base commit,
+        // and many commits share a segment; keeping the column list lets the
+        // loadColumnAt() reload below remap each mmap in place (openOrCreateMemory
+        // reuses mem.of at the new size) instead of munmap+mmap-ing every column
+        // per commit. Computed before the fields are reassigned; columnCount is
+        // cross-checked after metadata.open in case the on-disk schema differs.
+        final boolean sameTableWalSegment = this.walName != null
+                && this.tableName != null
+                && this.segmentId == segmentId
+                && Chars.equals(this.tableName, tableToken.getTableName())
+                && Chars.equals(this.walName, walName);
+        final int prevColumnCount = this.columnCount;
+
+        this.tableName = tableToken.getTableName();
+        if (!sameTableWalSegment) {
+            this.walName = Chars.toString(walName);
+        }
+        this.segmentId = segmentId;
+        this.rowCount = rowCount;
+
+        path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
+        rootLen = path.size();
+
+        metadata.open(path.slash().put(segmentId), rootLen, tableToken);
+        columnCount = metadata.getColumnCount();
+        LOG.debug().$("open [table=").$(tableToken).I$();
+        int pathLen = path.size();
+        walEventCursor = walEventReader.of(path.slash().put(segmentId), -1);
+        path.trimTo(pathLen);
+        openSymbolMaps(walEventCursor, configuration);
+        path.slash().put(segmentId);
+        walEventCursor.reset();
+
+        if (!sameTableWalSegment || prevColumnCount != columnCount) {
+            final int capacity = 2 * columnCount + 2;
+            // Different segment (or first bind): drop the prior segment's column
+            // mmaps; loadColumnAt() remaps on demand for this one.
+            Misc.freeObjList(columns);
+            columns.clear();
+            columns.setPos(capacity + 2);
+            columns.setQuick(0, NullMemoryCMR.INSTANCE);
+            columns.setQuick(1, NullMemoryCMR.INSTANCE);
+        }
+        // Same segment: keep the column list intact. dataCursor.of() below runs
+        // openSegment() -> loadColumnAt() for every column, and openOrCreateMemory
+        // remaps each retained mmap in place at the current rowCount.
+        dataCursor.of(this);
+        return this;
     }
 
     public long openSegment() {
@@ -238,6 +346,13 @@ public class WalReader implements Closeable {
     }
 
     private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
+        // Preserve off-heap buffers but drop entries carried over from a prior segment.
+        for (int i = 0, n = symbolMaps.size(); i < n; i++) {
+            DirectSymbolMap m = symbolMaps.getQuick(i);
+            if (m != null) {
+                m.clear();
+            }
+        }
         while (eventCursor.hasNext()) {
             if (WalTxnType.isDataType(eventCursor.getType())) {
                 WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -245,34 +360,31 @@ public class WalReader implements Closeable {
                 while (symbolDiff != null) {
                     int cleanSymbolCount = symbolDiff.getCleanSymbolCount();
                     int columnIndex = symbolDiff.getColumnIndex();
-                    final IntObjHashMap<CharSequence> symbolMap;
+                    DirectSymbolMap symbolMap = columnIndex < symbolMaps.size() ? symbolMaps.getQuick(columnIndex) : null;
 
-                    if (symbolMaps.size() <= columnIndex || symbolMaps.getQuick(columnIndex) == null) {
-                        symbolMap = new IntObjHashMap<>();
-                        if (cleanSymbolCount > 0) {
-                            try (
-                                    SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(
-                                            configuration,
-                                            path,
-                                            this.metadata.getColumnName(columnIndex),
-                                            COLUMN_NAME_TXN_NONE,
-                                            cleanSymbolCount
-                                    )
-                            ) {
-                                for (int key = 0; key < cleanSymbolCount; key++) {
-                                    CharSequence symbol = symbolMapReader.valueOf(key);
-                                    symbolMap.put(key, String.valueOf(symbol));
-                                }
+                    if (symbolMap == null) {
+                        symbolMap = new DirectSymbolMap(256, 8, MemoryTag.NATIVE_DEFAULT);
+                        symbolMaps.extendAndSet(columnIndex, symbolMap);
+                    }
+                    if (cleanSymbolCount > 0 && symbolMap.size() == 0) {
+                        try (
+                                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(
+                                        configuration,
+                                        path,
+                                        this.metadata.getColumnName(columnIndex),
+                                        COLUMN_NAME_TXN_NONE,
+                                        cleanSymbolCount
+                                )
+                        ) {
+                            for (int key = 0; key < cleanSymbolCount; key++) {
+                                symbolMap.put(key, symbolMapReader.valueOf(key));
                             }
                         }
-                        symbolMaps.extendAndSet(columnIndex, symbolMap);
-                    } else {
-                        symbolMap = symbolMaps.getQuick(columnIndex);
                     }
 
                     SymbolMapDiffEntry entry = symbolDiff.nextEntry();
                     while (entry != null) {
-                        symbolMap.put(entry.getKey(), String.valueOf(entry.getSymbol()));
+                        symbolMap.put(entry.getKey(), entry.getSymbol());
                         entry = symbolDiff.nextEntry();
                     }
 

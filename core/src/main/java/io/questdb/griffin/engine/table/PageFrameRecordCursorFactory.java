@@ -157,6 +157,14 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return null;
     }
 
+    public boolean hasFilter() {
+        return filter != null;
+    }
+
+    public boolean isIntervalScan() {
+        return partitionFrameCursorFactory.isIntervalScan();
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return supportsRandomAccess;

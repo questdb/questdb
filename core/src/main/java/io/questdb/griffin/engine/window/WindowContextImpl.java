@@ -41,6 +41,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private int exclusionKindPos;
     private int framingMode;
     private boolean ignoreNulls;
+    private boolean liveView;
     private int nullsDescPos;
     private int orderByDirection;
     private int orderByPos;
@@ -74,6 +75,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.timestampIndex = -1;
         this.timestampType = ColumnType.UNDEFINED;
         this.ignoreNulls = false;
+        this.liveView = false;
         this.nullsDescPos = 0;
     }
 
@@ -165,6 +167,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     @Override
+    public boolean isLiveView() {
+        return liveView;
+    }
+
+    @Override
     public boolean isOrdered() {
         return ordered;
     }
@@ -219,6 +226,10 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.ignoreNulls = ignoreNulls;
         this.nullsDescPos = nullsDescPos;
         this.timestampType = timestampType;
+    }
+
+    public void setLiveView(boolean liveView) {
+        this.liveView = liveView;
     }
 
     @Override

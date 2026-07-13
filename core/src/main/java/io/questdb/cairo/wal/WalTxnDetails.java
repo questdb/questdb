@@ -69,7 +69,8 @@ public class WalTxnDetails implements QuietCloseable {
     private static final int WAL_TXN_REPLACE_RANGE_TS_LOW = WAL_TXN_MAT_VIEW_REFRESH_TS + 1;
     private static final int WAL_TXN_REPLACE_RANGE_TS_HI = WAL_TXN_REPLACE_RANGE_TS_LOW + 1;
     private static final int WAL_TXN_MAT_VIEW_PERIOD_HI = WAL_TXN_REPLACE_RANGE_TS_HI + 1;
-    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
+    private static final int WAL_TXN_LV_MAX_BASE_TXN = WAL_TXN_MAT_VIEW_PERIOD_HI + 1;
+    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_LV_MAX_BASE_TXN + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
     private final MicrosecondClock clock;
@@ -362,6 +363,10 @@ public class WalTxnDetails implements QuietCloseable {
 
     public long getLastSeqTxn() {
         return startSeqTxn + transactionMeta.size() / TXN_METADATA_LONGS_SIZE - 1;
+    }
+
+    public long getLiveViewMaxBaseSeqTxn(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_LV_MAX_BASE_TXN);
     }
 
     public long getMatViewPeriodHi(long seqTxn) {
@@ -737,10 +742,18 @@ public class WalTxnDetails implements QuietCloseable {
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestampUs());
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, matViewDataInfo.getLastPeriodHi());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_LV_MAX_BASE_TXN, -1);
+                            } else if (walTxnType == WalTxnType.LIVE_VIEW_DATA) {
+                                WalEventCursor.LiveViewDataInfo liveViewDataInfo = walEventCursor.getLiveViewDataInfo();
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_LV_MAX_BASE_TXN, liveViewDataInfo.getMaxBaseSeqTxnInBlock());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1);
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, -1);
                             } else {
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1);
                                 transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, -1);
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_LV_MAX_BASE_TXN, -1);
                             }
                             transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_LOW, commitInfo.getReplaceRangeTsLow());
                             transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_HI, commitInfo.getReplaceRangeTsHi());
@@ -768,6 +781,7 @@ public class WalTxnDetails implements QuietCloseable {
                     transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_LOW, -1); // replace range low boundary
                     transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_HI, -1); // replace range high boundary
                     transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_PERIOD_HI, -1); // mat view last period high boundary
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_LV_MAX_BASE_TXN, -1); // live view max base seqTxn in block
                 }
             }
         } finally {

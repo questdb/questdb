@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.Map;
@@ -118,9 +119,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                 MemoryARW memory,
                 int initialBufferSize,
                 int timestampIdx,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, n);
+            super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx, n, partitionByKeyTypes, liveView);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 
@@ -151,9 +154,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                 long rowsHi,
                 Function arg,
                 MemoryARW memory,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, n);
+            super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory, n, partitionByKeyTypes, liveView);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 
@@ -182,9 +187,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                 RecordSink partitionBySink,
                 long rowsHi,
                 Function arg,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView
         ) {
-            super(map, partitionByRecord, partitionBySink, rowsHi, arg, n);
+            super(map, partitionByRecord, partitionBySink, rowsHi, arg, n, partitionByKeyTypes, liveView);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 
@@ -298,8 +305,18 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
     static final class UnboundedPartitionTimestamp extends NthValueWindowFunctionFactoryHelper.NthValueOverUnboundedPartitionFrameBase implements WindowTimestampFunction {
         private final TimestampDriver timestampDriver;
 
-        UnboundedPartitionTimestamp(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int n, boolean isRange) {
-            super(map, partitionByRecord, partitionBySink, arg, n, isRange);
+        UnboundedPartitionTimestamp(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                Function arg,
+                int n,
+                boolean isRange,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg, n, isRange, partitionByKeyTypes, liveView, configuration);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
         }
 

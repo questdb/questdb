@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -44,9 +45,11 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -77,7 +80,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal8LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new Decimal8LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal8LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal8LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL16 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -88,7 +91,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal16LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new Decimal16LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal16LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal16LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL32 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -99,7 +102,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal32LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new Decimal32LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal32LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal32LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL64 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -110,7 +113,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal64LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new Decimal64LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal64LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal64LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL128 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -121,7 +124,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal128LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new Decimal128LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal128LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal128LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             case ColumnType.DECIMAL256 -> LeadLagWindowFunctionFactoryHelper.newInstance(
                     position, args, argPositions, configuration, sqlExecutionContext,
@@ -132,7 +135,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     },
                     (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal256LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
                     (partitionByRecord, arg, name, ignoreNulls) -> new Decimal256LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal256LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, partitionByKeyTypes, liveView) -> new Decimal256LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType, partitionByKeyTypes, liveView)
             );
             default ->
                     throw SqlException.$(argPositions.getQuick(0), "lag is not yet implemented for ").put(ColumnType.nameOf(tag));
@@ -194,6 +197,13 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
+    // Not yet migrated to the live-view snapshot contract: unlike the narrower
+    // widths (which extend BaseLagOverPartitionFunction and inherit its LV
+    // hooks), this class manages its own ring layout and keeps the default
+    // supportsSnapshot() == false, so CREATE LIVE VIEW rejects lag(DECIMAL128)
+    // over a partitioned frame up front (CairoEngine.validateLiveViewWindowFunction)
+    // while lag(DECIMAL64 and narrower) is accepted. Fails safe; migrate the
+    // snapshot/restore + tombstone hooks to lift the restriction.
     static class Decimal128LagOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Function defaultValue;
@@ -213,7 +223,9 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                   boolean ignoreNulls,
                                                   Function defaultValue,
                                                   long offset,
-                                                  int type) {
+                                                  int type,
+                                                  @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                                  @SuppressWarnings("unused") boolean liveView) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.memory = memory;
             this.ignoreNulls = ignoreNulls;
@@ -320,6 +332,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         public void reset() {
             super.reset();
             Misc.free(memory);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -438,8 +456,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                  boolean ignoreNulls,
                                                  Function defaultValue,
                                                  long offset,
-                                                 int type) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+                                                 int type,
+                                                 ColumnTypes partitionByKeyTypes,
+                                                 boolean liveView) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
+                    partitionByKeyTypes, liveView);
             this.type = type;
         }
 
@@ -559,6 +580,9 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
+    // Not yet migrated to the live-view snapshot contract - see the
+    // Decimal128LagOverPartitionFunction note; CREATE LIVE VIEW rejects
+    // lag(DECIMAL256) over a partitioned frame up front.
     static class Decimal256LagOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Function defaultValue;
@@ -578,7 +602,9 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                   boolean ignoreNulls,
                                                   Function defaultValue,
                                                   long offset,
-                                                  int type) {
+                                                  int type,
+                                                  @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                                  @SuppressWarnings("unused") boolean liveView) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.memory = memory;
             this.ignoreNulls = ignoreNulls;
@@ -687,6 +713,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         public void reset() {
             super.reset();
             Misc.free(memory);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -807,8 +839,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                  boolean ignoreNulls,
                                                  Function defaultValue,
                                                  long offset,
-                                                 int type) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+                                                 int type,
+                                                 ColumnTypes partitionByKeyTypes,
+                                                 boolean liveView) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
+                    partitionByKeyTypes, liveView);
             this.type = type;
         }
 
@@ -931,8 +966,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                  boolean ignoreNulls,
                                                  Function defaultValue,
                                                  long offset,
-                                                 int type) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+                                                 int type,
+                                                 ColumnTypes partitionByKeyTypes,
+                                                 boolean liveView) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
+                    partitionByKeyTypes, liveView);
             this.type = type;
         }
 
@@ -1055,8 +1093,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                                                 boolean ignoreNulls,
                                                 Function defaultValue,
                                                 long offset,
-                                                int type) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+                                                int type,
+                                                ColumnTypes partitionByKeyTypes,
+                                                boolean liveView) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
+                    partitionByKeyTypes, liveView);
             this.type = type;
         }
 

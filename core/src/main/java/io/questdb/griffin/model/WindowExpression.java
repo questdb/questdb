@@ -37,6 +37,12 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 
 public final class WindowExpression extends QueryColumn {
+    // Live-view ANCHOR clause kinds. NONE means no ANCHOR was specified — the
+    // default for any non-live-view query and also the live-view default unless the
+    // user wrote ANCHOR EXPRESSION or ANCHOR DAILY.
+    public static final byte ANCHOR_KIND_DAILY = 2;
+    public static final byte ANCHOR_KIND_EXPRESSION = 1;
+    public static final byte ANCHOR_KIND_NONE = 0;
     public static final int CURRENT = 3;
     public static final int EXCLUDE_CURRENT_ROW = 1;
     public static final int EXCLUDE_GROUP = 2;
@@ -58,6 +64,15 @@ public final class WindowExpression extends QueryColumn {
     private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
     private final IntList orderByDirection = new IntList(2);
     private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
+    // ANCHOR clause state. Set only for live-view WINDOW specs; null/zero
+    // for everything else.
+    private ExpressionNode anchorExpression;
+    private byte anchorKind = ANCHOR_KIND_NONE;
+    private int anchorPosition;
+    // ANCHOR DAILY '<HH:MM>' [tz] — captured at parse time. Desugared into
+    // anchorExpression by the live-view validator.
+    private long anchorDailyTimeUs;
+    private CharSequence anchorDailyTimeZone;
     // For window inheritance: WINDOW w2 AS (w1 ROWS ...) — stores the base window name
     private CharSequence baseWindowName;
     private int baseWindowNamePosition;
@@ -93,6 +108,11 @@ public final class WindowExpression extends QueryColumn {
     @Override
     public void clear() {
         super.clear();
+        anchorKind = ANCHOR_KIND_NONE;
+        anchorExpression = null;
+        anchorPosition = 0;
+        anchorDailyTimeUs = 0;
+        anchorDailyTimeZone = null;
         baseWindowName = null;
         baseWindowNamePosition = 0;
         partitionBy.clear();
@@ -182,6 +202,26 @@ public final class WindowExpression extends QueryColumn {
         dst.windowName = this.windowName;
         dst.windowNamePosition = this.windowNamePosition;
         return dst;
+    }
+
+    public long getAnchorDailyTimeUs() {
+        return anchorDailyTimeUs;
+    }
+
+    public CharSequence getAnchorDailyTimeZone() {
+        return anchorDailyTimeZone;
+    }
+
+    public ExpressionNode getAnchorExpression() {
+        return anchorExpression;
+    }
+
+    public byte getAnchorKind() {
+        return anchorKind;
+    }
+
+    public int getAnchorPosition() {
+        return anchorPosition;
     }
 
     public CharSequence getBaseWindowName() {
@@ -302,6 +342,19 @@ public final class WindowExpression extends QueryColumn {
     @Override
     public WindowExpression of(CharSequence alias, ExpressionNode ast) {
         return (WindowExpression) super.of(alias, ast);
+    }
+
+    public void setAnchorDaily(long timeUs, CharSequence timeZone, int position) {
+        this.anchorKind = ANCHOR_KIND_DAILY;
+        this.anchorDailyTimeUs = timeUs;
+        this.anchorDailyTimeZone = timeZone;
+        this.anchorPosition = position;
+    }
+
+    public void setAnchorExpression(ExpressionNode expression, int position) {
+        this.anchorKind = ANCHOR_KIND_EXPRESSION;
+        this.anchorExpression = expression;
+        this.anchorPosition = position;
     }
 
     public void setBaseWindowName(CharSequence baseWindowName, int baseWindowNamePosition) {

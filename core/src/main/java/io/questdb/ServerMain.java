@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -76,9 +77,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.PropertyKey.*;
 
 public class ServerMain implements Closeable {
-    private final CairoEngine engine;
     private final Bootstrap bootstrap;
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPoolManager workerPoolManager;
@@ -715,19 +716,32 @@ public class ServerMain implements Closeable {
     }
 
     protected void setupDedicatedPools(Log log, boolean isReadOnly, ServerConfiguration config) {
-        if (config.getCairoConfiguration().isMatViewEnabled() && !isReadOnly) {
+        // Mat view refresh and live view refresh share one dedicated pool: same workload
+        // shape (compile SELECT, run cursor, materialize) triggered by WAL commits, same
+        // CPU/latency profile, one capacity knob to tune. Each job set is gated on its
+        // OWN enable flag, so enabling only live views (mat views off) still starts the
+        // live view refresh workers - otherwise CREATE LIVE VIEW would succeed and enqueue
+        // refresh tasks that nothing ever drains.
+        final boolean isMatViewEnabled = config.getCairoConfiguration().isMatViewEnabled();
+        final boolean isLiveViewEnabled = config.getCairoConfiguration().isLiveViewEnabled();
+        if ((isMatViewEnabled || isLiveViewEnabled) && !isReadOnly) {
             if (config.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0) {
-                // This starts mat view refresh jobs only when there is a dedicated pool for mat view refresh
+                // This starts refresh jobs only when there is a dedicated pool configured;
                 // this will not use shared pool write because getWorkerCount() > 0
                 WorkerPool mvRefreshWorkerPool = workerPoolManager.getSharedPoolWrite(
                         config.getMatViewRefreshPoolConfiguration(),
                         WorkerPoolManager.Requester.MAT_VIEW_REFRESH
                 );
-                setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+                if (isMatViewEnabled) {
+                    setupMatViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+                }
+                if (isLiveViewEnabled) {
+                    setupLiveViewJobs(mvRefreshWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
+                }
             } else {
-                log.advisory().$("mat view refresh is disabled; set ")
+                log.advisory().$("mat view and live view refresh are disabled; set ")
                         .$(MAT_VIEW_REFRESH_WORKER_COUNT.getPropertyPath())
-                        .$(" to a positive value or keep default to enable mat view refresh.")
+                        .$(" to a positive value or keep default to enable refresh.")
                         .$();
             }
         }
@@ -750,6 +764,17 @@ public class ServerMain implements Closeable {
 
     protected Job setupEngineMaintenanceJob(CairoEngine engine) {
         return new EngineMaintenanceJob(engine);
+    }
+
+    protected void setupLiveViewJobs(WorkerPool lvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {
+        for (int i = 0, workerCount = lvWorkerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final LiveViewRefreshJob liveViewRefreshJob = new LiveViewRefreshJob(i, engine, sharedQueryWorkerCount);
+            lvWorkerPool.assign(i, liveViewRefreshJob);
+            lvWorkerPool.freeOnExit(liveViewRefreshJob);
+        }
+        // There is no LiveViewTimerJob: idle flushes are driven by FLUSH EVERY
+        // ticks polled inside LiveViewRefreshJob, not by a separate timer.
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {

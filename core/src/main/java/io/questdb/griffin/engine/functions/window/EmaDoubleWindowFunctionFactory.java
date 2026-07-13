@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -38,6 +39,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -45,6 +48,7 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -71,7 +75,8 @@ import io.questdb.std.Unsafe;
 public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     // Column types for partition-based functions: ema, prevTimestamp, hasValue
-    private static final ArrayColumnTypes EMA_COLUMN_TYPES;
+    static final ArrayColumnTypes EMA_COLUMN_TYPES;
+    static final ArrayColumnTypes EMA_COLUMN_TYPES_LV;
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(DSD)";
 
@@ -160,10 +165,11 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         // Create appropriate function based on partitioning
         if (partitionByRecord != null) {
+            final boolean liveView = windowContext.isLiveView();
             Map map = MapFactory.createUnorderedMap(
                     configuration,
                     partitionByKeyTypes,
-                    EMA_COLUMN_TYPES
+                    liveView ? EMA_COLUMN_TYPES_LV : EMA_COLUMN_TYPES
             );
 
             if (mode == MODE_TIME_WEIGHTED) {
@@ -175,7 +181,10 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         timestampIndex,
                         tau,
                         kind.toString(),
-                        paramValue
+                        paramValue,
+                        partitionByKeyTypes,
+                        liveView,
+                        configuration
                 );
             } else {
                 return new EmaOverPartitionFunction(
@@ -185,7 +194,10 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         valueArg,
                         alpha,
                         mode == MODE_ALPHA ? "alpha" : "period",
-                        paramValue
+                        paramValue,
+                        partitionByKeyTypes,
+                        liveView,
+                        configuration
                 );
             }
         } else {
@@ -241,7 +253,11 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     static class EmaOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private final double alpha;
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
         private final String kindStr;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final double paramValue;
         private double ema;
 
@@ -252,12 +268,39 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 Function arg,
                 double alpha,
                 String kindStr,
-                double paramValue
+                double paramValue,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.alpha = alpha;
             this.kindStr = kindStr;
             this.paramValue = paramValue;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = EMA_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(EMA_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -275,6 +318,9 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             double d = arg.getDouble(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 // First value for this partition
                 if (Numbers.isFinite(d)) {
                     value.putDouble(0, d);
@@ -326,9 +372,93 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : EMA_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), ema);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putLong(1, 0L);
+                value.putLong(2, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(2, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putLong(value.getLong(1));
+            sink.putLong(value.getLong(2));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -340,12 +470,22 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
         }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
+        }
     }
 
     // Time-weighted EMA with partition by
     static class EmaTimeWeightedOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
         private final String kindStr;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final double paramValue;
         private final long tau;
         private final int timestampIndex;
@@ -359,13 +499,40 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 int timestampIndex,
                 long tau,
                 String kindStr,
-                double paramValue
+                double paramValue,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.timestampIndex = timestampIndex;
             this.tau = tau;
             this.kindStr = kindStr;
             this.paramValue = paramValue;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = EMA_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(EMA_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override
@@ -384,6 +551,9 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 // First value for this partition
                 if (Numbers.isFinite(d)) {
                     value.putDouble(0, d);
@@ -447,9 +617,93 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : EMA_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), ema);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putDouble(0, 0.0);
+                value.putLong(1, 0L);
+                value.putLong(2, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(2, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putLong(value.getLong(1));
+            sink.putLong(value.getLong(2));
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -460,6 +714,12 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -641,5 +901,11 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         EMA_COLUMN_TYPES.add(ColumnType.DOUBLE); // ema
         EMA_COLUMN_TYPES.add(ColumnType.LONG);   // prevTimestamp
         EMA_COLUMN_TYPES.add(ColumnType.LONG);   // hasValue (0 or 1)
+
+        EMA_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        EMA_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // ema
+        EMA_COLUMN_TYPES_LV.add(ColumnType.LONG);   // prevTimestamp
+        EMA_COLUMN_TYPES_LV.add(ColumnType.LONG);   // hasValue (0 or 1)
+        EMA_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
     }
 }

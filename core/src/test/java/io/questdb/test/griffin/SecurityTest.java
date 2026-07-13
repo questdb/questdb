@@ -27,6 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,11 +38,14 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -394,6 +399,95 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewAuthorizesOnlyReferencedBaseColumns() throws Exception {
+        // The base read CREATE authorizes must be exactly the columns the view reads, and
+        // nothing else: a coarser check (SELECT on any column) would let a principal with
+        // access to one harmless column read every other column through a view it creates.
+        //
+        // The view deliberately carries no WHERE clause. A residual filter makes
+        // SqlCodeGenerator.generateFilter0 open a page-frame cursor at code-generation time,
+        // which authorizes the base read as a side effect - so a filtered view was already
+        // covered by accident, and asserting on one would pass with or without the explicit
+        // check. Unfiltered is the shape that reached CREATE with no base-read authorization
+        // at all.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int, y int, secret int) timestamp(ts) partition by day wal");
+            final RecordingSelectSecurityContext recorder = new RecordingSelectSecurityContext();
+            try (SqlExecutionContext recordingContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(recorder, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER)) {
+                engine.execute(
+                        "create live view lv flush every 1s as " +
+                                "select ts, x, row_number() over () as rn from base",
+                        recordingContext
+                );
+            }
+            Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertEquals("base", recorder.selectTable);
+            // ts + x only: y and secret are never read, so they must not be demanded.
+            Assert.assertEquals("[ts,x]", recorder.selectColumns.toString());
+            // The coarse fallback must not have been taken.
+            Assert.assertFalse(recorder.anyColumnAuthorized);
+
+            execute("drop live view lv");
+        });
+    }
+
+    @Test
+    public void testCreateLiveViewDeniedOnNoBaseTableSelect() throws Exception {
+        // A principal allowed to create live views but holding no SELECT on the base
+        // must not be able to read the base's columns through a view it creates.
+        // CREATE LIVE VIEW compiles the SELECT but never opens a cursor over it, so the
+        // cursor-open authorizeSelect that guards a plain SELECT never fires here;
+        // createLiveView authorizes the base read set explicitly instead.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            try (SqlExecutionContext denyContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(new DenyBaseTableSelectSecurityContext(), null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER)) {
+                engine.execute(
+                        "create live view lv flush every 1s as " +
+                                "select ts, x, row_number() over () as rn from base",
+                        denyContext
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                TestUtils.assertContains(ex.getMessage(), "permission denied");
+            }
+            // The denial must not have created the view.
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            assertQuery("select count() from lv")
+                    .noLeakCheck()
+                    .failsWith("table does not exist");
+        });
+    }
+
+    @Test
+    public void testCreateLiveViewDeniedOnNoWriteAccess() throws Exception {
+        // Compile CREATE LIVE VIEW through a read-only security context and assert
+        // authorizeLiveViewCreate() denies it. The base table exists so compilation
+        // reaches execution, where the ACL fires before the view is created.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            try {
+                engine.execute(
+                        "create live view lv flush every 1s as " +
+                                "select ts, x, row_number() over () as rn from base",
+                        roContext
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                TestUtils.assertContains(ex.getMessage(), "permission denied");
+            }
+            // The denial must not have created the view.
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            assertQuery("select count() from lv")
+                    .noLeakCheck()
+                    .failsWith("table does not exist");
+        });
+    }
+
+    @Test
     public void testCreateTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -418,6 +512,31 @@ public class SecurityTest extends AbstractCairoTest {
             assertQuery("select count() from balances")
                     .noLeakCheck()
                     .failsWith("table does not exist");
+        });
+    }
+
+    @Test
+    public void testDropLiveViewDeniedOnNoWriteAccess() throws Exception {
+        // Compile DROP LIVE VIEW through a read-only security context and assert
+        // authorizeLiveViewDrop() denies it after the existence check passes. The
+        // view must survive the denied drop.
+        assertMemoryLeak(() -> {
+            execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("create live view lv flush every 1s as " +
+                    "select ts, x, row_number() over () as rn from base");
+            final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
+                    .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            try {
+                engine.execute("drop live view lv", roContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                TestUtils.assertContains(ex.getMessage(), "permission denied");
+            }
+            // The denied DROP must leave the view registered and droppable by a
+            // privileged context.
+            Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("drop live view lv");
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
         });
     }
 
@@ -1015,5 +1134,40 @@ public class SecurityTest extends AbstractCairoTest {
     @Override
     protected void prepareForQueryAssertion() {
         memoryRestrictedEngine.reloadTableNames();
+    }
+
+    /**
+     * Grants everything except per-column SELECT, so a CREATE that is otherwise permitted
+     * still trips on the base-table read it needs.
+     */
+    private static final class DenyBaseTableSelectSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            throw CairoException.nonCritical().put("permission denied [table=").put(tableToken.getTableName()).put(']');
+        }
+    }
+
+    /**
+     * Allows everything and records which base table + columns the SELECT authorization
+     * demanded, so a test can pin the exact read set a statement asks for.
+     */
+    private static final class RecordingSelectSecurityContext extends AllowAllSecurityContext {
+        final ObjList<CharSequence> selectColumns = new ObjList<>();
+        boolean anyColumnAuthorized;
+        String selectTable;
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            selectTable = tableToken.getTableName();
+            selectColumns.clear();
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                selectColumns.add(Chars.toString(columnNames.getQuick(i)));
+            }
+        }
+
+        @Override
+        public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+            anyColumnAuthorized = true;
+        }
     }
 }

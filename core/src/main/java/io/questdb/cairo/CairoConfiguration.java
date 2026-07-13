@@ -343,6 +343,84 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
+    /**
+     * Wall-clock ceiling between consecutive head-checkpoint writes for a
+     * live view. The refresh worker writes a fresh head once this duration
+     * has elapsed since the prior write, even when
+     * {@link #getLiveViewCheckpointRows()} has not been reached. Caps the
+     * worst-case O3 / restart replay window for low-rate views.
+     */
+    long getLiveViewCheckpointMaxDurationMicros();
+
+    /**
+     * Row-count cadence trigger for head-checkpoint writes. The refresh
+     * worker writes a fresh head once this many live-view rows have been
+     * applied since the prior head. The natural sizing knob for high-rate
+     * views: raising it spaces checkpoints further apart at the cost of a
+     * larger O3 / restart replay window.
+     */
+    long getLiveViewCheckpointRows();
+
+    int getLiveViewFlushRetryMax();
+
+    long getLiveViewFlushRetryMaxDurationMicros();
+
+    /**
+     * Fast-path growth budget. When the published in-memory slot's footprint
+     * already meets or exceeds this size, the refresh worker falls
+     * back to a slow-path swap (which evicts rows older than {@code IN MEMORY}
+     * and may shrink the slot) instead of appending in place. Acts as a
+     * safety backstop against unbounded slot growth between slow-path edges.
+     * Operators with an {@code IN MEMORY} window large enough to exceed the
+     * default should raise this proportionally to keep the fast-path engaged.
+     */
+    long getLiveViewInMemoryBufferGrowthBytes();
+
+    long getLiveViewInMemoryBufferInitialBytes();
+
+    long getLiveViewInMemoryMaxMicros();
+
+    /**
+     * Anchor-map tombstone count threshold above which {@code LiveViewWindow}
+     * fires compaction. The compaction also fires when
+     * {@code tombstoneCount > 0.5 * anchorMap.size()}, regardless of this
+     * absolute threshold.
+     */
+    int getLiveViewPartitionCompactThreshold();
+
+    /**
+     * @return the byte limit applied to one live view's refresh, measured as the PEAK of a
+     * refresh cycle. {@code 0} means unlimited; only the global RSS limit applies.
+     * <p>
+     * The tracker is per-view and its lifetime matches the view's cached state, not one
+     * refresh attempt, because the persistent part of that state - the anchor map plus each
+     * anchored window function's partition map and ring buffers - outlives the cycle that
+     * built it. Unlike a query or a materialized-view refresh, this state is what the limit
+     * exists to bound: it is the only backstop for a view whose ANCHOR cannot drive frontier
+     * compaction (a LONG/INT anchor, or any anchor not provably monotone with the base scan
+     * order), since such a view retains every partition key it has ever seen.
+     * <p>
+     * The tracker also charges the transient per-cycle buffers of the view's compiled SELECT:
+     * LiveViewRefreshSqlExecutionContext hands it to AbstractPageFrameRecordCursor, which binds
+     * it into the frame memory pool and so into RowGroupBuffers. Parquet decode buffers are
+     * therefore charged alongside the persistent state, and freed at cursor close, so the
+     * accounting stays symmetric across cycles but the limit bounds the cycle's peak rather
+     * than its residue. Size the limit to include those transients: a peak that crosses it
+     * invalidates the view (LiveViewRefreshJob.handleRefreshFailure invalidates immediately on
+     * a limit breach rather than spending the retry budget), and invalidation is durable and
+     * sticky - recovery is an operator DROP + CREATE.
+     * <p>
+     * Two floors dominate that sizing. A view with a bounded (ROWS) window frame allocates a
+     * whole window store page for its ring buffer on the first row ({@link
+     * #getSqlWindowStorePageSize()}, 1 MiB by default), so such a view cannot run under a limit
+     * of one page at all. A view reading parquet partitions decodes a whole row group at a time.
+     */
+    long getLiveViewRefreshMemoryLimitBytes();
+
+    int getLiveViewRefreshTurnMaxCommits();
+
+    long getLiveViewRefreshTurnMaxDurationMicros();
+
     boolean getLogLevelVerbose();
 
     boolean getLogSqlQueryProgressExe();
@@ -1043,6 +1121,8 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isLiveViewEnabled();
 
     boolean isMatViewCoveringIndexEnabled();
 
