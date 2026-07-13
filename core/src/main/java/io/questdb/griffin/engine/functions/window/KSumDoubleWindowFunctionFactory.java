@@ -975,6 +975,12 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1282,12 +1288,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -1379,6 +1379,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             loIdx = 0;
             sum = 0.0;
             c = 0.0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

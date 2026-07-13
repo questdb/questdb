@@ -2440,6 +2440,12 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -2839,7 +2845,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            initBuffer();
         }
 
         /**
@@ -2969,6 +2974,11 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             firstValue = Numbers.LONG_NULL;
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         /**

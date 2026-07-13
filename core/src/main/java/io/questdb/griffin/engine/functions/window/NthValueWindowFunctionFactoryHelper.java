@@ -1224,6 +1224,12 @@ public class NthValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1685,7 +1691,6 @@ public class NthValueWindowFunctionFactoryHelper {
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.n = n;
-            initBuffer();
         }
 
         @Override
@@ -1765,6 +1770,11 @@ public class NthValueWindowFunctionFactoryHelper {
             nthValue = Numbers.LONG_NULL;
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

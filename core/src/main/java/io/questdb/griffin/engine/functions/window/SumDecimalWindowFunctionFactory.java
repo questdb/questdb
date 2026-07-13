@@ -1818,6 +1818,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -2154,12 +2160,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -2270,6 +2270,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -3432,6 +3437,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -3729,12 +3740,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             acc = 0L;
             value = Decimals.DECIMAL64_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -3812,6 +3817,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc = 0L;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -5046,6 +5056,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -5387,12 +5403,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -5508,6 +5518,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -6716,6 +6731,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -7029,12 +7050,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -7121,6 +7136,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -8300,6 +8320,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -8618,12 +8644,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -8710,6 +8730,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -9851,6 +9876,12 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -10151,12 +10182,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             acc = 0L;
             value = Decimals.DECIMAL64_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -10234,6 +10259,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc = 0L;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

@@ -1342,6 +1342,15 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1752,12 +1761,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
 
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
@@ -1861,6 +1864,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             }
             loIdx = 0;
             maxMin = Double.NaN;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
         }
 
         @Override

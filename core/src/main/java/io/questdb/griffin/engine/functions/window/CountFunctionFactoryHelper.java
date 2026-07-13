@@ -1000,6 +1000,12 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1292,12 +1298,6 @@ public class CountFunctionFactoryHelper {
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.isRecordNotNull = isRecordNotNull;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
 
         }
 
@@ -1371,6 +1371,11 @@ public class CountFunctionFactoryHelper {
             count = 0;
             lastcount = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

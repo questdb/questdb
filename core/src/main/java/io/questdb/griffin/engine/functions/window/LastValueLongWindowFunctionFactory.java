@@ -1320,6 +1320,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1529,7 +1535,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             }
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            initBuffer();
         }
 
         /**
@@ -1687,6 +1692,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             lastValue = Numbers.LONG_NULL;
             cacheValue = Numbers.LONG_NULL;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         /**
@@ -2866,6 +2876,12 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -3224,7 +3240,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             bufferSize = (int) Math.abs(rowsHi);
             this.buffer = memory;
             this.rowsLo = rowsLo;
-            initBuffer();
         }
 
         /**
@@ -3328,6 +3343,11 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             buffer.close();
             lastValue = Numbers.LONG_NULL;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         /**

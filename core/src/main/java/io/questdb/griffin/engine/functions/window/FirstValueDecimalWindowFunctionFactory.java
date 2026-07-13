@@ -3184,6 +3184,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -3488,12 +3494,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.buffer = memory;
             this.type = type;
             firstValue.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -3566,6 +3566,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             firstValue.ofRawNull();
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -5177,6 +5182,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -5474,12 +5485,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.type = type;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -5550,6 +5555,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             firstValue = Decimals.DECIMAL16_NULL;
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -7232,6 +7242,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -7538,12 +7554,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.buffer = memory;
             this.type = type;
             firstValue.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -7618,6 +7628,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             firstValue.ofRawNull();
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -9235,6 +9250,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -9532,12 +9553,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.type = type;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -9608,6 +9623,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             firstValue = Decimals.DECIMAL32_NULL;
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -11211,6 +11231,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -11508,12 +11534,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.type = type;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -11584,6 +11604,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             firstValue = Decimals.DECIMAL64_NULL;
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -13187,6 +13212,12 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -13484,12 +13515,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.type = type;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -13560,6 +13585,11 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             firstValue = Decimals.DECIMAL8_NULL;
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

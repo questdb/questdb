@@ -45,9 +45,11 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -330,6 +332,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         public void reset() {
             super.reset();
             Misc.free(memory);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -705,6 +713,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         public void reset() {
             super.reset();
             Misc.free(memory);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
         }
 
         @Override

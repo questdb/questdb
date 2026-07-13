@@ -1474,6 +1474,15 @@ public class MaxMinWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1875,12 +1884,6 @@ public class MaxMinWindowFunctionFactoryHelper {
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
 
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
@@ -1978,6 +1981,14 @@ public class MaxMinWindowFunctionFactoryHelper {
             }
             loIdx = 0;
             maxMin = Numbers.LONG_NULL;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
+            if (dequeMemory != null) {
+                dequeMemory.setMemoryTracker(tracker);
+            }
         }
 
         @Override

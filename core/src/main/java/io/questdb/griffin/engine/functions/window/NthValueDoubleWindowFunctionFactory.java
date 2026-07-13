@@ -1139,6 +1139,12 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1629,7 +1635,6 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.n = n;
-            initBuffer();
         }
 
         @Override
@@ -1714,6 +1719,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             nthValue = Double.NaN;
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

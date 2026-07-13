@@ -911,6 +911,12 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(')');
@@ -1231,12 +1237,6 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -1317,6 +1317,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             loIdx = 0;
             sum = 0.0;
             sumSq = 0.0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

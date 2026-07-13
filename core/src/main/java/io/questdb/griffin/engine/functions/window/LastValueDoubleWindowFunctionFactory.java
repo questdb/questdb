@@ -1029,6 +1029,12 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1200,7 +1206,6 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             }
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            initBuffer();
         }
 
         @Override
@@ -1287,6 +1292,11 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             lastValue = Double.NaN;
             cacheValue = Double.NaN;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -2147,6 +2157,12 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -2402,7 +2418,6 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             bufferSize = (int) Math.abs(rowsHi);
             this.buffer = memory;
             this.rowsLo = rowsLo;
-            initBuffer();
         }
 
         @Override
@@ -2453,6 +2468,11 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             buffer.close();
             lastValue = Double.NaN;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

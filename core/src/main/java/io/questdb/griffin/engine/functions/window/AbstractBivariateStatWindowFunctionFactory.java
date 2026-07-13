@@ -1087,6 +1087,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(argY).val(',').val(argX).val(')');
@@ -1454,12 +1459,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -1562,6 +1561,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             sumY = 0.0;
             sumYY = 0.0;
             sumXY = 0.0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

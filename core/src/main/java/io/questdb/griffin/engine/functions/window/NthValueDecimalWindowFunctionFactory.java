@@ -1877,6 +1877,12 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -2353,7 +2359,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.buffer = memory;
             this.n = n;
             this.type = type;
-            initBuffer();
         }
 
         @Override
@@ -2445,6 +2450,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             nthValue.ofRawNull();
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -3628,6 +3638,12 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -4092,7 +4108,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.buffer = memory;
             this.n = n;
             this.type = type;
-            initBuffer();
         }
 
         @Override
@@ -4182,6 +4197,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             nthValue = Decimals.DECIMAL16_NULL;
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -5379,6 +5399,12 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -5860,7 +5886,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.buffer = memory;
             this.n = n;
             this.type = type;
-            initBuffer();
         }
 
         @Override
@@ -5954,6 +5979,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             nthValue.ofRawNull();
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -7145,6 +7175,12 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -7609,7 +7645,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.buffer = memory;
             this.n = n;
             this.type = type;
-            initBuffer();
         }
 
         @Override
@@ -7699,6 +7734,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             nthValue = Decimals.DECIMAL32_NULL;
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -8861,6 +8901,12 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -9325,7 +9371,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.buffer = memory;
             this.n = n;
             this.type = type;
-            initBuffer();
         }
 
         @Override
@@ -9415,6 +9460,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             nthValue = Decimals.DECIMAL64_NULL;
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -10576,6 +10626,12 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -11040,7 +11096,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             this.buffer = memory;
             this.n = n;
             this.type = type;
-            initBuffer();
         }
 
         @Override
@@ -11130,6 +11185,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             nthValue = Decimals.DECIMAL8_NULL;
             loIdx = 0;
             count = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

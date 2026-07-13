@@ -1819,6 +1819,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -2164,12 +2170,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -2282,6 +2282,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -3484,6 +3489,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -3797,12 +3808,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL16_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -3890,6 +3895,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             value = Decimals.DECIMAL16_NULL;
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -5189,6 +5199,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -5545,12 +5561,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -5673,6 +5683,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -6890,6 +6905,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -7203,12 +7224,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL32_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -7296,6 +7311,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             value = Decimals.DECIMAL32_NULL;
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -8484,6 +8504,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -8813,12 +8839,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             acc.ofRaw(0);
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -8912,6 +8932,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             count = 0;
             loIdx = 0;
             acc.ofRaw(0);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override
@@ -10091,6 +10116,12 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -10404,12 +10435,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL8_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
         }
 
         @Override
@@ -10497,6 +10522,11 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             value = Decimals.DECIMAL8_NULL;
             count = 0;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         @Override

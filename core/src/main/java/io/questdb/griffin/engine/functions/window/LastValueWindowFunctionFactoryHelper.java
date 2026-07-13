@@ -1439,6 +1439,12 @@ public class LastValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -1682,7 +1688,6 @@ public class LastValueWindowFunctionFactoryHelper {
             }
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            initBuffer();
         }
 
         /**
@@ -1833,6 +1838,11 @@ public class LastValueWindowFunctionFactoryHelper {
             lastValue = Numbers.LONG_NULL;
             cacheValue = Numbers.LONG_NULL;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         /**
@@ -3057,6 +3067,12 @@ public class LastValueWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            memory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public int snapshotFormatVersion() {
             return 1;
         }
@@ -3408,7 +3424,6 @@ public class LastValueWindowFunctionFactoryHelper {
             bufferSize = (int) Math.abs(rowsHi);
             this.buffer = memory;
             this.rowsLo = rowsLo;
-            initBuffer();
         }
 
         /**
@@ -3501,6 +3516,11 @@ public class LastValueWindowFunctionFactoryHelper {
             buffer.close();
             lastValue = Numbers.LONG_NULL;
             loIdx = 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            buffer.setMemoryTracker(tracker);
         }
 
         /**
