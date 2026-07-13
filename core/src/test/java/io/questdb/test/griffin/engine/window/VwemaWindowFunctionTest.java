@@ -1154,14 +1154,14 @@ public class VwemaWindowFunctionTest extends AbstractCairoTest {
                 "avg(price, 'alpha', 0.5, bvol) over (partition by sym order by ts) as vwema_col " +
                 "from trades")
                 .ddl("create table trades (ts timestamp, sym symbol, side symbol, price double, " +
-                        "qty double, bvol double) timestamp(ts) partition by day",
+                                "qty double, bvol double) timestamp(ts) partition by day",
                         // 'SELL' is interned first, so symbol key 0 is SELL and 'BUY' is key 1: an
                         // un-initialised `side = 'BUY'` matches the SELL rows.
                         "insert into trades values " +
-                        "('2024-01-01T00:00:00.000000Z', 's1', 'SELL', 10.0, 100.0, 0.0), " +
-                        "('2024-01-01T00:00:01.000000Z', 's1', 'BUY',  20.0, 200.0, 200.0), " +
-                        "('2024-01-01T00:00:02.000000Z', 's1', 'BUY',  30.0, 300.0, 300.0), " +
-                        "('2024-01-01T00:00:03.000000Z', 's1', 'SELL', 40.0, 400.0, 0.0)")
+                                "('2024-01-01T00:00:00.000000Z', 's1', 'SELL', 10.0, 100.0, 0.0), " +
+                                "('2024-01-01T00:00:01.000000Z', 's1', 'BUY',  20.0, 200.0, 200.0), " +
+                                "('2024-01-01T00:00:02.000000Z', 's1', 'BUY',  30.0, 300.0, 300.0), " +
+                                "('2024-01-01T00:00:03.000000Z', 's1', 'SELL', 40.0, 400.0, 0.0)")
                 .timestamp("ts")
                 .noRandomAccess()
                 .expectSize()
