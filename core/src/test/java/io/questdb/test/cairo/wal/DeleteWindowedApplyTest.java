@@ -555,6 +555,54 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * F-D coverage: drive VAR-SIZE columns (varchar + string, including NULLs) through the survivor-replace
+     * forced-O3 staging path. Every other DELETE test uses only fixed-width columns
+     * (long/int/timestamp/symbol/decimal), so {@code TableWriter.applyReplaceRangeWindow}'s var-size copier was
+     * never exercised by the windowed DELETE apply. The pass proved this path correct for var-size empirically;
+     * this locks it in permanently. This is the varchar/string analogue of
+     * {@code TableWriterReplaceRangeDirectTest#testReplaceRangeSurvivorsWithDecimalColumn}, but through the full
+     * windowed WAL-apply path.
+     * <p>
+     * Fixture: a single BY DAY partition, rows O3-SCRAMBLED within the day (ts permuted by a coprime multiply so
+     * the apply genuinely sorts them out of order), a varchar and a string column each with a surviving NULL
+     * (x=7 -> null varchar, x=13 -> null string; both odd, so both survive the delete and flow through the
+     * copier). {@code rows.per.step=1} tiles the single day into many windows; {@code delete where x % 2 = 0}
+     * partially survives each window. Assert content AND order against the NOT-predicate oracle + exact survivor count.
+     */
+    @Test
+    public void testVarSizeColumnsThroughSurvivorReplace() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // tile the single day into many windows
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long, v varchar, s string) timestamp(ts) partition by DAY WAL");
+            // 48 rows, ALL on 1970-01-01, minute-of-day permuted by ((x-1)*37 % 48) (37 coprime to 48) so the
+            // rows are inserted out of designated-timestamp order and the WAL apply O3-sorts them. NULL var-size
+            // at x=7 (varchar) and x=13 (string) - both odd -> survive the delete -> exercise the NULL path.
+            execute(
+                    "insert into t select " +
+                            "((((x - 1) * 37) % 48) * 60L * 1000000L)::timestamp ts, " +
+                            "x, " +
+                            "case when x = 7 then cast(null as varchar) else cast('v' || x as varchar) end v, " +
+                            "case when x = 13 then cast(null as string) else cast('s' || x as string) end s " +
+                            "from long_sequence(48)"
+            );
+            drainWalQueue();
+            // Independent oracle snapshot of the survivors (odd x), never touched by the DELETE.
+            execute("create table t_ref as (select * from t)");
+
+            execute("delete from t where x % 2 = 0");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            // Content AND order (both tables are designated-timestamp ordered): every surviving var-size value,
+            // incl. the NULLs, must round-trip through the forced-O3 survivor copier byte-for-byte.
+            assertSqlCursors("select * from t_ref where not (x % 2 = 0)", "select * from t");
+            // Exact survivor count: odd x in 1..48 == 24 rows.
+            Assert.assertEquals(24, count("select count(*) from t"));
+        });
+    }
+
     // Counts SUPERSEDED partition-version directories physically present under the table dir: for each calendar-day
     // partition (dir named yyyy-MM-dd, optionally with a .<nameTxn> version suffix), every physical version dir
     // beyond the first for that day is a duplicate = a superseded version not yet reclaimed. A correct multi-window

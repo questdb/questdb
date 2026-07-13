@@ -31,7 +31,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -328,6 +330,17 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
                     seqTxn(tt), writerTxn(tt));
             // Final state == the exact NOT-predicate oracle: the re-run's convert-no-op + replace reached it.
             assertSqlCursors("select * from t_ref where not (" + PRED + ")", "select * from t");
+
+            // F-E: the crash-then-resume path must not leave orphaned uncommitted partition-version dirs. The
+            // mid-replace fault triggers abortReplaceRange's rollback; the resumed re-apply then completes the
+            // delete. A regression where the rollback (or the re-apply) leaks a superseded/uncommitted version
+            // dir would still pass the data oracle above (the leaked dir is detached + invisible to queries),
+            // so apply the same on-disk duplicate-version-dir oracle the successful multi-window path uses.
+            Assert.assertEquals(
+                    "no partition may have a duplicate (orphaned) physical version dir after crash+resume",
+                    0,
+                    countDuplicatePartitionVersionDirs(tt)
+            );
         });
     }
 
@@ -412,6 +425,47 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * F-F coverage: the ATOMIC route (default cairo.wal.delete.disk.bounded=false) over a table whose ACTIVE/last
+     * partition is Parquet, with the delete spanning >= 2 windows over it. Active-Parquet-across-windows was
+     * covered only on the disk-bounded route (testDiskBoundedActiveParquetPartitionMultiWindow); the atomic route
+     * converts all in-range Parquet in ONE pre-pass (commit #1) before the single replace bracket - lower-risk
+     * than the per-window disk-bounded convert, but previously untested (DeleteTest converts only an INTERIOR
+     * day). This is the atomic-route counterpart of the disk-bounded active-Parquet test.
+     */
+    @Test
+    public void testAtomicRouteActiveParquetPartitionMultiWindow() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, "false"); // DEFAULT atomic route (convert pre-pass + one replace bracket)
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // ~1 window per hourly row -> the active day spans many
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            execute("insert into t select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x from long_sequence(144)");
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+            // Convert EVERY partition, INCLUDING the active day 6 (ts < day 7 covers all 6 days). On a WAL table
+            // the active partition IS converted (a non-WAL table would skip it), so day 6 becomes Parquet.
+            execute("alter table t convert partition to parquet where ts < '1970-01-07T00:00:00.000000Z'");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            // Precondition (self-verifying fixture): the ACTIVE/last partition (day 6) must actually be Parquet.
+            Assert.assertEquals(
+                    "the active/last partition (day 6) must actually be Parquet on a WAL table",
+                    1,
+                    count("select count(*) from table_partitions('t') where name = '1970-01-06' and isParquet")
+            );
+
+            // Arbitrary residual predicate (x % 7 = 0) matches rows in the active Parquet day (x=126,133,140),
+            // so with rows.per.step=1 the delete tiles that partition across many windows.
+            execute("delete from t where " + PRED);
+            drainWalQueue();
+
+            Assert.assertFalse("a valid arbitrary DELETE over an active-Parquet table (atomic route) must not suspend",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            assertSqlCursors("select * from t_ref where not (" + PRED + ")", "select * from t");
+        });
+    }
+
     // No-match arbitrary DELETE: the survivor-replace rewrites every window with ALL rows (removes nothing). The
     // whole table survives and the table stays healthy (still un-tiers Parquet as a side effect, as documented).
     @Test
@@ -463,6 +517,36 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             return cursor.hasNext() ? cursor.getRecord().getLong(0) : -1;
         }
+    }
+
+    // Counts SUPERSEDED partition-version directories physically present under the table dir: for each calendar-day
+    // partition (dir named yyyy-MM-dd, optionally with a .<nameTxn> version suffix), every physical version dir
+    // beyond the first for that day is a duplicate = a superseded/orphaned version not yet reclaimed. A correct
+    // apply leaves exactly one physical dir per calendar day, so this returns 0. Replicated from
+    // DeleteWindowedApplyTest#countDuplicatePartitionVersionDirs per the F-E brief (small helper, kept local).
+    private int countDuplicatePartitionVersionDirs(TableToken tableToken) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final java.util.HashSet<String> seenDays = new java.util.HashSet<>();
+        final int[] duplicates = {0};
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken);
+            final int plen = path.size();
+            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                if (ff.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                    final byte first = Unsafe.getByte(pUtf8NameZ);
+                    if (first >= '0' && first <= '9') {
+                        final String name = path.toString().substring(plen + 1);
+                        final int dot = name.indexOf('.');
+                        final String day = dot < 0 ? name : name.substring(0, dot);
+                        if (!seenDays.add(day)) {
+                            duplicates[0]++;
+                        }
+                    }
+                    path.trimTo(plen);
+                }
+            });
+        }
+        return duplicates[0];
     }
 
     private long seqTxn(TableToken tt) {
