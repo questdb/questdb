@@ -1380,5 +1380,10 @@ public interface CairoConfiguration {
         return new ParquetPartitionDecoder();
     }
 
+    @Nullable
+    default PartitionDeltaWriter newPartitionDeltaWriter() {
+        return null;
+    }
+
     boolean useWithinLatestByOptimisation();
 }

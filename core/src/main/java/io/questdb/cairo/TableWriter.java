@@ -397,6 +397,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private SymbolColumnIndexer parquetRewriteIndexer;
     private byte parquetRewriteIndexerType = IndexType.NONE;
     private RowGroupBuffers parquetRewriteRowGroupBuffers;
+    private PartitionDeltaWriter partitionDeltaWriter;
+    private boolean partitionDeltaWriterInitialized;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -416,6 +418,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FragileCode RECOVER_FROM_COLUMN_OPEN_FAILURE = this::recoverOpenColumnFailure;
     private final FragileCode RECOVER_FROM_SWAP_RENAME_FAILURE = this::recoverFromSwapRenameFailure;
     private UpdateOperatorImpl updateOperatorImpl;
+    private long walApplyCommitTimestamp;
     // seqTxn of the WAL apply in progress, stamped into native partitions; -1 when not applying.
     // For a block apply this is the block's last seqTxn.
     private long walApplySeqTxn = -1;
@@ -1281,6 +1284,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(tableToken.getTableName()).put(", column=").put(columnName)
                         .put(", partition=").put(utf8Sink).put(']');
             }
+            // A delta-active partition's frozen base cannot be rewritten in place, and its
+            // delta tiles carry the old physical type.
+            if (txWriter.isPartitionDeltaActive(i)) {
+                formatPartitionForTimestamp(txWriter.getPartitionTimestampByIndex(i), -1);
+                throw CairoException.nonCritical().put("cannot change column type, partition is delta-active [table=")
+                        .put(tableToken.getTableName()).put(", column=").put(columnName)
+                        .put(", partition=").put(utf8Sink).put(']');
+            }
         }
 
         ConvertOperatorImpl convertOperator = getConvertOperator();
@@ -1615,7 +1626,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void commitWalInsertTransactions(
             @Transient Path walPath,
             long seqTxn,
-            TableWriterPressureControl pressureControl
+            TableWriterPressureControl pressureControl,
+            long txnCommitTimestamp
     ) {
         if (hasO3() || columnVersionWriter.hasChanges()) {
             // When the writer is returned to the pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -1628,6 +1640,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
         hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
+        walApplyCommitTimestamp = txnCommitTimestamp;
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
         // Capture wall clock once to reduce syscalls. Used for:
@@ -1747,6 +1760,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (txWriter.isPartitionParquet(partitionIndex)) {
             return true; // Partition is already in Parquet format.
+        }
+
+        // Conversion re-parents the partition and deletes the old directory, which holds
+        // the delta catalog and its sealed tiles; a delta-active partition must keep its
+        // frozen base as-is.
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical().put("cannot convert partition to parquet, partition is delta-active [table=")
+                    .put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
         }
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
@@ -1876,6 +1899,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert read-only partition to native [table=")
+                    .put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink)
+                    .put(']');
+        }
+
+        // The retrofit delta switch clears read_only, so the guard above no longer covers a
+        // delta-active partition; conversion would delete its delta catalog with the old dir.
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical().put("cannot convert parquet partition to native, partition is delta-active [table=")
                     .put(tableToken.getTableName())
                     .put(", partition=").put(utf8Sink)
                     .put(']');
@@ -2282,6 +2315,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            // The v1 delta tile model is insert-only; dedup over a base + delta pair has no
+            // survivor-selection path yet, so a table with any delta-active partition keeps
+            // deduplication off.
+            if (txWriter.isPartitionDeltaActive(i)) {
+                throw CairoException.nonCritical().put("cannot enable deduplication, table has a delta-active partition [table=")
+                        .put(tableToken.getTableName())
+                        .put(", partition=").ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
+                        .put(']');
+            }
+        }
         LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken).$(", columns=[");
 
         boolean isSubsetOfOldKeys = true;
@@ -2758,6 +2802,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isOpen() {
         return tempMem16b != 0;
+    }
+
+    public boolean isPartitionDeltaActive(int partitionIndex) {
+        return txWriter.isPartitionDeltaActive(partitionIndex);
     }
 
     public boolean isPartitionParquet(int partitionIndex) {
@@ -3954,6 +4002,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Whether any WAL transaction in {@code [seqTxnLo, seqTxnHi]} may touch a
+     * delta-active partition, judged by each transaction's timestamp range (the
+     * replace range for a replace commit) against the attached partitions whose
+     * delta-write bit is set. Conservative: a false positive only reduces
+     * batching; a false negative would mix transactions in one delta tile and
+     * break the MVCC window, so the test errs wide.
+     */
+    public boolean walTxnRangeOverlapsDeltaActivePartition(long seqTxnLo, long seqTxnHi) {
+        for (long s = seqTxnLo; s <= seqTxnHi; s++) {
+            long minTs = walTxnDetails.getMinTimestamp(s);
+            long maxTs = walTxnDetails.getMaxTimestamp(s);
+            if (walTxnDetails.getDedupMode(s) == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+                minTs = Math.min(minTs, walTxnDetails.getReplaceRangeTsLow(s));
+                maxTs = Math.max(maxTs, walTxnDetails.getReplaceRangeTsHi(s) - 1);
+            }
+            if (timestampRangeOverlapsDeltaActivePartition(minTs, maxTs)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Eagerly sets up writer instance. Otherwise, the writer will initialize lazily. Invoking this method could improve
      * the performance of some applications. UDP receivers use this in order to avoid initial receive buffer contention.
      */
@@ -4510,7 +4581,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // ignore the return are additionally kept off this method for a
                 // legacy head by the Possible-predicate guard; the block-apply gate
                 // bails earlier still. See lastPartitionHasLegacyCoveringHead().
-                && !lastPartitionHasLegacyCoveringHead()) {
+                && !lastPartitionHasLegacyCoveringHead()
+                // A delta-active last partition takes no direct appends: its rows must go
+                // through the O3 path, which routes them into the partition's local delta.
+                && !txWriter.isPartitionDeltaActiveByPartitionTimestamp(lastPartitionTimestamp)) {
             // There is some data in LAG, it's ordered, and it's already written to the last partition.
             // We can simply increase the last partition transient row count to make it committed.
 
@@ -4792,7 +4866,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // covered-read OOB): fall back to the full commit, whose reseal
                 // migrates the head to format 1. Mirrors the block-apply gate;
                 // together they cover every fast-lag extend path.
-                && !lastPartitionHasLegacyCoveringHead();
+                && !lastPartitionHasLegacyCoveringHead()
+                // A delta-active last partition takes no direct appends: its rows must go
+                // through the O3 path, which routes them into the partition's local delta.
+                && !txWriter.isPartitionDeltaActiveByPartitionTimestamp(lastPartitionTimestamp);
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
@@ -5324,12 +5401,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             return 1;
         }
+        // A transaction that may touch a delta-active partition must apply alone: one delta
+        // tile carries exactly one transaction's rows with one exact seqTxn (the MVCC window
+        // filter depends on it). The range test is conservative -- a false positive only
+        // costs batching.
+        if (walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn)) {
+            pressureControl.updateInflightTxnBlockLength(
+                    1,
+                    Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
+            );
+            return 1;
+        }
         // In-order optimization applies only when commit timestamps >= inOrderMinTimestamp.
         // For native last partition: use the partition's max timestamp, so only appending data is optimized.
         // For parquet last partition: use Long.MAX_VALUE to disable optimization entirely,
         // batching more transactions to reduce the number of expensive parquet O3 merges.
         long inOrderMinTimestamp = isLastPartitionParquet() ? Long.MAX_VALUE : txWriter.getMaxTimestamp();
-        return walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
+        int blockSize = walTxnDetails.calculateInsertTransactionBlock(seqTxn, pressureControl, getWalMaxLagRows(), inOrderMinTimestamp);
+        // Cap a multi-transaction block before the first future transaction that may touch a
+        // delta-active partition, so that transaction starts its own size-1 apply.
+        for (int k = 1; k < blockSize; k++) {
+            if (walTxnRangeOverlapsDeltaActivePartition(seqTxn + k, seqTxn + k)) {
+                blockSize = k;
+                break;
+            }
+        }
+        return blockSize;
     }
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
@@ -7009,6 +7106,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         Misc.free(slaveTxReader);
         Misc.free(commandQueue);
         Misc.free(dedupColumnCommitAddresses);
+        partitionDeltaWriter = Misc.free(partitionDeltaWriter);
         Misc.free(parquetDecoder);
         Misc.free(parquetFileDecoder);
         // parquetMetaReader is a flyweight: it never owns its mmap, so
@@ -9293,6 +9391,61 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Captures one WAL transaction's ts-sorted O3 slice targeting a delta-active
+     * partition in that partition's local delta. The delta seal completes before
+     * this transaction's {@code _txn} commit, so the applied seqTxn never runs
+     * ahead of the last durable tile; {@code has_delta} arms in that same commit,
+     * atomically with the first tile becoming visible. Without a writer (an OSS
+     * build; only an enterprise delta-switch event can mark a partition
+     * delta-active) the rows keep the pre-delta cold posture: dropped exactly
+     * like writes to a read-only partition.
+     */
+    private void o3CommitPartitionDelta(
+            long partitionTimestamp,
+            int partitionIndexRaw,
+            long partitionNameTxn,
+            long baseRowCount,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi
+    ) {
+        if (!partitionDeltaWriterInitialized) {
+            partitionDeltaWriter = configuration.newPartitionDeltaWriter();
+            partitionDeltaWriterInitialized = true;
+        }
+        final PartitionDeltaWriter deltaWriter = partitionDeltaWriter;
+        if (deltaWriter == null) {
+            LOG.critical()
+                    .$("o3 ignoring write on delta-active partition, this build has no delta writer [table=").$(tableToken)
+                    .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", numRows=").$(srcOooHi - srcOooLo + 1)
+                    .$();
+            return;
+        }
+        final boolean parquetBase = txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
+        deltaWriter.writeCommit(
+                this,
+                partitionTimestamp,
+                partitionNameTxn,
+                parquetBase,
+                parquetBase ? txWriter.getPartitionParquetFileSizeByRawIndex(partitionIndexRaw) : -1,
+                baseRowCount,
+                o3Columns,
+                sortedTimestampsAddr,
+                srcOooLo,
+                srcOooHi,
+                walApplySeqTxn,
+                walApplyCommitTimestamp
+        );
+        if (!txWriter.getPartitionHasDeltaByRawIndex(partitionIndexRaw)) {
+            txWriter.setPartitionHasDeltaByRawIndex(partitionIndexRaw, true);
+            // Readers with the partition already open must re-resolve it: a bare
+            // base read past this commit would miss the tile just sealed.
+            txWriter.bumpPartitionTableVersion();
+        }
+    }
+
     private void o3ConsumePartitionUpdates() {
         final Sequence partitionSubSeq = messageBus.getO3PartitionSubSeq();
         final RingQueue<O3PartitionTask> partitionQueue = messageBus.getO3PartitionQueue();
@@ -10225,6 +10378,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", rssMemUsed=").$size(Unsafe.getRssMemUsed())
                             .I$();
 
+                    if (partitionIndexRaw > -1 && txWriter.isPartitionDeltaActiveByRawIndex(partitionIndexRaw)) {
+                        // Late rows into a delta-active partition land in its local delta;
+                        // the frozen base (native or parquet) is never touched. Ahead of the
+                        // append/merge dispatch so every strategy is captured, and the delta
+                        // seal is durable before this transaction's _txn commit.
+                        o3CommitPartitionDelta(partitionTimestamp, partitionIndexRaw, srcNameTxn, srcDataMax, sortedTimestampsAddr, srcOooLo, srcOooHi);
+                        continue;
+                    }
                     if (partitionIsReadOnly) {
                         // move over read-only partitions
                         LOG.critical()
@@ -10613,7 +10774,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // unaffected: those partitions accept LAG normally.
                 boolean isParquetTableEmptyPlaceholder = txWriter.getRowCount() == 0
                         && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
-                boolean noLag = lastPartitionIsParquet || isParquetTableEmptyPlaceholder;
+                // A transaction over a delta-active partition takes the full O3 path in its own
+                // commit: lag would materialize its rows later inside a larger batch, and the
+                // ordered-into-last-partition fast commit would append into the frozen base.
+                boolean noLag = lastPartitionIsParquet || isParquetTableEmptyPlaceholder
+                        || timestampRangeOverlapsDeltaActivePartition(o3TimestampMin, o3TimestampMax);
                 boolean needFullCommit = forceFullCommit
                         // No LAG available (parquet partition or parquet table)
                         || noLag
@@ -10837,6 +11002,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         walRowsProcessed = rowHi - rowLo;
 
         if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            if (timestampRangeOverlapsDeltaActivePartition(replaceRangeTsLo, replaceRangeTsHi - 1)
+                    || timestampRangeOverlapsDeltaActivePartition(txnMinTs, txnMaxTs)) {
+                // The insert-only delta tile model cannot express a range replacement over a
+                // frozen base; suspend rather than half-apply or silently drop the range.
+                throw CairoException.nonCritical()
+                        .put("cannot apply replace-range commit over a delta-active partition [table=")
+                        .put(tableToken.getTableName())
+                        .put(", replaceRangeTsLo=").ts(timestampDriver, replaceRangeTsLo)
+                        .put(", replaceRangeTsHi=").ts(timestampDriver, replaceRangeTsHi)
+                        .put(']');
+            }
             processWalCommitDedupReplace(
                     walPath,
                     inOrder,
@@ -14899,6 +15075,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         distressed = true;
         throw new CairoError(cause);
+    }
+
+    /**
+     * Whether {@code [minTs, maxTs]} intersects an attached partition whose
+     * delta-write bit is set, judged over partition floor intervals. Gaps
+     * between attached partitions count toward the earlier partition's
+     * interval, so the test is conservative (never a false negative).
+     */
+    private boolean timestampRangeOverlapsDeltaActivePartition(long minTs, long maxTs) {
+        if (minTs > maxTs) {
+            return false;
+        }
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (!txWriter.isPartitionDeltaActive(i)) {
+                continue;
+            }
+            final long lo = txWriter.getPartitionTimestampByIndex(i);
+            if (lo > maxTs) {
+                return false;
+            }
+            final long hi = i + 1 < n ? txWriter.getPartitionTimestampByIndex(i + 1) : Long.MAX_VALUE;
+            if (hi > minTs) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void tombstoneCoveredColumnInOtherIndexes(int droppedWriterIdx) {
