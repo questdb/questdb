@@ -1783,6 +1783,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -2194,6 +2195,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
             printSql("(lv) ORDER BY 1", preRemoval);
 
             final long baseRowsBefore = countRows("base");
@@ -2440,6 +2442,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -2861,6 +2864,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
 
             if (inMemReadBack) {
                 // Mode B read-back cross-checks, single-threaded now that the worker
@@ -3006,6 +3010,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults(viewNames[v]);
         }
 
         for (int v = 0; v < viewCount; v++) {
@@ -3139,6 +3144,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -3249,6 +3255,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -3344,6 +3351,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -3489,6 +3497,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -3638,6 +3647,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
             printSql("(lv) ORDER BY 1", preRemoval);
 
             // The removal event: every targeted row is emitted (phase 1 has
@@ -3871,6 +3881,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -3993,6 +4004,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -4129,6 +4141,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         // Var-length read-back cross-checks, single-threaded now the worker is
         // freed and the view is quiesced: SELECT * FROM lv actually routes through

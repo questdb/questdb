@@ -834,6 +834,14 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                         continue;
                     }
+                    if (!configuration.isLiveViewEnabled()) {
+                        // Feature off: no LiveViewRefreshJob runs, so nothing would advance this
+                        // view's watermarks. Reap above regardless (pure cleanup), but do NOT
+                        // register an instance - WalPurgeJob clamps the base WAL floor to every
+                        // registered view's lvConsumedSeqTxn, so an unattended one would pin the base
+                        // WAL forever. The view stays on disk and returns when the flag is back on.
+                        continue;
+                    }
                     try {
                         if (liveViewRegistry.getViewInstance(tableToken.getTableName()) == null) {
                             final GenericRecordMetadata metadata;
@@ -1527,11 +1535,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         blockFileWriter
                 );
 
-                // write _lv definition file (commit marker)
-                path.of(configuration.getDbRoot()).concat(liveViewToken);
-                blockFileWriter.of(path.concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
-                LiveViewDefinition.append(definition, blockFileWriter);
-
+                // _lv is written by TableUtils.createTable, before _txn - see the note there.
                 LiveViewInstance instance = new LiveViewInstance(definition, liveViewToken);
                 instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);

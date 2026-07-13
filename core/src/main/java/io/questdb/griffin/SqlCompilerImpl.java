@@ -1962,7 +1962,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isViewKeyword(tok))) {
+        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok) && !isLiveKeyword(tok) && !isViewKeyword(tok))) {
             compileAlterExt(executionContext, tok);
             return;
         }
@@ -1971,8 +1971,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileAlterTable(executionContext);
         } else if (isMaterializedKeyword(tok)) {
             compileAlterMatView(executionContext);
+        } else if (isLiveKeyword(tok)) {
+            compileAlterLiveView(executionContext);
         } else {
             compileAlterView(executionContext);
+        }
+    }
+
+    /**
+     * {@code ALTER LIVE VIEW <name> RESUME|SUSPEND WAL}. Mirrors compileAlterMatView.
+     * <p>
+     * A live view is a WAL table, so a failing inline apply suspends it like any other, and
+     * hasPendingLiveViewApply then skips it until an operator RESUMEs. That recovery was
+     * unreachable: compileAlterTable rejects every ALTER on a non-TABLE token up front, and no
+     * ALTER LIVE VIEW grammar existed - so an idle view stayed suspended, serving a stale prefix,
+     * with DROP + recreate the only escape.
+     * <p>
+     * Only the WAL-control verbs live here; the structural ones stay rejected, since a live view's
+     * schema is a function of its SELECT.
+     */
+    private void compileAlterLiveView(SqlExecutionContext executionContext) throws SqlException {
+        expectKeyword(lexer, "view");
+        final int liveViewNamePosition = lexer.getPosition();
+        CharSequence tok = expectToken(lexer, "live view name");
+        assertNameIsQuotedOrNotAKeyword(tok, liveViewNamePosition);
+        final TableToken liveViewToken = tableExistsOrFail(liveViewNamePosition, unquote(tok), executionContext);
+        if (!liveViewToken.isLiveView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "live view name expected");
+        }
+        tok = expectToken(lexer, "'resume' or 'suspend'");
+        if (isResumeKeyword(tok)) {
+            parseResumeWal(liveViewToken, liveViewNamePosition, executionContext);
+        } else if (isSuspendKeyword(tok)) {
+            parseSuspendWal(liveViewToken, liveViewNamePosition, executionContext);
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend' expected");
         }
     }
 
@@ -3146,12 +3179,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 return model;
             case ExecutionModel.CREATE_LIVE_VIEW:
-                // Authorize for parity with CREATE MAT VIEW so a restricted user
-                // cannot probe a plan they may not create. Plan generation is left
-                // to compileExecutionModel0 unchanged (the real create recompiles
-                // from the captured SQL text, not this parser model).
+                // Authorize for parity with CREATE MAT VIEW so a restricted user cannot probe a plan
+                // they may not create. Then optimise like the two arms above: falling through with
+                // the raw parser model made generateExplain() codegen an unoptimised SELECT, which
+                // trips "wtf? ts" under -ea and an AIOOBE without - an Error escaping compile(),
+                // i.e. a 500 on HTTP/pgwire instead of a plan. setLiveViewCompile pins the same
+                // codegen path the real create uses, so the plan reflects it.
                 executionContext.getSecurityContext().authorizeLiveViewCreate();
-                break;
+                final CreateLiveViewOperationBuilder createLiveViewBuilder = (CreateLiveViewOperationBuilder) model;
+                if (createLiveViewBuilder.getQueryModel() != null) {
+                    executionContext.setLiveViewCompile(true);
+                    try {
+                        final IQueryModel selectModel = optimiser.optimise(createLiveViewBuilder.getQueryModel(), executionContext, this);
+                        createLiveViewBuilder.setSelectModel(selectModel);
+                    } finally {
+                        executionContext.setLiveViewCompile(false);
+                    }
+                }
+                return model;
         }
         return compileExecutionModel0(executionContext, model);
     }

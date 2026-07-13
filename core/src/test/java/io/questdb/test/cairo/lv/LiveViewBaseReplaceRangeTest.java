@@ -370,6 +370,7 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
 
             execute("DROP LIVE VIEW lv");
         });

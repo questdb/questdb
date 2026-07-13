@@ -37,6 +37,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -392,6 +393,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            volumeArg.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return vwema;
         }
@@ -421,6 +428,20 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : VWEMA_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // volumeArg is a plain Function, so it rebinds via init() - as lead/lag does for
+            // its defaultValue.
+            volumeArg.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -513,6 +534,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void toTop() {
             super.toTop();
+            volumeArg.toTop();
             tombstoneCount = 0;
         }
     }
@@ -571,6 +593,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            volumeArg.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             // When hasValue is true, denominator is guaranteed finite and positive
             // (set from volume > 0 and updated with positive arithmetic)
@@ -585,6 +613,20 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // volumeArg is a plain Function, so it rebinds via init() - as lead/lag does for
+            // its defaultValue.
+            volumeArg.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -611,6 +653,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void toTop() {
             super.toTop();
+            volumeArg.toTop();
             numerator = Double.NaN;
             denominator = Double.NaN;
             hasValue = false;
@@ -766,6 +809,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            volumeArg.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return vwema;
         }
@@ -795,6 +844,20 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             return mapValueTypes != null
                     ? mapValueTypes.getColumnCount()
                     : VWEMA_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // volumeArg is a plain Function, so it rebinds via init() - as lead/lag does for
+            // its defaultValue.
+            volumeArg.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -887,6 +950,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void toTop() {
             super.toTop();
+            volumeArg.toTop();
             tombstoneCount = 0;
         }
     }
@@ -959,6 +1023,12 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            volumeArg.cursorClosed();
+        }
+
+        @Override
         public double getDouble(Record rec) {
             // When hasValue is true, denominator is guaranteed finite and positive
             // (set from volume > 0 and updated with positive arithmetic)
@@ -973,6 +1043,20 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            volumeArg.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // volumeArg is a plain Function, so it rebinds via init() - as lead/lag does for
+            // its defaultValue.
+            volumeArg.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -1000,6 +1084,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void toTop() {
             super.toTop();
+            volumeArg.toTop();
             numerator = Double.NaN;
             denominator = Double.NaN;
             hasValue = false;

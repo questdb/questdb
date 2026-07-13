@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -35,6 +36,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
@@ -42,10 +44,15 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Lifecycle and catalogue tests for live views. Complements
@@ -321,6 +328,75 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDropLiveViewPurgesTableFiles() throws Exception {
+        // A live view is a WAL table, so its on-disk directory is reclaimed by the standard
+        // WAL machinery: the sequencer mints a DROP_TABLE_WAL_ID notification, ApplyWal2TableJob
+        // sees the token is dropped and calls purgeTableFiles, and WalPurgeJob then removes the
+        // token from tables.d. But ApplyWal2TableJob.doRun drops EVERY notification for a live
+        // view on a primary (the LV refresh worker owns the writer there), including the drop -
+        // so purgeTableFiles was never reached. WalPurgeJob then saw "dropped but files exist",
+        // logged "pinging WAL Apply job to delete table files" and re-notified, forever: the
+        // view's entire directory and its tables.d entry leaked across restarts, on the default
+        // configuration.
+        //
+        // The 441 other DROP LIVE VIEW tests miss this because not one of them asserts the
+        // directory or the token is actually gone.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, sum(x) OVER (PARTITION BY x ORDER BY ts " +
+                    "ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+
+            final TableToken lvToken = engine.getTableTokenIfExists("lv");
+            Assert.assertNotNull(lvToken);
+            // The refresh worker must be enabled for the primary-path early-return to engage;
+            // that is the default, and it is what the state store reports here.
+            Assert.assertTrue(engine.getLiveViewStateStore().isRefreshEnabled());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+
+            execute("DROP LIVE VIEW lv");
+            // Drive the apply job and the purge job to convergence. Reclaiming a dropped WAL
+            // table takes both, in turn: ApplyWal2TableJob removes the table's files and
+            // WalPurgeJob then rmdir's the shell and deregisters the token. Pre-fix this loop
+            // never converges - the purge job re-pings the apply job on every pass, and the
+            // apply job drops the notification on the floor again.
+            try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                for (int i = 0; i < 8; i++) {
+                    drainWalQueue();
+                    purgeJob.drain(0);
+                }
+            }
+
+            Assert.assertNull(
+                    "the dropped live view's token must be gone from the name registry",
+                    engine.getTableTokenIfExists("lv")
+            );
+            // TABLE_EXISTS means the _txn file is still there, i.e. purgeTableFiles never ran and
+            // the view's partition data is still on disk. A dropped plain WAL table reaches
+            // TABLE_RESERVED here (its txn_seq/ and wal1/ shells outlive this loop and are
+            // reclaimed by the sequencer-release path), so that - not TABLE_DOES_NOT_EXIST - is
+            // the state a correctly-purged live view must reach too. Pre-fix the view sat at
+            // TABLE_EXISTS no matter how many times the two jobs ran.
+            final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
+            Assert.assertNotEquals(
+                    "the dropped live view's table files must be purged, as they are for a plain WAL table",
+                    TableUtils.TABLE_EXISTS,
+                    TableUtils.exists(
+                            engine.getConfiguration().getFilesFacade(),
+                            path,
+                            engine.getConfiguration().getDbRoot(),
+                            lvToken.getDirName()
+                    )
+            );
+        });
+    }
+
+    @Test
     public void testDropNonExistentLiveViewFails() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -332,6 +408,147 @@ public class LiveViewTest extends AbstractLiveViewTest {
                         e.getMessage().contains("live view does not exist")
                 );
             }
+        });
+    }
+
+    @Test
+    public void testHighIndexSymbolColumnWithNoSegmentDiffRefreshes() throws Exception {
+        // WalReader.symbolMaps is only as long as the symbol columns a segment actually carries a
+        // diff for, and getSymbolKey/Count/Value index it with the base writer index - guarded by
+        // col < symbolMaps.size(). This pins the shape those guards exist for: a wide base whose
+        // high-index SYMBOL contributes no diff at all (its rows are NULL) while a low-index one
+        // does, so the list is genuinely shorter than the high column's index. The refresh must
+        // complete and the column read back NULL.
+        //
+        // Note: removing the guards does NOT crash here. A column with no diff can only hold NULLs,
+        // and a NULL never resolves through getSymbolValue/getSymbolCount, so the out-of-bounds read
+        // is not reachable from the live-view path - the guards are defensive.
+        assertMemoryLeak(() -> {
+            // lo_sym (writer index 1) carries values, so it gets a diff and sizes symbolMaps to 2.
+            // hi_sym (writer index 18) is always NULL, so it contributes no diff at all - its index
+            // sits far past the end of that list.
+            final StringBuilder cols = new StringBuilder("ts TIMESTAMP, lo_sym SYMBOL");
+            for (int i = 1; i <= 16; i++) {
+                cols.append(", c").append(i).append(" INT");
+            }
+            cols.append(", hi_sym SYMBOL");
+            execute("CREATE TABLE base (" + cols + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, lo_sym, hi_sym, c1, row_number() OVER () AS rn FROM base " +
+                    "WHERE hi_sym IS NULL");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, lo_sym, c1) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 'aa', 10), " +
+                        "('2026-01-01T00:00:02.000000Z', 'bb', 20)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, lo_sym, hi_sym, c1, rn FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tlo_sym\thi_sym\tc1\trn\n" +
+                            "2026-01-01T00:00:01.000000Z\taa\t\t10\t1\n" +
+                            "2026-01-01T00:00:02.000000Z\tbb\t\t20\t2\n");
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testSuspendedLiveViewCanBeResumed() throws Exception {
+        // A live view is a WAL table, so a failing inline apply suspends it exactly like any
+        // other (ApplyWal2TableJob.applyWal ends its catch in suspendTable), and
+        // hasPendingLiveViewApply then skips it until an operator RESUMEs - the refresh job's own
+        // comment says "only an operator RESUME clears it". But that recovery was unreachable:
+        // compileAlterTable rejects every ALTER on a non-TABLE token up front, so
+        // ALTER TABLE <lv> RESUME WAL died on "cannot modify live view", and no ALTER LIVE VIEW
+        // grammar existed. A transient disk error during apply froze the view at its last applied
+        // seqTxn forever, silently serving a stale prefix, with DROP + recreate the only escape.
+        final String[] lvDir = new String[1];
+        final AtomicBoolean failApply = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // Fail the apply's create of the day-2 LV partition, once, after the commit made
+                // the block durable. The fault self-clears so the resumed apply reads cleanly.
+                if (failApply.get()
+                        && lvDir[0] != null
+                        && Utf8s.endsWithAscii(name, "x.d")
+                        && Utf8s.containsAscii(name, lvDir[0])
+                        && Utf8s.containsAscii(name, "2026-04-02")
+                        && failApply.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            final TableToken lvToken = engine.verifyTableName("lv");
+            lvDir[0] = lvToken.getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Baseline: row 1 flushes and applies cleanly.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The failing flush suspends the LV: its block is committed but unapplied.
+                setCurrentMicros(2_000_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-02T00:00:00.000000Z', 2)");
+                drainWalQueue();
+                failApply.set(true);
+                drainJob(job);
+                Assert.assertTrue("the failed inline apply must suspend the live view",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+
+                // The view is now STUCK. Its refresh worker cannot clear the suspension on its
+                // own - hasPendingLiveViewApply skips suspended tables - so with no further base
+                // traffic the committed-but-unapplied block never lands. Row 2 stays invisible
+                // and the view serves a stale prefix indefinitely. (A *new* base commit would
+                // self-heal it: the next flush's inline applyWalDirect bypasses the suspension
+                // check. That makes this the idle / low-traffic view's failure mode - precisely
+                // the case an operator cannot wait out.)
+                for (int i = 0; i < 5; i++) {
+                    setCurrentMicros(currentMicros + 2_000_000L);
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n1\n");
+                Assert.assertTrue("idle refresh cycles cannot clear the suspension",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+
+                // The operator recovery. ALTER TABLE stays (correctly) refused for a live view -
+                // its schema is a function of its SELECT - so the WAL-control verbs get their own
+                // grammar, exactly as materialized views do.
+                try {
+                    execute("ALTER TABLE lv RESUME WAL");
+                    Assert.fail("ALTER TABLE must not modify a live view");
+                } catch (SqlException e) {
+                    Assert.assertTrue(e.getMessage(), e.getMessage().contains("cannot modify live view"));
+                }
+                execute("ALTER LIVE VIEW lv RESUME WAL");
+                Assert.assertFalse("RESUME WAL must clear the suspension",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+
+                // It catches up with NO new base commit: the deferred block lands exactly once.
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                            "2026-04-02T00:00:00.000000Z\t2\t2\n");
         });
     }
 

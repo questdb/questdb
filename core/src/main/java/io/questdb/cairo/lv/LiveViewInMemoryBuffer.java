@@ -565,8 +565,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
             int type = ColumnType.tagOf(columnTypes.getQuick(c));
             switch (type) {
                 case ColumnType.LONG:
-                case ColumnType.GEOLONG:
                     putLong(dstRow, c, record.getLong(c));
+                    break;
+                // GEOHASH must use the getGeo* getters: GeoByteColumn and siblings override only
+                // those, inheriting the plain-width ones from AbstractGeoHashFunction, which throw.
+                case ColumnType.GEOLONG:
+                    putLong(dstRow, c, record.getGeoLong(c));
                     break;
                 case ColumnType.TIMESTAMP:
                     putLong(dstRow, c, record.getTimestamp(c));
@@ -575,10 +579,12 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     putLong(dstRow, c, record.getDate(c));
                     break;
                 case ColumnType.INT:
-                case ColumnType.GEOINT:
                 case ColumnType.IPv4:
                 case ColumnType.SYMBOL:
                     putInt(dstRow, c, record.getInt(c));
+                    break;
+                case ColumnType.GEOINT:
+                    putInt(dstRow, c, record.getGeoInt(c));
                     break;
                 case ColumnType.DOUBLE:
                     putDouble(dstRow, c, record.getDouble(c));
@@ -587,15 +593,19 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
                     putFloat(dstRow, c, record.getFloat(c));
                     break;
                 case ColumnType.SHORT:
-                case ColumnType.GEOSHORT:
                     putShort(dstRow, c, record.getShort(c));
+                    break;
+                case ColumnType.GEOSHORT:
+                    putShort(dstRow, c, record.getGeoShort(c));
                     break;
                 case ColumnType.CHAR:
                     putShort(dstRow, c, (short) record.getChar(c));
                     break;
                 case ColumnType.BYTE:
-                case ColumnType.GEOBYTE:
                     putByte(dstRow, c, record.getByte(c));
+                    break;
+                case ColumnType.GEOBYTE:
+                    putByte(dstRow, c, record.getGeoByte(c));
                     break;
                 case ColumnType.BOOLEAN:
                     putBool(dstRow, c, record.getBool(c));

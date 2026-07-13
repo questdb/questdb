@@ -150,20 +150,25 @@ public class WalReader implements Closeable {
     }
 
     /**
-     * Returns the int key whose stored value equals {@code value} in column {@code col},
-     * or {@link SymbolTable#VALUE_NOT_FOUND} if no such entry exists. The cumulative
-     * symbol map is populated via {@link DirectSymbolMap#put(int, CharSequence)} which
-     * does not maintain a reverse index, so this method walks the dense key range
-     * 0..size-1 and compares each value byte-wise. The cost is proportional to the
-     * column's accumulated dictionary size; the live view incremental refresh path calls
-     * this once per filter init per segment, so the linear scan is acceptable.
+     * Returns the int key in {@code [0, hiExclusive)} whose stored value equals {@code value} in
+     * column {@code col}, else {@link SymbolTable#VALUE_NOT_FOUND}. The map has no reverse index,
+     * so this walks the range and compares byte-wise; callers hit it once per filter init per
+     * segment, so the linear scan is fine.
+     * <p>
+     * {@code hiExclusive} is mandatory: the map is cumulative over the whole segment (last writer
+     * wins) while callers resolve for a single txn. The WAL writer restarts local symbol ids at the
+     * committed count on every commit, so two un-applied commits in one segment give the same key to
+     * different new symbols. An unbounded scan could therefore return a key valid in a DIFFERENT txn
+     * and match this txn's rows carrying that same local id. Callers pass their clean symbol count,
+     * so the scan only resolves clean-dictionary keys (stable across every txn in the segment); a
+     * caller's own new symbols come from its per-txn diff overlay.
      */
-    public int getSymbolKey(int col, CharSequence value, DirectString view) {
+    public int getSymbolKey(int col, CharSequence value, DirectString view, int hiExclusive) {
         DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
         if (symbolMap == null || value == null) {
             return SymbolTable.VALUE_NOT_FOUND;
         }
-        for (int k = 0, n = symbolMap.size(); k < n; k++) {
+        for (int k = 0, n = Math.min(symbolMap.size(), hiExclusive); k < n; k++) {
             CharSequence v = symbolMap.valueOf(k, view);
             if (v != null && Chars.equals(value, v)) {
                 return k;

@@ -1536,6 +1536,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertModeBMatchesDiskOnly("SELECT * FROM lv");
             assertLvMatchesOracle("SELECT * FROM lv",
                     "SELECT *, row_number() OVER () AS rn FROM base");
+            // The oracle above passes even when every refresh cycle throws, because
+            // handleRefreshFailure recomputes the window from the applied base and the
+            // recompute is what the oracle compares against. Pin the incremental path.
+            assertNoRefreshFaults("lv");
         });
     }
 
@@ -2308,6 +2312,53 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             assertModeBMatchesDiskOnly("SELECT * FROM lv");
             assertLvMatchesOracle("SELECT * FROM lv",
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
+        });
+    }
+
+    @Test
+    public void testRestartWithAdditiveFrontierTieKeepsAllRows() throws Exception {
+        // The seam contract is "the slot holds every output row with ts >= seamTs": hasNext
+        // serves disk strictly below seamTs and DISCARDS the first disk row at or above it,
+        // trusting the slot to carry it. A post-restart slot is pure lead - see
+        // testRestartRecoversUnflushedLeadFromBaseWal, which asserts only the rebuilt lead
+        // is resident - and a pure-lead slot stamps seamTs = the lead's own minimum ts, so
+        // it carries ZERO overlap. Give disk a row at exactly that timestamp and it is
+        // served by neither tier: hasNext drops it, and the slot never had it. size() still
+        // counts it (diskSize + leadRowCount), so the stream and the count disagree and a
+        // LIMIT near the seam reads short.
+        //
+        // The trigger is an ordinary additive append whose minimum ts equals the frontier,
+        // on any base with duplicate microsecond timestamps. LiveViewFuzzTest cannot catch
+        // it: its generator gives every row a distinct, strictly-increasing timestamp.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLeadWithFrontierTie();
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            LiveViewInstance restored = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(restored);
+            restored.setLastFlushTimeUs(0L); // keep the rebuilt lead un-flushed
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            // Every row survives the seam, and size() agrees with what the stream yields.
+            assertLvMatchesOracle("SELECT * FROM lv",
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            try (RecordCursorFactory factory = select("SELECT * FROM lv")) {
+                try (LiveViewRecordCursor cursor = openLvCursor(factory)) {
+                    long streamed = 0;
+                    while (cursor.hasNext()) {
+                        streamed++;
+                    }
+                    Assert.assertEquals("the seam must not drop the disk row at the lead's minimum ts",
+                            5, streamed);
+                    Assert.assertEquals("size() must agree with the rows the cursor actually serves",
+                            streamed, cursor.size());
+                }
+            }
+            assertNoRefreshFaults("lv");
         });
     }
 
@@ -3094,6 +3145,32 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // refreshes B within the FLUSH EVERY window, so the refresh publishes B as the
     // lead without flushing. The clock stays at 0 (set in the class @Before) so the
     // second refresh is inside FLUSH EVERY relative to the first flush at t=0.
+    // buildFlushedPlusLead with the lead's minimum timestamp TIED to the last flushed
+    // row's. crossCommitO3 compares txnMinTs < latestSeen strictly, so a commit whose
+    // minimum equals the frontier is an ordinary additive append, not an O3 rewrite: the
+    // extra ts=03 row lands on top as lead. Disk therefore holds a row at exactly the
+    // lead's minimum timestamp - the ts the post-restart pure-lead slot stamps as its seam.
+    private void buildFlushedPlusLeadWithFrontierTie() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+                "SELECT ts, x, row_number() OVER () AS rn FROM base");
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-12T00:00:01.000000Z', 1), " +
+                    "('2026-05-12T00:00:02.000000Z', 2), " +
+                    "('2026-05-12T00:00:03.000000Z', 3)");
+            drainWalQueue();
+            drainJob(job); // clock 0: first tick flushes rows 1-3 to disk
+
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-05-12T00:00:03.000000Z', 4), " +
+                    "('2026-05-12T00:00:04.000000Z', 5)");
+            drainWalQueue();
+            drainJob(job); // clock still 0: refresh as the un-flushed lead, no flush
+        }
+    }
+
     private void buildFlushedPlusLead() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);

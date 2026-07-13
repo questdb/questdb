@@ -744,6 +744,19 @@ public final class TableUtils {
                     MatViewDefinition.append(structure.getMatViewDefinition(), writer);
                 }
             }
+            // _lv must land BEFORE _txn, like _view and _mv above. _txn is what exists() keys on,
+            // so writing _lv after it leaves a crash window whose directory looks like a plain WAL
+            // table: the loader types it TABLE (no _lv), and it squats the view's name. It also
+            // makes the "missing _lv means CREATE crashed" reap unreachable for its stated cause,
+            // while leaving it live for the opposite one - dropping a committed view whose _lv was
+            // lost, data included.
+            if (structure.isLiveView()) {
+                assert blockFileWriter != null;
+                try (BlockFileWriter writer = blockFileWriter) {
+                    writer.of(path.trimTo(rootLen).concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+                    LiveViewDefinition.append(structure.getLiveViewDefinition(), writer);
+                }
+            }
 
             // Create TXN file last, it is used to determine if table exists
             mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);

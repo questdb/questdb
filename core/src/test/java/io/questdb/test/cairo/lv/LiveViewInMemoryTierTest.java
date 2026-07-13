@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -1175,6 +1176,69 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testGeoHashRoundTripThroughTier() throws Exception {
+        // testColumnTypeSupportGate admits all four GEOHASH widths into the tier, so the
+        // record -> buffer copier has to be able to read them. A GEOHASH column function
+        // (GeoByteColumn and siblings) overrides only getGeoByte/Short/Int/Long and
+        // inherits the plain-width getters from AbstractGeoHashFunction, which throw. The
+        // copier used to reach for record.getLong/getInt/getShort/getByte for the GEO
+        // cases, so every refresh cycle of a view projecting a GEOHASH column threw. The
+        // throw was invisible end-to-end: handleRefreshFailure swallowed it and recomputed
+        // the window from the applied base, which is exactly what a recompute oracle
+        // compares against, so the view's answer stayed right while the incremental path
+        // never ran. GeoRecord implements only the getGeo* getters, so a copier that
+        // regresses to a plain getter fails here the same way it does in production.
+        assertMemoryLeak(() -> {
+            IntList types = geoSchema();
+            try (LiveViewInMemoryTier tier = new LiveViewInMemoryTier(types, 0, PAGE_SIZE)) {
+                int writeIdx = 1 - tier.getPublishedIdx();
+                LiveViewInMemoryBuffer slot = tier.tryAcquireWrite(writeIdx);
+                Assert.assertNotNull(slot);
+                GeoRecord rec = new GeoRecord();
+
+                // row 0: normal values, one per width.
+                rec.of(1_000_000L, (byte) 0x0A, (short) 0x0BBB, 0x00CC_CCCC, 0x0000_00DD_DDDD_DDDDL);
+                slot.copyRowFromRecord(rec, 0);
+                // row 1: the per-width GEOHASH NULL sentinels, which are just byte patterns
+                // the tier has to carry through verbatim.
+                rec.of(2_000_000L, GeoHashes.BYTE_NULL, GeoHashes.SHORT_NULL, GeoHashes.INT_NULL, GeoHashes.NULL);
+                slot.copyRowFromRecord(rec, 1);
+                // row 2: another distinct set.
+                rec.of(3_000_000L, (byte) 0x01, (short) 0x0222, 0x0033_3333, 0x0000_0044_4444_4444L);
+                slot.copyRowFromRecord(rec, 2);
+                slot.setRowCount(3);
+                tier.publishSwap(writeIdx);
+
+                int pin = tier.acquireRead();
+                Assert.assertEquals(writeIdx, pin);
+                LiveViewInMemoryBuffer r = tier.getSlot(pin);
+                Assert.assertEquals(3, r.rowCount());
+
+                // The buffer stores each GEOHASH at its plain width, so it reads back
+                // through the plain-width buffer getters (LiveViewBufferRecord.getGeoByte
+                // delegates to buffer.getByte, and so on).
+                Assert.assertEquals(1_000_000L, r.getLong(0, 0));
+                Assert.assertEquals((byte) 0x0A, r.getByte(0, 1));
+                Assert.assertEquals((short) 0x0BBB, r.getShort(0, 2));
+                Assert.assertEquals(0x00CC_CCCC, r.getInt(0, 3));
+                Assert.assertEquals(0x0000_00DD_DDDD_DDDDL, r.getLong(0, 4));
+
+                Assert.assertEquals(GeoHashes.BYTE_NULL, r.getByte(1, 1));
+                Assert.assertEquals(GeoHashes.SHORT_NULL, r.getShort(1, 2));
+                Assert.assertEquals(GeoHashes.INT_NULL, r.getInt(1, 3));
+                Assert.assertEquals(GeoHashes.NULL, r.getLong(1, 4));
+
+                Assert.assertEquals((byte) 0x01, r.getByte(2, 1));
+                Assert.assertEquals((short) 0x0222, r.getShort(2, 2));
+                Assert.assertEquals(0x0033_3333, r.getInt(2, 3));
+                Assert.assertEquals(0x0000_0044_4444_4444L, r.getLong(2, 4));
+
+                tier.releaseRead(pin);
+            }
+        });
+    }
+
     private static IntList array1d2dSchema() {
         IntList types = new IntList(3);
         types.add(ColumnType.TIMESTAMP);
@@ -1311,6 +1375,19 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
         return types;
     }
 
+    // TIMESTAMP + one column of each GEOHASH storage width: GEOBYTE (<=7 bits),
+    // GEOSHORT (<=15), GEOINT (<=31) and GEOLONG (<=60). The bit counts mirror the
+    // rnd_geohash(4/12/24/40) projection the end-to-end tier test uses.
+    private static IntList geoSchema() {
+        IntList types = new IntList(5);
+        types.add(ColumnType.TIMESTAMP);
+        types.add(ColumnType.getGeoHashTypeWithBits(4));
+        types.add(ColumnType.getGeoHashTypeWithBits(12));
+        types.add(ColumnType.getGeoHashTypeWithBits(24));
+        types.add(ColumnType.getGeoHashTypeWithBits(40));
+        return types;
+    }
+
     private static IntList wideFixedWidthSchema() {
         IntList types = new IntList(4);
         types.add(ColumnType.TIMESTAMP);
@@ -1432,6 +1509,54 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
             this.d256Hl = d256Hl;
             this.d256Lh = d256Lh;
             this.d256Ll = d256Ll;
+        }
+    }
+
+    // Minimal single-row Record stub feeding copyRowFromRecord a TIMESTAMP (col 0) and
+    // the four GEOHASH widths (GEOBYTE 1, GEOSHORT 2, GEOINT 3, GEOLONG 4). It models a
+    // real GEOHASH column function: GeoByteColumn and its siblings override ONLY the
+    // getGeo* getters, inheriting the plain-width ones from AbstractGeoHashFunction,
+    // which throw. So this stub deliberately leaves getByte/getShort/getInt/getLong
+    // unimplemented - Record's defaults throw UnsupportedOperationException - and a
+    // copier that reaches for a plain getter fails here exactly as it does in production.
+    private static final class GeoRecord implements Record {
+        private byte geoByte;
+        private int geoInt;
+        private long geoLong;
+        private short geoShort;
+        private long ts;
+
+        @Override
+        public byte getGeoByte(int col) {
+            return geoByte;
+        }
+
+        @Override
+        public int getGeoInt(int col) {
+            return geoInt;
+        }
+
+        @Override
+        public long getGeoLong(int col) {
+            return geoLong;
+        }
+
+        @Override
+        public short getGeoShort(int col) {
+            return geoShort;
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return ts;
+        }
+
+        void of(long ts, byte geoByte, short geoShort, int geoInt, long geoLong) {
+            this.ts = ts;
+            this.geoByte = geoByte;
+            this.geoShort = geoShort;
+            this.geoInt = geoInt;
+            this.geoLong = geoLong;
         }
     }
 

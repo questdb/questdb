@@ -130,6 +130,50 @@ public class LiveViewInMemoryBufferRollbackTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCopyRowsFromWithRollbackRewindsAllColumns() throws Exception {
+        // fillSlotFromStaging (the rebuildInMemoryTier fast path) reset()s the PUBLISHED slot then
+        // copyRowsFromWithRollback's into it; the caller republishes that slot in its catch. A copy
+        // that throws part-way must leave EVERY var-size column's cursor rewound, not just the one
+        // that threw: with a schema of two VARCHAR columns, copyRowsFrom appends column 0 in full
+        // before it starts column 1, so a throw in column 1 leaves column 0 fully advanced. A
+        // rollback that only rewound the throwing column would strand column 0's cursor and the
+        // next append would misalign its aux vector. A single-column schema cannot exercise this.
+        assertMemoryLeak(() -> {
+            try (
+                    LiveViewInMemoryBuffer dst = new LiveViewInMemoryBuffer(varcharSchema2(), 0, PAGE_SIZE);
+                    LiveViewInMemoryBuffer retained = new TwoColVarcharBuffer(-1, "r0", "r1");
+                    LiveViewInMemoryBuffer poison = new TwoColVarcharBuffer(1, "p0", "p1", "p2");
+                    LiveViewInMemoryBuffer fresh = new TwoColVarcharBuffer(-1, "f0", "f1")
+            ) {
+                dst.copyRowsFromWithRollback(retained, 0, 2, 0);
+                dst.setRowCount(2);
+
+                try {
+                    // Throws while appending column 1, row 1 - after column 0's three rows and
+                    // column 1's row 0 are already appended.
+                    dst.copyRowsFromWithRollback(poison, 0, 3, 2);
+                    Assert.fail("injected failure expected");
+                } catch (InjectedException expected) {
+                    // rollback must rewind BOTH columns' cursors to the pre-copy savepoint
+                }
+
+                // The retained rows are intact in both columns, and a fresh append lands
+                // correctly - no order-assert trip, no torn read from a stranded column-0 cursor.
+                dst.copyRowsFromWithRollback(fresh, 0, 2, 2);
+                dst.setRowCount(4);
+                Assert.assertEquals("r0-c0", dst.getVarcharA(0, 0).toString());
+                Assert.assertEquals("r0-c1", dst.getVarcharA(0, 1).toString());
+                Assert.assertEquals("r1-c0", dst.getVarcharA(1, 0).toString());
+                Assert.assertEquals("r1-c1", dst.getVarcharA(1, 1).toString());
+                Assert.assertEquals("f0-c0", dst.getVarcharA(2, 0).toString());
+                Assert.assertEquals("f0-c1", dst.getVarcharA(2, 1).toString());
+                Assert.assertEquals("f1-c0", dst.getVarcharA(3, 0).toString());
+                Assert.assertEquals("f1-c1", dst.getVarcharA(3, 1).toString());
+            }
+        });
+    }
+
     private static LiveViewInMemoryBuffer throwingValues(int failRow, String... vals) {
         return new SyntheticVarcharBuffer(failRow, vals);
     }
@@ -143,6 +187,13 @@ public class LiveViewInMemoryBufferRollbackTest extends AbstractCairoTest {
 
     private static IntList varcharSchema() {
         IntList types = new IntList();
+        types.add(ColumnType.VARCHAR);
+        return types;
+    }
+
+    private static IntList varcharSchema2() {
+        IntList types = new IntList();
+        types.add(ColumnType.VARCHAR);
         types.add(ColumnType.VARCHAR);
         return types;
     }
@@ -173,6 +224,29 @@ public class LiveViewInMemoryBufferRollbackTest extends AbstractCairoTest {
                 throw new InjectedException();
             }
             return new Utf8String(vals[(int) row]);
+        }
+    }
+
+    // Two-VARCHAR-column synthetic source. getVarcharA returns a distinct value per (row, col),
+    // and throws only on the LAST column at failRow - so copyRowsFrom appends column 0 in full
+    // before the throw, leaving column 0's cursor advanced. failRow == -1 never throws.
+    private static final class TwoColVarcharBuffer extends LiveViewInMemoryBuffer {
+        private final int failRow;
+        private final String[] vals;
+
+        TwoColVarcharBuffer(int failRow, String... vals) {
+            super(varcharSchema2(), 0, PAGE_SIZE);
+            this.failRow = failRow;
+            this.vals = vals;
+            setRowCount(vals.length);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(long row, int col) {
+            if (row == failRow && col == 1) {
+                throw new InjectedException();
+            }
+            return new Utf8String(vals[(int) row] + "-c" + col);
         }
     }
 }

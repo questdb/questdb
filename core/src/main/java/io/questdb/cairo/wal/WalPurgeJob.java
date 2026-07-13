@@ -544,6 +544,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // block base WAL purging indefinitely while the base keeps ingesting.
         // Re-CREATE requires a DROP first and backfills through an MVCC snapshot
         // reader, not the raw base WAL, so the retained WAL is never load-bearing.
+        // Skip the LV arm when the feature is off: ServerMain then starts no LiveViewRefreshJob, so
+        // nothing advances lvConsumedSeqTxn / headCheckpointBaseSeqTxn and clamping to those frozen
+        // values would pin the base WAL forever while the base keeps ingesting. The mat-view arm
+        // gets this free (NoOp state store -> null state -> floor released); the LV arm reads the
+        // registry directly, so it needs the gate.
+        if (!engine.getConfiguration().isLiveViewEnabled()) {
+            return safeToPurgeTxn;
+        }
         liveViewSink.clear();
         final LiveViewRegistry liveViewRegistry = engine.getLiveViewRegistry();
         liveViewRegistry.getViewsForBaseTable(tableToken.getTableName(), liveViewSink);

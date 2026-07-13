@@ -2072,6 +2072,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // it (hasPendingLiveViewApply / retryPendingLiveViewApply) rather than leaving the view
         // stale until the next base commit happens to flush again.
         // See LiveViewSmokeTest.testFlushLeadInlineApplyFailureRecoversWithoutDuplication.
+        final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(token);
+        // Captured before the apply so the restamp below can tell a real apply from a no-op /
+        // suspend: only when the writer txn advanced did the flushed lead reach disk.
+        final long lvAppliedBefore = lvTracker.getWriterTxn();
         applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
         // Read the applied LV-table seqTxn only AFTER applyWalDirect: restampSlotAfterFlush
         // below stamps the slot with it, and the getCursor staleness retry depends on the
@@ -2080,7 +2084,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // at the freshly applied seqTxn would see isSlotNewerThanDisk() false and disengage
         // the slot/disk seam, falling back to stale disk-only content (see
         // LiveViewRecordCursor.isSlotNewerThanDisk).
-        final long lvAppliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn();
+        final long lvAppliedSeqTxn = lvTracker.getWriterTxn();
         boolean lvConsumedPersisted = false;
         try {
             engine.advanceLiveViewConsumedSeqTxn(token, advanceTo, blockFileWriter, path);
@@ -2108,6 +2112,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // incomplete subset of disk. Leave it stale-stamped and mark it for
                 // rebuild - the fence routes reads disk-only (disk is now current)
                 // until the next refresh drops the slot and rebuilds a clean one.
+                instance.setTierStale(true);
+            } else if (lvAppliedSeqTxn <= lvAppliedBefore) {
+                // The inline apply no-opped or suspended (writer txn did not advance): the flushed
+                // lead is in the LV WAL but never reached disk, so the slot still holds those rows
+                // while disk lacks them. Unlike an emergency flush, disk did NOT move ahead, so the
+                // fence (slot.lvSeqTxn == diskSeqTxn) stays engaged on the pre-flush stamp -
+                // re-stamping as a leadRowCount=0 subset would make size() report disk-only while
+                // the scan still serves the lead, so count() and a full scan disagree (the seam can
+                // even double-serve an overlap row). Un-stamp so the fence disengages and reads are
+                // disk-only and self-consistent until the block lands. Same appliedBefore/After
+                // guard retryPendingLiveViewApply uses.
+                restampSlot(instance, Numbers.LONG_NULL, 0);
                 instance.setTierStale(true);
             } else {
                 // Normal flush: the lead rows are now on disk and still in the slot,
@@ -3150,6 +3166,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 batchMaxTs = ts;
                             }
                             instance.setLatestSeenTs(ts);
+                            // hasNext() already advanced the accumulators for this row, so the window
+                            // state now leads the last durable commit. Mark it dirty like both
+                            // active-drain loops do: without this, handleRefreshFailure's guard is
+                            // false during backfill and its BACKFILL recovery never runs, so a
+                            // mid-sweep failure (uncommitted WAL rows roll back, the accumulator
+                            // advance does not) re-feeds the same rows next turn from the unchanged
+                            // dataOffset, double-advancing every window value from there on.
+                            windowStateDirty = true;
                             // Skip-write: rows already on disk (outPos below the
                             // floor) are recomputed to advance window state but
                             // not re-appended; rows at/above it are emitted.
@@ -4727,7 +4751,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void fillSlotFromStaging(LiveViewInMemoryBuffer slot, long lvSeqTxn) {
         slot.reset();
         final long rows = stagingBuffer.rowCount();
-        slot.copyRowsFrom(stagingBuffer, 0, rows, 0);
+        // Rollback-safe: copyRowsFrom can throw mid-copy (native OOM growing a var-size column). On
+        // rebuildInMemoryTier's fast path the slot being filled IS the published slot, and the
+        // caller republishes it in its catch - a plain copyRowsFrom would leave rowCount 0 but a
+        // var-size cursor stranded at k*width, misaligning the aux vector so every later
+        // STRING/BINARY/VARCHAR/ARRAY read dereferences a garbage offset. The rollback rewinds every
+        // var-size cursor, so a failed fill republishes a clean, empty slot (lvSeqTxn stays
+        // LONG_NULL from reset(), so the fence routes reads disk-only).
+        slot.copyRowsFromWithRollback(stagingBuffer, 0, rows, 0);
         slot.setRowCount(rows);
         slot.setSeamTs(stagingBuffer.seamTs());
         slot.setLvSeqTxn(lvSeqTxn);

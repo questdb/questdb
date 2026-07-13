@@ -1452,6 +1452,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         LOG,
                         true
                 );
+                assertNoRefreshFaults("lv");
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
@@ -1592,6 +1593,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
     }
 
     // Differential oracle for the first_value IGNORE NULLS unbounded-lo range restart test: the LV must
@@ -1607,6 +1609,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
     }
 
     // Differential oracle for the throw-then-retry idempotency test: the LV must
@@ -6375,6 +6378,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertFalse("a suspended apply must not invalidate the view",
                         instance.isInvalid());
                 assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+                // A count() alone reads size() only; a full scan must agree with it. If the
+                // failed inline apply left the slot re-stamped as a subset of a disk that never
+                // received the flushed lead, hasNext() serves the committed-but-unapplied lead
+                // row while size() reports disk-only - count() and a full scan disagree.
+                assertQuery("SELECT ts, x, rn FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(
+                        "ts\tx\trn\n" +
+                                "2026-04-01T00:00:00.000000Z\t1\t1\n");
 
                 // Recovery: a third row (day 2) drives a clean flush with the fault
                 // cleared. Resuming the suspended apply lands the deferred block plus
@@ -12184,6 +12194,49 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testWalSymbolFilterResolvesUnderCommitLocalKeyCollisionLaterSymbol() throws Exception {
+        // The mirror of testWalSymbolFilterResolvesUnderCommitLocalKeyCollision, filtering on
+        // the LATER of the two colliding symbols. That test filters on 'X', the symbol the
+        // segment's cumulative reader map HIDES (key 2 ends up mapped to 'Y'), so it exercises
+        // only the overlay-hit path. Filtering on 'Y' exercises the fall-through, where the
+        // stale cumulative map does hold a hit for the constant - and a key that is valid in a
+        // DIFFERENT transaction. If the filter resolves 'Y' to key 2 and then matches every row
+        // carrying local key 2, commit A's 'X' row (also key 2, in its own txn) is admitted into
+        // the view in violation of its own WHERE.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 2);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, px, sum(px) OVER w AS s FROM base WHERE sym = 'Y' " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES " +
+                        "('2026-10-01T00:00:00.000000Z', 'SEED0', 1.0), " +
+                        "('2026-10-01T00:00:01.000000Z', 'SEED1', 2.0)");
+                drainWalQueue();
+
+                // Two un-applied commits sharing segment 1, colliding on local key 2:
+                // commit A -> 'X'=2, commit B -> 'Y'=2.
+                execute("INSERT INTO base VALUES ('2026-10-01T00:00:02.000000Z', 'X', 3.0)");
+                execute("INSERT INTO base VALUES ('2026-10-01T00:00:03.000000Z', 'Y', 4.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // Only 'Y' matches the view's WHERE. The 'X' row shares the local key but belongs
+            // to another transaction and must not be admitted.
+            assertQuery("SELECT ts, sym, px, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(
+                    "ts\tsym\tpx\ts\n" +
+                            "2026-10-01T00:00:03.000000Z\tY\t4.0\t4.0\n");
+            assertNoRefreshFaults("lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testWindowArgRebindsSymbolKeyAcrossRefreshCycles() throws Exception {
         // C4 regression: a window function's arg must rebind to the cursor on every refresh
         // cycle, not just the first.
@@ -12732,6 +12785,68 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testVwemaTimeWeightedOverPartitionSnapshotRoundTrip() throws Exception {
         assertStatefulAnchorRoundTrip("avg(x, 'minute', 5, vol)", "PARTITION BY sym ORDER BY ts", STATEFUL_SINGLE_DAY_INSERT);
+    }
+
+    @Test
+    public void testVwemaVolumeArgRebindsAcrossRefreshCycles() throws Exception {
+        // initPartitionBy() is what WindowRecordCursorFactory.ofIncremental calls on every
+        // refresh cycle after the first, to rebind each inner expression to the new cursor's
+        // symbol table. vwema's volume arg is exactly such an expression, and it was rebound
+        // nowhere: the WAL writer re-assigns symbol keys per commit, so a `side = 'BUY'`
+        // predicate inside the volume arg resolves against a stale symbol table and weights
+        // the wrong rows. The ordinary-query test in VwemaWindowFunctionTest covers init();
+        // only a live view driven across more than one commit covers initPartitionBy().
+        //
+        // The oracle is differential and lives inside the view: bvol carries, as a plain
+        // DOUBLE column, the values the CASE expression must produce, so the two vwema
+        // columns must agree row for row. 'SELL' interns first, so an unbound `side = 'BUY'`
+        // matches the SELL rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, side SYMBOL, price DOUBLE, " +
+                    "qty DOUBLE, bvol DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, side, " +
+                    "  avg(price, 'alpha', 0.5, CASE WHEN side = 'BUY' THEN qty ELSE 0.0 END) OVER w AS v_expr, " +
+                    "  avg(price, 'alpha', 0.5, bvol) OVER w AS v_col " +
+                    "FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Commit 1: seeds the symbol dictionary and runs the bootstrap (init) cycle.
+                execute("INSERT INTO base (ts, sym, side, price, qty, bvol) VALUES " +
+                        "('2026-01-01T00:00:00.000000Z', 's1', 'SELL', 10.0, 100.0, 0.0), " +
+                        "('2026-01-01T00:00:01.000000Z', 's1', 'BUY',  20.0, 200.0, 200.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                // Commit 2 onwards: every later cycle goes through initPartitionBy, and each
+                // new commit hands the WAL segment a fresh local symbol key space.
+                execute("INSERT INTO base (ts, sym, side, price, qty, bvol) VALUES " +
+                        "('2026-01-01T00:00:02.000000Z', 's1', 'BUY',  30.0, 300.0, 300.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                execute("INSERT INTO base (ts, sym, side, price, qty, bvol) VALUES " +
+                        "('2026-01-01T00:00:03.000000Z', 's1', 'SELL', 40.0, 400.0, 0.0), " +
+                        "('2026-01-01T00:00:04.000000Z', 's1', 'BUY',  50.0, 500.0, 500.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            drainWalQueue();
+
+            assertQuery("lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tside\tv_expr\tv_col\n" +
+                            "2026-01-01T00:00:00.000000Z\tSELL\tnull\tnull\n" +
+                            "2026-01-01T00:00:01.000000Z\tBUY\t20.0\t20.0\n" +
+                            "2026-01-01T00:00:02.000000Z\tBUY\t26.0\t26.0\n" +
+                            "2026-01-01T00:00:03.000000Z\tSELL\t26.0\t26.0\n" +
+                            "2026-01-01T00:00:04.000000Z\tBUY\t42.0\t42.0\n");
+            assertNoRefreshFaults("lv");
+        });
     }
 
     @Test
@@ -15846,6 +15961,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -15948,6 +16064,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
 
             execute("DROP LIVE VIEW lv");
         });
@@ -18033,23 +18150,33 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testRejectAlterLiveView() throws Exception {
-        // ALTER LIVE VIEW is not a supported statement: ALTER only branches on
-        // TABLE / MATERIALIZED VIEW / VIEW, so the LIVE keyword is rejected at
-        // parse time. (ALTER TABLE <lv> is a separate path, covered by
-        // LiveViewTest.testRejectAlterTable with "cannot modify live view".)
+        // ALTER LIVE VIEW exists only for the WAL-control verbs (RESUME / SUSPEND WAL), which are
+        // the operator's recovery for a suspended view - see
+        // LiveViewTest.testSuspendedLiveViewCanBeResumed. Every STRUCTURAL verb stays rejected: a
+        // live view's schema is a function of its SELECT and must not be mutated in place.
+        // (ALTER TABLE <lv> is a separate path, covered by LiveViewTest.testRejectAlterTable with
+        // "cannot modify live view".)
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
-            try {
-                execute("ALTER LIVE VIEW lv RENAME TO lv2");
-                Assert.fail("expected SqlException rejecting ALTER LIVE VIEW");
-            } catch (SqlException e) {
-                Assert.assertTrue(
-                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
-                        Chars.contains(e.getFlyweightMessage(), "'table' or 'materialized' or 'view' expected")
-                );
+            for (String sql : new String[]{
+                    "ALTER LIVE VIEW lv RENAME TO lv2",
+                    "ALTER LIVE VIEW lv ADD COLUMN y INT",
+                    "ALTER LIVE VIEW lv DROP COLUMN x",
+            }) {
+                try {
+                    execute(sql);
+                    Assert.fail("expected SqlException rejecting: " + sql);
+                } catch (SqlException e) {
+                    Assert.assertTrue(
+                            sql + " -> wrong message [msg=" + e.getFlyweightMessage() + ']',
+                            Chars.contains(e.getFlyweightMessage(), "'resume' or 'suspend' expected")
+                    );
+                }
             }
+            // The name must still resolve to the untouched live view.
+            Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
             execute("DROP LIVE VIEW lv");
         });
     }

@@ -1584,7 +1584,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }
 
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, "(" + view1Sql + ") ORDER BY 1", "(lv1) ORDER BY 1", LOG, true);
+        assertNoRefreshFaults("lv1");
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, "(" + view2Sql + ") ORDER BY 1", "(lv2) ORDER BY 1", LOG, true);
+        assertNoRefreshFaults("lv2");
 
         execute("DROP LIVE VIEW lv1");
         execute("DROP LIVE VIEW lv2");
@@ -2086,6 +2088,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
+        assertNoRefreshFaults("lv");
 
         // Guard against the soak silently passing on disk-only reads: confirm the
         // quiesced production read path actually routes through Mode B.

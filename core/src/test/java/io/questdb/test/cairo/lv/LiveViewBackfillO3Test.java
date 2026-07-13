@@ -29,7 +29,6 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.mp.Job;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -52,7 +51,7 @@ import org.junit.Test;
  * back-dated commit between two sweep turns and asserts the view still equals a
  * from-scratch recompute over the final base.
  */
-public class LiveViewBackfillO3Test extends AbstractCairoTest {
+public class LiveViewBackfillO3Test extends AbstractLiveViewTest {
 
     @Before
     public void pinClockBelowTestData() {
@@ -136,6 +135,7 @@ public class LiveViewBackfillO3Test extends AbstractCairoTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
 
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");

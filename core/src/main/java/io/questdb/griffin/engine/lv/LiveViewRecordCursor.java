@@ -222,7 +222,15 @@ public class LiveViewRecordCursor implements RecordCursor {
             if (!diskExhausted) {
                 if (diskCursor.hasNext()) {
                     long ts = diskCursor.getRecord().getTimestamp(timestampColumnIndex);
-                    if (ts < pinnedSlot.seamTs()) {
+                    // leadStart == 0: the slot carries NO overlap (every row is un-flushed lead), so
+                    // disk holds none of them and there is nothing to cut against - disk must serve
+                    // every row it has. Cutting at seamTs (then the lead's own minimum) would drop a
+                    // disk row at exactly that ts, served by neither tier. Reachable: an additive
+                    // commit whose min ts equals the frontier is not diverted to O3 (strict
+                    // below-frontier compare), and a post-restart slot is pure lead. size() and
+                    // skipRows() already use diskRouted = diskSize - leadStart, i.e. the whole disk
+                    // when leadStart == 0; this restores hasNext() to that same contract.
+                    if (leadStart == 0 || ts < pinnedSlot.seamTs()) {
                         recordA.toDiskMode();
                         return true;
                     }

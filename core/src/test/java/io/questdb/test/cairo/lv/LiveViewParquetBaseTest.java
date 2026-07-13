@@ -92,6 +92,7 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
         });
@@ -144,6 +145,7 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
                     LOG,
                     true
             );
+            assertNoRefreshFaults("lv");
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
         });

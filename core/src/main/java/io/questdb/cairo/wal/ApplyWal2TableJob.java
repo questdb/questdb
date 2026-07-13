@@ -864,6 +864,26 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     return 1;
                 }
             case TRUNCATE:
+                // Freeze-and-continue keeps live views valid across a plain base TRUNCATE: it
+                // retires settled data the view already consumed, and a live view is a
+                // forward-computed row stream, not a re-derivable aggregate.
+                //
+                // A mat view is derived, so a TRUNCATE of one is never data retirement - it is the
+                // rebuild half of a full refresh. A live view on it would walk past the TRUNCATE and
+                // treat the re-materialised rows as fresh appends, emitting them twice while its
+                // accumulators still carry pre-rebuild state (a bounded frame keeps the deleted rows
+                // in its ring). Invalidate instead; the operator recreates the view.
+                //
+                // Runs BEFORE the partitions go: invalidation is idempotent, so doing it for a
+                // truncate that then fails is harmless, whereas a throw after removeAllPartitions()
+                // would commit the seqTxn, never re-enter this arm, and leave the view active over a
+                // rebuilt base.
+                if (writer.getTableToken().isMatView()) {
+                    engine.invalidateLiveViewsForBaseTable(
+                            writer.getTableToken(),
+                            "base materialized view was rebuilt"
+                    );
+                }
                 long txn = writer.getTxn();
                 writer.setSeqTxn(seqTxn);
                 writer.removeAllPartitions();
@@ -872,10 +892,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.markSeqTxnCommitted(seqTxn);
                 }
                 lastCommittedRows = 0;
-                // Invalidate dependent materialized views on truncate. Live views
-                // own a private copy of derived rows and stay valid: the LV
-                // refresh worker walks past the TRUNCATE seqTxn and advances its
-                // own lv_consumed_seqTxn floor without rewriting LV state.
+                // Invalidate dependent materialized views on truncate.
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
@@ -1195,7 +1212,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // replica the refresh worker is quiesced (the live-view state store is NoOp, so
         // isRefreshEnabled() is false) and never applies anything, so the global apply job
         // owns the LV's on-disk tier and its _lv.s advance instead -- fall through to applyWal.
-        if (tableToken.isLiveView() && engine.getLiveViewStateStore().isRefreshEnabled()) {
+        //
+        // A DROP is the exception: dropLiveView removes the instance from the registry, marks it
+        // dropped and fences the refresh latch BEFORE the sequencer mints the drop, so no worker
+        // is left to race. applyWal's head is the only path to purgeTableFiles, so swallowing the
+        // drop here left the view's whole directory and its tables.d entry on disk forever, with
+        // WalPurgeJob re-pinging the apply job every sweep.
+        if (tableToken.isLiveView()
+                && engine.getLiveViewStateStore().isRefreshEnabled()
+                && !engine.isTableDropped(tableToken)) {
             return true;
         }
 

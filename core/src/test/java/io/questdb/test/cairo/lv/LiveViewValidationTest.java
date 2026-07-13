@@ -28,9 +28,19 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Semantic-validation rejects for CREATE LIVE VIEW that the grammar/shape validators
@@ -130,6 +140,111 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertNotNull("the pre-existing live view must be untouched",
                     engine.getLiveViewRegistry().getViewInstance("lv"));
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testExplainCreateLiveViewReturnsAPlan() throws Exception {
+        // The CREATE_LIVE_VIEW arm of compileExplainExecutionModel0 only authorized and broke, so
+        // generateExplain() ran codegen over the RAW parser model. CREATE TABLE and CREATE MAT VIEW
+        // both optimise theirs first. The unoptimised model tripped "wtf? ts" under -ea (an AIOOBE
+        // without) - an Error escaping compile(), i.e. a 500 on HTTP/pgwire instead of a plan.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS "
+                    + "SELECT ts, x, row_number() OVER () AS rn FROM base";
+
+            final StringSink plan = new StringSink();
+            printSql("EXPLAIN " + body, plan);
+            Assert.assertTrue("EXPLAIN must return a plan [plan=" + plan + ']', plan.length() > 0);
+            Assert.assertTrue("the plan must mention the base table [plan=" + plan + ']',
+                    Chars.contains(plan, "base"));
+
+            // The JSON format goes through the same codegen and must not throw either.
+            final StringSink jsonPlan = new StringSink();
+            printSql("EXPLAIN (FORMAT JSON) " + body, jsonPlan);
+            Assert.assertTrue("EXPLAIN (FORMAT JSON) must return a plan", jsonPlan.length() > 0);
+
+            // EXPLAIN must not actually create the view.
+            Assert.assertNull("EXPLAIN must not create the live view",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+        });
+    }
+
+    @Test
+    public void testCreateLiveViewWritesDefinitionBeforeTxn() throws Exception {
+        // _lv must land BEFORE _txn, like _view and _mv. _txn is what TableUtils.exists() keys on,
+        // so writing _lv after it leaves a crash window whose directory looks like a plain WAL
+        // table: the loader types it TABLE (no _lv) and it squats the view's name, so CREATE LIVE
+        // VIEW then fails forever with "already exists" while DROP LIVE VIEW fails with "live view
+        // name expected". Fail the _lv write and assert the directory never reaches TABLE_EXISTS.
+        // Pin the ordering itself. A caught failure cannot stand in for the real hazard
+        // (createLiveView rolls the orphan back on an exception; only a crash leaves it), so record
+        // the order in which CREATE LIVE VIEW opens _lv and _txn.
+        final AtomicBoolean armed = new AtomicBoolean(false);
+        final StringBuilder order = new StringBuilder();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (armed.get()) {
+                    if (Utf8s.endsWithAscii(name, '/' + LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME)) {
+                        order.append("_lv ");
+                    } else if (Utf8s.endsWithAscii(name, '/' + TableUtils.TXN_FILE_NAME)) {
+                        order.append("_txn ");
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            armed.set(true);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            armed.set(false);
+
+            final String seq = order.toString();
+            Assert.assertTrue("CREATE LIVE VIEW must write both _lv and _txn [seq=" + seq + ']',
+                    seq.contains("_lv") && seq.contains("_txn"));
+            Assert.assertTrue(
+                    "_lv must be written BEFORE _txn, else a crash between them leaves a directory"
+                            + " that reports TABLE_EXISTS and squats the view's name [seq=" + seq + ']',
+                    seq.indexOf("_lv") < seq.indexOf("_txn")
+            );
+            Assert.assertNotNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewOverLiveViewRejected() throws Exception {
+        // CREATE LIVE VIEW rejects live-on-live composition, but a materialized view slipped
+        // through: Type.LIVE_VIEW.isImplicitlyWal() is true, so an LV token answers isWal() and
+        // sailed past CreateMatViewOperationImpl's only base-kind gate. That matters because a
+        // mat view refreshes through the very apply pipeline that does not support an LV as a
+        // base, and its refresh reads the LV through LiveViewRecordCursorFactory - which unions
+        // the un-flushed in-memory tier - so it could materialise rows no LV WAL txn covers yet
+        // and then record a lastRefreshBaseTxn behind them (non-deterministic w.r.t. flush timing).
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, a DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, a, sum(a) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+
+            final String sql = "CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(a) AS av FROM lv SAMPLE BY 1h) PARTITION BY DAY";
+            try {
+                execute(sql);
+                Assert.fail("a live view must not be accepted as a materialized view base");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(),
+                        e.getMessage().contains("live views are not allowed as base tables"));
+                // The caret points at the base table name, not the statement head.
+                Assert.assertEquals("the error must point at the base table name",
+                        sql.indexOf("lv SAMPLE"), e.getPosition());
+            }
+            Assert.assertNull("no materialized view may be left behind", engine.getTableTokenIfExists("mv"));
         });
     }
 

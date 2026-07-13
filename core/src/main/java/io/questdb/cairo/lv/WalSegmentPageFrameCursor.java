@@ -286,6 +286,12 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                 m.clear();
             }
         }
+        // Clean counts are per-transaction, exactly like the overlays above: a column
+        // whose diff is absent from THIS transaction must not keep the previous one's
+        // count, or keyOf would bound its scan by a band that does not belong to it.
+        for (int i = 0, n = txnSymbolCleanCounts.size(); i < n; i++) {
+            txnSymbolCleanCounts.setQuick(i, 0);
+        }
         if (txnDiffs == null) {
             return;
         }
@@ -379,7 +385,14 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                         : null;
                 // Pass an empty map as null — valueOf short-circuits to the reader.
                 final boolean hasOverlay = diff != null && diff.size() > 0;
-                final int cleanSymbolCount = hasOverlay ? txnSymbolCleanCounts.getQuick(walColumnIndex) : 0;
+                // The clean count stands alone, even with no overlay: a txn that adds no new symbol
+                // still emits an empty diff whenever the column has committed symbols
+                // (WalEventWriter.writeSymbolMapDiffs, any initialCount > 0), and keyOf needs that
+                // count to bound its scan. Forcing 0 here would collapse the scan and stop an
+                // ordinary committed-symbol filter resolving at all.
+                final int cleanSymbolCount = walColumnIndex < txnSymbolCleanCounts.size()
+                        ? txnSymbolCleanCounts.getQuick(walColumnIndex)
+                        : 0;
                 symTab.of(walColumnIndex, reader, hasOverlay ? diff : null, cleanSymbolCount);
             } else {
                 symbolTables.setQuick(i, null);
@@ -447,6 +460,12 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
             // reader's count already covers the overlay. Take the max regardless: the
             // count must never cut the current txn's band short, or a filter would drop
             // rows whose symbol key sits past it.
+            //
+            // This deliberately OVER-covers: the cumulative count also spans sibling txns' dirty
+            // bands, which no row of this txn carries. An enumerating filter just resolves a few
+            // keys that match nothing here - wasted work, never a wrong answer (resolve() is
+            // overlay-first). Do NOT tighten to the exact band without re-checking keyOf: the
+            // over-count is harmless, an under-count drops rows.
             int count = reader.getSymbolCount(walColumnIndex);
             if (txnDiff != null) {
                 count = Math.max(count, cleanSymbolCount + txnDiff.size());
@@ -485,9 +504,12 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                     }
                 }
             }
-            // Falls through for values below the overlay band (the clean symbols loaded
-            // from the table's committed files), which the reader resolves correctly.
-            return reader.getSymbolKey(walColumnIndex, value, scanView);
+            // Falls through for clean symbols (below the overlay band), which the reader resolves
+            // correctly. The scan MUST stop at cleanSymbolCount: above it the cumulative map holds
+            // every OTHER txn's dirty band, and local ids restart per commit - so an unbounded scan
+            // could return a key valid in a sibling txn, and every row of THIS txn carrying that
+            // same local id would match, admitting rows that violate the view's own WHERE.
+            return reader.getSymbolKey(walColumnIndex, value, scanView, cleanSymbolCount);
         }
 
         public void of(int walColumnIndex, WalReader reader, @Nullable DirectSymbolMap txnDiff, int cleanSymbolCount) {
