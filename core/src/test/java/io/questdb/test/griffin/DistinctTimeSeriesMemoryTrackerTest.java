@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.functions.test.TestAllocatingFunctionFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
@@ -132,6 +133,21 @@ public class DistinctTimeSeriesMemoryTrackerTest extends AbstractCairoTest {
                         "1970-01-01T00:00:04.000000Z\t1\n" +
                         "1970-01-01T00:00:05.000000Z\t2\n" +
                         "1970-01-01T00:00:06.000000Z\t0\n");
+    }
+
+    @Test
+    public void testDistinctLimitHiCompilationFailureReleasesLimitLoFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (v LONG)");
+            TestAllocatingFunctionFactory.resetCloseCount();
+            try {
+                final String sql = "SELECT DISTINCT v FROM tab LIMIT alloc(64), npe()";
+                assertException(sql, sql.indexOf("npe"), "LIMIT expressions must be convertible to INT");
+                Assert.assertEquals(1, TestAllocatingFunctionFactory.getCloseCount());
+            } finally {
+                TestAllocatingFunctionFactory.disableAllocationForTests();
+            }
+        });
     }
 
     @Test

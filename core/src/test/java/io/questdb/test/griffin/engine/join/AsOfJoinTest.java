@@ -26,20 +26,15 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TimeFrame;
-import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor;
 import io.questdb.griffin.engine.table.RetimestampedRecordCursorFactory;
 import io.questdb.jit.JitUtil;
-import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.Rows;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -1374,19 +1369,19 @@ public class AsOfJoinTest extends AbstractCairoTest {
             execute("create table snapshots (ts timestamp, account_id int) timestamp(ts) partition by DAY");
             execute("create table balances (ts timestamp, account_id int, balance double) timestamp(ts) partition by DAY");
 
-            // bucket [17:30,18:00): only match is exactly at 17:30
-            execute("insert into snapshots values ('2026-07-07T17:30:00.000000Z', 0)");
-            // bucket [18:00,18:30): only match is at 18:24, NOT at the 18:00 bucket boundary
-            execute("insert into snapshots values ('2026-07-07T18:24:00.000000Z', 0)");
-
-            execute("insert into balances values ('2026-07-07T17:30:00.000000Z', 0, 100)");
-            execute("insert into balances values ('2026-07-07T17:56:00.000000Z', 0, 200)");
-            // A row strictly between the raw bucket boundary (18:00) and the re-timestamped s_f_ts
-            // (18:24): the LT JOIN below can only return this row when it reads the master timestamp
-            // as s_f_ts (18:24); a path that wrongly read s_ts (18:00) would still stop at 17:56/200.
-            execute("insert into balances values ('2026-07-07T18:10:00.000000Z', 0, 250)");
-            execute("insert into balances values ('2026-07-07T18:24:00.000000Z', 0, 300)");
-            execute("insert into balances values ('2026-07-07T18:40:00.000000Z', 0, 400)");
+            execute("""
+                    INSERT INTO snapshots VALUES
+                        ('2026-07-07T17:30:00.000000Z', 0),
+                        ('2026-07-07T18:24:00.000000Z', 0)
+                    """);
+            execute("""
+                    INSERT INTO balances VALUES
+                        ('2026-07-07T17:30:00.000000Z', 0, 100),
+                        ('2026-07-07T17:56:00.000000Z', 0, 200),
+                        ('2026-07-07T18:10:00.000000Z', 0, 250),
+                        ('2026-07-07T18:24:00.000000Z', 0, 300),
+                        ('2026-07-07T18:40:00.000000Z', 0, 400)
+                    """);
 
             // The master side is explicitly re-timestamped to s_f_ts (the real, first snapshot
             // timestamp within each 30m bucket), which differs from s_ts (the bucket boundary
@@ -1713,6 +1708,42 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         .expectSize()
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSlaveSubqueryExplicitTimestampAcrossPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (physical_ts TIMESTAMP, ts2 TIMESTAMP, value LONG) TIMESTAMP(physical_ts) PARTITION BY DAY");
+            execute("INSERT INTO master VALUES ('2024-01-10T12:00:00.000000Z')");
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('2024-01-01T01:00:00.000000Z', '2024-01-10T01:00:00.000000Z', 10),
+                        ('2024-01-02T01:00:00.000000Z', '2024-01-11T01:00:00.000000Z', 20)
+                    """);
+
+            final String slave = "(SELECT * FROM (SELECT * FROM slave WHERE value > 0) TIMESTAMP(ts2)) s";
+            assertQuery("SELECT master.ts, s.ts2, s.value FROM master ASOF JOIN " + slave)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join", "Async JIT Filter")
+                    .withPlanNotContaining("Filtered AsOf Join Fast")
+                    .returns("""
+                            ts\tts2\tvalue
+                            2024-01-10T12:00:00.000000Z\t2024-01-10T01:00:00.000000Z\t10
+                            """);
+            assertQuery("SELECT master.ts, s.ts2, s.value FROM master LT JOIN " + slave)
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Lt Join", "Async JIT Filter")
+                    .withPlanNotContaining("Filtered Lt Join Fast")
+                    .returns("""
+                            ts\tts2\tvalue
+                            2024-01-10T12:00:00.000000Z\t2024-01-10T01:00:00.000000Z\t10
+                            """);
         });
     }
 
@@ -6280,125 +6311,78 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSubqueryExplicitTimestampTimeFrameCursorReportsRedesignatedTimestamp() throws Exception {
-        // White-box coverage of RetimestampedRecordCursorFactory's TimeFrame path. A downstream
-        // time-frame consumer (interval scan, ASOF/LT slave, LATEST ON fast path) must see the
-        // REDESIGNATED column as the frame cursor's designated timestamp, and otherwise receive the
-        // base's frames and records byte-identically. The bare-subquery `(SELECT * FROM tab)
-        // timestamp(ts2)` redesignation reaches LATEST ON as a Retimestamp wrapper over a plain
-        // (time-frame-capable) table scan; here we reach into that wrapper and drive its
-        // TimeFrameCursor / ConcurrentTimeFrameCursor directly to prove they relabel the designated
-        // timestamp index to ts2 and pass every frame/record through unchanged.
+    public void testSubqueryExplicitTimestampDoesNotExposePhysicalTimeFrames() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, ts2 timestamp, k symbol, v long) timestamp(ts) partition by DAY");
-            execute(
-                    "insert into tab " +
-                            "select (x * 3600L * 1000000L)::timestamp, " +
-                            "       (x * 3600L * 1000000L + 500000L)::timestamp, " +
-                            "       's' || (x % 3), x " +
-                            "from long_sequence(72)"
-            );
-            drainWalQueue();
+            execute("CREATE TABLE tab (ts TIMESTAMP, ts2 TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00.000000Z', '2024-01-10T00:00:00.000000Z', 'A', 1),
+                        ('2024-01-02T00:00:00.000000Z', '2024-01-11T00:00:00.000000Z', 'B', 2)
+                    """);
             try (RecordCursorFactory top = select(
-                    "SELECT * FROM (SELECT * FROM tab) timestamp(ts2) LATEST ON ts2 PARTITION BY k")) {
-                RetimestampedRecordCursorFactory wrapper = findRetimestamped(top);
+                    "SELECT * FROM (SELECT * FROM tab) TIMESTAMP(ts2) LATEST ON ts2 PARTITION BY k")) {
+                final RetimestampedRecordCursorFactory wrapper = findRetimestamped(top);
                 Assert.assertNotNull("expected a RetimestampedRecordCursorFactory in the tree", wrapper);
+                Assert.assertEquals(
+                        wrapper.getMetadata().getColumnIndex("ts2"),
+                        wrapper.getMetadata().getTimestampIndex()
+                );
+                Assert.assertFalse(wrapper.supportsTimeFrameCursor());
+                Assert.assertNull(wrapper.getTimeFrameCursor(sqlExecutionContext));
+                Assert.assertNull(wrapper.newTimeFrameCursor());
 
-                final RecordMetadata metadata = wrapper.getMetadata();
-                final int ts2Index = metadata.getColumnIndex("ts2");
-                final int kIndex = metadata.getColumnIndex("k");
-                Assert.assertEquals(ts2Index, metadata.getTimestampIndex());
-                Assert.assertTrue("wrapper base must support time frames for this test", wrapper.supportsTimeFrameCursor());
-
-                // Cheap capability delegations must mirror the base 1:1.
-                final RecordCursorFactory base = wrapper.getBaseFactory();
-                Assert.assertEquals(base.supportsPageFrameCursor(), wrapper.supportsPageFrameCursor());
-                Assert.assertEquals(base.supportsSharedCursors(), wrapper.supportsSharedCursors());
-                Assert.assertEquals(base.recordCursorSupportsRandomAccess(), wrapper.recordCursorSupportsRandomAccess());
-                Assert.assertEquals(base.implementsLimit(), wrapper.implementsLimit());
-                Assert.assertEquals(base.usesIndex(), wrapper.usesIndex());
-                Assert.assertEquals(base.usesCompiledFilter(), wrapper.usesCompiledFilter());
-                Assert.assertEquals(base.followedOrderByAdvice(), wrapper.followedOrderByAdvice());
-                Assert.assertEquals(base.recordCursorSupportsLongTopK(ts2Index), wrapper.recordCursorSupportsLongTopK(ts2Index));
-                Assert.assertEquals(base.getScanDirection(), wrapper.getScanDirection());
-                Assert.assertEquals(base.getFilter(), wrapper.getFilter());
-                Assert.assertEquals(base.getCompiledFilter(), wrapper.getCompiledFilter());
-                Assert.assertEquals(base.getBindVarFunctions(), wrapper.getBindVarFunctions());
-                Assert.assertEquals(base.getBindVarMemory(), wrapper.getBindVarMemory());
-                Assert.assertEquals(0, wrapper.translateOrderByColumnToBase(0));
-
-                // Drive the sequential time-frame cursor: it must report ts2 as the designated
-                // timestamp and hand back the base's own records unchanged (ts2 = ts + 500us by
-                // construction, so a passed-through record still round-trips both columns).
-                long framesSeen = 0;
-                long rowsSeen = 0;
-                long prevTs2 = Long.MIN_VALUE;
-                try (TimeFrameCursor cursor = wrapper.getTimeFrameCursor(sqlExecutionContext)) {
-                    Assert.assertEquals(ts2Index, cursor.getTimestampIndex());
-                    Record record = cursor.getRecord();
-                    Assert.assertNotNull(cursor.getRecordB());
-                    TimeFrame frame = cursor.getTimeFrame();
-                    while (cursor.next()) {
-                        framesSeen++;
-                        cursor.open();
-                        cursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-                        for (long row = frame.getRowLo(); row < frame.getRowHi(); row++) {
-                            cursor.recordAt(record, Rows.toRowID(frame.getFrameIndex(), row));
-                            cursor.recordAt(record, frame.getFrameIndex(), row);
-                            // Passed-through records expose the redesignated column; ts2 = ts + const
-                            // by construction, so the ts2 read-out is strictly increasing frame-order.
-                            long ts2 = record.getTimestamp(ts2Index);
-                            Assert.assertTrue("ts2 must increase in frame order", ts2 > prevTs2);
-                            prevTs2 = ts2;
-                            rowsSeen++;
-                        }
-                    }
-                    Assert.assertTrue(framesSeen > 0);
-                    Assert.assertEquals(72, rowsSeen);
-
-                    // Random re-navigation surface: re-open the first frame and exercise the
-                    // remaining delegating entry points.
-                    cursor.toTop();
-                    Assert.assertTrue(cursor.next());
-                    cursor.open();
-                    cursor.jumpTo(frame.getFrameIndex());
-                    cursor.open();
-                    cursor.recordAtRowIndex(record, frame.getRowLo());
-                    cursor.seekEstimate(record.getTimestamp(ts2Index));
-                    Assert.assertNotNull(cursor.getSymbolTable(kIndex));
-                    Assert.assertNotNull(cursor.newSymbolTable(kIndex));
-                    //noinspection StatementWithEmptyBody
-                    while (cursor.prev()) {
-                        // walk backwards to exercise prev()
-                    }
+                Assert.assertTrue(wrapper.supportsPageFrameCursor());
+                try (PageFrameCursor cursor = wrapper.getPageFrameCursor(
+                        sqlExecutionContext,
+                        RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                )) {
+                    Assert.assertNotNull(cursor);
+                    Assert.assertNotNull(cursor.next());
                 }
+                Assert.assertEquals(
+                        wrapper.getBaseFactory().supportsSharedCursors(),
+                        wrapper.supportsSharedCursors()
+                );
+            }
 
-                // Concurrent time-frame cursor: same relabel to ts2.
-                ConcurrentTimeFrameCursor concurrent = wrapper.newTimeFrameCursor();
-                if (concurrent != null) {
-                    try {
-                        Assert.assertEquals(ts2Index, concurrent.getTimestampIndex());
-                    } finally {
-                        Misc.free(concurrent);
-                    }
+            try (RecordCursorFactory top = select("""
+                    SELECT * FROM (SELECT * FROM tab WHERE v > 0) TIMESTAMP(ts2)
+                    LATEST ON ts2 PARTITION BY k
+                    """)) {
+                final RetimestampedRecordCursorFactory wrapper = findRetimestamped(top);
+                Assert.assertNotNull(wrapper);
+                Assert.assertFalse(wrapper.supportsFilterStealing());
+                Assert.assertTrue(wrapper.getBaseFactory().supportsFilterStealing());
+                Assert.assertTrue(wrapper.getBaseFactory().getBaseFactory().supportsPageFrameCursor());
+                try (RecordCursor cursor = top.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                }
+            }
+
+            final String filteredTopK = "SELECT * FROM (SELECT * FROM tab WHERE v > 0) "
+                    + "TIMESTAMP(ts2) ORDER BY v DESC LIMIT 1";
+            assertQuery(filteredTopK)
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .expectSize()
+                    .withPlanContaining("Top K")
+                    .returns("""
+                            ts\tts2\tk\tv
+                            2024-01-02T00:00:00.000000Z\t2024-01-11T00:00:00.000000Z\tB\t2
+                            """);
+
+            try (RecordCursorFactory top = select("""
+                    SELECT * FROM (SELECT * FROM (tab UNION ALL tab)) TIMESTAMP(ts2)
+                    LATEST ON ts2 PARTITION BY k
+                    """)) {
+                final RetimestampedRecordCursorFactory wrapper = findRetimestamped(top);
+                Assert.assertNotNull(wrapper);
+                Assert.assertTrue(wrapper.fragmentedSymbolTables());
+                try (RecordCursor cursor = top.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
                 }
             }
         });
-    }
-
-    private static RetimestampedRecordCursorFactory findRetimestamped(RecordCursorFactory factory) {
-        RecordCursorFactory cur = factory;
-        while (cur != null) {
-            if (cur instanceof RetimestampedRecordCursorFactory) {
-                return (RetimestampedRecordCursorFactory) cur;
-            }
-            RecordCursorFactory next = cur.getBaseFactory();
-            if (next == cur) {
-                break;
-            }
-            cur = next;
-        }
-        return null;
     }
 
     @Test
@@ -6570,6 +6554,22 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
         TestUtils.assertEquals(expectedSink, actualSink);
     }
+
+    private static RetimestampedRecordCursorFactory findRetimestamped(RecordCursorFactory factory) {
+        RecordCursorFactory cur = factory;
+        while (cur != null) {
+            if (cur instanceof RetimestampedRecordCursorFactory retimestamped) {
+                return retimestamped;
+            }
+            RecordCursorFactory next = cur.getBaseFactory();
+            if (next == cur) {
+                break;
+            }
+            cur = next;
+        }
+        return null;
+    }
+
 
     private @NotNull String getString(String format) {
         String leftSuffix = getTimestampSuffix(leftTableTimestampType.getTypeName());

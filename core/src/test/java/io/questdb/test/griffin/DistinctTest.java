@@ -85,8 +85,11 @@ public class DistinctTest extends AbstractCairoTest {
         // survives as the designated timestamp of the DISTINCT result.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, ts2 TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:01.000000Z', 1)");
-            execute("INSERT INTO tab VALUES ('2024-01-01T00:01:00.000000Z', '2024-01-01T00:01:01.000000Z', 2)");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:01.000000Z', 1),
+                        ('2024-01-01T00:01:00.000000Z', '2024-01-01T00:01:01.000000Z', 2)
+                    """);
             drainWalQueue();
 
             // The reviewer's repro/oracle: the DISTINCT result's designated timestamp index must be
@@ -101,17 +104,25 @@ public class DistinctTest extends AbstractCairoTest {
                 final int tsIdx = f.getMetadata().getTimestampIndex();
                 Assert.assertEquals("designated timestamp must survive the DISTINCT-to-GROUP-BY rewrite", 1, tsIdx);
                 Assert.assertEquals("ts2", f.getMetadata().getColumnName(tsIdx));
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_OTHER, f.getScanDirection());
             }
+            final String expected = """
+                    ts\tts2\tv
+                    2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t1
+                    2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t2
+                    """;
             assertQuery(bare)
                     .noLeakCheck()
                     .inferTimestamp()
                     .expectSize()
                     .withPlanContaining("Retimestamp")
-                    .returns("""
-                            ts\tts2\tv
-                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t1
-                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t2
-                            """);
+                    .returns(expected);
+            assertQuery("SELECT * FROM (" + bare + ") ORDER BY ts2")
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .expectSize()
+                    .withPlanContaining("sort light")
+                    .returns(expected);
         });
     }
 

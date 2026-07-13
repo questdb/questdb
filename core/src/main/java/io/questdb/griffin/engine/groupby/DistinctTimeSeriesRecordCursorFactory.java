@@ -59,6 +59,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     ) {
         super(base.getMetadata());
         this.base = base;
+        Map dataMap = null;
+        DistinctTimeSeriesRecordCursor cursor = null;
         try {
             assert base.recordCursorSupportsRandomAccess();
             final RecordMetadata metadata = base.getMetadata();
@@ -68,7 +70,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             // Lazy variant (openOnInit=false): the map allocates no native backing until the first
             // cursor's of() binds a MemoryTracker and calls reopen(), keeping malloc/free symmetric on
             // the per-query counter from the very first cursor.
-            Map dataMap = new OrderedMap(
+            dataMap = new OrderedMap(
                     configuration.getSqlSmallMapPageSize(),
                     metadata,
                     null,
@@ -77,13 +79,16 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
                     Integer.MAX_VALUE,
                     false
             );
-            this.cursor = new DistinctTimeSeriesRecordCursor(
+            cursor = new DistinctTimeSeriesRecordCursor(
                     getMetadata().getTimestampIndex(),
                     dataMap,
                     recordSink
             );
+            dataMap = null;
+            this.cursor = cursor;
         } catch (Throwable t) {
-            close();
+            Misc.free(cursor);
+            Misc.free(dataMap);
             throw t;
         }
     }

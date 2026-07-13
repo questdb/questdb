@@ -1428,25 +1428,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return metadata;
     }
 
-    // generateNoSelect, generateSelectDistinct and generateSelectGroupBy build their factory either
-    // as a bare passthrough of their nested subquery's factory, or from metadata derived from it,
-    // without otherwise consulting the model's own explicit timestamp() redesignation -- unlike
-    // generateSelectChoose, which already does. That silently drops a redesignation to a column
-    // other than the nested factory's own designated timestamp -- e.g. a SAMPLE BY result
-    // re-timestamped to a first()/last() aggregate column instead of the bucket-boundary column,
-    // or the production-default DISTINCT-to-GROUP-BY rewrite (see rewriteDistinct in SqlOptimiser)
-    // which drops the designation entirely -- so every downstream consumer (joins, LATEST ON,
-    // ordering, DISTINCT) would then keep reading the original timestamp column, or none, instead
-    // of the one the user asked for.
-    //
-    // The fix wraps the generated factory in a fully transparent RetimestampedRecordCursorFactory
-    // that re-labels ONLY the designated timestamp -- records pass through byte-identically, so it is
-    // safe to layer over a join-adjacent, cursor-stateful output (unlike a projecting wrap, which
-    // previously corrupted row-by-row random access on an ASOF JOIN whose master was a SAMPLE BY
-    // subquery). It is a no-op when the model has no explicit timestamp, or when the explicit
-    // timestamp already matches the factory's own designated timestamp. The one place it must NOT be
-    // applied is generateSampleBy's output: SAMPLE BY manages its own designated timestamp and the
-    // wrap is bypassed for it in generateSelectGroupBy.
+    // Bare subqueries and non-SAMPLE-BY GROUP BY paths do not otherwise apply their model's explicit
+    // timestamp designation. Relabel metadata without projecting records so cursor identity and
+    // random-access behavior remain unchanged.
     private RecordCursorFactory applyExplicitTimestamp(
             IQueryModel model,
             RecordCursorFactory factory
@@ -1460,11 +1444,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (explicitTimestampIndex == metadata.getTimestampIndex()) {
                 return factory;
             }
-            // Guard the ENTIRE ownership-transfer sequence: metadata copy and factory construction can
-            // throw (e.g. OOM), and until the wrapper fully owns `factory` we must free it on any throw.
-            final GenericRecordMetadata retimestampedMetadata = GenericRecordMetadata.copyOfNew(metadata);
-            retimestampedMetadata.setTimestampIndex(explicitTimestampIndex);
-            return new RetimestampedRecordCursorFactory(retimestampedMetadata, factory);
+            final RecordCursorFactory ownedFactory = factory;
+            factory = null;
+            return RetimestampedRecordCursorFactory.create(ownedFactory, explicitTimestampIndex);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
@@ -8558,33 +8540,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateSelectDistinct(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        // Explicit timestamp must be applied BEFORE the random-access/timestamp check just below:
-        // DistinctTimeSeriesRecordCursor's dedup fast path keys its row-adjacency decision directly
-        // off this factory's own timestampIndex, so choosing that branch (and which column feeds
-        // it) has to already reflect any timestamp() redesignation -- applying it only after this
-        // method returns (as generateSelect()'s central call does for other arms) would be too late.
-        final RecordCursorFactory factory = applyExplicitTimestamp(model, generateSubQuery(model, executionContext));
+        RecordCursorFactory factory = generateSubQuery(model, executionContext);
+        Function limitHiFunc = null;
+        Function limitLoFunc = null;
         try {
             if (factory.recordCursorSupportsRandomAccess() && factory.getMetadata().getTimestampIndex() != -1) {
-                return new DistinctTimeSeriesRecordCursorFactory(
+                final DistinctTimeSeriesRecordCursorFactory distinctFactory = new DistinctTimeSeriesRecordCursorFactory(
                         configuration,
                         factory,
                         entityColumnFilter,
                         asm
                 );
+                factory = null;
+                return distinctFactory;
             }
 
-            final Function limitLoFunc;
-            final Function limitHiFunc;
             if (model.getOrderBy().size() == 0) {
                 limitLoFunc = getLoFunction(model, executionContext);
                 limitHiFunc = getHiFunction(model, executionContext);
-            } else {
-                limitLoFunc = null;
-                limitHiFunc = null;
             }
 
-            return new DistinctRecordCursorFactory(
+            final DistinctRecordCursorFactory distinctFactory = new DistinctRecordCursorFactory(
                     configuration,
                     factory,
                     entityColumnFilter,
@@ -8592,8 +8568,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     limitLoFunc,
                     limitHiFunc
             );
+            factory = null;
+            limitHiFunc = null;
+            limitLoFunc = null;
+            return distinctFactory;
         } catch (Throwable e) {
             Misc.free(factory);
+            Misc.free(limitHiFunc);
+            Misc.free(limitLoFunc);
             throw e;
         }
     }

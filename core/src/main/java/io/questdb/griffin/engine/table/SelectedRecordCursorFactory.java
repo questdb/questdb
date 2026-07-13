@@ -53,8 +53,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final ConcurrentTimeFrameCursorConstructor CONCURRENT_TIME_FRAME_CURSOR_CONSTRUCTOR = SelectedConcurrentTimeFrameCursor::new;
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
     private final SelectedRecordCursor cursor;
@@ -83,6 +85,21 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             }
         }
         return false;
+    }
+
+    @TestOnly
+    public static ConcurrentTimeFrameCursor newSelectedConcurrentTimeFrameCursor(
+            ConcurrentTimeFrameCursor baseCursor,
+            int timestampIndex,
+            ConcurrentTimeFrameCursorConstructor constructor
+    ) {
+        try {
+            final ConcurrentTimeFrameCursor selectedCursor = constructor.create(baseCursor, timestampIndex);
+            baseCursor = null;
+            return selectedCursor;
+        } finally {
+            Misc.free(baseCursor);
+        }
     }
 
     @Override
@@ -210,7 +227,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         if (baseCursor == null || !needsProjection) {
             return baseCursor;
         }
-        return new SelectedConcurrentTimeFrameCursor(baseCursor, getMetadata().getTimestampIndex());
+        return newSelectedConcurrentTimeFrameCursor(
+                baseCursor,
+                getMetadata().getTimestampIndex(),
+                CONCURRENT_TIME_FRAME_CURSOR_CONSTRUCTOR
+        );
     }
 
     @Override
@@ -296,6 +317,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     // Record data access works correctly without wrapping because the address cache
     // is populated with SelectedPageFrame data (logically-indexed), and the join code
     // accesses it using logical column indices from the selected metadata.
+    @FunctionalInterface
+    public interface ConcurrentTimeFrameCursorConstructor {
+        ConcurrentTimeFrameCursor create(ConcurrentTimeFrameCursor baseCursor, int timestampIndex);
+    }
+
     static final class SelectedConcurrentTimeFrameCursor implements ConcurrentTimeFrameCursor {
         private final ConcurrentTimeFrameCursor delegate;
         private final int selectedTimestampIndex;
