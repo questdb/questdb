@@ -2503,11 +2503,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return state.getViewMetadata();
     }
 
-    // Scans the base-table WAL gap (lastRefreshBaseTxn, baseTableLastTxn] for a TRUNCATE, using the
-    // same range and loader an incremental refresh would use (so there is no off-by-one vs interval
-    // planning). A truncate in the gap means a resumed incremental refresh would keep stale
-    // pre-truncate rows, so the caller must invalidate the view instead. Runs only on the cold
-    // load/hydrate path, so a transient loader is fine.
+    // Scans the base-table WAL gap (lastRefreshBaseTxn, baseTableLastTxn] for a TRUNCATE or a DELETE, using
+    // the same range and loader an incremental refresh would use (so there is no off-by-one vs interval
+    // planning). A truncate or a delete in the gap means a resumed incremental refresh would keep stale
+    // pre-barrier rows, so the caller must invalidate the view instead. (DELETE-scoped alongside TRUNCATE;
+    // DROP/DETACH PARTITION and rows-affected UPDATE remain the tracked follow-up - see WalTxnRangeLoader.)
+    // Runs only on the cold load/hydrate path, so a transient loader is fine. The method name is kept for
+    // churn reasons though it now also detects a DELETE.
     private boolean hasBaseTableTruncateInWalGap(TableToken baseTableToken, long lastRefreshBaseTxn, long baseTableLastTxn) {
         if (lastRefreshBaseTxn >= baseTableLastTxn) {
             return false;
@@ -2523,17 +2525,17 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             final LongList intervals = new LongList();
             loader.load(this, path, baseTableToken, intervals, lastRefreshBaseTxn, baseTableLastTxn);
-            return loader.hasTruncate();
+            return loader.hasTruncate() || loader.hasDelete();
         } catch (CairoException e) {
-            // Missing or purged WAL files in the gap. Treat as "no truncate found" so the caller
+            // Missing or purged WAL files in the gap. Treat as "no barrier found" so the caller
             // still schedules the normal incremental refresh. The refresh path's own interval planning
             // hits the same read failure and falls back to a full refresh; note that fallback is a
-            // REPLACE_RANGE over the current range, so if the purged gap held a truncate, pre-truncate
-            // buckets outside the current range can survive (a stale-valid view). That purge-during-the-
-            // pending-window residual is a known, tracked deferral. Letting the exception escape would
-            // cause loadMatViewIntoStore's logging-only catch to swallow it, skipping
+            // REPLACE_RANGE over the current range, so if the purged gap held a truncate or a delete,
+            // pre-barrier buckets outside the current range can survive (a stale-valid view). That
+            // purge-during-the-pending-window residual is a known, tracked deferral. Letting the exception
+            // escape would cause loadMatViewIntoStore's logging-only catch to swallow it, skipping
             // enqueueIncrementalRefresh and leaving the view silently unscheduled after a promote-hydrate.
-            LOG.info().$("could not scan base WAL gap for truncate, scheduling refresh [baseTable=").$(baseTableToken)
+            LOG.info().$("could not scan base WAL gap for a truncate or delete, scheduling refresh [baseTable=").$(baseTableToken)
                     .$(", errno=").$(e.getErrno())
                     .$(", msg=").$safe(e.getFlyweightMessage())
                     .I$();

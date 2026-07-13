@@ -40,12 +40,14 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
     private final WalEventReader walEventReader;
+    private boolean hasDelete;
     private boolean hasTruncate;
     private long maxTimestamp;
     private long minTimestamp;
@@ -66,6 +68,16 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    // True when the last load() scan saw a base-table DELETE in the scanned (txnLo, txnHi] range. A DELETE
+    // deletes base rows via a non-data SQL txn (WalTxnType.SQL, CMD_DELETE_TABLE) that the interval scan
+    // skips, so - exactly like a TRUNCATE - it is an invalidating barrier for an incremental mat-view
+    // refresh: the caller must not advance the refresh base txn past it, or the view keeps pre-delete rows
+    // (stale-valid). DELETE-scoped only; DROP/DETACH PARTITION and rows-affected UPDATE share the same
+    // gap-skip loss class and remain the tracked follow-up documented in loadTransactionDetailsFromWalE.
+    public boolean hasDelete() {
+        return hasDelete;
     }
 
     // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range.
@@ -105,6 +117,7 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
         minTimestamp = Long.MAX_VALUE;
         maxTimestamp = Long.MIN_VALUE;
+        hasDelete = false;
         hasTruncate = false;
 
         try (WalEventReader eventReader = walEventReader) {
@@ -147,15 +160,21 @@ public class WalTxnRangeLoader implements QuietCloseable {
                         }
 
                         if (!WalTxnType.isDataType(walEventCursor.getType())) {
-                            // Skip non-inserts for interval computation, but flag a TRUNCATE: it carries
-                            // no data interval yet is an invalidating barrier for an incremental mat-view
-                            // refresh. The caller must not advance the refresh base txn past a truncate.
-                            // Scoped to TRUNCATE only for now: DROP/DETACH PARTITION and rows-affected
-                            // UPDATE also delete base rows and likewise commit as non-data SQL txns the
-                            // interval scan skips, so they share the same gap-skip loss class. Treating any
-                            // invalidating non-data txn in the gap as a barrier is a tracked follow-up.
+                            // Skip non-inserts for interval computation, but flag a TRUNCATE or a DELETE: each
+                            // carries no data interval yet is an invalidating barrier for an incremental
+                            // mat-view refresh. The caller must not advance the refresh base txn past one, or
+                            // the view keeps pre-barrier rows (stale-valid). A DELETE commits as a non-data SQL
+                            // txn (WalTxnType.SQL, cmdType CMD_DELETE_TABLE); getSqlInfo() is valid only when
+                            // getType()==SQL, so guard on the type first.
+                            // Still scoped to TRUNCATE + DELETE only: DROP/DETACH PARTITION and rows-affected
+                            // UPDATE also delete base rows and likewise commit as non-data SQL txns the interval
+                            // scan skips, so they share the same gap-skip loss class. Treating those remaining
+                            // invalidating non-data txns in the gap as barriers is a tracked follow-up.
                             if (walEventCursor.getType() == WalTxnType.TRUNCATE) {
                                 hasTruncate = true;
+                            } else if (walEventCursor.getType() == WalTxnType.SQL
+                                    && walEventCursor.getSqlInfo().getCmdType() == TableWriterTask.CMD_DELETE_TABLE) {
+                                hasDelete = true;
                             }
                             continue;
                         }

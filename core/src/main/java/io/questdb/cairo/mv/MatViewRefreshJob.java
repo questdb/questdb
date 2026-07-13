@@ -2276,11 +2276,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 intervals.clear();
                 txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, intervals, lastRefreshTxn, lastBaseTxn);
-                if (txnRangeLoader.hasTruncate()) {
-                    // The scanned base WAL range contains a TRUNCATE. The loader skips it as a non-data
-                    // txn, so the data intervals alone look like an ordinary advance -- but a truncate
+                if (txnRangeLoader.hasTruncate() || txnRangeLoader.hasDelete()) {
+                    // The scanned base WAL range contains a TRUNCATE or a DELETE. The loader skips it as a
+                    // non-data txn, so the data intervals alone look like an ordinary advance -- but either
                     // invalidates the view (the same way ApplyWal2TableJob invalidates dependents on a
-                    // truncate). Do NOT advance refreshIntervalsBaseTxn past the barrier; finalize the
+                    // truncate or a delete). Do NOT advance refreshIntervalsBaseTxn past the barrier; finalize the
                     // invalidation inline and stop this refresh. This run already holds the view lock AND
                     // the view's WalWriter on a primary (the only role that reaches here -- a replica's
                     // writer acquire already failed upstream), so the invalidation can mint here directly.
@@ -2299,11 +2299,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (viewState.getLastRefreshBaseTxn() != -1) {
                         final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                         final long invalidationTimestamp = microsecondClock.getTicks();
+                        // Accurate reason for both the log line and the persisted invalid state. hasTruncate()
+                        // takes precedence when both a truncate and a delete fall in the same scanned gap
+                        // (either alone is sufficient to invalidate).
+                        final CharSequence barrierReason = txnRangeLoader.hasTruncate() ? "truncate operation" : "delete operation";
                         LOG.info().$("marking materialized view as invalid [view=").$(viewToken)
-                                .$(", reason=truncate operation, ts=").$ts(invalidationTimestamp)
+                                .$(", reason=").$(barrierReason).$(", ts=").$ts(invalidationTimestamp)
                                 .I$();
                         try {
-                            setInvalidState(viewState, walWriter, "truncate operation", invalidationTimestamp);
+                            setInvalidState(viewState, walWriter, barrierReason, invalidationTimestamp);
                         } catch (CairoException ex) {
                             // setInvalidState flips the in-memory invalid flag and bumps the in-memory start
                             // timestamp BEFORE the fenced commit. If that commit then fails -- a read-only
