@@ -728,6 +728,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 TableToken tableToken = writer.getTableToken();
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
                 long skipTxnCount = calculateSkipTransactionCount(tableToken, seqTxn, txnDetails);
+                if (skipTxnCount > 0 && writer.walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn + skipTxnCount)) {
+                    skipTxnCount = 0;
+                }
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
                 if (skipTxnCount > 0) {
@@ -739,7 +742,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.commitWalInsertTransactions(
                             walPath,
                             seqTxn,
-                            pressureControl
+                            pressureControl,
+                            commitTimestamp
                     );
                 }
 

@@ -429,6 +429,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Sets the delta-write bit, preserving REMOTE, VALID and the offset-3 value. Set-only: the bit
+     * is the replicated delta-mode gate and is never cleared in place -- DROP PARTITION removes the
+     * whole record.
+     */
+    public void setPartitionDeltaActiveByRawIndex(int indexRaw) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, getPartitionOffset3(indexRaw) | PARTITION_DELTA_WRITE_BIT);
+    }
+
+    public void setPartitionDeltaActiveByTimestamp(long timestamp) {
+        setPartitionDeltaActiveByRawIndex(findAttachedPartitionRawIndex(timestamp));
+    }
+
     public void setPartitionHasDelta(int partitionIndex, boolean hasDelta) {
         setPartitionHasDeltaByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, hasDelta);
     }
@@ -440,7 +456,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         final int offset = indexRaw + PARTITION_VERSION_OFFSET;
         final long raw = attachedPartitions.getQuick(offset);
         if (raw == -1L) {
-            throw CairoException.nonCritical().put("cannot set HAS_DELTA on partition without parquet");
+            // The legacy cleared word carries no flag bits.
+            throw CairoException.nonCritical().put("cannot set HAS_DELTA on partition with a cleared offset-3 word");
+        }
+        // Keyed on delta mode, not base format: a delta-active base may be native (offset-3
+        // holds its seqTxn word) or parquet. A partition outside delta mode has no business
+        // setting the catalog bit.
+        if (hasDelta && (raw & PARTITION_DELTA_WRITE_BIT) == 0) {
+            throw CairoException.nonCritical().put("cannot set HAS_DELTA on partition without delta-write mode");
         }
         attachedPartitions.setQuick(offset, hasDelta ? raw | PARTITION_HAS_DELTA_BIT : raw & ~PARTITION_HAS_DELTA_BIT);
     }
