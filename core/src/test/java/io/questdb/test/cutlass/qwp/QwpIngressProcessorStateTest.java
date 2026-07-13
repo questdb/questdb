@@ -1264,17 +1264,17 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 );
                 Assert.assertNotNull(tud);
 
-                int[] commitAttempts = {0};
-                replaceWriterWithRawCairoException(tud, commitAttempts);
+                int[] rawFailureCount = {0};
+                replaceWriterWithRawCairoException(tud, rawFailureCount, 0);
                 execute("DROP TABLE be_raw");
 
                 cache.commitAllBestEffort();
-                Assert.assertEquals(1, commitAttempts[0]);
+                Assert.assertEquals(1, rawFailureCount[0]);
                 Assert.assertEquals(0, getCacheSize(cache));
                 Assert.assertEquals(0, cache.size());
 
                 cache.commitAllBestEffort();
-                Assert.assertEquals("evicted TUD must not be retried", 1, commitAttempts[0]);
+                Assert.assertEquals("evicted TUD must not be retried", 1, rawFailureCount[0]);
             }
         });
     }
@@ -1903,17 +1903,20 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 );
                 Assert.assertNotNull(tud);
 
-                int[] commitAttempts = {0};
-                replaceWriterWithRawCairoException(tud, commitAttempts);
+                int[] rawFailureCount = {0};
+                // commitIfIntervalElapsed() reads the row count while completing its
+                // debug record, then commit() reads it again. Let the log read succeed
+                // and throw raw CairoException from commit() itself.
+                replaceWriterWithRawCairoException(tud, rawFailureCount, 1);
                 execute("DROP TABLE interval_raw");
 
                 cache.commitWalTables(Long.MAX_VALUE);
-                Assert.assertEquals(1, commitAttempts[0]);
+                Assert.assertEquals(1, rawFailureCount[0]);
                 Assert.assertEquals(0, getCacheSize(cache));
                 Assert.assertEquals(0, cache.size());
 
                 cache.commitWalTables(Long.MAX_VALUE);
-                Assert.assertEquals("evicted TUD must not be retried", 1, commitAttempts[0]);
+                Assert.assertEquals("evicted TUD must not be retried", 1, rawFailureCount[0]);
             }
         });
     }
@@ -3179,17 +3182,26 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         ));
     }
 
-    private static void replaceWriterWithRawCairoException(WalTableUpdateDetails tud, int[] commitAttempts) throws Exception {
+    private static void replaceWriterWithRawCairoException(
+            WalTableUpdateDetails tud,
+            int[] rawFailureCount,
+            int successfulCallsBeforeFailure
+    ) throws Exception {
         Field writerField = TableUpdateDetails.class.getDeclaredField("writerAPI");
         writerField.setAccessible(true);
 
         Misc.free((TableWriterAPI) writerField.get(tud));
+        int[] callsBeforeFailure = {successfulCallsBeforeFailure};
         writerField.set(tud, Proxy.newProxyInstance(
                 TableWriterAPI.class.getClassLoader(),
                 new Class[]{TableWriterAPI.class},
                 (_, method, _) -> switch (method.getName()) {
                     case "getUncommittedRowCount" -> {
-                        commitAttempts[0]++;
+                        if (callsBeforeFailure[0] > 0) {
+                            callsBeforeFailure[0]--;
+                            yield 1L;
+                        }
+                        rawFailureCount[0]++;
                         throw CairoException.nonCritical().put("simulated raw commit failure");
                     }
                     case "getWalId" -> 1;
