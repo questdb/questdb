@@ -30,6 +30,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.OperationExecutor;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -345,6 +346,116 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     }
 
     /**
+     * Finding #6: the strongest FEASIBLE in-process oracle for the C1 peak-memory claim ("peak O3 staging is
+     * bounded to ~one window, not the whole survivor set").
+     * <p>
+     * <b>Why not a real memory-limit oracle:</b> {@code cairo.wal.apply.memory.limit.bytes} does NOT govern this
+     * path. That limit is enforced by the per-query {@code WAL_APPLY} {@code MemoryTracker}, which is bound only
+     * to SQL query-operator memory (join/group-by/window maps and allocators, via
+     * {@code setMemoryTracker(executionContext.getMemoryTracker())}). The survivor-replace's O3 staging is
+     * {@code TableWriter}'s {@code o3MemColumns} ({@code MemoryTag.NATIVE_O3}), which {@code TableWriter} never
+     * binds to that tracker (it has zero {@code setMemoryTracker} calls); and the survivor cursor is a plain
+     * {@code SELECT *} interval scan that allocates no tracked operator memory. So a limit set between one
+     * window's and the whole table's survivors would fire on NEITHER - it cannot distinguish them, making a
+     * positive+negative-control pair a false oracle.
+     * <p>
+     * <b>What this proves instead:</b> it asserts the WINDOW-SIZING arithmetic - {@link OperationExecutor#deleteWindowStep},
+     * the exact {@code public static} function the apply loop uses - tiled with the loop's exact tiling formula,
+     * bounds each window's staged survivor slice (the rows that window copies into O3, == the in-window survivor
+     * count) to {@code <= rows.per.step} and to a small fraction of the whole survivor set, over a 50k-row
+     * uniformly-timestamped table. The NEGATIVE CONTROL recomputes the step with {@code rows.per.step} >> table
+     * size and shows it collapses to ONE window whose slice IS the entire survivor set - i.e. the same delete
+     * WITHOUT windowing stages every survivor at once, the peak windowing exists to avoid. A regression in
+     * {@code deleteWindowStep} (e.g. losing the row-density scaling, a unit bug, or a fixed step) changes the
+     * bounded max and fails this test. Combined with {@link #testGeneratedSurvivorFactoryRebindsPerWindow} (each
+     * window's cursor returns ONLY its slice) and {@link #testLargeTableProducesManyWindows} (the loop actually
+     * drives many windows), this closes the chain from window sizing to per-window staged rows.
+     * <p>
+     * <b>What it does NOT prove:</b> process-level peak RSS. Confirming the runtime actually frees each window's
+     * native O3 buffers before staging the next would require external RSS sampling, out of scope for a JUnit
+     * test; this is a faithful ROW-COUNT proxy (peak O3 staging is directly proportional to the max per-window
+     * staged row count), not an RSS measurement.
+     */
+    @Test
+    public void testPeakWindowStagingBoundedNotWholeSurvivorSet() throws Exception {
+        final long rowsPerStep = 1000;
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, String.valueOf(rowsPerStep));
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            // 50k rows, one per second (uniform density -> the row-density window estimate is accurate here).
+            execute("insert into t select (x*1000000L)::timestamp, x from long_sequence(50000)");
+            drainWalQueue();
+            execute("create table ref as (select * from t where not (x % 2 = 0))");
+
+            // Read the table's populated range + row count exactly as OperationExecutor.replaceWithSurvivors does
+            // (tableWriter.getMinTimestamp()/getMaxTimestamp()/size()), from the pre-delete committed state the
+            // window loop reads throughout.
+            final long minTs = count("select min(ts) from t");
+            final long maxTs = count("select max(ts) from t");
+            final long tableRows = count("select count(*) from t");
+            final long totalSurvivors = count("select count(*) from t where not (x % 2 = 0)");
+            Assert.assertEquals(50000, tableRows);
+            Assert.assertEquals(25000, totalSurvivors);
+
+            // The exact step the apply loop uses for this rows.per.step.
+            final long step = OperationExecutor.deleteWindowStep(minTs, maxTs, tableRows, rowsPerStep);
+            Assert.assertTrue("windowed step must be a strict sub-range of the populated span", step < (maxTs - minTs + 1));
+
+            // Tile [minTs, maxTs+1) with the loop's EXACT formula and measure each window's staged survivor slice
+            // (== the in-window NOT-predicate count the survivor cursor returns and copies into O3).
+            long windowCount = 0;
+            long maxWindowStaged = 0;
+            long summedStaged = 0;
+            long wLo = minTs;
+            while (wLo <= maxTs) {
+                final long remaining = maxTs - wLo + 1;
+                final long wHiExcl = (step >= remaining) ? (maxTs + 1) : (wLo + step);
+                final long staged = count("select count(*) from t where not (x % 2 = 0) and ts >= " + wLo + " and ts < " + wHiExcl);
+                maxWindowStaged = Math.max(maxWindowStaged, staged);
+                summedStaged += staged;
+                windowCount++;
+                wLo = wHiExcl;
+            }
+
+            // Sanity: the windows partition the survivor set exactly (no double count / gap).
+            Assert.assertEquals("windows must exactly partition the survivor set", totalSurvivors, summedStaged);
+            // The loop genuinely tiled into many windows (not collapsed to one).
+            Assert.assertTrue("expected many windows, got " + windowCount, windowCount >= 20);
+            // C1 bound: NO single window stages more than rows.per.step rows...
+            Assert.assertTrue(
+                    "peak per-window staged survivors (" + maxWindowStaged + ") must be <= rows.per.step (" + rowsPerStep + ")",
+                    maxWindowStaged <= rowsPerStep
+            );
+            // ...and the peak is a small fraction of the whole survivor set (the memory windowing actually saves).
+            Assert.assertTrue(
+                    "peak per-window staged survivors (" + maxWindowStaged + ") must be << total survivors (" + totalSurvivors + ")",
+                    maxWindowStaged * 10 <= totalSurvivors
+            );
+
+            // NEGATIVE CONTROL: rows.per.step >> table size collapses to ONE window whose staged slice IS the
+            // ENTIRE survivor set - the whole-table peak windowing exists to avoid. This is what maxWindowStaged
+            // would equal if windowing were disabled.
+            final long hugeStep = OperationExecutor.deleteWindowStep(minTs, maxTs, tableRows, 100_000_000L);
+            Assert.assertTrue("a rows.per.step >> table size must collapse to a single window",
+                    hugeStep >= (maxTs - minTs + 1));
+            final long singleWindowStaged = count("select count(*) from t where not (x % 2 = 0) and ts >= " + minTs + " and ts < " + (maxTs + 1));
+            Assert.assertEquals("the single (unwindowed) window stages the ENTIRE survivor set", totalSurvivors, singleWindowStaged);
+            Assert.assertTrue(
+                    "windowing must bound the peak far below the unwindowed whole-survivor-set staging",
+                    maxWindowStaged * 10 <= singleWindowStaged
+            );
+
+            // Finally, the real windowed DELETE at this scale must be correct + healthy (the behaviour the bound
+            // is claimed about).
+            execute("delete from t where x % 2 = 0");
+            drainWalQueue();
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertSqlCursors("select ts, x from ref order by ts", "select ts, x from t order by ts");
+        });
+    }
+
+    /**
      * Task 7 (extra - folds in a Task 5 review coverage gap): deletes EVERY row of the table's LAST partition
      * (day 4, x=73..96) with a tiny rows-per-step, so that single partition spans MANY windows (rows.per.step
      * of 1 over a 4-day/96-row table puts roughly 20+ windows inside one day). Because the last window of the
@@ -413,6 +524,14 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     private static void setWindow(SqlExecutionContext executionContext, long loInclusive, long hiExclusive) throws SqlException {
         executionContext.getBindVariableService().setTimestamp(DeleteOperation.WINDOW_LO_BIND, loInclusive);
         executionContext.getBindVariableService().setTimestamp(DeleteOperation.WINDOW_HI_BIND, hiExclusive);
+    }
+
+    // Reads a single scalar (row 0, col 0) as a long: count(*), or min(ts)/max(ts) as raw micros.
+    private long count(String sql) throws Exception {
+        try (RecordCursorFactory factory = select(sql, sqlExecutionContext);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            return cursor.hasNext() ? cursor.getRecord().getLong(0) : -1;
+        }
     }
 
     private void createAndPopulate() throws Exception {

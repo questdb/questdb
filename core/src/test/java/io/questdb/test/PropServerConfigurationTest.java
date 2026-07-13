@@ -1401,6 +1401,43 @@ public class PropServerConfigurationTest {
         }
     }
 
+    // cairo.wal.delete.rows.per.step < 1 must be rejected at startup: a value <= 0 makes the windowed-DELETE
+    // survivor-replace window-sizing estimate floor the ts-window to 1, exploding the window count to the whole
+    // timestamp span = an effectively permanent WAL-apply hang. See OperationExecutor.deleteWindowStep.
+    @Test
+    public void testInvalidWalDeleteRowsPerStepNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.delete.rows.per.step", "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.wal.delete.rows.per.step must be >= 1");
+        }
+    }
+
+    @Test
+    public void testInvalidWalDeleteRowsPerStepZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.delete.rows.per.step", "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.wal.delete.rows.per.step must be >= 1");
+        }
+    }
+
+    // The boundary value 1 (one row per window) must be ACCEPTED: it is the smallest legal step, used by the
+    // windowed-DELETE tests to force many windows.
+    @Test
+    public void testValidWalDeleteRowsPerStepOne() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.delete.rows.per.step", "1");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(1L, configuration.getCairoConfiguration().getWalDeleteRowsPerStep());
+    }
+
     @Test(expected = ServerConfigurationException.class)
     public void testInvalidIPv4Address() throws Exception {
         Properties properties = new Properties();

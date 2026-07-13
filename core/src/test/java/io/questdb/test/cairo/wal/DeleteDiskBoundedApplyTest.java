@@ -277,6 +277,54 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Finding #5 regression: the ACTIVE (last) partition CAN be Parquet on a WAL table, so
+     * {@code convertParquetPartitionsForDeleteWindow}'s last-partition branch (which bounds the last partition's
+     * extent by {@code getMaxTimestamp()+1}) must handle a Parquet active partition that spans several windows.
+     * The active-partition skip in {@code TableWriter.convertPartitionNativeToParquet} is gated on
+     * {@code !isWal()}, so {@code ALTER TABLE ... CONVERT PARTITION TO PARQUET} over a range that includes the
+     * active day DOES convert it on a WAL table (unlike a non-WAL table, which skips it) - which a stale comment
+     * on that branch wrongly claimed could "never be Parquet". The {@code getMaxTimestamp()+1} bound is sound
+     * whether or not the last partition is Parquet, so this is a coverage test for the previously-untested
+     * active-Parquet path, NOT a data-bug repro.
+     * <p>
+     * Fixture: 144 hourly rows over 6 daily partitions, ALL converted to Parquet INCLUDING the active day 6;
+     * with {@code rows.per.step=1} the active day alone spans many per-window commits. The test first asserts the
+     * active/last partition really is Parquet (the precondition this test exists to exercise), then runs the
+     * arbitrary DELETE, drains, and checks not-suspended + the exact NOT-predicate oracle.
+     */
+    @Test
+    public void testDiskBoundedActiveParquetPartitionMultiWindow() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, "true");
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // ~1 window per hourly row -> active day spans many
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            execute("insert into t select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x from long_sequence(144)");
+            drainWalQueue();
+            execute("create table t_ref as (select * from t)");
+            // Convert EVERY partition, INCLUDING the active day 6 (ts < day 7 covers all 6 days). On a WAL table
+            // the active partition IS converted (a non-WAL table would skip it), so day 6 becomes Parquet.
+            execute("alter table t convert partition to parquet where ts < '1970-01-07T00:00:00.000000Z'");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            // Precondition (self-verifying fixture): the ACTIVE/last partition (day 6) must actually be Parquet -
+            // the whole point of this test. If this ever fails, the active-Parquet path is no longer exercised.
+            Assert.assertEquals(
+                    "the active/last partition (day 6) must actually be Parquet on a WAL table",
+                    1,
+                    count("select count(*) from table_partitions('t') where name = '1970-01-06' and isParquet")
+            );
+
+            execute("delete from t where " + PRED);
+            drainWalQueue();
+
+            Assert.assertFalse("a valid arbitrary DELETE over an active-Parquet table must not suspend",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            assertSqlCursors("select * from t_ref where not (" + PRED + ")", "select * from t");
+        });
+    }
+
     // No-match arbitrary DELETE: the survivor-replace rewrites every window with ALL rows (removes nothing). The
     // whole table survives and the table stays healthy (still un-tiers Parquet as a side effect, as documented).
     @Test
