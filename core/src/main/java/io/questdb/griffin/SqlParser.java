@@ -1344,13 +1344,14 @@ public class SqlParser {
         long inMemoryMicros = flushMicros;
         boolean inMemorySpecified = false;
         boolean partitionBySpecified = false;
-        boolean backfillSpecified = false;
+        boolean startFromSpecified = false;
 
-        // Optional clauses: IN MEMORY <duration>, PARTITION BY <unit>, BACKFILL.
+        // Clauses: IN MEMORY <duration>, PARTITION BY <unit>, START FROM <start>.
         // Any of the three may appear, in any order, before AS, but each at most
         // once - a repeat is rejected so a typo'd second clause does not silently
-        // overwrite the first.
-        tok = tok(lexer, "'in', 'partition', 'backfill', or 'as'");
+        // overwrite the first. START FROM is the only mandatory one; the check for
+        // it sits below, once AS terminates the clause list.
+        tok = tok(lexer, "'in', 'partition', 'start', or 'as'");
         while (true) {
             if (isInKeyword(tok)) {
                 if (inMemorySpecified) {
@@ -1404,13 +1405,44 @@ public class SqlParser {
                 builder.setPartitionBy(partitionBy);
                 partitionBySpecified = true;
                 tok = tok(lexer, "next clause or 'as'");
-            } else if (isBackfillKeyword(tok)) {
-                if (backfillSpecified) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "live view BACKFILL clause specified more than once");
+            } else if (isStartKeyword(tok)) {
+                if (startFromSpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view START FROM clause specified more than once");
                 }
-                builder.setBackfillRequested(true);
-                backfillSpecified = true;
-                tok = tok(lexer, "next clause or 'as'");
+                expectTok(lexer, "from");
+                tok = tok(lexer, "'now', 'beginning' or a timestamp literal");
+                final int startPos = lexer.lastTokenPosition();
+                if (isNowKeyword(tok)) {
+                    builder.setStartFromNow();
+                    startFromSpecified = true;
+                    tok = tok(lexer, "next clause or 'as'");
+                    // NOW is grammar, not the now() function: the view resolves it to a single
+                    // clock reading at CREATE and persists that. Reject the call syntax rather
+                    // than letting the '(' fall through to a bare "'as' expected".
+                    if (Chars.equals(tok, '(')) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "live view START FROM NOW does not take arguments");
+                    }
+                } else if (isBeginningKeyword(tok)) {
+                    builder.setStartFromBeginning();
+                    startFromSpecified = true;
+                    tok = tok(lexer, "next clause or 'as'");
+                } else if (isNullKeyword(tok)) {
+                    throw SqlException.$(startPos, "live view START FROM does not accept NULL");
+                } else if (tok.length() > 1 && tok.charAt(0) == '\'' && tok.charAt(tok.length() - 1) == '\'') {
+                    // Single quotes only: a double-quoted or back-quoted token is an identifier
+                    // in QuestDB SQL, and the boundary is a constant, not a name.
+                    //
+                    // The literal is parsed at CREATE, not here: its precision follows the base
+                    // table's designated timestamp type (MICRO or NANO), which the parser cannot
+                    // see. CairoEngine.createLiveView resolves it against the base's driver.
+                    builder.setStartFromTimestamp(Chars.toString(GenericLexer.unquote(tok)), startPos);
+                    startFromSpecified = true;
+                    tok = tok(lexer, "next clause or 'as'");
+                } else {
+                    throw SqlException.$(startPos, "'now', 'beginning' or a quoted timestamp literal expected");
+                }
+            } else if (isBackfillKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "live view BACKFILL is not supported, use START FROM BEGINNING");
             } else {
                 break;
             }
@@ -1436,6 +1468,15 @@ public class SqlParser {
         // expect AS
         if (!isAsKeyword(tok)) {
             throw SqlException.position(lexer.lastTokenPosition()).put("'as' expected");
+        }
+
+        // START FROM decides which base rows the view ever contains, and the answer
+        // differs by orders of magnitude between NOW and BEGINNING. There is no
+        // defensible default, so the clause is mandatory: point at the AS that closed
+        // the clause list, which is where the missing clause belongs.
+        if (!startFromSpecified) {
+            throw SqlException.$(lexer.lastTokenPosition(),
+                    "live view requires a START FROM clause, one of 'START FROM NOW', 'START FROM BEGINNING' or 'START FROM <timestamp>'");
         }
 
         // parse SELECT

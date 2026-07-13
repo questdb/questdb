@@ -171,7 +171,7 @@ public class LiveViewInMemReadBenchmark {
         final long spanSeconds = Math.max(1L, (long) rows * STEP_MICROS / 1_000_000L);
         final String inMemory = seamSplit ? "in memory " + Math.max(1L, spanSeconds / 2) + "s " : "in memory 60m ";
         engine.execute(
-                "create live view lv flush every 100ms " + inMemory + "as "
+                "create live view lv flush every 100ms " + inMemory + "start from now as "
                         + "select ts, i, row_number() over () as rn from base",
                 sqlCtx
         );

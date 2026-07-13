@@ -76,10 +76,18 @@ public class LiveViewDefinition {
     // Sits in the LV directory alongside _lv and _lv.s; its mere existence is
     // the signal, the file contents are unused.
     public static final String LIVE_VIEW_DROP_SENTINEL_FILE_NAME = "_lv.drop";
+    // START FROM modes, as persisted in the CORE block. The mode the user wrote is kept
+    // alongside the boundary it resolved to: NOW and an explicit timestamp both persist a
+    // finite floor in viewLowerBoundTimestamp, and only the kind tells them apart for
+    // SHOW CREATE LIVE VIEW and the catalogue.
+    public static final byte START_FROM_BEGINNING = 1;
+    public static final byte START_FROM_NOW = 0;
+    public static final byte START_FROM_TIMESTAMP = 2;
+    // Parse-time only, never persisted: the CREATE builder's "user has not written the
+    // clause yet" state. The clause is mandatory, so a definition never carries this.
+    public static final byte START_FROM_UNSET = -1;
 
     private final @Nullable LvAnchorSpec anchorSpec;
-    // BACKFILL was specified at CREATE.
-    private final boolean backfillRequested;
     private final String baseTableName;
     // Not final: on a read-only replica the LV's files can download and register BEFORE its base
     // table's, so the registration-time name lookup resolves to null. The refresh scan heals it
@@ -108,10 +116,16 @@ public class LiveViewDefinition {
     private final char inMemoryIntervalUnit;
     private final GenericRecordMetadata metadata;
     private final int partitionBy;
+    // The START FROM mode the user wrote at CREATE: one of START_FROM_NOW,
+    // START_FROM_BEGINNING, START_FROM_TIMESTAMP.
+    private final byte startFromKind;
     private final String viewName;
     private final String viewSql;
-    // Earliest base-table ts the view promises to retain rows for. Non-BACKFILL
-    // views set this to the view's CREATE timestamp; O3 rejects rows below this bound.
+    // The resolved START FROM boundary, in base-table timestamp units. NOW resolves the
+    // engine clock once at CREATE; an explicit timestamp parses the literal against the
+    // base's driver. Rows at or above it belong to the view, rows below it do not, so O3
+    // rejects rows below this bound. BEGINNING has no meaningful floor of its own; it
+    // currently seeds from the earliest base row and records that row's timestamp here.
     private final long viewLowerBoundTimestamp;
 
     public LiveViewDefinition(
@@ -126,7 +140,7 @@ public class LiveViewDefinition {
             char inMemoryIntervalUnit,
             int partitionBy,
             long viewLowerBoundTimestamp,
-            boolean backfillRequested,
+            byte startFromKind,
             @Nullable LvAnchorSpec anchorSpec,
             ObjList<String> dependencyColumnNames,
             IntList dependencyColumnTypes,
@@ -143,7 +157,7 @@ public class LiveViewDefinition {
         this.inMemoryIntervalUnit = inMemoryIntervalUnit;
         this.partitionBy = partitionBy;
         this.viewLowerBoundTimestamp = viewLowerBoundTimestamp;
-        this.backfillRequested = backfillRequested;
+        this.startFromKind = startFromKind;
         this.anchorSpec = anchorSpec;
         this.dependencyColumnNames = dependencyColumnNames;
         this.dependencyColumnTypes = dependencyColumnTypes;
@@ -162,7 +176,7 @@ public class LiveViewDefinition {
         block.putChar(definition.inMemoryIntervalUnit);
         block.putInt(definition.partitionBy);
         block.putLong(definition.viewLowerBoundTimestamp);
-        block.putBool(definition.backfillRequested);
+        block.putByte(definition.startFromKind);
         final int depCount = definition.dependencyColumnNames.size();
         block.putInt(depCount);
         for (int i = 0; i < depCount; i++) {
@@ -268,6 +282,35 @@ public class LiveViewDefinition {
         throw SqlException.$(position + k, "invalid duration qualifier ").put(tok);
     }
 
+    /**
+     * Parses the {@code START FROM '<timestamp>'} literal against the base table's designated
+     * timestamp driver, so a MICRO base and a NANO base each read the literal at their own
+     * precision and a sub-microsecond literal survives on a NANO base. Returns the boundary in
+     * base-table timestamp units.
+     * <p>
+     * The parse is deliberately deferred to CREATE - the parser cannot see the base's timestamp
+     * type - which is why this takes the literal's position: a malformed literal must still
+     * report against the token the user typed.
+     */
+    public static long parseStartFromTimestamp(
+            @NotNull CharSequence literal,
+            int baseTimestampType,
+            int position
+    ) throws SqlException {
+        final long timestamp;
+        try {
+            timestamp = ColumnType.getTimestampDriver(baseTimestampType).parseFloorLiteral(literal);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid live view START FROM timestamp [ts=").put(literal).put(']');
+        }
+        // parseFloorLiteral maps a null literal to the NULL sentinel, and a designated timestamp
+        // is never NULL, so a NULL boundary could neither admit nor reject a row meaningfully.
+        if (timestamp == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "live view START FROM timestamp cannot be NULL");
+        }
+        return timestamp;
+    }
+
     private static int endOfDigits(CharSequence tok, int len, int position) throws SqlException {
         // Advance over the numeric run, admitting '_' thousands separators (e.g.
         // "3_600s") so FLUSH EVERY / IN MEMORY stay consistent with mat-view strides
@@ -333,7 +376,7 @@ public class LiveViewDefinition {
         char inMemoryIntervalUnit = 0;
         int partitionBy = 0;
         long viewLowerBoundTimestamp = 0;
-        boolean backfillRequested = false;
+        byte startFromKind = START_FROM_NOW;
         ObjList<String> dependencyColumnNames = new ObjList<>();
         IntList dependencyColumnTypes = new IntList();
         LvAnchorSpec anchorSpec = null;
@@ -369,7 +412,7 @@ public class LiveViewDefinition {
                 offset += Integer.BYTES;
                 viewLowerBoundTimestamp = block.getLong(offset);
                 offset += Long.BYTES;
-                backfillRequested = block.getBool(offset);
+                startFromKind = block.getByte(offset);
                 offset += Byte.BYTES;
                 int depCount = block.getInt(offset);
                 offset += Integer.BYTES;
@@ -439,7 +482,7 @@ public class LiveViewDefinition {
                 inMemoryIntervalUnit,
                 partitionBy,
                 viewLowerBoundTimestamp,
-                backfillRequested,
+                startFromKind,
                 anchorSpec,
                 dependencyColumnNames,
                 dependencyColumnTypes,
@@ -449,10 +492,6 @@ public class LiveViewDefinition {
 
     public @Nullable LvAnchorSpec getAnchorSpec() {
         return anchorSpec;
-    }
-
-    public boolean isBackfillRequested() {
-        return backfillRequested;
     }
 
     public String getBaseTableName() {
@@ -505,6 +544,10 @@ public class LiveViewDefinition {
 
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public byte getStartFromKind() {
+        return startFromKind;
     }
 
     public String getViewName() {

@@ -113,7 +113,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         // boundary of the type-change invalidation and proves it is not over-broad).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -181,7 +181,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         // from, whereas an UPDATE mutates those very rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -234,7 +234,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -284,7 +284,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         // empty-set branch is never reached by a real view.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, unused INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
                     "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base");
 
@@ -312,7 +312,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         // detached while a later day is active.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -381,7 +381,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         };
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, price INT, size INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, price, row_number() OVER () AS rn FROM base WHERE price > 0");
 
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -429,7 +429,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -462,7 +462,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         // reaches the view and its materialized data stays frozen at the pre-drop state.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -511,7 +511,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x, y) VALUES " +
@@ -612,7 +612,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
     private void assertReferencedColumnOpNamesColumn(String alterSql, String opReason, String columnName) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, price INT, size INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, price, row_number() OVER () AS rn FROM base WHERE price > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -644,7 +644,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         final String transition = initialType + "->" + newType;
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x " + initialType + ", y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -676,7 +676,7 @@ public class LiveViewBaseDdlTest extends AbstractLiveViewTest {
         final String transition = initialType + "->" + newType;
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x " + initialType + ", y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {

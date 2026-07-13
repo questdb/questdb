@@ -416,7 +416,7 @@ public class SecurityTest extends AbstractCairoTest {
             try (SqlExecutionContext recordingContext = new SqlExecutionContextImpl(engine, 1)
                     .with(recorder, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER)) {
                 engine.execute(
-                        "create live view lv flush every 1s as " +
+                        "create live view lv flush every 1s start from now as " +
                                 "select ts, x, row_number() over () as rn from base",
                         recordingContext
                 );
@@ -444,7 +444,7 @@ public class SecurityTest extends AbstractCairoTest {
             try (SqlExecutionContext denyContext = new SqlExecutionContextImpl(engine, 1)
                     .with(new DenyBaseTableSelectSecurityContext(), null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER)) {
                 engine.execute(
-                        "create live view lv flush every 1s as " +
+                        "create live view lv flush every 1s start from now as " +
                                 "select ts, x, row_number() over () as rn from base",
                         denyContext
                 );
@@ -471,7 +471,7 @@ public class SecurityTest extends AbstractCairoTest {
                     .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
             try {
                 engine.execute(
-                        "create live view lv flush every 1s as " +
+                        "create live view lv flush every 1s start from now as " +
                                 "select ts, x, row_number() over () as rn from base",
                         roContext
                 );
@@ -522,7 +522,7 @@ public class SecurityTest extends AbstractCairoTest {
         // view must survive the denied drop.
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("create live view lv flush every 1s as " +
+            execute("create live view lv flush every 1s start from now as " +
                     "select ts, x, row_number() over () as rn from base");
             final SqlExecutionContext roContext = new SqlExecutionContextImpl(engine, 1)
                     .with(ReadOnlySecurityContext.INSTANCE, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);

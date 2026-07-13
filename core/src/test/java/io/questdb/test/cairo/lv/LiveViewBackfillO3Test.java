@@ -81,7 +81,7 @@ public class LiveViewBackfillO3Test extends AbstractLiveViewTest {
             final String viewSql = "SELECT ts, sym, x, " +
                     "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS v " +
                     "FROM base";
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 final LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");

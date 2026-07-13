@@ -83,7 +83,7 @@ public class LiveViewIngestRejectTest extends AbstractBootstrapTest {
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false"
             )) {
                 serverMain.execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
-                serverMain.execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                serverMain.execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT val, ts, row_number() OVER () AS rn FROM base");
 
                 // ILP over HTTP surfaces the rejection in the response body.

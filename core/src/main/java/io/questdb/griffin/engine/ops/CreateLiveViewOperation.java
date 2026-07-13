@@ -35,7 +35,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperation implements Operation {
     private final @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec;
-    private final boolean backfillRequested;
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final long flushEveryInterval;
@@ -45,6 +44,12 @@ public class CreateLiveViewOperation implements Operation {
     private final char inMemoryIntervalUnit;
     private final int partitionBy;
     private final String selectSql;
+    private final byte startFromKind;
+    // Unquoted START FROM '<timestamp>' text, null for NOW and BEGINNING. Parsed against the
+    // base table's designated timestamp driver in CairoEngine.createLiveView, which is the
+    // first point that knows whether the base is TIMESTAMP_MICRO or TIMESTAMP_NANO.
+    private final @Nullable String startFromTimestamp;
+    private final int startFromTimestampPosition;
     private final String viewName;
     private final int viewNamePosition;
 
@@ -60,7 +65,9 @@ public class CreateLiveViewOperation implements Operation {
             char inMemoryIntervalUnit,
             int partitionBy,
             boolean ignoreIfExists,
-            boolean backfillRequested,
+            byte startFromKind,
+            @Nullable String startFromTimestamp,
+            int startFromTimestampPosition,
             @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec
     ) {
         this.viewName = viewName;
@@ -74,7 +81,9 @@ public class CreateLiveViewOperation implements Operation {
         this.inMemoryIntervalUnit = inMemoryIntervalUnit;
         this.partitionBy = partitionBy;
         this.ignoreIfExists = ignoreIfExists;
-        this.backfillRequested = backfillRequested;
+        this.startFromKind = startFromKind;
+        this.startFromTimestamp = startFromTimestamp;
+        this.startFromTimestampPosition = startFromTimestampPosition;
         this.anchorSpec = anchorSpec;
     }
 
@@ -137,16 +146,24 @@ public class CreateLiveViewOperation implements Operation {
         return selectSql;
     }
 
+    public byte getStartFromKind() {
+        return startFromKind;
+    }
+
+    public @Nullable String getStartFromTimestamp() {
+        return startFromTimestamp;
+    }
+
+    public int getStartFromTimestampPosition() {
+        return startFromTimestampPosition;
+    }
+
     public String getViewName() {
         return viewName;
     }
 
     public int getViewNamePosition() {
         return viewNamePosition;
-    }
-
-    public boolean isBackfillRequested() {
-        return backfillRequested;
     }
 
     public boolean isIgnoreIfExists() {

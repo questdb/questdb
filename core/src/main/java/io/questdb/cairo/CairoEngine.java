@@ -1259,26 +1259,44 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             baseTimestampType = baseMetadata.getColumnType(tsIndex);
         }
-        // viewLowerBoundTimestamp is the floor for O3 reachability and is compared
-        // against late_row.ts in base-table units. The non-BACKFILL path takes the
-        // wall-clock CREATE moment, scaled into base units via the base's driver
-        // so MICRO and NANO bases both produce a comparable value. The catalogue
-        // converts back to TIMESTAMP_MICRO at display time.
+        // viewLowerBoundTimestamp is the resolved START FROM boundary: the floor for O3
+        // reachability, compared against late_row.ts in base-table units. Each start mode
+        // resolves it once, here, and the view persists the resolved value:
         //
-        // BACKFILL views seed from the earliest visible base row, so the floor
-        // sits at that row's timestamp (already in base units): every historical
-        // row from there is admissible during the sweep, and any later O3 row
-        // below it is rejected. An empty base falls back to the CREATE moment.
+        // - NOW takes the wall-clock CREATE moment, scaled into base units via the base's
+        //   driver so MICRO and NANO bases both produce a comparable value. The catalogue
+        //   converts back to TIMESTAMP_MICRO at display time.
+        // - An explicit timestamp parses the user's literal against the base's driver, so it
+        //   keeps the base's precision.
+        // - BEGINNING seeds from the earliest visible base row, so the floor sits at that
+        //   row's timestamp (already in base units): every historical row from there is
+        //   admissible during the sweep, and any later O3 row below it is rejected. An empty
+        //   base falls back to the CREATE moment.
+        final int startFromKind = op.getStartFromKind();
         final long createMomentLowerBound = ColumnType.getTimestampDriver(baseTimestampType)
                 .fromMicros(configuration.getMicrosecondClock().getTicks());
-        if (op.isBackfillRequested()) {
-            try (TableReader baseReader = getReader(baseTableToken)) {
-                viewLowerBoundTimestamp = baseReader.size() == 0
-                        ? createMomentLowerBound
-                        : baseReader.getMinTimestamp();
-            }
-        } else {
-            viewLowerBoundTimestamp = createMomentLowerBound;
+        switch (startFromKind) {
+            case LiveViewDefinition.START_FROM_BEGINNING:
+                try (TableReader baseReader = getReader(baseTableToken)) {
+                    viewLowerBoundTimestamp = baseReader.size() == 0
+                            ? createMomentLowerBound
+                            : baseReader.getMinTimestamp();
+                }
+                break;
+            case LiveViewDefinition.START_FROM_TIMESTAMP:
+                viewLowerBoundTimestamp = LiveViewDefinition.parseStartFromTimestamp(
+                        op.getStartFromTimestamp(),
+                        baseTimestampType,
+                        op.getStartFromTimestampPosition()
+                );
+                break;
+            case LiveViewDefinition.START_FROM_NOW:
+                viewLowerBoundTimestamp = createMomentLowerBound;
+                break;
+            default:
+                // The parser requires START FROM and sets one of the three kinds; an unset
+                // kind means a caller built the operation by hand and skipped the clause.
+                throw SqlException.$(op.getViewNamePosition(), "live view START FROM is unset");
         }
 
         // compile the SELECT to validate and get metadata. The live-view-compile flag
@@ -1399,10 +1417,13 @@ public class CairoEngine implements Closeable, WriterSource {
         // Resolve PARTITION BY: PartitionBy.NONE is the "inherit" sentinel.
         final int partitionBy = LiveViewTableStructure.resolvePartitionBy(op.getPartitionBy(), basePartitionBy);
 
-        // Capture base sequencer head. Non-BACKFILL views start empty and consume
-        // commits with seqTxn >= subscribeFromSeqTxn. BACKFILL views capture the
-        // same head as backfillTargetSeqTxn (the upper bound the sweep covers)
-        // and start incremental consumption at head + 1 once the sweep completes.
+        // Capture base sequencer head. START FROM NOW and START FROM '<timestamp>' views
+        // start empty and consume commits with seqTxn >= subscribeFromSeqTxn. START FROM
+        // BEGINNING views capture the same head as backfillTargetSeqTxn (the upper bound
+        // the sweep covers) and start incremental consumption at head + 1 once the sweep
+        // completes. The initial seed that START FROM '<timestamp>' and NOW also need over
+        // pre-CREATE rows lands with the generalized seeding work; today they are still
+        // forward-only, so a pre-CREATE row at or above the boundary is not seeded.
         //
         // The tracker's writerTxn is UNINITIALIZED (-1) until CheckWalTransactionsJob
         // first sees the base table, and notifyWalTxnRepublisher resets it back to -1
@@ -1420,25 +1441,27 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         }
         final long subscribeFromSeqTxn = baseHeadSeqTxn + 1;
-        final boolean backfillRequested = op.isBackfillRequested();
-        final byte backfillState = backfillRequested
+        // START FROM BEGINNING is the mode that sweeps the base's history at startup, so it
+        // is the mode that drives the backfill state machine.
+        final boolean seedsFromBeginning = startFromKind == LiveViewDefinition.START_FROM_BEGINNING;
+        final byte backfillState = seedsFromBeginning
                 ? LiveViewState.BACKFILL_STATE_BACKFILLING
                 : LiveViewState.BACKFILL_STATE_ACTIVE;
-        final long backfillTargetSeqTxn = backfillRequested
+        final long backfillTargetSeqTxn = seedsFromBeginning
                 ? baseHeadSeqTxn
                 : Numbers.LONG_NULL;
         // Initial WAL purge floor this view publishes. BACKFILLING sits at
         // backfillTargetSeqTxn - 1: the snapshot reader MVCC-pins everything
         // <= the target, so base WAL up to the target is not load-bearing, while
         // one extra segment stays retained for the deferred ring drain after the
-        // sweep. Non-BACKFILL views start at subscribeFromSeqTxn - 1 - everything
-        // from subscribeFromSeqTxn forward is the view's responsibility.
+        // sweep. A view that does not sweep starts at subscribeFromSeqTxn - 1 -
+        // everything from subscribeFromSeqTxn forward is the view's responsibility.
         // Clamp the floor at 0: an empty base has backfillTargetSeqTxn=0, and a raw
         // -1 collides with the "no floor" sentinel WalPurgeJob tests (lvConsumed >
         // -1), which would let purge delete base WAL 1..K before the first drain
         // reads it. 0 pins the floor without retaining anything, matching the
-        // non-BACKFILL empty-base case (subscribeFromSeqTxn - 1 == 0).
-        final long initialLvConsumedSeqTxn = Math.max(0, backfillRequested
+        // no-sweep empty-base case (subscribeFromSeqTxn - 1 == 0).
+        final long initialLvConsumedSeqTxn = Math.max(0, seedsFromBeginning
                 ? backfillTargetSeqTxn - 1
                 : subscribeFromSeqTxn - 1);
 
@@ -1458,7 +1481,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 op.getInMemoryIntervalUnit(),
                 partitionBy,
                 viewLowerBoundTimestamp,
-                backfillRequested,
+                op.getStartFromKind(),
                 op.getAnchorSpec(),
                 dependencyColumnNames,
                 dependencyColumnTypes,

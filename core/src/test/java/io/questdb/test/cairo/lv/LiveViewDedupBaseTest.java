@@ -64,7 +64,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (sym, val, ts) VALUES ('a', 10, '2026-01-01T00:00:01.000000Z')");
@@ -112,7 +112,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         // collapse. Then DISABLE and confirm a later forward row still appends.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Batch 1: flushed to disk (first flush).
@@ -195,7 +195,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS SELECT sym, val, ts, " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT sym, val, ts, " +
                     "sum(val) OVER w AS cum FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1h', ts))");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -247,7 +247,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -322,7 +322,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -406,7 +406,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -469,7 +469,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (sym, val, ts) VALUES " +
@@ -518,7 +518,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (sym, val, ts) VALUES " +
@@ -574,7 +574,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (sym SYMBOL, u UUID, val DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS SELECT u, val, ts, " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT u, val, ts, " +
                         "sum(val) OVER w AS cum FROM base " +
                         "WINDOW w AS (PARTITION BY u ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1h', ts))");
                 Assert.fail("expected SqlException for an unsnapshottable anchor key over a DEDUP base");
@@ -599,7 +599,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS SELECT sym, val, ts, " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT sym, val, ts, " +
                     "sum(val) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 100 PRECEDING AND CURRENT ROW) AS cum FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (sym, val, ts) VALUES " +
@@ -639,7 +639,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS SELECT sym, val, ts, " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT sym, val, ts, " +
                     "first_value(val) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 100 PRECEDING AND CURRENT ROW) AS fv " +
                     "FROM base WHERE val > 0");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -680,7 +680,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (sym, val, ts) VALUES " +
@@ -719,7 +719,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (sym, val, ts) VALUES " +
@@ -759,7 +759,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Batch 1: initial rows (the first cycle warms the signal).
@@ -826,7 +826,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS SELECT sym, val, ts, " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT sym, val, ts, " +
                     "sum(val) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 100 PRECEDING AND CURRENT ROW) AS cum FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -897,7 +897,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, tag SYMBOL, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT sym, tag, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (sym, tag, ts) VALUES " +
@@ -935,7 +935,7 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (sym, val, ts) VALUES ('a', 10, '2026-01-01T00:00:01.000000Z')");

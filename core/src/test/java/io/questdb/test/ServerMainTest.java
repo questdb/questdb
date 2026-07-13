@@ -306,7 +306,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 TestUtils.assertEquals("wait_wal_table('trades')\ntrue\n", sink);
 
                 serverMain.getEngine().execute(
-                        "CREATE LIVE VIEW live_rn FLUSH EVERY 1s AS" +
+                        "CREATE LIVE VIEW live_rn FLUSH EVERY 1s START FROM NOW AS" +
                                 " SELECT symbol, price, ts, row_number() OVER w AS rn" +
                                 " FROM trades" +
                                 " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')",
@@ -361,7 +361,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 testHttpClient.assertGet(
                         "/exec",
                         "{\"ddl\":\"OK\"}",
-                        "CREATE LIVE VIEW live_http FLUSH EVERY 1s" + viewSelect,
+                        "CREATE LIVE VIEW live_http FLUSH EVERY 1s START FROM NOW" + viewSelect,
                         "localhost",
                         HTTP_PORT,
                         null,
@@ -375,7 +375,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                         Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                         Statement stmt = conn.createStatement()
                 ) {
-                    stmt.execute("CREATE LIVE VIEW live_pg FLUSH EVERY 1s" + viewSelect);
+                    stmt.execute("CREATE LIVE VIEW live_pg FLUSH EVERY 1s START FROM NOW" + viewSelect);
                 }
                 Assert.assertTrue(serverMain.getEngine().getLiveViewRegistry().hasView("live_pg"));
             }

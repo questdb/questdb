@@ -78,7 +78,7 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         // deleted band's derived rows and renumber, not keep them as ghosts.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -134,7 +134,7 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         // that removed their base rows, so the view permanently over-reports.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -209,7 +209,7 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         // path and the view converges without a replay.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -261,7 +261,7 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         // ghosts. The final view equals the recompute over the applied base.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -324,7 +324,7 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         // the post-replace base: rows at 00:01 and 00:04, renumbered 1..2.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -385,7 +385,7 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts " +
                     "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM base");
 
@@ -442,7 +442,7 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         // frontier row as a ghost.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {

@@ -171,7 +171,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -226,7 +226,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             final String checkpointHead;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -299,7 +299,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         final LogCapture capture = new LogCapture();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             capture.start();
             try {
@@ -368,7 +368,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                     "('2026-01-01T00:00:05.000000Z', 'a', 5.0), " +
                     "('2026-01-01T00:00:06.000000Z', 'b', 6.0)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql);
 
             final long bcpKeyAtCheckpoint;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -438,8 +438,8 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS m FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms AS " + viewSql1);
-            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms AS " + viewSql2);
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms START FROM NOW AS " + viewSql1);
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM NOW AS " + viewSql2);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -480,7 +480,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         // own on-disk tier.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             final String expectedRows = "ts\tx\trn\n" +
@@ -533,7 +533,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         // missing file.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             // A healthy, unrelated table. It is what the whole-database checkpoint was losing.
             execute("CREATE TABLE other (ts TIMESTAMP, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -588,7 +588,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, val DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, val) VALUES " +
@@ -651,7 +651,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -712,7 +712,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -771,7 +771,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -836,7 +836,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -910,7 +910,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 60s AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 60s START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Flushed prefix on disk.
@@ -967,7 +967,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, v VARCHAR, d DECIMAL(18, 3)) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 60s AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 60s START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x, v, d) VALUES " +
@@ -1024,7 +1024,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, d) VALUES " +
@@ -1065,7 +1065,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -1162,7 +1162,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                 "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)";
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, val " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, sym, val) VALUES " +

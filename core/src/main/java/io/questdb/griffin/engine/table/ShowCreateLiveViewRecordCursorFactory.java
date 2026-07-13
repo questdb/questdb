@@ -87,7 +87,7 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         private final Path path;
         private final ShowCreateLiveViewRecord record = new ShowCreateLiveViewRecord();
         protected SqlExecutionContext executionContext;
-        private boolean backfillRequested;
+        private int baseTimestampType;
         private char flushEveryUnit;
         private long flushEveryValue;
         private boolean hasRun;
@@ -95,6 +95,8 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         private long inMemoryValue;
         private int partitionBy;
         private BlockFileReader reader;
+        private byte startFromKind;
+        private long startFromTimestamp;
         private String viewSql;
         private TableToken viewToken;
 
@@ -158,7 +160,9 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                 inMemoryValue = def.getInMemoryInterval();
                 inMemoryUnit = def.getInMemoryIntervalUnit();
                 partitionBy = def.getPartitionBy();
-                backfillRequested = def.isBackfillRequested();
+                baseTimestampType = def.getBaseTimestampType();
+                startFromKind = def.getStartFromKind();
+                startFromTimestamp = def.getViewLowerBoundTimestamp();
             } catch (CairoException e) {
                 throw SqlException.$(tokenPosition, "could not read live view definition [view=").put(viewToken)
                         .put(", msg=").put(e)
@@ -205,8 +209,23 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
             // PARTITION BY NONE case, which would otherwise round-trip to base's
             // scheme if the clause were omitted from SHOW CREATE.
             sink.putAscii(" PARTITION BY ").put(PartitionBy.toString(partitionBy));
-            if (backfillRequested) {
-                sink.putAscii(" BACKFILL");
+            // START FROM is mandatory at CREATE, so it always round-trips. NOW and an
+            // explicit timestamp both persist a resolved boundary in
+            // viewLowerBoundTimestamp; the persisted kind is what tells them apart, so a
+            // view created with NOW keeps emitting NOW rather than the CREATE moment it
+            // happened to resolve to.
+            switch (startFromKind) {
+                case LiveViewDefinition.START_FROM_BEGINNING:
+                    sink.putAscii(" START FROM BEGINNING");
+                    break;
+                case LiveViewDefinition.START_FROM_TIMESTAMP:
+                    sink.putAscii(" START FROM '");
+                    ColumnType.getTimestampDriver(baseTimestampType).append(sink, startFromTimestamp);
+                    sink.putAscii('\'');
+                    break;
+                default:
+                    sink.putAscii(" START FROM NOW");
+                    break;
             }
             sink.putAscii(" AS (\n")
                     .put(viewSql)

@@ -278,7 +278,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         // while an in-declared-order read still routes through the tier.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, a, b, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, a, b) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 10, 20), " +
@@ -616,7 +616,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, g, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, g) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 'aa'), " +
@@ -659,7 +659,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // the base segment's first-appearance ids (aa=0, bb=1). A tier that
             // stored the base segment-local id would resolve both symbols to the
             // wrong string; storing LV-space ids is what makes Mode B == disk-only.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
             execute("INSERT INTO base (ts, g, keep) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 'aa', 0), " +
@@ -694,7 +694,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Pin the CREATE clock below the data so the non-backfill floor admits
             // the back-dated O3 row.
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -819,7 +819,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -927,7 +927,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -1016,7 +1016,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -1101,7 +1101,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -1211,7 +1211,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -1298,7 +1298,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Pin the CREATE clock below the data so the non-backfill floor admits
             // every row, including the back-dated O3 row.
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -1372,7 +1372,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             setCurrentMicros(0L);
             // A tight 2s IN MEMORY window: after O3 the rewritten LV table spans
             // two day-partitions, but only the recent 2s suffix is resident.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 2s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 2s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -1450,7 +1450,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Pin the CREATE clock below the data so the non-backfill floor admits
             // every row, including the back-dated O3 row.
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -1518,7 +1518,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Pin the CREATE clock below the data so the non-backfill floor admits every row,
             // including the back-dated O3 row.
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
                     "SELECT " + everyTierTypeColumns() + ", row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -1582,12 +1582,12 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             // Victim: DOUBLE val over a DEDUP base -> the coupled applied-reader path.
             execute("CREATE TABLE base_a (sym SYMBOL, val DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base_a");
             // Sibling: INT at the same column index, same total column count.
             execute("CREATE TABLE base_b (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL");
-            execute("CREATE LIVE VIEW lvb FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lvb FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT sym, val, ts, row_number() OVER () AS rn FROM base_b");
 
             LiveViewInstance instanceA = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -1772,7 +1772,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, arr, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: three flushed rows on disk.
@@ -1846,7 +1846,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, a1 DOUBLE[], a2 DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, a1, a2, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: three flushed rows on disk, mixed 1-D and 2-D shapes.
@@ -1936,7 +1936,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, s STRING, b BINARY) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, s, b, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: three flushed rows on disk (rnd_bin is evaluated once at
@@ -2003,7 +2003,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, v, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: three flushed rows on disk. A short inlined value, a long
@@ -2156,7 +2156,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -2438,7 +2438,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2595,9 +2595,9 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             setCurrentMicros(0L);
             // SYMBOL output is now lead-eligible: eager interning gives the lead's
             // symbols LV-table-consistent ids the read path resolves from RAM.
-            execute("CREATE LIVE VIEW lv_sym FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv_sym FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, g, row_number() OVER () AS rn FROM base");
-            execute("CREATE LIVE VIEW lv_num FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv_num FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, g, x) VALUES " +
                     "('2026-05-12T00:00:01.000000Z', 'aa', 1), " +
@@ -2733,7 +2733,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL, keep INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, g, row_number() OVER () AS rn FROM base WHERE keep > 0");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -2797,7 +2797,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -2874,7 +2874,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -2936,7 +2936,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -3168,7 +3168,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     private void buildFlushedPlusLeadWithFrontierTie() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                 "SELECT ts, x, row_number() OVER () AS rn FROM base");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             execute("INSERT INTO base (ts, x) VALUES " +
@@ -3189,7 +3189,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     private void buildFlushedPlusLead() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                 "SELECT ts, x, row_number() OVER () AS rn FROM base");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             execute("INSERT INTO base (ts, x) VALUES " +
@@ -3215,7 +3215,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     private void buildSymbolFlushedPlusLead() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                 "SELECT ts, g, row_number() OVER () AS rn FROM base");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             execute("INSERT INTO base (ts, g) VALUES " +
@@ -3343,7 +3343,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     // drives one refresh cycle so the published slot is populated and stamped.
     private void createIngestRefresh() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m AS " +
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 30m START FROM NOW AS " +
                 "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
         execute("INSERT INTO base (ts, x) VALUES " +
                 "('2026-05-12T00:00:00.000001Z', 4), " +
@@ -3366,7 +3366,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
         // Pin the CREATE wall clock below the data so every row stays in-frame.
         setCurrentMicros(0L);
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s AS " +
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
                 "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
         final long dataStart = 1_700_000_000_000_000L;
         final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s
@@ -3395,7 +3395,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         execute("CREATE TABLE base (ts TIMESTAMP, vs STRING, vv VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s AS " +
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
                 "SELECT ts, vs, vv, row_number() OVER () AS rn FROM base");
         final long dataStart = 1_700_000_000_000_000L;
         final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s
@@ -3429,7 +3429,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         execute("CREATE TABLE base (ts TIMESTAMP, s SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
         setCurrentMicros(0L);
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s AS " +
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
                 "SELECT ts, s, x, row_number() OVER () AS rn FROM base WHERE x > 0");
         final long dataStart = 1_700_000_000_000_000L;
         final long cycle2Start = dataStart + 5_000_000L; // 5s later, beyond IN MEMORY 1s

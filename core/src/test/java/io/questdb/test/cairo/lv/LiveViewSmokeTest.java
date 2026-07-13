@@ -362,7 +362,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -420,7 +420,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, avg(d, " + targetScale + ") OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -474,7 +474,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, first_value(d)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -526,7 +526,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, first_value(d)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -585,7 +585,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, val " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, first_value(val) IGNORE NULLS OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '2' SECOND PRECEDING)");
 
@@ -691,7 +691,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " + fnName + "(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -743,7 +743,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, first_value(v)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -793,7 +793,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, first_value(v)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -849,7 +849,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, last_value(d)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -902,7 +902,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         final String v90 = decimalText(90, scale);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, last_value(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING)");
 
@@ -980,7 +980,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, last_value(v)" + (ignoreNulls ? " IGNORE NULLS" : "") + " OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -1037,7 +1037,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     private void assertMaxMinBoundedRestoresDequeAcrossRestart(String valueType, String suffix, String windowClause) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  min(x) OVER w1 AS mn, " +
                     "  max(x) OVER w1 AS mx, " +
@@ -1148,7 +1148,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " + fnName + "(v) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -1200,7 +1200,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(d, " + nthN + ") OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -1252,7 +1252,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(d, " + nthN + ") OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -1299,7 +1299,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d " + decimalType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts " + frameClause + ")");
 
@@ -1365,7 +1365,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, v " + valueType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(v, 2) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
 
@@ -1434,7 +1434,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, y DOUBLE, vol DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " + fnExpr + " OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -1511,7 +1511,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // PARTITION BY uses the fixed-width SYMBOL key (var-length partition
             // keys are unsupported by the snapshot key codec); the var-length v
             // column rides through as a projected passthrough.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, v, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -1658,7 +1658,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -1688,7 +1688,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testCreateAndDropLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s PARTITION BY DAY AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s PARTITION BY DAY START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("DROP LIVE VIEW lv");
         });
@@ -1698,7 +1698,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testCreateLiveViewDefaultsInMemoryToFlushEvery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 500ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 500ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("DROP LIVE VIEW lv");
         });
@@ -1711,7 +1711,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // has a target directory ready.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             try {
                 TableToken token = engine.verifyTableName("lv");
@@ -1754,7 +1754,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         };
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             Assert.assertTrue("expected _lv write to be observed during CREATE",
                     observedDuringLvWrite.get());
@@ -1787,7 +1787,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             failLvWrite.set(true);
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected _lv write failure to abort CREATE");
             } catch (CairoException expected) {
@@ -1802,7 +1802,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             // Retry CREATE with the same name; rollback must have cleared
             // sequencer + FS state so the retry succeeds and the LV is queryable.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
             execute("DROP LIVE VIEW lv");
@@ -1812,7 +1812,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     @Test
     public void testRejectLiveViewOverMissingBase() throws Exception {
         assertMemoryLeak(() -> {
-            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM does_not_exist";
             try {
                 execute(sql);
@@ -1833,7 +1833,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             // No WAL — bypass-WAL is the default for non-partitioned plain tables.
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts)");
-            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base";
             try {
                 execute(sql);
@@ -1853,9 +1853,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRejectLiveViewOverLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
-            final String sql = "CREATE LIVE VIEW lv2 FLUSH EVERY 1s AS " +
+            final String sql = "CREATE LIVE VIEW lv2 FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM lv1";
             try {
                 execute(sql);
@@ -1890,7 +1890,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:01.000000Z', 2), " +
                     "('2026-04-01T00:00:02.000000Z', 3)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -1930,7 +1930,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the lifecycle advances immediately.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -1964,7 +1964,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // out of bounds and crash the JVM).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
@@ -1989,7 +1989,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // boundaries cleanly. 600 rows at 1-hour steps span 25 day-partitions.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 3_600_000_000), x FROM long_sequence(600)");
@@ -2012,7 +2012,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // eligible for the tier. Neither path may crash.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 10s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 10s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
@@ -2042,7 +2042,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:00.000000Z', 1), " +
                     "('2026-04-01T00:00:01.000000Z', 2)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -2089,7 +2089,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2026-04-02T00:00:00.000000Z', 'a', 3), " +
                     "('2026-04-02T00:00:02.000000Z', 'b', 5)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
@@ -2132,7 +2132,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(4)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             // Capture the rolling .bcp key from a partial sweep before finishing.
@@ -2195,7 +2195,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:02.000000Z', 30), " +
                     "('2026-04-01T00:00:03.000000Z', 40)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             // Capture a rolling .bcp key from a partial sweep, then finish cleanly.
@@ -2303,7 +2303,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:06.000000Z', 7), " +
                     "('2026-04-01T00:00:07.000000Z', 8)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x >= 5");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2346,7 +2346,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:00.000000Z', 1), " +
                     "('2026-04-01T00:00:01.000000Z', 2)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             // The job re-fetches the instance from the registry each tick, so a
@@ -2396,7 +2396,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2447,7 +2447,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2508,7 +2508,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             final TableToken lvToken = engine.verifyTableName("lv");
 
@@ -2575,7 +2575,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -2613,7 +2613,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("INSERT INTO base (ts, x) " +
                     "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -2651,7 +2651,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -2680,10 +2680,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // DDL re-creates an equivalent view.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
-                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 200ms PARTITION BY DAY BACKFILL AS (\n" +
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 200ms PARTITION BY DAY START FROM BEGINNING AS (\n" +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
                     ");\n");
             assertShowCreateLiveViewRoundTrips("lv");
@@ -2702,17 +2702,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:00.000000Z', 1), " +
                     "('2026-04-01T00:00:01.000000Z', 2)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 500ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 500ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            Assert.assertTrue(
-                    "BACKFILL clause must round-trip to definition",
-                    instance.getDefinition().isBackfillRequested()
+            Assert.assertEquals(
+                    "START FROM BEGINNING must round-trip to definition",
+                    LiveViewDefinition.START_FROM_BEGINNING,
+                    instance.getDefinition().getStartFromKind()
             );
             Assert.assertEquals(
-                    "BACKFILL CREATE must persist BACKFILLING state",
+                    "START FROM BEGINNING CREATE must persist BACKFILLING state",
                     LiveViewState.BACKFILL_STATE_BACKFILLING,
                     instance.getStateReader().getBackfillState()
             );
@@ -2741,7 +2742,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2026-04-01T00:00:00.000000Z', 1)," +
                     "('2026-04-01T00:00:01.000000Z', 2)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -2771,7 +2772,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // Create the view while the base is still empty: baseHeadSeqTxn is 0,
             // so backfillTargetSeqTxn is 0 and the raw floor would be -1.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -2857,7 +2858,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     engine.getTableSequencerAPI().isTxnTrackerInitialised(baseToken)
             );
 
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -2901,7 +2902,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             // (a) named WINDOW shape.
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, symbol, sum(price) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY symbol ORDER BY ts)");
                 Assert.fail("expected bare unbounded named WINDOW reject");
@@ -2915,7 +2916,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             // (b) inline OVER (...) shape.
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, symbol, sum(price) OVER (PARTITION BY symbol ORDER BY ts) AS s FROM base");
                 Assert.fail("expected bare unbounded inline OVER reject");
             } catch (SqlException e) {
@@ -2927,7 +2928,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             // (c) inline OVER nested inside an arithmetic expression must still be caught.
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, symbol, sum(price) OVER (PARTITION BY symbol ORDER BY ts) + 1 AS s FROM base");
                 Assert.fail("expected bare unbounded nested OVER reject");
             } catch (SqlException e) {
@@ -2938,13 +2939,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
 
             // (d) bounded ROWS frame without ANCHOR is accepted.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, symbol, sum(price) OVER (PARTITION BY symbol ORDER BY ts " +
                     "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base");
             execute("DROP LIVE VIEW lv");
 
             // (e) ANCHOR DAILY satisfies the rule for the same window shape.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, symbol, sum(price) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
             execute("DROP LIVE VIEW lv");
@@ -2956,7 +2957,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 50ms AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 50ms START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected FLUSH EVERY <100ms reject");
             } catch (SqlException e) {
@@ -2973,7 +2974,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 2h AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 2h START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected IN MEMORY > cap reject");
             } catch (SqlException e) {
@@ -2992,7 +2993,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 2h AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 2h START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected defaulted IN MEMORY > cap reject");
             } catch (SqlException e) {
@@ -3009,7 +3010,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 500ms AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 500ms START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected IN MEMORY < FLUSH EVERY reject");
             } catch (SqlException e) {
@@ -3029,7 +3030,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // purge to run.
             setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // First insert + drain — base table applies seqTxn 1.
@@ -3079,7 +3080,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // sweep), but below the data so the view still materializes the rows.
             setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -3133,7 +3134,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // queryable from the on-disk tier.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             execute("INSERT INTO base (ts, sym, x) VALUES " +
@@ -3186,7 +3187,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // ahead state without an object store.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:01.000000Z', 1), ('2026-06-01T00:00:02.000000Z', 2)");
             drainWalQueue();
 
@@ -3237,7 +3238,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Seed the tier via an initial refresh so both slots have valid
@@ -3327,7 +3328,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -3378,7 +3379,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // more than 100ms, so the earliest lead row ends up below the IN MEMORY
             // window while still un-flushed - exactly the case the clamp protects.
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -3451,7 +3452,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // Pin the CREATE-moment wall clock at 0 so the view's lower bound
             // sits well below the data timestamps, keeping every row in-frame.
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Data timestamps: a fixed positive epoch (the exact calendar date
@@ -3564,7 +3565,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // once a refresh has populated the tier.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Before any refresh: tier is unallocated; in_mem_bytes must read 0.
@@ -3598,7 +3599,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // equals the published slot's rowCount once a refresh has populated it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Before any refresh: tier is unallocated; in_mem_rows must read 0.
@@ -3636,7 +3637,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // order, with seamTs = the lowest ts.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 1), " +
@@ -3684,7 +3685,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -3763,7 +3764,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the watermark assertion below catches.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT val, ts, row_number() OVER () AS rn FROM base");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
@@ -3834,7 +3835,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Flush an initial two rows so the LV table and the published slot
@@ -3890,7 +3891,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // dereference a freed Unsafe pointer.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 7)");
             drainWalQueue();
@@ -3944,7 +3945,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 7)");
@@ -4029,7 +4030,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // -> tier.acquireRead, then on close -> tier.releaseRead).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 4), " +
@@ -4095,7 +4096,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // is valid for either tier.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, sym, x) VALUES " +
                     "('2026-04-01T00:00:00.000000Z', 'aapl', 1), " +
@@ -4233,7 +4234,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // advance the LV's _txn, since global apply ignores LV notifications.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 11)");
             drainWalQueue();
@@ -4280,7 +4281,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // a subsequent global apply tick.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 4), " +
                     "('2026-04-01T00:01:00.000000Z', 8)");
@@ -4322,7 +4323,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL " +
                     "DEDUP UPSERT KEYS(ts)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             final TableToken baseToken = engine.verifyTableName("base");
@@ -4408,7 +4409,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // removal.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -4456,7 +4457,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // base WAL purge can release the segment.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 1000000");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -4503,7 +4504,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
@@ -4637,7 +4638,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -4784,7 +4785,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -4929,7 +4930,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(MicrosTimestampDriver.floor("2026-05-31T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -5042,7 +5043,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // flipping the view to INVALID on every base TRUNCATE.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             execute(
@@ -5113,7 +5114,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // drop -- which broke any base using DROP PARTITION or TTL retention.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             execute(
@@ -5195,7 +5196,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // the eviction is deterministic.
             setCurrentMicros(MicrosTimestampDriver.floor("2020-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY TTL 1 DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             execute(
@@ -5277,7 +5278,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 4)");
             drainWalQueue();
@@ -5358,7 +5359,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // Pin the clock so the second refresh isn't skipped by the FLUSH-EVERY gate.
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -5422,7 +5423,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(ff, () -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -5501,7 +5502,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(ff, () -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -5598,7 +5599,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(ff, () -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -5693,7 +5694,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRefreshAdvancesLvConsumedSeqTxn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:00.000000Z', 1), " +
                     "('2026-01-01T00:01:00.000000Z', 5), ('2026-01-01T00:02:00.000000Z', -3)");
@@ -5731,7 +5732,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRestartRecoversLvState() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES ('2026-02-01T00:00:00.000000Z', 7), " +
                     "('2026-02-01T00:01:00.000000Z', 9)");
@@ -5779,22 +5780,23 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // visibly.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
-            Assert.assertFalse(
-                    "backfillRequested defaults to false when BACKFILL is omitted",
-                    instance.getDefinition().isBackfillRequested()
+            Assert.assertEquals(
+                    "START FROM NOW must round-trip to definition",
+                    LiveViewDefinition.START_FROM_NOW,
+                    instance.getDefinition().getStartFromKind()
             );
             Assert.assertEquals(
-                    "backfillState defaults to ACTIVE when BACKFILL is omitted",
+                    "backfillState is ACTIVE for a view that does not sweep",
                     LiveViewState.BACKFILL_STATE_ACTIVE,
                     instance.getStateReader().getBackfillState()
             );
             Assert.assertEquals(
-                    "backfillTargetSeqTxn defaults to LONG_NULL when BACKFILL is omitted",
+                    "backfillTargetSeqTxn is LONG_NULL for a view that does not sweep",
                     Numbers.LONG_NULL,
                     instance.getStateReader().getBackfillTargetSeqTxn()
             );
@@ -5805,9 +5807,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull("live view must be re-registered after restart", reloaded);
-            Assert.assertFalse(
-                    "backfillRequested must round-trip via _lv",
-                    reloaded.getDefinition().isBackfillRequested()
+            Assert.assertEquals(
+                    "start kind must round-trip via _lv",
+                    LiveViewDefinition.START_FROM_NOW,
+                    reloaded.getDefinition().getStartFromKind()
             );
             Assert.assertEquals(
                     "backfillState must round-trip via _lv.s",
@@ -5834,7 +5837,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // engine.advanceLiveViewConsumedSeqTxn and lives outside the smoke suite.)
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 4), " +
                     "('2026-04-01T00:01:00.000000Z', 8)");
@@ -5880,7 +5883,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRestartContinuesProcessingNewBaseCommits() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // First batch lands and is fully refreshed/applied.
@@ -5925,7 +5928,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -5976,10 +5979,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // lv_ok is a healthy sibling; lv_stub becomes the torn stub. Neither is
             // refreshed before the fault, so lv_stub commits no LIVE_VIEW_DATA block and
             // thus has no recoverable floor once its _lv.s is torn (-> state_unreadable).
-            execute("CREATE LIVE VIEW lv_ok FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_ok FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-            execute("CREATE LIVE VIEW lv_stub FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_stub FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -6053,7 +6056,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -6165,7 +6168,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -6213,9 +6216,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // Two LVs over the same base with different SELECT shapes. A single base
             // commit must fan out to BOTH via getViewsForBaseTable; the per-instance
             // refresh latch must not block one LV from refreshing while the other is.
-            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
-            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 5");
 
             execute("INSERT INTO base (ts, x) VALUES ('2026-05-01T00:00:00.000000Z', 3), " +
@@ -6248,7 +6251,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testLiveViewAsAsofJoinRhs() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("CREATE TABLE probe (ts TIMESTAMP, label SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO base (ts, x) VALUES " +
@@ -6277,7 +6280,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             // Base has four columns (ts, x, y, z); LV references only ts + x.
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, z INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -6300,7 +6303,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testFallbackScanPicksUpMissedNotifications() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Drain the notification state store BEFORE inserting — this simulates a
@@ -6339,7 +6342,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // the LV catch up.
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -6429,7 +6432,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(ff, () -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             lvDir[0] = engine.verifyTableName("lv").getDirName();
             final TableToken lvToken = engine.verifyTableName("lv");
@@ -6510,7 +6513,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             final TableToken lvToken = engine.verifyTableName("lv");
 
@@ -6588,7 +6591,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(ff, () -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -6655,7 +6658,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -6720,7 +6723,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -6792,7 +6795,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final String recompute = "SELECT ts, sym, s FROM " +
                     "(SELECT ts, sym, sum(x) OVER w AS s FROM base " + frame + ") ORDER BY ts, s";
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " + frame);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -6844,7 +6847,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testSchemaChangeNarrowsToReferencedColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, z INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -6878,7 +6881,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // while a rename of a column the view never reads leaves it ACTIVE.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -6940,7 +6943,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         };
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("DROP LIVE VIEW lv");
             Assert.assertTrue("_lv.drop sentinel must be created during DROP",
@@ -6960,7 +6963,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // issued.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
@@ -6990,7 +6993,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testLoaderReapsOrphanLiveViewDirectory() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Simulate a CREATE crash that left the table directory and _lv.s
@@ -7031,7 +7034,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testLoaderSurfacesHalfCreatedLiveViewAsDroppableStub() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Simulate a crash that left _lv on disk but not _lv.s. With the engine's
@@ -7071,7 +7074,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testSchemaChangeNarrowsAfterRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT, z INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Restart sweep before any refresh runs. The dependency set must come
@@ -7097,7 +7100,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorSpecPersistsAndRoundTrips() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7138,7 +7141,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsRunningSumAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7173,7 +7176,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // hour(ts) returns INT; the anchor's LONG slot must absorb the
             // INT-to-LONG widening cleanly. Two rows in hour 10 accumulate; the
             // hour-11 row resets the running sum.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION hour(ts))");
 
@@ -7202,7 +7205,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsAvgAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, avg(x) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7239,7 +7242,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // side-step the per-WAL-segment SYMBOL index collision.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7305,7 +7308,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // resets to the new bucket's first row at the day boundary.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7339,7 +7342,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Decimal256AvgOverUnboundedPartitionRowsFrameFunction.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(60, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7371,7 +7374,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Decimal8/16/32 widths (identical migration code).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(9, 3)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7402,7 +7405,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // accumulator, the second snapshot payload variant.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7432,7 +7435,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Restart-restore for the narrow (raw LONG acc) snapshot payload.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(9, 3)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7477,7 +7480,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Restart-restore for the DECIMAL64 (DECIMAL128 acc) snapshot payload.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7523,7 +7526,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // running count of non-null decimal values must survive a restart.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, count(d) OVER w AS c FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7571,7 +7574,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // restorePartitionState so a later, smaller value does not lower it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7617,7 +7620,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // representing the Decimal8/16/32/64 widths.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(4, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7662,7 +7665,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Restart-restore for the DECIMAL256 snapshot payload (32-byte value).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(60, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7708,7 +7711,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // path's snapshot/restore: a later, larger value does not raise the min.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, min(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7755,7 +7758,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // advance the count (exercises the decimal not-null predicate).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, count(d) OVER w AS c FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7793,7 +7796,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // smaller value inside a bucket does not lower the running max.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7828,7 +7831,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // value slot. Represents the Decimal8/16/32/64 widths (shared layout).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(4, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7863,7 +7866,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Exercises Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(60, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7897,7 +7900,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // max over a DECIMAL(9,3) column (DECIMAL32 storage, LONG value slot).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(9, 3)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7931,7 +7934,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // max over a DECIMAL(18,2) column (DECIMAL64 storage, LONG value slot).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -7965,7 +7968,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // max over a DECIMAL(2,0) column (DECIMAL8 storage, LONG value slot).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(2, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8001,7 +8004,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // larger value inside a bucket does not raise the running min.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, min(d) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8038,7 +8041,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // resets to the new bucket's first row at the day boundary.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8069,7 +8072,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // accumulator. Represents the Decimal8/16 widths (identical migration).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(4, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8100,7 +8103,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Exercises Decimal256SumOverUnboundedPartitionRowsFrameFunction.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(60, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8131,7 +8134,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Exercises Decimal32SumOverUnboundedPartitionRowsFrameFunction.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(9, 3)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8162,7 +8165,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Exercises Decimal64SumOverUnboundedPartitionRowsFrameFunction.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8193,7 +8196,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Exercises Decimal8SumOverUnboundedPartitionRowsFrameFunction.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(2, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8225,7 +8228,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // restorePartitionState so the sum continues across a restart.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8271,7 +8274,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Restart-restore for the narrow (raw LONG acc) snapshot payload.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(4, 0)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8316,7 +8319,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Restart-restore for the DECIMAL128-acc snapshot payload (DECIMAL64 input).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(18, 2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(d) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8365,7 +8368,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // variable-size native [ts, value] ring.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW)");
 
@@ -8428,7 +8431,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // [acc, count, loIdx, startOffset] slots plus the fixed-size native ring.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, avg(d) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)");
 
@@ -8960,7 +8963,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // max over a DATE column, re-anchored each day via the null sentinel.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v DATE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(v) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -8996,7 +8999,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // new day. Without the reset, day 2 would keep day 1's 2026-01-20.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, first_value(v) IGNORE NULLS OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -9029,7 +9032,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Without the reset, day 2 would keep day 1's first value 2026-01-20.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, first_value(v) OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -9063,7 +9066,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // max over a TIMESTAMP column, re-anchored each day via the null sentinel.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(v) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -9097,7 +9100,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // min over a TIMESTAMP column (min reuses Max's classes), re-anchored each day.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, v TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, min(v) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -9912,7 +9915,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY HOUR WAL " +
                     "DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             baseDir[0] = engine.verifyTableName("base").getDirName();
@@ -10032,7 +10035,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(ff, () -> {
             setCurrentMicros(0);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             baseDir[0] = engine.verifyTableName("base").getDirName();
@@ -10421,7 +10424,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsCountAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, count(x) OVER w AS c FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10453,7 +10456,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsRowNumberAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10482,7 +10485,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsMaxAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, max(x) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10516,7 +10519,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsFirstValueAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, first_value(x) OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10553,7 +10556,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the new day. Without the reset, day 2 would keep day 1's 20.0.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, first_value(x) IGNORE NULLS OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10587,7 +10590,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the new day. Without the reset, day 2 would keep day 1's 20.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, first_value(x) IGNORE NULLS OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10619,7 +10622,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Restart-restore for the Decimal128 (16-byte value slot) snapshot payload.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, d DECIMAL(38, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, first_value(d) OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10664,7 +10667,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // first_value over a DECIMAL(38,6) column (DECIMAL128 storage).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DECIMAL(38, 6), sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, first_value(x) OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10694,7 +10697,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // first_value over a DECIMAL(18,2) column (DECIMAL64 storage, LONG value slot).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DECIMAL(18, 2), sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, first_value(x) OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -10730,7 +10733,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the new day. Without the reset, day 2 would keep day 1's 20.00.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DECIMAL(18, 2), sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, first_value(x) IGNORE NULLS OVER w AS f FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -11274,7 +11277,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsRankAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, rank() OVER w AS r FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -11310,7 +11313,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorIsolatesPartitionsIndependently() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -11359,7 +11362,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // that confuses cross-segment partition lookups.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -11419,7 +11422,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -11477,7 +11480,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -11557,7 +11560,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -11628,7 +11631,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -11702,7 +11705,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, ts2 TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, ts2, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts2))");
 
@@ -11772,7 +11775,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', dateadd('d', hour(ts), ts)))");
 
@@ -11837,7 +11840,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION dateadd('M', 1, ts))");
 
@@ -11901,7 +11904,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', dateadd('h', 1, ts)))");
 
@@ -11983,7 +11986,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // assertion.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12048,7 +12051,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // index collision that confuses cross-segment partition lookups.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12145,7 +12148,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  row_number() OVER w_anchor AS rn, " +
                     "  sum(x) OVER w_bounded AS s " +
@@ -12209,7 +12212,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // partition entries instead of growing per-segment.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12300,7 +12303,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, px, sum(px) OVER w AS s FROM base WHERE sym = 'X' " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12348,7 +12351,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, px, sum(px) OVER w AS s FROM base WHERE sym = 'Y' " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12400,7 +12403,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, side SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, side, px, " +
                     "sum(CASE WHEN side = 'BUY' THEN px ELSE 0.0 END) OVER (PARTITION BY sym ORDER BY ts " +
                     "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS buy_vol FROM base");
@@ -12453,7 +12456,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsEmaAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, avg(x, 'alpha', 0.5) OVER w AS e FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12485,7 +12488,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsKsumAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, ksum(x) OVER w AS k FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12515,7 +12518,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsLagAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, lag(x) OVER w AS l FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12547,7 +12550,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorResetsStddevAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, stddev_pop(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12581,7 +12584,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // resetPartition restarts the counter at each anchor crossing.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, dense_rank() OVER w AS r FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12614,7 +12617,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // clears the initialized flag so day 2 starts from its own first value.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, min(x) OVER w AS m FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12650,7 +12653,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // zeroes count/mean/m2 so day 2's variance covers day 2 rows only.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, var_pop(x) OVER w AS v FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12685,7 +12688,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // covar_samp / covar_pop; resetPartition clears it at each anchor cross.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, y DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, covar_pop(x, y) OVER w AS c FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -12758,7 +12761,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // before the byte-exact write -> toTop -> restore -> write round-trip.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, ksum(x) OVER w AS k FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS 2 PRECEDING)");
 
@@ -12820,7 +12823,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // to side-step the per-WAL-segment SYMBOL index collision.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, ksum(x) OVER w AS k FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS 2 PRECEDING)");
 
@@ -12946,7 +12949,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, side SYMBOL, price DOUBLE, " +
                     "qty DOUBLE, bvol DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, side, " +
                     "  avg(price, 'alpha', 0.5, CASE WHEN side = 'BUY' THEN qty ELSE 0.0 END) OVER w AS v_expr, " +
                     "  avg(price, 'alpha', 0.5, bvol) OVER w AS v_col " +
@@ -12996,7 +12999,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the per-partition count so day 2's nth_value(x, 2) sees only day 2.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS n FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -13037,7 +13040,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // the DST spring-forward happens at 01:00 UTC). The two rows on either
             // side of the boundary live in different anchor buckets even though they
             // are only an hour apart in wall-clock UTC.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00' 'Europe/London')");
 
@@ -13069,7 +13072,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAnchorDailyResetsAtMidnightUtc() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
@@ -13101,7 +13104,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // ANCHOR DAILY '09:30' (UTC) buckets at 09:30:00.000000Z each day.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '09:30')");
 
@@ -13135,7 +13138,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testInvalidationSurvivesRestart() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             // Drop the base table — this should invalidate the live view AND persist
@@ -13184,7 +13187,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // renaming the LV itself (rejected outright, never reaching this path).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("INSERT INTO base (ts, x) VALUES " +
                     "('2026-05-01T00:00:00.000000Z', 1), " +
@@ -13248,7 +13251,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // surface.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             try {
                 assertQuery("SELECT * FROM live_views() WHERE 1 = 0").noLeakCheck().returns("view_name\tview_table_dir_name\tbase_table_name\tview_sql\tview_status\t"
@@ -13268,7 +13271,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testLiveViewsCatalogueExposesView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 5s IN MEMORY 30s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 5s IN MEMORY 30s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             assertQuery("SELECT view_name, base_table_name, view_status, flush_every_interval, flush_every_interval_unit, " +
@@ -13287,7 +13290,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // Since FLUSH EVERY's minimum is 100ms, this hit the most common LV shape.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms IN MEMORY 500ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms IN MEMORY 500ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             assertQuery("SELECT view_name, flush_every_interval, flush_every_interval_unit, in_memory_interval, in_memory_interval_unit FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tflush_every_interval\tflush_every_interval_unit\tin_memory_interval\tin_memory_interval_unit\n" +
@@ -13304,7 +13307,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // wall-clock at CREATE deterministically.
             setCurrentMicros(1_700_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
@@ -13322,7 +13325,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(1_700_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -13349,7 +13352,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(1_700_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -13384,7 +13387,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "('2024-06-15T12:00:00.000000Z', 2)," +
                     "('2026-01-01T00:00:00.000000Z', 3)");
             drainWalQueue();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
@@ -13402,7 +13405,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(1_700_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             assertQuery("SELECT view_name, view_lower_bound_timestamp FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\tview_lower_bound_timestamp\n" +
@@ -13422,7 +13425,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // wall-clock moment (2023-11-14T22:13:20Z).
             setCurrentMicros(1_700_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -13485,9 +13488,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // Pin the clock at the floor so each non-BACKFILL view's lower bound
             // is 2026-04-01T00:00:05.
             setCurrentMicros(floorMicros);
-            execute("CREATE LIVE VIEW lv_fwd FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv_fwd FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base_fwd");
-            execute("CREATE LIVE VIEW lv_o3 FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv_o3 FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base_o3");
 
             LiveViewInstance fwd = engine.getLiveViewRegistry().getViewInstance("lv_fwd");
@@ -13574,7 +13577,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // path rather than the O3 replay.
             setCurrentMicros(1_700_000_000_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -13613,7 +13616,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // LIVE VIEW still removes it best-effort.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
 
@@ -13650,7 +13653,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the view as version_unsupported even when _lv reads cleanly.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
 
@@ -13696,7 +13699,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(1_000_000L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
             drainWalQueue();
@@ -13730,7 +13733,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // locked value.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -13780,7 +13783,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // [value: LONG, count: LONG, tombstone: BYTE].
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -14272,7 +14275,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the Nth row per partition.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(ts, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -14325,7 +14328,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // [count: LONG, lockedValue: LONG (double bits), tombstone: BYTE].
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
 
@@ -14377,7 +14380,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // [count: LONG, lockedValue: LONG, tombstone: BYTE].
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
 
@@ -14429,7 +14432,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // [count: LONG, lockedValue: TIMESTAMP-as-LONG, tombstone: BYTE].
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(ts, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)");
 
@@ -14483,7 +14486,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // a bufferSize-long ring of DOUBLE values in MemoryARW.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)");
 
@@ -14538,7 +14541,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // a bufferSize-long ring of LONG values in MemoryARW.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)");
 
@@ -14590,7 +14593,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // a bufferSize-long ring of TIMESTAMP-as-LONG values in MemoryARW.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(ts, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)");
 
@@ -14643,7 +14646,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // MemoryARW; ts is LONG, value is DOUBLE (RECORD_SIZE = 16).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '5' HOUR PRECEDING AND CURRENT ROW)");
 
@@ -14699,7 +14702,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // MemoryARW; ts and value both LONG (RECORD_SIZE = 16).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '5' HOUR PRECEDING AND CURRENT ROW)");
 
@@ -14753,7 +14756,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // carrying the TIMESTAMP encoded as LONG.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, nth_value(ts, 2) OVER w AS nv FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '5' HOUR PRECEDING AND CURRENT ROW)");
 
@@ -14802,7 +14805,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -14854,7 +14857,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // exercises the codec in isolation.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -14930,7 +14933,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testHeadCheckpointSetAndReadAtomicity() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -15085,7 +15088,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // subsequent writes; this test only proves the first one fires.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -15172,7 +15175,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // lastProcessedSeqTxn to the manifest's baseSeqTxn.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -15251,7 +15254,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 1_000);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
@@ -15299,7 +15302,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 64 * 1024 * 1024);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
@@ -15363,7 +15366,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("ALTER TABLE base CONVERT PARTITION TO PARQUET WHERE ts < '2026-01-02'");
             drainWalQueue();
 
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS v " +
                     "FROM base");
             // Not driveBackfillToCompletion: the breach invalidates the view mid-sweep, so it never
@@ -15404,7 +15407,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     """);
             drainWalQueue();
 
-            execute("CREATE LIVE VIEW lv_native FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv_native FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS v " +
                     "FROM base_native");
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -15441,7 +15444,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)");
 
@@ -15495,7 +15498,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
             // ANCHOR EXPRESSION sid: a bare LONG column. Legal at CREATE, never monotone
             // with the base order, so compact() is structurally disabled for this view.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sid, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION sid)");
 
@@ -15545,7 +15548,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
@@ -15642,7 +15645,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the too-old half of the same range check.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -15775,7 +15778,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
@@ -15875,7 +15878,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // compatibility break.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -15999,7 +16002,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // recovery via a structural key-shape mismatch rather than a CRC failure.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -16101,7 +16104,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // outside this test's scope.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, rank() OVER w AS r FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -16168,7 +16171,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // chain-prefix serializer that still restores the right number of keys.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, rank() OVER w AS r FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -16228,7 +16231,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // codec - not just a partition-count drift - surfaces here.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -16298,7 +16301,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // testRestartRestoresRankFromHeadCheckpoint documents).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -16373,7 +16376,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // surfaces here before the integration test sees it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, lag(x, 2) OVER w AS prev FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -16438,7 +16441,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // bounded frames, so this exercises the no-anchor snapshot path.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  avg(x) OVER w AS a, " +
                     "  sum(x) OVER w AS s, " +
@@ -16510,7 +16513,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, y DOUBLE, vol DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  stddev_samp(x) OVER w AS sd, " +
                     "  corr(x, y) OVER w AS cr, " +
@@ -16579,7 +16582,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the per-WAL-segment SYMBOL index collision.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE, y DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  stddev_samp(x) OVER w AS sd, " +
                     "  var_samp(x) OVER w AS va, " +
@@ -16682,7 +16685,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // SYMBOL index collision.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE, vol DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  avg(x, 'period', 5) OVER w AS ep, " +
                     "  avg(x, 'minute', 5) OVER w AS et, " +
@@ -16787,7 +16790,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // factories at once.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  min(x) OVER w1 AS mn, " +
                     "  max(x) OVER w1 AS mx, " +
@@ -16854,7 +16857,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // ring at capacity = max(size, initialBufferSize).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  avg(x) OVER w AS a, " +
                     "  sum(x) OVER w AS s, " +
@@ -16918,7 +16921,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // handle their distinct slot orderings.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  first_value(x) OVER w1 AS fv, " +
                     "  first_value(x) IGNORE NULLS OVER w1 AS fvn, " +
@@ -16990,7 +16993,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // functions also covers Min* and Max* factories at once.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  min(x) OVER w1 AS mn, " +
                     "  max(x) OVER w1 AS mx, " +
@@ -17095,7 +17098,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // LastValueIncludeCurrent, which has no snapshot support).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, " +
                     "  first_value(x) OVER w1 AS fv, " +
                     "  first_value(x) IGNORE NULLS OVER w1 AS fvn, " +
@@ -17167,7 +17170,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // "known limitations".
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, lag(x, 1) OVER w AS prev FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17260,7 +17263,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // batch.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17342,7 +17345,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // restart can short-circuit to head-hit for any subsequent O3.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17449,7 +17452,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // against the base would produce.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17519,7 +17522,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -17598,7 +17601,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -17656,7 +17659,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // bucket so no anchor reset fires - the bug is purely row order.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17696,7 +17699,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base WHERE x > 100 " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17749,7 +17752,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base WHERE x > 100 " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17817,7 +17820,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // accumulator artifact in this scenario).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17896,7 +17899,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // ts-ascending order.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -17986,7 +17989,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // IN MEMORY 1h keeps every test row resident in the in-mem tier.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -18076,7 +18079,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // viewLowerBoundTimestamp and merges the late row in ts order.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -18156,7 +18159,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // After three such events the LV output reflects all rows in ts order.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -18215,7 +18218,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // The .cp file exists on disk at the new lvSeqTxn.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -18290,7 +18293,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // against anchored snapshot-capable LVs.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -18350,7 +18353,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // until the latch is released.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -18414,7 +18417,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // state.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -18490,7 +18493,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // pending commit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -18552,7 +18555,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, d DECIMAL(18, 6)) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, x, d, row_number() OVER () AS rn FROM base");
 
             // Six separate base WAL commits - one INSERT per row so each
@@ -18614,7 +18617,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // populating them.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             try {
                 assertQuery("SELECT view_name, head_checkpoint_lv_seqtxn, head_checkpoint_max_ts, head_checkpoint_state_bytes FROM live_views()").noLeakCheck().noRandomAccess().returns("view_name\thead_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n" +
@@ -18637,7 +18640,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testTablesIntegrationReportsLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             // tables() emits 'L' in the table_type column for live views.
             assertQuery("SELECT table_name, table_type FROM tables() WHERE table_name = 'lv'").noLeakCheck().noRandomAccess().returns("table_name\ttable_type\n" +
@@ -18650,10 +18653,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testShowCreateLiveView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
-                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY AS (\n" +
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 5s PARTITION BY DAY START FROM NOW AS (\n" +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
                     ");\n");
             assertShowCreateLiveViewRoundTrips("lv");
@@ -18675,7 +18678,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY NONE AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY NONE START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
                 Assert.fail("expected SqlException rejecting PARTITION BY NONE");
             } catch (SqlException e) {
@@ -18686,28 +18689,28 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 );
             }
             // Confirm no partial-CREATE residue: re-creating with a valid scheme works.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
             execute("DROP LIVE VIEW lv");
         });
     }
 
     @Test
-    public void testRejectDuplicateBackfillClause() throws Exception {
+    public void testRejectDuplicateStartFromClause() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL BACKFILL AS " +
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0";
-            final int secondClausePos = sql.indexOf("BACKFILL", sql.indexOf("BACKFILL") + 1);
+            final int secondClausePos = sql.indexOf("START", sql.indexOf("START") + 1);
             try {
                 execute(sql);
-                Assert.fail("expected SqlException rejecting duplicate BACKFILL");
+                Assert.fail("expected SqlException rejecting duplicate START FROM");
             } catch (SqlException e) {
                 Assert.assertEquals(secondClausePos, e.getPosition());
                 Assert.assertTrue(
                         "wrong message [msg=" + e.getFlyweightMessage() + ']',
                         Chars.contains(e.getFlyweightMessage(),
-                                "live view BACKFILL clause specified more than once")
+                                "live view START FROM clause specified more than once")
                 );
             }
         });
@@ -18717,7 +18720,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRejectDuplicateInMemoryClause() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 1s IN MEMORY 2s AS " +
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 1s IN MEMORY 2s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0";
             final int secondClausePos = sql.indexOf("IN MEMORY", sql.indexOf("IN MEMORY") + 1);
             try {
@@ -18738,7 +18741,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testRejectDuplicatePartitionByClause() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY PARTITION BY HOUR AS " +
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY PARTITION BY HOUR START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0";
             final int secondClausePos = sql.indexOf("PARTITION BY", sql.indexOf("PARTITION BY") + 1);
             try {
@@ -18762,7 +18765,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY MINUTE AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY MINUTE START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected SqlException rejecting PARTITION BY MINUTE");
             } catch (SqlException e) {
@@ -18781,7 +18784,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY foo AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY foo START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected SqlException rejecting an invalid FLUSH EVERY duration value");
             } catch (SqlException e) {
@@ -18800,7 +18803,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 5w AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 5w START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected SqlException rejecting an invalid FLUSH EVERY duration qualifier");
             } catch (SqlException e) {
@@ -18819,7 +18822,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5w AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 5w START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected SqlException rejecting an invalid IN MEMORY duration qualifier");
             } catch (SqlException e) {
@@ -18838,7 +18841,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s " +
-                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                        "SELECT ts, x, row_number() OVER () START FROM NOW AS rn FROM base");
                 Assert.fail("expected SqlException rejecting a missing AS keyword");
             } catch (SqlException e) {
                 Assert.assertTrue(
@@ -18859,7 +18862,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // "cannot modify live view".)
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             for (String sql : new String[]{
                     "ALTER LIVE VIEW lv RENAME TO lv2",
@@ -18890,7 +18893,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY 0900)");
                 Assert.fail("expected SqlException rejecting an unquoted ANCHOR DAILY time");
@@ -18910,7 +18913,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION)");
                 Assert.fail("expected SqlException rejecting a missing ANCHOR EXPRESSION expression");
@@ -18930,7 +18933,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR WEEKLY '00:00')");
                 Assert.fail("expected SqlException rejecting an unknown ANCHOR kind");
@@ -18980,7 +18983,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             // The clause still works where it belongs, and a rejected query does not
             // leave the parser's anchor gate stuck open or shut.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             execute("DROP LIVE VIEW lv");
@@ -18995,7 +18998,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base LIMIT 10");
                 Assert.fail("expected SqlException rejecting LIMIT in the live view select");
             } catch (SqlException e) {
@@ -19014,7 +19017,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv AS " +
+                execute("CREATE LIVE VIEW lv START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected SqlException rejecting a missing FLUSH EVERY clause");
             } catch (SqlException e) {
@@ -19052,7 +19055,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM (SELECT * FROM base WHERE x > 0)");
                 Assert.fail("expected SqlException rejecting a subquery in FROM");
             } catch (SqlException e) {
@@ -19072,7 +19075,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // any later change to the base.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -19084,7 +19087,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             );
 
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
-                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY AS (\n" +
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY START FROM NOW AS (\n" +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0\n" +
                     ");\n");
 
@@ -19100,7 +19103,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             // ANCHOR EXPRESSION on a default-frame WINDOW must parse without error.
             // The runtime that drives resetPartition lands with the window-function
             // migration; here we only verify CREATE accepts the syntax.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             execute("DROP LIVE VIEW lv");
@@ -19111,7 +19114,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAcceptAnchorDaily() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00')");
             execute("DROP LIVE VIEW lv");
@@ -19122,7 +19125,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     public void testAcceptAnchorDailyWithTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '09:30' 'America/New_York')");
             execute("DROP LIVE VIEW lv");
@@ -19137,7 +19140,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '0900')");
                 Assert.fail("expected SqlException rejecting a malformed ANCHOR DAILY time");
@@ -19157,7 +19160,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '99:99')");
                 Assert.fail("expected SqlException rejecting an out-of-range ANCHOR DAILY time");
@@ -19175,7 +19178,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ROWS 5 PRECEDING ANCHOR EXPRESSION timestamp_floor('1d', ts))");
                 Assert.fail("expected ANCHOR + bounded frame reject");
@@ -19190,7 +19193,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION 1)");
                 Assert.fail("expected constant anchor reject");
@@ -19209,7 +19212,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, sym, row_number() OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00') AS rn FROM base");
                 Assert.fail("expected inline ANCHOR reject");
             } catch (SqlException e) {
@@ -19226,7 +19229,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts)) AS s FROM base");
                 Assert.fail("expected inline ANCHOR EXPRESSION reject");
             } catch (SqlException e) {
@@ -19246,7 +19249,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00') + 1 AS s FROM base");
                 Assert.fail("expected nested inline ANCHOR reject");
             } catch (SqlException e) {
@@ -19263,7 +19266,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, sum(x) OVER w1 AS sx, sum(y) OVER w2 AS sy FROM base " +
                         "WINDOW w1 AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts)), " +
                         "       w2 AS (PARTITION BY y ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1h', ts))");
@@ -19286,7 +19289,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, row_number() OVER w AS rn FROM base " +
                         "WINDOW w AS (ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
                 Assert.fail("expected reject for anchored WINDOW without PARTITION BY");
@@ -19301,7 +19304,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION (SELECT 1))");
                 Assert.fail("expected subquery anchor reject");
@@ -19317,7 +19320,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, lon DOUBLE, lat DOUBLE, sym SYMBOL) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, sym, lon, lat, sum(lon) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION make_geohash(lon, lat, 10))");
                 Assert.fail("expected GEOHASH anchor return type reject");
@@ -19336,7 +19339,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("CREATE TABLE base (ts TIMESTAMP, xs DOUBLE[], sym SYMBOL) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, sym, xs, count() OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION xs)");
                 Assert.fail("expected ARRAY anchor return type reject");
@@ -19354,7 +19357,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION rnd_long())");
                 Assert.fail("expected random anchor reject");
@@ -19372,7 +19375,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION ts + $1)");
                 Assert.fail("expected bind-variable anchor reject");
@@ -19390,7 +19393,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION now())");
                 Assert.fail("expected now() anchor reject");
@@ -19409,7 +19412,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x + 1 ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
                 Assert.fail("expected non-literal PARTITION BY reject");
@@ -19431,7 +19434,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION 1 + 2 + 3)");
                 Assert.fail("expected fold-to-constant anchor reject");
@@ -19450,7 +19453,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION sum(x))");
                 Assert.fail("expected aggregation anchor reject");
@@ -19465,7 +19468,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, lead(x) OVER (ORDER BY ts) AS nxt FROM base");
                 Assert.fail("expected lead() reject");
             } catch (SqlException e) {
@@ -19480,7 +19483,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY x)");
                 Assert.fail("expected non-timestamp ORDER BY reject");
@@ -19497,7 +19500,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts DESC)");
                 Assert.fail("expected ORDER BY DESC reject");
@@ -19514,7 +19517,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x)");
                 Assert.fail("expected missing ORDER BY reject");
@@ -19531,7 +19534,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts, x)");
                 Assert.fail("expected multi-column ORDER BY reject");
@@ -19546,7 +19549,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv AS SELECT ts, x FROM base");
+                execute("CREATE LIVE VIEW lv START FROM NOW AS SELECT ts, x FROM base");
                 Assert.fail("expected FLUSH EVERY required");
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("flush every"));
@@ -19559,7 +19562,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base WHERE x > 0 " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -19622,7 +19625,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // accumulate rows linearly.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -19672,7 +19675,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // remains intact.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -19731,7 +19734,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
 
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -19767,7 +19770,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts " +
                         "ANCHOR EXPRESSION date_trunc('day', '2025-01-01'::timestamp))");
@@ -19788,7 +19791,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 0s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 0s START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected FLUSH EVERY 0 reject");
             } catch (SqlException e) {
@@ -19808,7 +19811,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // the captured LvAnchorSpec rather than the re-parse.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION length('hello'))";
             try {
@@ -19833,7 +19836,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION systimestamp())");
                 Assert.fail("expected systimestamp() anchor reject");
@@ -19854,7 +19857,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // this case is the cleanest place to pin the CREATE-SQL position.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION sym)";
             try {
@@ -19881,7 +19884,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, s STRING, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, s, x, sum(x) OVER w AS sm FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION s)");
                 Assert.fail("expected STRING anchor return type reject");
@@ -19902,7 +19905,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, flag BOOLEAN, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, flag, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION flag)");
                 Assert.fail("expected BOOLEAN anchor return type reject");
@@ -19922,7 +19925,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, d DOUBLE, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, d, x, sum(x) OVER w AS s FROM base " +
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION d)");
                 Assert.fail("expected DOUBLE anchor return type reject");
@@ -19945,13 +19948,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // or persists a heavier expression than necessary.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv_utc FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_utc FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')");
-            execute("CREATE LIVE VIEW lv_no_tz FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_no_tz FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00')");
-            execute("CREATE LIVE VIEW lv_london FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_london FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'Europe/London')");
 
@@ -19993,7 +19996,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // case collapses the offset away; this pins the non-midnight branch.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '09:30')");
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -20019,7 +20022,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             // Live view over the mat view - must be accepted.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, row_number() OVER w AS rn FROM mv " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
 
@@ -20042,11 +20045,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // reproduces the original definition.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')");
             assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
-                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY AS (\n" +
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY START FROM NOW AS (\n" +
                     "SELECT ts, x, sum(x) OVER w AS s FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')\n" +
                     ");\n");

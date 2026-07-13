@@ -33,7 +33,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     private @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec;
-    private boolean backfillRequested;
     private String baseTableName;
     private int baseTableNamePosition;
     private long flushEveryInterval;
@@ -50,6 +49,14 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     private int partitionBy = Numbers.INT_NULL;
     private IQueryModel selectModel;
     private String selectSql;
+    // The START FROM mode the user asked for. The parser always sets one - the clause is
+    // mandatory - so START_FROM_UNSET only survives a builder that was never parsed into.
+    private byte startFromKind = LiveViewDefinition.START_FROM_UNSET;
+    // START FROM '<timestamp>' text, verbatim and unquoted. Stays a string here: its
+    // precision follows the base table's designated timestamp type, which only
+    // CairoEngine.createLiveView knows, so it parses there and not in the parser.
+    private String startFromTimestamp;
+    private int startFromTimestampPosition;
     private String viewName;
     private int viewNamePosition;
 
@@ -66,7 +73,9 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
                 inMemoryIntervalUnit,
                 partitionBy,
                 ignoreIfExists,
-                backfillRequested,
+                startFromKind,
+                startFromTimestamp,
+                startFromTimestampPosition,
                 anchorSpec
         );
     }
@@ -74,7 +83,6 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
     @Override
     public void clear() {
         anchorSpec = null;
-        backfillRequested = false;
         baseTableName = null;
         baseTableNamePosition = 0;
         ignoreIfExists = false;
@@ -85,6 +93,9 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
         partitionBy = Numbers.INT_NULL;
         selectModel = null;
         selectSql = null;
+        startFromKind = LiveViewDefinition.START_FROM_UNSET;
+        startFromTimestamp = null;
+        startFromTimestampPosition = 0;
         viewName = null;
         viewNamePosition = 0;
     }
@@ -105,10 +116,6 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
 
     public void setAnchorSpec(@Nullable LiveViewDefinition.LvAnchorSpec anchorSpec) {
         this.anchorSpec = anchorSpec;
-    }
-
-    public void setBackfillRequested(boolean backfillRequested) {
-        this.backfillRequested = backfillRequested;
     }
 
     public void setBaseTableName(String baseTableName) {
@@ -149,6 +156,24 @@ public class CreateLiveViewOperationBuilder implements ExecutionModel, Mutable {
 
     public void setSelectSql(String selectSql) {
         this.selectSql = selectSql;
+    }
+
+    public void setStartFromBeginning() {
+        this.startFromKind = LiveViewDefinition.START_FROM_BEGINNING;
+        this.startFromTimestamp = null;
+        this.startFromTimestampPosition = 0;
+    }
+
+    public void setStartFromNow() {
+        this.startFromKind = LiveViewDefinition.START_FROM_NOW;
+        this.startFromTimestamp = null;
+        this.startFromTimestampPosition = 0;
+    }
+
+    public void setStartFromTimestamp(String startFromTimestamp, int startFromTimestampPosition) {
+        this.startFromKind = LiveViewDefinition.START_FROM_TIMESTAMP;
+        this.startFromTimestamp = startFromTimestamp;
+        this.startFromTimestampPosition = startFromTimestampPosition;
     }
 
     public void setViewName(String viewName) {

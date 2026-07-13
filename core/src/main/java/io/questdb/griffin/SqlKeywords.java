@@ -163,6 +163,11 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'h';
     }
 
+    /**
+     * BACKFILL is no longer part of the live-view grammar; START FROM BEGINNING replaced it.
+     * The parser still recognizes the token so it can reject it with that pointer instead of
+     * a generic "'as' expected".
+     */
     public static boolean isBackfillKeyword(CharSequence tok) {
         return tok.length() == 8
                 && (tok.charAt(0) | 32) == 'b'
@@ -173,6 +178,19 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'i'
                 && (tok.charAt(6) | 32) == 'l'
                 && (tok.charAt(7) | 32) == 'l';
+    }
+
+    public static boolean isBeginningKeyword(CharSequence tok) {
+        return tok.length() == 9
+                && (tok.charAt(0) | 32) == 'b'
+                && (tok.charAt(1) | 32) == 'e'
+                && (tok.charAt(2) | 32) == 'g'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'n'
+                && (tok.charAt(5) | 32) == 'n'
+                && (tok.charAt(6) | 32) == 'i'
+                && (tok.charAt(7) | 32) == 'n'
+                && (tok.charAt(8) | 32) == 'g';
     }
 
     public static boolean isBetweenKeyword(CharSequence tok) {

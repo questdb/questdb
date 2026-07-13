@@ -75,7 +75,7 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
             execute("ALTER TABLE base CONVERT PARTITION TO PARQUET WHERE ts < '2026-01-05'");
             drainWalQueue();
 
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS v " +
                     "FROM base WHERE i > 0");
 
@@ -128,7 +128,7 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
             execute("ALTER TABLE base CONVERT PARTITION TO PARQUET WHERE ts < '2026-01-09'");
             drainWalQueue();
 
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                     "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS v " +
                     "FROM base WHERE i > 0");
 

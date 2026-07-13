@@ -1688,7 +1688,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + bucket + ")";
         final String oracleSql = "SELECT " + anchoredOracleProjection(variant, bucket) + " FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -1820,7 +1820,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -1963,7 +1963,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + "AS " + viewSql;
+                + "START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -2114,7 +2114,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection + " FROM base" + where;
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + "AS " + viewSql;
+                + "START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -2310,7 +2310,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -2482,7 +2482,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String projection = projection(variant, n);
         final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -2712,7 +2712,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMem ? "IN MEMORY 60s " : "")
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -2964,7 +2964,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         try {
             for (int v = 0; v < viewCount; v++) {
                 final String inMem = rnd.nextBoolean() ? "IN MEMORY 60s " : "";
-                execute("CREATE LIVE VIEW " + viewNames[v] + " FLUSH EVERY 100ms " + inMem + "AS " + viewSql[v]);
+                execute("CREATE LIVE VIEW " + viewNames[v] + " FLUSH EVERY 100ms " + inMem + "START FROM NOW AS " + viewSql[v]);
             }
             job = new LiveViewRefreshJob(0, engine, 1);
 
@@ -3053,7 +3053,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -3177,7 +3177,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + "AS " + viewSql;
+                + "START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -3283,7 +3283,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + "BACKFILL AS " + viewSql;
+                + "START FROM BEGINNING AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -3377,7 +3377,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT ts, vs, vv, i, row_number() OVER () AS rn FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + "AS " + viewSql;
+                + "START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -3550,7 +3550,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection + " FROM base" + where;
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -3764,7 +3764,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -3908,7 +3908,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
@@ -4041,7 +4041,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final String viewSql = "SELECT ts, vs, vv, vb, va, row_number() OVER () AS rn FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s "
-                + (backfill ? "BACKFILL " : "")
+                + (backfill ? "START FROM BEGINNING " : "START FROM NOW ")
                 + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");

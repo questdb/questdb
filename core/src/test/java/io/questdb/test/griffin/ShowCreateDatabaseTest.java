@@ -408,7 +408,7 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             // emit the live view first and its CREATE LIVE VIEW replay would fail; the
             // dependency edge must emit z_base first.
             execute("create table z_base (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("create live view a_lv flush every 1s as " +
+            execute("create live view a_lv flush every 1s start from now as " +
                     "select ts, x, row_number() over () as rn from z_base where x > 0");
             drainWalQueue();
 
@@ -446,7 +446,7 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
             node1.setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
             execute("create table base (ts timestamp, x int) timestamp(ts) partition by day wal");
-            execute("create live view lv flush every 1s as " +
+            execute("create live view lv flush every 1s start from now as " +
                     "select ts, x, row_number() over () as rn from base where x > 0");
             drainWalQueue();
 

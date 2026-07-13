@@ -315,7 +315,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             worker.start();
             boolean threw = false;
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
                         "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
             } catch (Throwable expected) {
                 threw = true; // the injected registerBaseTable failure rolls the CREATE back
@@ -369,7 +369,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             execute("DROP LIVE VIEW IF EXISTS lv");
             execute("DROP TABLE IF EXISTS base");
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
                     "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
 
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -816,7 +816,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         final int n = 1 + rnd.nextInt(8);
         final String viewSql = "SELECT " + projection(0, n) + " FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -927,7 +927,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS "
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS "
                 + "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
 
         // One committed base row so the view carries a real durable _lv.s to rewrite.
@@ -1037,7 +1037,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
-                + "AS " + viewSql;
+                + "START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -1145,7 +1145,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         final int n = 1 + rnd.nextInt(8);
         final String viewSql = "SELECT " + projection(0, n) + " FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " + viewSql;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -1238,7 +1238,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // deterministically reaches the mint - no deferred FLUSH cadence to wait on.
         final String viewSql = "SELECT ts, sym, sum(i) OVER (PARTITION BY sym ORDER BY ts "
                 + "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base";
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
         final TableToken baseToken = engine.verifyTableName("base");
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
@@ -1335,7 +1335,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         final int n = 1 + rnd.nextInt(8);
         final String viewSql = "SELECT " + projection(0, n) + " FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s BACKFILL AS " + viewSql;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM BEGINNING AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -1434,7 +1434,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final String viewSql = "SELECT " + projection(0, n) + " FROM base";
         // IN MEMORY so the drop tears down the in-mem tier (slot buffers, double
         // buffer) under the race, not just the on-disk path.
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -1534,8 +1534,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final double[] xv = new double[rowCount];
         generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
 
-        execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms IN MEMORY 60s AS " + view1Sql);
-        execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms IN MEMORY 60s AS " + view2Sql);
+        execute("CREATE LIVE VIEW lv1 FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + view1Sql);
+        execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + view2Sql);
 
         LOG.info().$("LV concurrency multi-view: writers=").$(numWriters)
                 .$(", rows=").$(rowCount).$(", n=").$(n).$();
@@ -1619,7 +1619,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // in-mem tier (Mode B) so the multi-worker refresh churns the tier under the
         // readers, and the readers can assert the gapless-rn prefix invariant.
         final String viewSql = "SELECT ts, i, row_number() OVER () AS rn FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -1767,7 +1767,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS "
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS "
                 + "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
 
         final TableToken baseToken = engine.verifyTableName("base");
@@ -1878,7 +1878,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final String viewSql = modeB
                 ? "SELECT ts, i, row_number() OVER () AS rn FROM base"
                 : "SELECT " + projection(0, n) + " FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
@@ -2020,7 +2020,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final String viewSql = "SELECT ts, vs, vv, row_number() OVER () AS rn FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s AS " + viewSql;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");

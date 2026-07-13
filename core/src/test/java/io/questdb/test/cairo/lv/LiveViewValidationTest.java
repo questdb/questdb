@@ -25,6 +25,8 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
@@ -77,9 +79,9 @@ public class LiveViewValidationTest extends AbstractCairoTest {
 
             // Free the name, then a real live view; IF NOT EXISTS over the SAME kind no-ops.
             execute("DROP TABLE lv");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
-            execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             Assert.assertNotNull("IF NOT EXISTS over an existing live view must be a no-op",
                     engine.getLiveViewRegistry().getViewInstance("lv"));
@@ -98,7 +100,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_ENABLED, "false");
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected CREATE LIVE VIEW to be rejected when live views are disabled");
             } catch (SqlException e) {
@@ -124,10 +126,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // testCreateNameCollisionMessage), so both wordings are locked.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                         "SELECT ts, x, row_number() OVER () AS rn FROM base");
                 Assert.fail("expected same-kind collision reject");
             } catch (SqlException e) {
@@ -151,7 +153,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // without) - an Error escaping compile(), i.e. a 500 on HTTP/pgwire instead of a plan.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS "
+            final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
                     + "SELECT ts, x, row_number() OVER () AS rn FROM base";
 
             final StringSink plan = new StringSink();
@@ -181,7 +183,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // CREATE never generates.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS "
+            final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
                     + "SELECT ts, sym, x, row_number() OVER () AS rn FROM base WHERE sym = 'a'";
 
             final StringSink plan = new StringSink();
@@ -224,7 +226,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             armed.set(true);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             armed.set(false);
 
@@ -253,7 +255,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, a DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, sym, a, sum(a) OVER (PARTITION BY sym ORDER BY ts " +
                     "ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
 
@@ -282,7 +284,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // executeCreateLiveView already guards in the opposite direction.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
 
             // IF NOT EXISTS first: it is the dangerous arm (a silent no-op, not a wrong message).
@@ -311,7 +313,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             // A single-letter and a two-letter unit, both with an underscore, round-trip
             // to the plain numeric value (1_200s -> 1200s, 1_800s -> 1800s, both under the
             // 60-minute IN MEMORY cap; 1_500ms -> 1500ms exercises the "ms" unit path).
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1_200s IN MEMORY 1_800s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1_200s IN MEMORY 1_800s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(lv);
@@ -321,7 +323,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertEquals('s', lv.getDefinition().getInMemoryIntervalUnit());
             execute("DROP LIVE VIEW lv");
 
-            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1_500ms AS " +
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1_500ms START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance lv2 = engine.getLiveViewRegistry().getViewInstance("lv2");
             Assert.assertNotNull(lv2);
@@ -331,11 +333,11 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             execute("DROP LIVE VIEW lv2");
 
             // Misplaced separators fail closed with the "invalid duration value" reject.
-            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY _600s AS " +
+            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY _600s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
-            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY 3__600s AS " +
+            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY 3__600s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
-            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY 600_s AS " +
+            assertInvalidDurationValueRejected("CREATE LIVE VIEW lv FLUSH EVERY 600_s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             Assert.assertNull("no view should survive a malformed-duration reject",
                     engine.getLiveViewRegistry().getViewInstance("lv"));
@@ -416,13 +418,13 @@ public class LiveViewValidationTest extends AbstractCairoTest {
 
             // Ascending ORDER BY on the designated timestamp elides into the forward scan the
             // refresh path already drives, so it stays accepted - the reject must not widen to it.
-            execute("CREATE LIVE VIEW lv_asc FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_asc FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts ASC");
             execute("DROP LIVE VIEW lv_asc");
-            execute("CREATE LIVE VIEW lv_default FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_default FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base ORDER BY ts");
             execute("DROP LIVE VIEW lv_default");
-            execute("CREATE LIVE VIEW lv_anchor FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_anchor FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, avg(x) OVER w AS a FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts)) ORDER BY ts ASC");
             execute("DROP LIVE VIEW lv_anchor");
@@ -461,7 +463,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             //
             // An explicit column list naming exactly what "*" would have expanded to stays accepted
             // - the reject is about the wildcard re-expanding on a recompile, not about the columns.
-            execute("CREATE LIVE VIEW lv_explicit FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv_explicit FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             execute("DROP LIVE VIEW lv_explicit");
         });
@@ -477,10 +479,10 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             assertDurationOutOfRangeRejected(
-                    "CREATE LIVE VIEW lv FLUSH EVERY 100_000_000_000_000_000d AS " +
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100_000_000_000_000_000d START FROM NOW AS " +
                             "SELECT ts, x, row_number() OVER () AS rn FROM base");
             assertDurationOutOfRangeRejected(
-                    "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 100_000_000_000_000_000d AS " +
+                    "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 100_000_000_000_000_000d START FROM NOW AS " +
                             "SELECT ts, x, row_number() OVER () AS rn FROM base");
         });
     }
@@ -503,7 +505,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             assertLagOverWideDecimalRejected("d256");
 
             // DECIMAL64 (precision 18) stays on the snapshot-capable base function.
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, lag(d64, 1) OVER w AS prev FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             Assert.assertNotNull(
@@ -521,7 +523,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         // at CREATE, with the position pointing at the base table name.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base_nowal (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base_nowal";
             try {
                 execute(createSql);
@@ -543,10 +545,175 @@ public class LiveViewValidationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStartFromBackfillKeywordRejected() throws Exception {
+        // BACKFILL is gone: START FROM BEGINNING is the same intent, spelled in the clause
+        // that every view now carries. The reject names the replacement so a stale script
+        // does not send anyone hunting for a removed keyword.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+            assertException(createSql, createSql.indexOf("BACKFILL"),
+                    "live view BACKFILL is not supported, use START FROM BEGINNING");
+        });
+    }
+
+    @Test
+    public void testStartFromExpressionRejected() throws Exception {
+        // The boundary must be a constant the view can persist once. An expression - even a
+        // constant-folding one - has no persisted form, so it is rejected at the value token.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM dateadd('d', -1, 0::timestamp) AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+            assertException(createSql, createSql.indexOf("dateadd"),
+                    "'now', 'beginning' or a quoted timestamp literal expected");
+
+            // NOW is grammar, not the now() function, so the call syntax is rejected too.
+            final String nowCallSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW() AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+            assertException(nowCallSql, nowCallSql.indexOf('('),
+                    "live view START FROM NOW does not take arguments");
+        });
+    }
+
+    @Test
+    public void testStartFromMalformedTimestampRejected() throws Exception {
+        // The literal parses at CREATE, against the base's designated timestamp driver, so a
+        // malformed one is caught there - but it must still report against the token the user
+        // typed, not against the CREATE statement's start.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM 'not-a-timestamp' AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+            assertException(createSql, createSql.indexOf("'not-a-timestamp'"),
+                    "invalid live view START FROM timestamp [ts=not-a-timestamp]");
+            Assert.assertNull("no view should survive a malformed-boundary reject",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+        });
+    }
+
+    @Test
+    public void testStartFromMissingFromKeyword() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START NOW AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+            assertException(createSql, createSql.indexOf("NOW"), "'from' expected");
+        });
+    }
+
+    @Test
+    public void testStartFromNullRejected() throws Exception {
+        // A designated timestamp is never NULL, so a NULL boundary could neither admit nor
+        // reject a row: it is a user error, not an "unbounded" spelling of BEGINNING.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NULL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+            assertException(createSql, createSql.indexOf("NULL"),
+                    "live view START FROM does not accept NULL");
+        });
+    }
+
+    @Test
+    public void testStartFromRequired() throws Exception {
+        // START FROM decides which base rows the view ever contains; there is no defensible
+        // default, so a CREATE without it is rejected at the AS that closed the clause list.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+            assertException(createSql, createSql.indexOf("AS"),
+                    "live view requires a START FROM clause");
+            Assert.assertNull("no view should survive a missing-START-FROM reject",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+        });
+    }
+
+    @Test
+    public void testStartFromTimestampNanoBase() throws Exception {
+        // A NANO base parses the literal through the nanosecond driver, so a sub-microsecond
+        // boundary survives CREATE intact instead of truncating to the micro grid. SHOW CREATE
+        // renders it back at the same precision.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_ns (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM '2026-04-01T00:00:15.000000123Z' AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base_ns");
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertEquals(LiveViewDefinition.START_FROM_TIMESTAMP, lv.getDefinition().getStartFromKind());
+            Assert.assertEquals(
+                    NanosTimestampDriver.INSTANCE.parseFloorLiteral("2026-04-01T00:00:15.000000123Z"),
+                    lv.getDefinition().getViewLowerBoundTimestamp()
+            );
+
+            assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY " +
+                    "START FROM '2026-04-01T00:00:15.000000123Z' AS (\n" +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base_ns\n" +
+                    ");\n");
+        });
+    }
+
+    @Test
+    public void testStartFromTimestampResolvesBoundary() throws Exception {
+        // An explicit boundary persists exactly what the user wrote, in base-table units, and
+        // SHOW CREATE round-trips it as a quoted literal (unlike NOW, which round-trips as the
+        // keyword and re-resolves at the next CREATE).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM '2026-04-01T00:00:15.000000Z' AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertEquals(LiveViewDefinition.START_FROM_TIMESTAMP, lv.getDefinition().getStartFromKind());
+            Assert.assertEquals(
+                    MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2026-04-01T00:00:15.000000Z"),
+                    lv.getDefinition().getViewLowerBoundTimestamp()
+            );
+
+            assertQuery("SHOW CREATE LIVE VIEW lv").noLeakCheck().noRandomAccess().returns("ddl\n" +
+                    "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY " +
+                    "START FROM '2026-04-01T00:00:15.000000Z' AS (\n" +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
+                    ");\n");
+
+            // The rendered DDL is executable: drop and replay it verbatim.
+            execute("DROP LIVE VIEW lv");
+            execute("CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY " +
+                    "START FROM '2026-04-01T00:00:15.000000Z' AS (\n" +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
+                    ");");
+            final LiveViewInstance replayed = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(replayed);
+            Assert.assertEquals(
+                    MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2026-04-01T00:00:15.000000Z"),
+                    replayed.getDefinition().getViewLowerBoundTimestamp()
+            );
+        });
+    }
+
+    @Test
+    public void testStartFromUnquotedTimestampRejected() throws Exception {
+        // An unquoted timestamp is not a constant the parser can see; require the quoted form
+        // rather than letting the lexer's split tokens produce a confusing downstream error.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM 2026-04-01T00:00:15.000000Z AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
+            assertException(createSql, createSql.indexOf("2026"),
+                    "'now', 'beginning' or a quoted timestamp literal expected");
+        });
+    }
+
     private void assertCreateLiveViewCollisionRejected(boolean ifNotExists) throws Exception {
         try {
             execute("CREATE LIVE VIEW " + (ifNotExists ? "IF NOT EXISTS " : "") +
-                    "lv FLUSH EVERY 1s AS SELECT ts, x, row_number() OVER () AS rn FROM base");
+                    "lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, row_number() OVER () AS rn FROM base");
             Assert.fail("expected name-collision reject [ifNotExists=" + ifNotExists + ']');
         } catch (SqlException e) {
             Assert.assertTrue(
@@ -571,7 +738,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
 
     private void assertLagOverWideDecimalRejected(String col) throws Exception {
         try {
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT ts, x, lag(" + col + ", 1) OVER w AS prev FROM base " +
                     "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             // Should not reach here; drop defensively so a spurious success does not
@@ -621,7 +788,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
 
     private void assertLiveViewShapeRejected(String selectSql, String expectedMessage) throws Exception {
         try {
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " + selectSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql);
             // Should not reach here; drop defensively so a spurious success does not
             // leave a view that trips the next assertion on the same name.
             execute("DROP LIVE VIEW lv");
@@ -636,7 +803,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
 
     private void assertOrderByDescRejected(String selectSql) throws Exception {
         try {
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " + selectSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql);
             // Should not reach here; drop defensively so a spurious success does not
             // leave a view that trips the next assertion on the same name.
             execute("DROP LIVE VIEW lv");
@@ -654,7 +821,7 @@ public class LiveViewValidationTest extends AbstractCairoTest {
 
     private void assertLiveViewCreateRejected(String selectSql, String offendingToken) throws Exception {
         try {
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " + selectSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql);
             // Should not reach here; drop defensively so a spurious success does not
             // leave a view that trips the next assertion on the same name.
             execute("DROP LIVE VIEW lv");

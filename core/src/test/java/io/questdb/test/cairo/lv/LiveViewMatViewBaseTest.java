@@ -63,7 +63,7 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
             // Create over the still-empty mat view so the live view consumes its commits
             // incrementally rather than backfilling.
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, k, v) VALUES " +
@@ -129,7 +129,7 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
             final String viewSql = "SELECT ts, k, avg(av) OVER (" +
                     "PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS a FROM mvbase";
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, k, v) VALUES " +
@@ -196,7 +196,7 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
             final String viewSql = "SELECT ts, k, sum(v) OVER (" +
                     "PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base";
             setCurrentMicros(0L);
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " + viewSql);
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + viewSql);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 execute("INSERT INTO base (ts, k, v) VALUES " +

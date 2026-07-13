@@ -77,7 +77,7 @@ public class LiveViewMatViewDisabledTest extends AbstractBootstrapTest {
 
                 // BACKFILL admits the pre-existing (historical-timestamp) rows regardless
                 // of the view's real-time lower bound, so the assertion is deterministic.
-                serverMain.execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                serverMain.execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " +
                         "SELECT val, ts, row_number() OVER () AS rn FROM base");
 
                 // With the refresh job wired, the backfill sweep materialises all three

@@ -743,7 +743,7 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         // stay unused: the type guard fires before any create attempt.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT val, ts, row_number() OVER () AS rn FROM base");
 
             LineHttpProcessorConfiguration lineConfig =
