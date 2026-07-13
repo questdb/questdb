@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -114,6 +115,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long deferredErrorSequence = -1;
     private byte deferredErrorStatus;
     private boolean durableAckEnabled;
+    // Connection's negotiated durability tier (DurabilityTier.NONE/LOCAL/REPLICATED/
+    // DEFAULT). Selects which frontier collectDurableProgress reads -- see its Javadoc.
+    private int durableAckTier = DurabilityTier.NONE;
     private long fd = -1;
     // Whether onHeadersReady wrote the 101 bytes into the send buffer but
     // deferred the actual rawSocket.send to onRequestComplete. Set true in
@@ -283,16 +287,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * durable seqTxn has advanced since the last durable ack was sent.
      * The caller must consume the map before the next call.
      * <p>
-     * Uses the max of the two durability tiers:
+     * Selects the frontier for this connection's negotiated {@link #durableAckTier}
+     * instead of taking the max of both tiers:
      * <ul>
-     *   <li>local tier: {@link DurableAckRegistry#getLocalDurableSeqTxn(CharSequence)} —
-     *       fdatasync'd to local disk (ADAPTIVE tables, OSS + Enterprise)</li>
-     *   <li>uploaded tier: {@link DurableAckRegistry#getDurablyUploadedSeqTxn(CharSequence)} —
+     *   <li>{@link DurabilityTier#REPLICATED}: {@link DurableAckRegistry#getDurablyUploadedSeqTxn(CharSequence)} —
      *       uploaded to an object store (Enterprise replication only)</li>
+     *   <li>otherwise ({@link DurabilityTier#LOCAL}): {@link DurableAckRegistry#getLocalDurableSeqTxn(CharSequence)} —
+     *       fdatasync'd to local disk (ADAPTIVE tables, OSS + Enterprise)</li>
      * </ul>
-     * The frontier is {@code max(local, uploaded)}. An OSS adaptive table satisfies the durable-ack
-     * immediately via the local tier (W=0). An Enterprise table can satisfy via either tier,
-     * whichever is ahead.
+     * No {@code max()}: {@code localDurableSeqTxn >= uploadedSeqTxn} always holds, so a blind
+     * max would silently resolve to the local frontier and downgrade a REPLICATED
+     * (failover-safe) client's guarantee to mere LOCAL (power-loss-safe) durability.
+     * Selecting the requested tier is exactly the requested guarantee.
      * <p>
      * Only iterates tables with outstanding durable work, not every table
      * the connection has ever written to.
@@ -306,11 +312,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
             String dirName = pendingDurableDirNames.get(tableName);
-            // Durability frontier = max(local-fsync tier, uploaded tier).
-            // Both return -1 when not applicable; max(-1, -1) = -1 => no progress.
-            long localSeqTxn = registry.getLocalDurableSeqTxn(dirName);
-            long uploadedSeqTxn = registry.getDurablyUploadedSeqTxn(dirName);
-            long durableSeqTxn = Math.max(localSeqTxn, uploadedSeqTxn);
+            // Durability frontier for this connection's negotiated tier. REPLICATED reads the
+            // uploaded frontier; LOCAL reads the local-fsync frontier. No max(): selecting the
+            // requested tier is exactly the requested guarantee (local >= uploaded), so a
+            // REPLICATED client is never advanced by the weaker local tier.
+            long durableSeqTxn = (durableAckTier == DurabilityTier.REPLICATED)
+                    ? registry.getDurablyUploadedSeqTxn(dirName)
+                    : registry.getLocalDurableSeqTxn(dirName);
             if (durableSeqTxn >= 0) {
                 long lastSent = lastDurableSeqTxns.get(tableName);
                 if (durableSeqTxn > lastSent) {
@@ -665,6 +673,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // Drop any durable-ack state; the connection is going away, so even if
         // uploads complete later, there is nobody left to notify.
         durableAckEnabled = false;
+        durableAckTier = DurabilityTier.NONE;
         pendingAckSeqTxns.clear();
         pendingDurableDirNames.clear();
         pendingDurableSeqTxns.clear();
@@ -965,6 +974,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void setDurableAckEnabled(boolean durableAckEnabled) {
         this.durableAckEnabled = durableAckEnabled;
+    }
+
+    public void setDurableAckTier(int tier) {
+        this.durableAckTier = tier;
+    }
+
+    public int getDurableAckTier() {
+        return durableAckTier;
     }
 
     public void setHandshakeFlushPending(boolean pending) {

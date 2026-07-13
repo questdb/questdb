@@ -32,6 +32,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -501,6 +502,57 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             } finally {
                 state.onDisconnected();
                 state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testCollectDurableProgressSelectsByTier() throws Exception {
+        // Anti-downgrade regression: collectDurableProgress must SELECT the
+        // frontier for the connection's negotiated tier, never max() the two
+        // tiers together. Since localDurableSeqTxn >= uploadedSeqTxn always
+        // holds in practice, a blind max() resolves to the local frontier --
+        // which would silently downgrade a REPLICATED (failover-safe) client
+        // to mere LOCAL (power-loss-safe) durability.
+        assertMemoryLeak(() -> {
+            // registry where local (10) >= uploaded (4), as always holds in practice
+            DurableAckRegistry registry = new DurableAckRegistry() {
+                @Override
+                public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                    return 10;
+                }
+
+                @Override
+                public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+                    return 4;
+                }
+
+                @Override
+                public boolean isEnabled() {
+                    return true;
+                }
+            };
+
+            // REPLICATED connection must NOT advance past the uploaded frontier.
+            QwpIngressProcessorState replicated = newStateWithPendingTable("t", "t~1");
+            try {
+                replicated.setDurableAckEnabled(true);
+                replicated.setDurableAckTier(DurabilityTier.REPLICATED);
+                Assert.assertEquals(4, replicated.collectDurableProgress(registry).get("t"));
+            } finally {
+                replicated.onDisconnected();
+                replicated.close();
+            }
+
+            // LOCAL connection may advance to the local (fdatasync) frontier.
+            QwpIngressProcessorState local = newStateWithPendingTable("t", "t~1");
+            try {
+                local.setDurableAckEnabled(true);
+                local.setDurableAckTier(DurabilityTier.LOCAL);
+                Assert.assertEquals(10, local.collectDurableProgress(registry).get("t"));
+            } finally {
+                local.onDisconnected();
+                local.close();
             }
         });
     }
@@ -2910,6 +2962,27 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         return fake;
     }
 
+    /**
+     * Builds a state with one table ({@code tableName}, on-disk dir
+     * {@code dirName}) already committed and sitting in the pending
+     * durable-ack set, via the same FakeConsumerTudCache + commit() path the
+     * other collectDurableProgress tests use. durableAckEnabled is left true
+     * (needed for recordCommittedTable to populate pendingDurableDirNames);
+     * callers are still expected to (re-)set it and the tier explicitly.
+     */
+    private static QwpIngressProcessorState newStateWithPendingTable(String tableName, String dirName) throws Exception {
+        LineHttpProcessorConfiguration lineConfig =
+                new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+        QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+        state.of(1, AllowAllSecurityContext.INSTANCE);
+        state.setDurableAckEnabled(true);
+        FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+        fake.queueCommit(new String[]{tableName}, new String[]{dirName}, new long[]{1L});
+        state.setHighestProcessedSequence(0);
+        state.commit();
+        return state;
+    }
+
     private static void addNativeData(QwpIngressProcessorState state, byte[] data) {
         long ptr = Unsafe.malloc(data.length, MemoryTag.NATIVE_HTTP_CONN);
         try {
@@ -3077,6 +3150,23 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
             Long v = watermarks.get(tableDirName.toString());
             return v == null ? -1L : v;
+        }
+
+        // This shared fake predates per-connection tier selection and does not
+        // model two independent frontiers: it mirrors the same watermark for
+        // the local tier as for the uploaded tier, so tests using it via set()
+        // get consistent progress regardless of which tier the connection
+        // under test negotiated (most don't set one and default to
+        // DurabilityTier.NONE, which reads this method). Before tier selection
+        // replaced collectDurableProgress's Math.max(), that max() collapsed to
+        // the uploaded value anyway because this fake's local tier was always
+        // -1 -- so mirroring here preserves those tests' original behavior
+        // exactly. Tests that must tell LOCAL and REPLICATED apart (e.g.
+        // testCollectDurableProgressSelectsByTier) construct their own
+        // asymmetric DurableAckRegistry instead of using this fake.
+        @Override
+        public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+            return getDurablyUploadedSeqTxn(tableDirName);
         }
 
         @Override

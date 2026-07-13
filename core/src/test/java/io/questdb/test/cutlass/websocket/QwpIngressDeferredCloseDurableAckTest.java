@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.websocket;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -919,6 +920,13 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         state.of(-1, AllowAllSecurityContext.INSTANCE);
         // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
         state.setDurableAckEnabled(true);
+        // This harness's registry (newEngineWithRegistry) models only the
+        // uploaded/Enterprise tier (getDurablyUploadedSeqTxn), with no local
+        // tracking -- so the connection must negotiate REPLICATED for
+        // collectDurableProgress to read that tier. Real handshake tier
+        // negotiation from the X-QWP-Request-Durable-Ack header value lands in
+        // a later task; this pins the tier the same way that negotiation will.
+        state.setDurableAckTier(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
     }
@@ -937,6 +945,13 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         state.of(-1, AllowAllSecurityContext.INSTANCE);
         // durable-ack opt-in, as negotiated via X-QWP-Request-Durable-Ack
         state.setDurableAckEnabled(true);
+        // This harness's registry (newEngineWithRegistry) models only the
+        // uploaded/Enterprise tier (getDurablyUploadedSeqTxn), with no local
+        // tracking -- so the connection must negotiate REPLICATED for
+        // collectDurableProgress to read that tier. Real handshake tier
+        // negotiation from the X-QWP-Request-Durable-Ack header value lands in
+        // a later task; this pins the tier the same way that negotiation will.
+        state.setDurableAckTier(DurabilityTier.REPLICATED);
         getLV().set(context, state);
         return state;
     }
