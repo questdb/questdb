@@ -719,12 +719,12 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute(isReplace
                     ? "insert into base values " +
-                    "('OLD', 1.0, '2024-01-05T00:00:00.000000Z')," +
-                    "('KEEP', 3.0, '2024-01-05T01:00:00.000000Z')," +
-                    "('NEW', 4.0, '2024-01-20T00:00:00.000000Z')"
+                      "('OLD', 1.0, '2024-01-05T00:00:00.000000Z')," +
+                      "('KEEP', 3.0, '2024-01-05T01:00:00.000000Z')," +
+                      "('NEW', 4.0, '2024-01-20T00:00:00.000000Z')"
                     : "insert into base values " +
-                    "('OLD', 1.0, '2024-01-05T00:00:00.000000Z')," +
-                    "('NEW', 4.0, '2024-01-20T00:00:00.000000Z')");
+                      "('OLD', 1.0, '2024-01-05T00:00:00.000000Z')," +
+                      "('NEW', 4.0, '2024-01-20T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v < 2");
             drainWalAndMatViewQueues();

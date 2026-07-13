@@ -115,8 +115,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
             assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                            "B\t5.0\n" +
-                            "D\t9.0\n");
+                    "B\t5.0\n" +
+                    "D\t9.0\n");
         });
     }
 
@@ -150,8 +150,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // d1 partial (A expired, C null kept) -> 1 row; d2 fully expired -> wiped; active d3 kept.
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
             assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                            "C\tnull\n" +
-                            "D\t9.0\n");
+                    "C\tnull\n" +
+                    "D\t9.0\n");
         });
     }
 
@@ -185,8 +185,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // 01-03 retained. The read filter already hid A; now its storage is gone too.
             assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
             assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                            "B\t2.0\n" +
-                            "C\t3.0\n");
+                    "B\t2.0\n" +
+                    "C\t3.0\n");
         });
     }
 
@@ -204,8 +204,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
             drainWalAndMatViewQueues();
             assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                            "B\t5.0\n" +
-                            "C\tnull\n");
+                    "B\t5.0\n" +
+                    "C\tnull\n");
         });
     }
 
@@ -296,7 +296,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("alter materialized view mv set expire rows when v < 2.0");
             drainWalAndMatViewQueues();
             assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                            "BBB\t5.0\n");
+                    "BBB\t5.0\n");
 
             // Drop the policy: all rows visible again.
             execute("alter materialized view mv drop expire");
@@ -308,8 +308,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
             }
             assertQuery("select sym, v from mv order by sym").expectSize().noLeakCheck().returns("sym\tv\n" +
-                            "AAA\t1.0\n" +
-                            "BBB\t5.0\n");
+                    "AAA\t1.0\n" +
+                    "BBB\t5.0\n");
         });
     }
 
@@ -353,7 +353,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             // The read-time filter (reading the policy from the metadata cache) hides v<2 rows.
             assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                            "BBB\t2.5\n");
+                    "BBB\t2.5\n");
         });
     }
 
@@ -397,7 +397,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             // Rows with v < 2 are hidden by the read-time filter.
             assertQuery("select sym, v from mv2 order by sym").noLeakCheck().returns("sym\tv\n" +
-                            "BBB\t2.5\n");
+                    "BBB\t2.5\n");
         });
     }
 
@@ -623,7 +623,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             // Only BBB survives in mv (v>=2), so the join yields only BBB even though dim has AAA.
             assertQuery("select mv.sym, mv.v, dim.label from mv join dim on mv.sym = dim.sym order by mv.sym").noLeakCheck().returns("sym\tv\tlabel\n" +
-                            "BBB\t5.0\tb\n");
+                    "BBB\t5.0\tb\n");
         });
     }
 
@@ -865,8 +865,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
             assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
-                            "B\t2.0\n" +
-                            "C\t3.0\n");
+                    "B\t2.0\n" +
+                    "C\t3.0\n");
         });
     }
 

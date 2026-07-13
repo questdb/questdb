@@ -138,6 +138,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private boolean isLastCleanupFailed;
     private SqlExecutionContextImpl sqlExecutionContext;
     private long survivorStreamOpenCount;
+
     public static boolean assignToPool(WorkerPool workerPool, CairoEngine engine) {
         if (!engine.getConfiguration().isRowExpiryEnabled()) {
             return false;
@@ -789,7 +790,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     }
 
     @TestOnly
-    public long getScalarPartitionScanCount() {        return scalarPartitionScanCount;
+    public long getScalarPartitionScanCount() {
+        return scalarPartitionScanCount;
     }
 
     @TestOnly

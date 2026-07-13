@@ -62,7 +62,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             // The encoded policy is rendered back to a readable clause (no sentinel) in the catalogue.
             assertQuery("select expire_clause, expire_cleanup_every from tables() where table_name = 'mv'").noRandomAccess().noLeakCheck().returns("expire_clause\texpire_cleanup_every\n" +
-                            "KEEP LATEST PARTITION BY k\t30m\n");
+                    "KEEP LATEST PARTITION BY k\t30m\n");
         });
     }
 
@@ -72,7 +72,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             createBaseAndPassthroughKeepLatest();
             // Latest per key is {A:2.0, B:6.0}; the outer WHERE filters the already-latest rows.
             assertQuery("select k, v from mv where v > 3 order by k").noLeakCheck().returns("k\tv\n" +
-                            "B\t6.0\n");
+                    "B\t6.0\n");
         });
     }
 
@@ -81,8 +81,8 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createBaseAndPassthroughKeepLatest();
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("k\tv\tts\n" +
-                            "A\t2.0\t2024-01-02T00:00:00.000000Z\n" +
-                            "B\t6.0\t2024-01-03T00:00:00.000000Z\n");
+                    "A\t2.0\t2024-01-02T00:00:00.000000Z\n" +
+                    "B\t6.0\t2024-01-03T00:00:00.000000Z\n");
         });
     }
 
@@ -94,8 +94,8 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             execute("insert into base values ('A', 9.0, '2024-01-04T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("k\tv\tts\n" +
-                            "A\t9.0\t2024-01-04T00:00:00.000000Z\n" +
-                            "B\t6.0\t2024-01-03T00:00:00.000000Z\n");
+                    "A\t9.0\t2024-01-04T00:00:00.000000Z\n" +
+                    "B\t6.0\t2024-01-03T00:00:00.000000Z\n");
         });
     }
 
@@ -188,7 +188,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             execute("alter materialized view mv set expire rows keep latest partition by k");
             drainWalAndMatViewQueues();
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("k\tv\tts\n" +
-                            "A\t2.0\t2024-01-02T00:00:00.000000Z\n");
+                    "A\t2.0\t2024-01-02T00:00:00.000000Z\n");
         });
     }
 
@@ -212,8 +212,8 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             // Drop pooled readers/writers; the policy must be re-read from _meta and the filter still apply.
             engine.releaseInactive();
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("k\tv\tts\n" +
-                            "A\t2.0\t2024-01-02T00:00:00.000000Z\n" +
-                            "B\t6.0\t2024-01-03T00:00:00.000000Z\n");
+                    "A\t2.0\t2024-01-02T00:00:00.000000Z\n" +
+                    "B\t6.0\t2024-01-03T00:00:00.000000Z\n");
         });
     }
 
@@ -247,8 +247,8 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             // (both latest) is protected. The read-filter result is unchanged.
             assertQuery("select count() c from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("c\n1\n");
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("k\tv\tts\n" +
-                            "A\t3.0\t2024-01-03T00:00:00.000000Z\n" +
-                            "B\t4.0\t2024-01-03T00:00:00.000000Z\n");
+                    "A\t3.0\t2024-01-03T00:00:00.000000Z\n" +
+                    "B\t4.0\t2024-01-03T00:00:00.000000Z\n");
         });
     }
 
@@ -283,9 +283,9 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             // row is physically removed (4 -> 3). The read-filter result is unchanged.
             assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("k\tv\tts\n" +
-                            "A\t2.0\t2024-01-02T00:00:00.000000Z\n" +
-                            "B\t5.0\t2024-01-03T00:00:00.000000Z\n" +
-                            "C\t9.0\t2024-01-01T00:00:00.000000Z\n");
+                    "A\t2.0\t2024-01-02T00:00:00.000000Z\n" +
+                    "B\t5.0\t2024-01-03T00:00:00.000000Z\n" +
+                    "C\t9.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -298,7 +298,7 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep latest on ts partition by k");
             drainWalAndMatViewQueues();
             assertQuery("select k, v, ts from mv order by k").expectSize().noLeakCheck().returns("k\tv\tts\n" +
-                            "A\t2.0\t2024-01-02T00:00:00.000000Z\n");
+                    "A\t2.0\t2024-01-02T00:00:00.000000Z\n");
             sink.clear();
             printSql("show create materialized view mv", sink);
             TestUtils.assertContains(sink.toString(), "EXPIRE ROWS KEEP LATEST ON ts PARTITION BY k");
