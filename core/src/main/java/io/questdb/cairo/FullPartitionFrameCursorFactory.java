@@ -29,7 +29,9 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
@@ -37,6 +39,9 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
     private final int baseOrder;
     private FullBwdPartitionFrameCursor bwdCursor;
     private FullFwdPartitionFrameCursor fwdCursor;
+    private IntervalFwdPartitionFrameCursor lowerBoundCursor;
+    private LongList lowerBoundIntervals;
+    private RuntimeIntervalModel lowerBoundIntervalModel;
 
     public FullPartitionFrameCursorFactory(
             TableToken tableToken,
@@ -56,6 +61,8 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
         super.close();
         fwdCursor = Misc.free(fwdCursor);
         bwdCursor = Misc.free(bwdCursor);
+        lowerBoundCursor = Misc.free(lowerBoundCursor);
+        lowerBoundIntervalModel = Misc.free(lowerBoundIntervalModel);
     }
 
     @Override
@@ -77,6 +84,43 @@ public class FullPartitionFrameCursorFactory extends AbstractPartitionFrameCurso
                 bwdCursor = new FullBwdPartitionFrameCursor();
             }
             return bwdCursor.of(reader);
+        } catch (Throwable th) {
+            Misc.free(reader);
+            throw th;
+        }
+    }
+
+    /**
+     * Returns a forward cursor whose first frame starts at {@code timestampLo},
+     * inclusive. The interval cursor culls historical partitions and binary
+     * searches the boundary partition instead of scanning the row prefix.
+     */
+    public PartitionFrameCursor getCursor(
+            SqlExecutionContext executionContext,
+            @NotNull IntList columnIndexes,
+            long timestampLo
+    ) throws SqlException {
+        authorizeSelect(executionContext, columnIndexes);
+        final TableReader reader = getReader(executionContext);
+        try {
+            reader.setActiveColumns(columnIndexes);
+            if (lowerBoundCursor == null) {
+                lowerBoundIntervals = new LongList(2);
+                lowerBoundIntervals.add(timestampLo);
+                lowerBoundIntervals.add(Long.MAX_VALUE);
+                lowerBoundIntervalModel = new RuntimeIntervalModel(
+                        ColumnType.getTimestampDriver(getMetadata().getTimestampType()),
+                        PartitionBy.NONE,
+                        lowerBoundIntervals
+                );
+                lowerBoundCursor = new IntervalFwdPartitionFrameCursor(
+                        lowerBoundIntervalModel,
+                        getMetadata().getTimestampIndex()
+                );
+            } else {
+                lowerBoundIntervals.setQuick(0, timestampLo);
+            }
+            return lowerBoundCursor.of(reader, executionContext);
         } catch (Throwable th) {
             Misc.free(reader);
             throw th;

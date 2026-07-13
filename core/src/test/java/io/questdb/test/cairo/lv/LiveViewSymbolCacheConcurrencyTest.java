@@ -56,17 +56,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * interning worker. This test exercises the read methods against a worker that
  * is actively growing the cache's per-column id-to-string lists.
  * <p>
- * It also pins down the memory-safety contract of the bounded scan: a reader must
- * bound {@code newSymbolKeyOf} to a symbol horizon published with a happens-before
- * edge (in production the slot-pin CAS; here an {@link AtomicInteger} release /
- * acquire), never to the list's live {@code size()}. The horizon is at most the
- * list size when it was published, so the backing array the reader observes is at
- * least that long even while the worker concurrently grows and reallocates the
- * list - the index stays in bounds without a lock. Bounding to a live size read
- * instead is the bug this guards against: on a weak-memory host (ARM) the reader
- * could observe the bumped size paired with the old, shorter array and index out
- * of bounds. So this doubles as an ARM-CI canary for the bounded read path and as
- * a guard on the append-only {@code id -> string} invariant.
+ * It also pins down both concurrent read structures. A reader bounds
+ * {@code newSymbolKeyOf} to the slot's published symbol horizon, so the reverse
+ * index cannot expose a later assignment. The matching {@code id -> string}
+ * lookup runs while the worker repeatedly reallocates its append-only list; the
+ * list's release/acquire publication must prevent torn or stale values. Production
+ * uses the slot-pin CAS for the horizon publish; this test uses an
+ * {@link AtomicInteger} release/acquire pair. This doubles as an ARM-CI canary for
+ * the concurrent read paths and a guard on the append-only history invariant.
  */
 public class LiveViewSymbolCacheConcurrencyTest {
 
@@ -142,20 +139,16 @@ public class LiveViewSymbolCacheConcurrencyTest {
         // id-to-string list (forcing many backing-array growths) while reader
         // threads resolve symbols by raw int key and by id - exactly what a
         // WHERE/GROUP BY filter and a getSymA print do against a live Mode A
-        // symbol lead. A backing-array reallocation observed mid-scan must not
-        // throw (ArrayIndexOutOfBounds / NPE) nor return a torn id; any id the
+        // symbol lead. Concurrent map publication and backing-array reallocation
+        // must not throw or return a torn id; any id the
         // key lookup returns must round-trip back to the same string.
         //
-        // Each reader bounds its newSymbolKeyOf scan to a horizon the worker
+        // Each reader bounds its newSymbolKeyOf lookup to a horizon the worker
         // publishes through an AtomicInteger release after the matching intern -
         // the unit-level stand-in for the production slot-pin CAS, which publishes
-        // the slot's stamped symbol horizon to a reader. The horizon is at most the
-        // list size when it was published, so the backing array the reader observes
-        // is at least that long; every index stays in bounds even as the worker
-        // reallocates the list under it. On a weak-memory host (ARM) a scan bounded
-        // to the live size() instead could observe the bumped size with the old,
-        // shorter array and go out of bounds - the regression this guards. This is
-        // one of several ARM-CI weak-memory guards for the bounded read path: the
+        // the slot's stamped symbol horizon to a reader. The test races reverse-map
+        // publication and id-list reallocation, then round-trips every found id.
+        // This is one of several ARM-CI weak-memory guards for the read path: the
         // torn-VALUE angle is covered by testReaderPinnedToStaleHorizonSeesNoTornValue
         // and the single-threaded overlay-bounds angle by
         // testOverlayBoundsKeyScanToSlotHorizon. Here it also guards the append-only
@@ -169,7 +162,7 @@ public class LiveViewSymbolCacheConcurrencyTest {
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final AtomicBoolean writerDone = new AtomicBoolean(false);
         // The lead's symbol horizon, published with release semantics after each
-        // intern; readers read it with acquire semantics and never scan past it.
+        // intern; readers read it with acquire semantics and never resolve past it.
         final AtomicInteger publishedHorizon = new AtomicInteger(0);
         final CyclicBarrier barrier = new CyclicBarrier(numReaders + 1);
 
@@ -206,8 +199,8 @@ public class LiveViewSymbolCacheConcurrencyTest {
                     int probe = seed;
                     long probes = 0;
                     while (!writerDone.get()) {
-                        // Acquire-read the published horizon, then bound the scan to
-                        // it - the WHERE/GROUP BY raw-int-key path, memory-safe.
+                        // Acquire-read the published horizon, then bound the lookup
+                        // to it - the WHERE/GROUP BY raw-int-key path.
                         final int horizon = publishedHorizon.get();
                         final int key = cache.newSymbolKeyOf(COL, "v" + probe, 0, horizon);
                         if (key != SymbolTable.VALUE_NOT_FOUND) {
@@ -255,7 +248,7 @@ public class LiveViewSymbolCacheConcurrencyTest {
     @Test
     public void testReaderPinnedToStaleHorizonSeesNoTornValue() throws Exception {
         // Torn-VALUE canary (companion to testConcurrentInternAndReadDoNotRace,
-        // which pins index safety). A reader pins its slot horizon ONCE, then keeps
+        // which races both read indexes). A reader pins its slot horizon ONCE, then keeps
         // resolving in-band values while the worker interns far past that horizon,
         // reallocating the backing array many times without the reader re-acquiring
         // a fresh publish. Every in-band value (id < the pinned horizon) was
@@ -359,15 +352,89 @@ public class LiveViewSymbolCacheConcurrencyTest {
     }
 
     @Test
+    public void testMissingKeyLookupDoesNotScanLeadOverlay() {
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        final LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);
+        final int symbolCount = 4096;
+        for (int i = 0; i < symbolCount; i++) {
+            cache.intern(COL, "value-" + i, NOT_FOUND_READER);
+        }
+
+        final class CountingCharSequence implements CharSequence {
+            private int accesses;
+            private final String value;
+
+            private CountingCharSequence(String value) {
+                this.value = value;
+            }
+
+            @Override
+            public char charAt(int index) {
+                accesses++;
+                return value.charAt(index);
+            }
+
+            @Override
+            public int length() {
+                accesses++;
+                return value.length();
+            }
+
+            @Override
+            public CharSequence subSequence(int start, int end) {
+                return value.subSequence(start, end);
+            }
+        }
+
+        final String missingValue = "absent-value";
+        final CountingCharSequence probe = new CountingCharSequence(missingValue);
+        Assert.assertEquals(
+                SymbolTable.VALUE_NOT_FOUND,
+                cache.newSymbolKeyOf(COL, probe, 0, symbolCount)
+        );
+        Assert.assertTrue(
+                "a cache miss must hash the probe once, not compare it with every lead symbol [accesses="
+                        + probe.accesses + ']',
+                probe.accesses <= missingValue.length() * 4
+        );
+    }
+
+    @Test
+    public void testReverseIndexPreservesPinnedHorizonAcrossReassignment() {
+        final IntList columnTypes = new IntList();
+        columnTypes.add(ColumnType.SYMBOL);
+        final LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);
+
+        Assert.assertEquals(0, cache.intern(COL, "repeated", NOT_FOUND_READER));
+        final int oldHorizon = cache.newSymbolMaxIdExclusive(COL);
+
+        // O3 clears the current interning window. The same string can then be
+        // provisionally assigned a later id while a cursor still holds a slot
+        // stamped with the old horizon.
+        cache.onO3();
+        Assert.assertEquals(1, cache.intern(COL, "repeated", NOT_FOUND_READER));
+        final int newHorizon = cache.newSymbolMaxIdExclusive(COL);
+
+        // The reverse index must retain both assignments: an old slot resolves
+        // the old id, while current and tail-only bands resolve the newer id.
+        Assert.assertEquals(0, cache.newSymbolKeyOf(COL, "repeated", 0, oldHorizon));
+        Assert.assertEquals(1, cache.newSymbolKeyOf(COL, "repeated", 0, newHorizon));
+        Assert.assertEquals(1, cache.newSymbolKeyOf(COL, "repeated", oldHorizon, newHorizon));
+        Assert.assertEquals(
+                SymbolTable.VALUE_NOT_FOUND,
+                cache.newSymbolKeyOf(COL, "repeated", newHorizon, newHorizon + 1)
+        );
+    }
+
+    @Test
     public void testOverlayBoundsKeyScanToSlotHorizon() {
-        // Deterministic guard that the overlay bounds its key scan to the pinned
+        // Deterministic guard that the overlay bounds its key lookup to the pinned
         // slot's symbol horizon, not the cache's live list size. A value a later
         // refresh cycle interned (past the slot horizon) must resolve to
         // VALUE_NOT_FOUND for that slot, and the overlay's symbol count must reflect
-        // the horizon, not the grown size. This is the over-scan a revert to the
-        // live-size scan would reintroduce - caught here on any host (the
-        // memory-safety angle of the same revert needs a weak-memory host; see
-        // testConcurrentInternAndReadDoNotRace).
+        // the horizon, not the grown size. A reverse lookup must not leak an
+        // assignment published by a later refresh cycle.
         final IntList columnTypes = new IntList();
         columnTypes.add(ColumnType.SYMBOL);
         final LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);

@@ -151,30 +151,24 @@ public class WalReader implements Closeable {
 
     /**
      * Returns the int key in {@code [0, hiExclusive)} whose stored value equals {@code value} in
-     * column {@code col}, else {@link SymbolTable#VALUE_NOT_FOUND}. The map has no reverse index,
-     * so this walks the range and compares byte-wise; callers hit it once per filter init per
-     * segment, so the linear scan is fine.
+     * column {@code col}, else {@link SymbolTable#VALUE_NOT_FOUND}. The map lazily builds an
+     * off-heap reverse index that preserves the explicit WAL symbol keys.
      * <p>
      * {@code hiExclusive} is mandatory: the map is cumulative over the whole segment (last writer
      * wins) while callers resolve for a single txn. The WAL writer restarts local symbol ids at the
      * committed count on every commit, so two un-applied commits in one segment give the same key to
      * different new symbols. An unbounded scan could therefore return a key valid in a DIFFERENT txn
      * and match this txn's rows carrying that same local id. Callers pass their clean symbol count,
-     * so the scan only resolves clean-dictionary keys (stable across every txn in the segment); a
+     * so the lookup only resolves clean-dictionary keys (stable across every txn in the segment); a
      * caller's own new symbols come from its per-txn diff overlay.
      */
-    public int getSymbolKey(int col, CharSequence value, DirectString view, int hiExclusive) {
+    public int getSymbolKey(int col, CharSequence value, int hiExclusive) {
         DirectSymbolMap symbolMap = col < symbolMaps.size() ? symbolMaps.getQuick(col) : null;
         if (symbolMap == null || value == null) {
             return SymbolTable.VALUE_NOT_FOUND;
         }
-        for (int k = 0, n = Math.min(symbolMap.size(), hiExclusive); k < n; k++) {
-            CharSequence v = symbolMap.valueOf(k, view);
-            if (v != null && Chars.equals(value, v)) {
-                return k;
-            }
-        }
-        return SymbolTable.VALUE_NOT_FOUND;
+        final int key = symbolMap.keyOf(value, 0, Math.min(symbolMap.size(), hiExclusive));
+        return key > -1 ? key : SymbolTable.VALUE_NOT_FOUND;
     }
 
     /**

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -105,6 +106,27 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             return initBwdPageFrameCursor(partitionFrameCursor, executionContext);
         }
         return null;
+    }
+
+    /**
+     * Opens this full forward scan at an inclusive timestamp lower bound.
+     */
+    public RecordCursor getCursorFromTimestamp(SqlExecutionContext executionContext, long timestampLo) throws SqlException {
+        if (!(partitionFrameCursorFactory instanceof FullPartitionFrameCursorFactory fullFrameFactory)) {
+            throw CairoException.nonCritical().put("timestamp lower-bound cursor requires a full partition scan");
+        }
+        final PartitionFrameCursor partitionFrameCursor = fullFrameFactory.getCursor(
+                executionContext,
+                columnIndexes,
+                timestampLo
+        );
+        final PageFrameCursor frameCursor = initFwdPageFrameCursor(partitionFrameCursor, executionContext);
+        try {
+            return initRecordCursor(frameCursor, executionContext);
+        } catch (Throwable th) {
+            frameCursor.close();
+            throw th;
+        }
     }
 
     @Override

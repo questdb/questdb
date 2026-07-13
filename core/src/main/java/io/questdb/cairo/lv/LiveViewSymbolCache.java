@@ -29,6 +29,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Chars;
 import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -62,49 +63,45 @@ import io.questdb.std.QuietCloseable;
  * </ul>
  * <p>
  * Threading: the refresh worker is the only writer ({@link #intern},
- * {@link #anchor}, {@link #onFlush}, {@link #onO3}). Cursors read only the
- * append-only {@code id -> string} lists ({@link #newSymbolValueOf},
- * {@link #newSymbolKeyOf}) through a {@link LiveViewSymbolTable} overlay. The
- * lists are append-only and a stored id is always assigned before the slot that
- * carries it is published, so the tier-slot acquire/release CAS supplies the
- * happens-before edge that makes a concurrent read of an already-assigned id
- * safe.
+ * {@link #anchor}, {@link #onFlush}, {@link #onO3}). Cursors read the append-only
+ * {@code id -> string} lists through {@link #newSymbolValueOf} and the concurrent
+ * {@code string -> id history} maps through {@link #newSymbolKeyOf}. A stored id
+ * and its reverse-index entry are assigned before the slot that carries the id is
+ * published. The lists and maps publish their entries with release/acquire semantics.
  * <p>
- * A reader must never scan or index past its pinned slot's symbol horizon - the
+ * A reader must never resolve an assignment at or beyond its pinned slot's symbol
+ * horizon - the
  * exclusive id bound stamped on the slot at publish (see
- * {@link LiveViewInMemoryBuffer#newSymbolMaxId}). The {@code id -> string} lists
- * are {@link ConcurrentCharSequenceList}s; {@link #intern} grows one through
- * {@link ConcurrentCharSequenceList#extendAndSet}, which reallocates the backing
- * array. A reader that bounded its scan to the list's <em>live</em> {@code size()}
- * could, on a weak-memory host, observe the bumped size paired with the old,
- * shorter array and index out of bounds. Bounding instead to the slot horizon
- * keeps every index at or below the array length that existed when the slot
- * published (the lists only grow), and the slot-pin CAS publishes that array
- * state to the reader - so the scan stays in bounds without a lock or a volatile
- * size. That is why {@link #newSymbolKeyOf} takes an explicit {@code toId} and the
- * overlay sources it from the slot, never from a live
- * {@link #newSymbolMaxIdExclusive} read (which the tier itself reads writer-side
- * only, to stamp the horizon).
+ * {@link LiveViewInMemoryBuffer#newSymbolMaxId}). The reverse index retains a
+ * newest-first immutable chain because O3 or replica rebinding can assign the same
+ * string a later id while an older pinned slot must still resolve the earlier id.
+ * {@link #newSymbolKeyOf} walks past assignments at or beyond {@code toId} and
+ * returns the newest one in the requested band. The overlay sources {@code toId}
+ * from the slot, never from a live {@link #newSymbolMaxIdExclusive} read.
  * <p>
- * The horizon bound gives index safety; {@link ConcurrentCharSequenceList} adds
- * value safety. A later refresh cycle can reallocate a list after the reader's
- * slot published - a reallocation the slot-pin CAS does not order to the reader -
- * so the list release-stores each new array and acquire-loads it on every read.
+ * {@link ConcurrentCharSequenceList} provides value safety for id-to-string
+ * resolution. A later refresh cycle can reallocate a list after the reader's slot
+ * published, so the list release-stores each new array and acquire-loads it on every read.
  * A reader that observes a new array thus also observes the element copies that
  * filled it, never a stale null at an in-bounds id (which a plain {@link ObjList},
  * storing the array with no fence, would expose as a transient spurious miss).
  * <p>
- * Memory: {@link #idToString} accumulates one immutable string per distinct
- * value that has ever passed through the lead (it is never cleared, so a pinned
- * cursor can keep resolving its slot). For a SYMBOL column - low cardinality by
- * design - this is bounded like the symbol table itself; it is a known RAM cost
- * for a very high cardinality column, which should not be typed SYMBOL.
+ * Memory: {@link #idToString} retains an immutable string and the reverse index
+ * retains one immutable chain node per lead assignment; the reverse map also
+ * retains one key per distinct value. They are never cleared before close because
+ * a pinned cursor can keep resolving an older slot. For a SYMBOL column - low
+ * cardinality by design - this is bounded like the symbol history itself; it is a
+ * known RAM cost for a very high cardinality column, which should not be typed SYMBOL.
  */
 public class LiveViewSymbolCache implements QuietCloseable {
     // Per output column, null for non-SYMBOL columns. Read by cursor overlays;
     // append-only, indexed by absolute LV-table symbol id (null gaps for ids
     // that only ever existed as committed values, which resolve via disk).
     private final ObjList<ConcurrentCharSequenceList> idToString;
+    // Per output column, null for non-SYMBOL columns. Readers use this
+    // append-only value -> assigned-id-history index. Lookup is expected O(1)
+    // except when an old horizon requires walking repeated assignments.
+    private final ObjList<ConcurrentHashMap<SymbolIdChain>> stringToIds;
     // Per output column, the next symbol id to assign to a value new to the lead.
     // Anchored at or above the committed symbol count each drain; advances per
     // new value. Persists across drain ticks within a flush window.
@@ -121,15 +118,18 @@ public class LiveViewSymbolCache implements QuietCloseable {
     public LiveViewSymbolCache(IntList columnTypes) {
         final int n = columnTypes.size();
         this.idToString = new ObjList<>(n);
+        this.stringToIds = new ObjList<>(n);
         this.windowNewToId = new ObjList<>(n);
         this.nextNewId = new IntList(n);
         for (int i = 0; i < n; i++) {
             if (ColumnType.tagOf(columnTypes.getQuick(i)) == ColumnType.SYMBOL) {
                 idToString.add(new ConcurrentCharSequenceList());
+                stringToIds.add(new ConcurrentHashMap<>());
                 windowNewToId.add(new CharSequenceIntHashMap());
                 symbolColumns.add(i);
             } else {
                 idToString.add(null);
+                stringToIds.add(null);
                 windowNewToId.add(null);
             }
             nextNewId.add(0);
@@ -154,6 +154,10 @@ public class LiveViewSymbolCache implements QuietCloseable {
             ConcurrentCharSequenceList list = idToString.getQuick(i);
             if (list != null) {
                 list.clear();
+            }
+            ConcurrentHashMap<SymbolIdChain> reverseMap = stringToIds.getQuick(i);
+            if (reverseMap != null) {
+                reverseMap.clear();
             }
             CharSequenceIntHashMap map = windowNewToId.getQuick(i);
             if (map != null) {
@@ -211,39 +215,45 @@ public class LiveViewSymbolCache implements QuietCloseable {
         final String s = Chars.toString(value);
         windowMap.putAt(ki, s, id);
         idToString.getQuick(col).extendAndSet(id, s);
+        final ConcurrentHashMap<SymbolIdChain> reverseMap = stringToIds.getQuick(col);
+        reverseMap.put(s, new SymbolIdChain(id, reverseMap.get(s)));
         return id;
     }
 
     /**
-     * Linear-scans the lead's new-symbol ids of {@code col} in {@code [fromId,
-     * toId)} for {@code value}, returning its id or {@link SymbolTable#VALUE_NOT_FOUND}.
+     * Looks up {@code value} in the lead's reverse symbol index and returns its
+     * newest assigned id in {@code [fromId, toId)}, or
+     * {@link SymbolTable#VALUE_NOT_FOUND}.
      * The overlay calls this only after the disk symbol table failed to find the
      * value, with {@code fromId} the disk reader's committed count and {@code toId}
-     * the pinned slot's symbol horizon, so the scan covers just that slot's
+     * the pinned slot's symbol horizon, so the lookup covers just that slot's
      * un-flushed lead band (committed values resolve via disk).
      * <p>
      * {@code toId} must be the slot horizon stamped at publish, not a live
-     * {@link #newSymbolMaxIdExclusive} read: it is at most the list size when the
-     * slot published, and the slot-pin CAS publishes a backing array at least that
-     * long to the reader, so every read for {@code i < toId} stays in bounds even
-     * while the writer concurrently grows (and reallocates) the list. See the class
-     * threading note.
+     * {@link #newSymbolMaxIdExclusive} read, so later assignments remain invisible
+     * to the pinned slot. See the class threading note.
      */
     public int newSymbolKeyOf(int col, CharSequence value, int fromId, int toId) {
-        final ConcurrentCharSequenceList list = idToString.getQuick(col);
-        if (list == null) {
+        final ConcurrentHashMap<SymbolIdChain> reverseMap = stringToIds.getQuick(col);
+        if (reverseMap == null || value == null) {
             return SymbolTable.VALUE_NOT_FOUND;
         }
-        final int id = list.indexOf(value, fromId, toId);
-        return id < 0 ? SymbolTable.VALUE_NOT_FOUND : id;
+        SymbolIdChain chain = reverseMap.get(value);
+        while (chain != null) {
+            if (chain.id < toId) {
+                return chain.id >= fromId ? chain.id : SymbolTable.VALUE_NOT_FOUND;
+            }
+            chain = chain.previous;
+        }
+        return SymbolTable.VALUE_NOT_FOUND;
     }
 
     /**
      * One past the highest new-symbol id assigned for {@code col}. Read writer-side
      * only - the tier calls it under the writer sentinel to stamp the slot's symbol
      * horizon at publish (see {@link LiveViewInMemoryBuffer#setNewSymbolMaxId}). A
-     * reader bounds its scan to that stamped horizon, never to this live value (the
-     * class threading note explains why a live read is not memory-safe).
+     * reader bounds its lookup to that stamped horizon, never to this live value
+     * (see the class threading note).
      */
     public int newSymbolMaxIdExclusive(int col) {
         final ConcurrentCharSequenceList list = idToString.getQuick(col);
@@ -301,6 +311,16 @@ public class LiveViewSymbolCache implements QuietCloseable {
     private void clearWindowMaps() {
         for (int i = 0, n = symbolColumns.size(); i < n; i++) {
             windowNewToId.getQuick(symbolColumns.getQuick(i)).clear();
+        }
+    }
+
+    private static final class SymbolIdChain {
+        private final int id;
+        private final SymbolIdChain previous;
+
+        private SymbolIdChain(int id, SymbolIdChain previous) {
+            this.id = id;
+            this.previous = previous;
         }
     }
 }

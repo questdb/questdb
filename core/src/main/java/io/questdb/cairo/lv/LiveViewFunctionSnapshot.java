@@ -77,11 +77,10 @@ public final class LiveViewFunctionSnapshot {
      * {@code payloadLength} - the restore-side mirror of the writer's
      * emitted-vs-live-count check. A function-level offset drift (a
      * restorePartitionState that reads more or fewer bytes than its writer
-     * emitted) would otherwise silently decode the next partition - or, since
-     * the scratch buffer is reused across blocks, a previous block's stale
-     * bytes - from the wrong offset.
+     * emitted) would otherwise silently decode the next partition or block
+     * from the wrong offset.
      *
-     * @param source        positioned at the payload start (just past the prelude)
+     * @param source        read-only memory containing the payload
      * @param offset        byte offset within {@code source} of the payload start
      * @param payloadLength exact byte length of the payload; restore must consume
      *                      all of it

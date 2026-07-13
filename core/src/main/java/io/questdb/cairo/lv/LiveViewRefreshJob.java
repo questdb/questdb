@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -41,9 +42,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.map.Map;
-import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -68,7 +67,9 @@ import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -78,7 +79,6 @@ import io.questdb.mp.Job;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -167,13 +167,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // path. Lazily allocated on the first LV with a head .cp to restore;
     // reused for subsequent LVs by re-opening on a different file.
     private LiveViewCheckpointReader checkpointReader;
-    // Bulk-copy buffer for restoring per-function snapshot blocks. The
-    // snapshot framework reads a function's payload from offset 0, so it
-    // copies the payload bytes here from the checkpoint file and hands the
-    // scratch to LiveViewFunctionSnapshot.restore. Lazily
-    // allocated; reused across functions and across cycles. Freed at
-    // job close.
-    private MemoryCARW checkpointRestoreScratch;
     // Per-worker reusable checkpoint writer. Lazily allocated on the first
     // cycle that triggers a head write; reused across cycles via of() / commit().
     // Memory pages stay mmapped between writes so a frequently-checkpointed LV
@@ -287,7 +280,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(memoryPool);
         Misc.free(applyJob);
         checkpointReader = Misc.free(checkpointReader);
-        checkpointRestoreScratch = Misc.free(checkpointRestoreScratch);
         checkpointWriter = Misc.free(checkpointWriter);
         stagingBuffer = Misc.free(stagingBuffer);
     }
@@ -1196,9 +1188,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         final RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
         final Function filter = filterFactory.getFilter();
-        final RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
-        final RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
-        final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+        final PageFrameRecordCursorFactory pageFrameFactory = (PageFrameRecordCursorFactory) (filter != null ? filterFactory.getBaseFactory() : filterFactory);
         final RecordMetadata outMetadata = windowFactory.getMetadata();
         final int cursorTimestampIndex = outMetadata.getTimestampIndex();
         if (cursorTimestampIndex < 0) {
@@ -1325,10 +1315,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Strictly-forward cheap append over the applied reader.
             // Inclusive lower bound: strictly above the frontier, floored at the view's
             // lower bound. On the first cycle latestSeenTs is LONG_NULL, so the floor
-            // governs and the scan builds window state from empty.
+            // governs and the scan builds window state from empty. MAX has no strict
+            // successor, so its forward range is empty rather than wrapping to MIN.
+            final boolean emptyForwardRange = latestSeenTs == Long.MAX_VALUE;
             final long scanLowTs = latestSeenTs == Numbers.LONG_NULL
                     ? viewLowerBoundTimestamp
-                    : Math.max(latestSeenTs + 1, viewLowerBoundTimestamp);
+                    : emptyForwardRange
+                            ? Long.MAX_VALUE
+                            : Math.max(latestSeenTs + 1, viewLowerBoundTimestamp);
 
             final LiveViewSymbolCache symbolCache = populateTier ? instance.getInMemoryTier().getSymbolCache() : null;
             final boolean internSymbols = symbolCache != null && stagingSymbolColumnIndexes.size() > 0;
@@ -1353,9 +1347,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     final RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
-                    try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
-                        tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, scanLowTs);
-                        RecordCursor source = tsLowerBoundCursor;
+                    try (RecordCursor pageCursor = emptyForwardRange
+                            ? EmptyTableRecordCursor.INSTANCE
+                            : pageFrameFactory.getCursorFromTimestamp(executionContext, scanLowTs)) {
+                        RecordCursor source = pageCursor;
                         if (filter != null) {
                             filteringCursor.of(source, filter, executionContext);
                             source = filteringCursor;
@@ -3722,13 +3717,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (checkpointReader == null) {
             checkpointReader = new LiveViewCheckpointReader(engine.getConfiguration());
         }
-        if (checkpointRestoreScratch == null) {
-            checkpointRestoreScratch = Vm.getCARWInstance(
-                    64 * 1024L,
-                    Integer.MAX_VALUE,
-                    MemoryTag.NATIVE_DEFAULT
-            );
-        }
 
         try {
             checkpointReader.of(path.$());
@@ -3768,8 +3756,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             throw CairoException.critical(0)
                                     .put("checkpoint anchor block but LV has no anchored window");
                         }
-                        copyBlockToScratch(block, 0L, block.size());
-                        anchorWindow.restore(checkpointRestoreScratch);
+                        anchorWindow.restore(block.memory(), block.payloadStart(), block.size());
                         break;
                     case LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT:
                         restoreFunctionBlock(block, functions);
@@ -4015,9 +4002,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     ...key-shape header + per-partition state (consumed by
      *        {@link LiveViewFunctionSnapshot#restore})
      * </pre>
-     * Then bulk-copies the trailing payload bytes into the per-worker scratch
-     * buffer (so {@link LiveViewFunctionSnapshot#restore} reads from offset 0)
-     * and pairs the block with a running window function positionally: the
+     * Then decodes the trailing payload directly from the mapped checkpoint and
+     * pairs the block with a running window function positionally: the
      * writer emits one block per snapshot-capable function in
      * {@code getWindowFunctions()} order, so the i-th block restores into the
      * i-th snapshot-capable function. Matching by factory name alone is
@@ -4102,18 +4088,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         final long payloadStart = offset;
         final long payloadLength = block.size() - payloadStart;
-        copyBlockToScratch(block, payloadStart, payloadLength);
-        LiveViewFunctionSnapshot.restore(checkpointRestoreScratch, 0L, payloadLength, match, formatVersion);
+        LiveViewFunctionSnapshot.restore(block.memory(), block.payloadStart() + payloadStart, payloadLength, match, formatVersion);
     }
 
-    private void copyBlockToScratch(LiveViewCheckpointReader.ReadableBlock block, long offsetInBlock, long length) {
-        checkpointRestoreScratch.jumpTo(0);
-        if (length == 0) {
-            return;
-        }
-        checkpointRestoreScratch.putBlockOfBytes(block.addressOf(offsetInBlock, length), length);
-        checkpointRestoreScratch.jumpTo(0);
-    }
 
     private static long strByteSize(LiveViewCheckpointReader.ReadableBlock block, long offset) {
         // STR encoding: INT length prefix + length * CHAR (2 bytes each). A null
@@ -4648,10 +4625,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         final long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
         final long retainThreshold = maxTs - inMemoryInBaseUnits;
+        final int partitionLo = PartitionBy.isPartitioned(lvReader.getPartitionedBy())
+                ? Math.max(0, lvReader.getPartitionIndexByTimestamp(retainThreshold))
+                : 0;
 
         long dstRow = 0;
         long seamTs = Numbers.LONG_NULL;
-        for (int p = 0; p < pc; p++) {
+        for (int p = partitionLo; p < pc; p++) {
             final long size = lvReader.openPartition(p);
             if (size <= 0) {
                 continue;

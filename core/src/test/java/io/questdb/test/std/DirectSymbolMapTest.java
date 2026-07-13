@@ -154,6 +154,64 @@ public class DirectSymbolMapTest {
     }
 
     @Test
+    public void testExplicitKeyLookupDoesNotScanValues() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                final int symbolCount = 4096;
+                for (int i = 0; i < symbolCount; i++) {
+                    map.put(i, "value-" + i);
+                }
+
+                final class CountingCharSequence implements CharSequence {
+                    private int accesses;
+                    private final String value = "absent-value";
+
+                    @Override
+                    public char charAt(int index) {
+                        accesses++;
+                        return value.charAt(index);
+                    }
+
+                    @Override
+                    public int length() {
+                        accesses++;
+                        return value.length();
+                    }
+
+                    @Override
+                    public CharSequence subSequence(int start, int end) {
+                        return value.subSequence(start, end);
+                    }
+                }
+
+                final CountingCharSequence probe = new CountingCharSequence();
+                Assert.assertEquals(-1, map.keyOf(probe, 0, symbolCount));
+                Assert.assertTrue(
+                        "a miss must hash the probe once, not compare every explicit symbol [accesses="
+                                + probe.accesses + ']',
+                        probe.accesses <= probe.value.length() * 4
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testExplicitKeyLookupHonorsBoundsDuplicatesAndOverwrites() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                map.put(2, "X");
+                map.put(3, "Y");
+                map.put(2, "Y");
+
+                Assert.assertEquals(-1, map.keyOf("X", 0, 4));
+                Assert.assertEquals(2, map.keyOf("Y", 2, 3));
+                Assert.assertEquals(3, map.keyOf("Y", 3, 4));
+                Assert.assertEquals(-1, map.keyOf("Y", 0, 2));
+            }
+        });
+    }
+
+    @Test
     public void testPutNullStoresNullSentinel() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {

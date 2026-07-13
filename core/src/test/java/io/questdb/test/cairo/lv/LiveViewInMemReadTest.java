@@ -42,6 +42,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -1375,6 +1376,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
+            final IntList openedLvPartitions = new IntList();
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 // Cycle 1: four in-order rows on day 2026-05-12.
@@ -1393,10 +1395,23 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                 instance.setLastFlushTimeUs(Numbers.LONG_NULL);
                 execute("INSERT INTO base (ts, x) VALUES ('2026-05-11T23:59:59.000000Z', 5)");
                 drainWalQueue();
+                engine.releaseAllReaders();
+                engine.setReaderListener((tableToken, partitionIndex) -> {
+                    if (instance.getLiveViewToken().equals(tableToken)) {
+                        openedLvPartitions.add(partitionIndex);
+                    }
+                });
                 setCurrentMicros(500_000L);
-                drainJob(job);
+                try {
+                    drainJob(job);
+                } finally {
+                    engine.setReaderListener(null);
+                }
                 drainWalQueue();
             }
+
+            Assert.assertEquals("O3 tier rebuild must open only retained LV partitions",
+                    "[1]", openedLvPartitions.toString());
 
             // The rebuild's tail read skips the 2026-05-11 partition entirely
             // (its newest row is below maxTs - 2s) and binary-searches the

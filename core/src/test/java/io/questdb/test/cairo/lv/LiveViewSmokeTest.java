@@ -89,8 +89,10 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
 
 /**
@@ -383,16 +385,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 try (MemoryCARW s1 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                      MemoryCARW s2 = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    s1.putLong(0x0123_4567_89ab_cdefL);
+                    final long payloadStart = s1.getAppendOffset();
                     LiveViewFunctionSnapshot.write(s1, fn);
-                    final long len = s1.getAppendOffset();
+                    final long len = s1.getAppendOffset() - payloadStart;
                     fn.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    LiveViewFunctionSnapshot.restore(s1, 0L, len, fn, 1);
+                    LiveViewFunctionSnapshot.restore(s1, payloadStart, len, fn, 1);
                     Assert.assertEquals(2L, fnMap.size());
                     LiveViewFunctionSnapshot.write(s2, fn);
                     Assert.assertEquals(len, s2.getAppendOffset());
                     for (long i = 0; i < len; i++) {
-                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(i), s2.getByte(i));
+                        Assert.assertEquals("snapshot byte mismatch at " + i, s1.getByte(payloadStart + i), s2.getByte(i));
                     }
                 }
             }
@@ -4310,6 +4314,86 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     lvConsumedPostRefresh,
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testDedupForwardRefreshAtMaxTimestampDoesNotWrapLowerBound() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+                    "DEDUP UPSERT KEYS(ts)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final TableToken baseToken = engine.verifyTableName("base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base VALUES ('2026-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+
+                // SQL ingestion caps designated timestamps at year 9999, so
+                // install the arithmetic boundary directly. This is the same
+                // persisted frontier value the drain must handle defensively.
+                instance.setLatestSeenTs(Long.MAX_VALUE);
+                Assert.assertEquals(Long.MAX_VALUE, instance.getLatestSeenTs());
+                final long lastProcessedBefore = instance.getLastProcessedSeqTxn();
+                final long rawWalCyclesBefore = instance.getDedupRawWalCleanCycles();
+
+                // This unreferenced schema change contributes no DATA rows but
+                // still advances the base sequencer. The forward applied-base
+                // drain must treat (Long.MAX_VALUE, +inf) as empty; adding one
+                // to the frontier wraps to Long.MIN_VALUE and re-appends the
+                // terminal row.
+                setCurrentMicros(2_000_000L);
+                execute("ALTER TABLE base ADD COLUMN y INT");
+                drainWalQueue();
+                // Force the conservative applied-base route used for a cold or
+                // diverged dedup signal. The ALTER itself is non-DATA, so the
+                // resulting scan range above the synthetic MAX frontier is empty.
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
+                final long structuralSeqTxn = tracker.getSeqTxn();
+                tracker.recordApplied(
+                        instance.getLastProcessedSeqTxn() + 1,
+                        structuralSeqTxn,
+                        true
+                );
+                engine.releaseAllReaders();
+                final IntList openedBasePartitions = new IntList();
+                engine.setReaderListener((tableToken, partitionIndex) -> {
+                    if (baseToken.equals(tableToken)) {
+                        openedBasePartitions.add(partitionIndex);
+                    }
+                });
+                try {
+                    drainJob(job);
+                } finally {
+                    engine.setReaderListener(null);
+                }
+                drainWalQueue();
+
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertEquals(Long.MAX_VALUE, instance.getLatestSeenTs());
+                Assert.assertTrue(
+                        "the non-DATA seqTxn must be consumed",
+                        instance.getLastProcessedSeqTxn() > lastProcessedBefore
+                );
+                Assert.assertEquals(structuralSeqTxn, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(
+                        "the regression must exercise drainAppliedBase, not the raw-WAL fast path",
+                        rawWalCyclesBefore,
+                        instance.getDedupRawWalCleanCycles()
+                );
+                Assert.assertEquals("an empty MAX-frontier suffix must open no base partition",
+                        "[]", openedBasePartitions.toString());
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            }
 
             execute("DROP LIVE VIEW lv");
         });
@@ -11542,6 +11626,63 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFrontierSweepSkipsBucketsWithoutExpiredPartitions() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10, 1), " +
+                        "('2026-08-01T01:00:00.000000Z', 20, 2), " +
+                        "('2026-08-01T02:00:00.000000Z', 30, 3), " +
+                        "('2026-08-01T03:00:00.000000Z', 40, 4), " +
+                        "('2026-08-01T04:00:00.000000Z', 50, 5), " +
+                        "('2026-08-01T05:00:00.000000Z', 60, 6)");
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-02T00:00:00.000000Z', 11, 1), " +
+                        "('2026-08-02T01:00:00.000000Z', 21, 2), " +
+                        "('2026-08-02T02:00:00.000000Z', 31, 3), " +
+                        "('2026-08-03T00:00:00.000000Z', 12, 1), " +
+                        "('2026-08-03T01:00:00.000000Z', 22, 2), " +
+                        "('2026-08-03T02:00:00.000000Z', 32, 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewWindow window = engine.getLiveViewRegistry().getViewInstance("lv").getAnchorWindow();
+                Assert.assertNotNull(window);
+                Assert.assertEquals("the first sweep drops the three day-1-only partitions", 1L, window.getCompactionCount());
+                Assert.assertEquals(3L, window.getAnchorMapSize());
+
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-04T00:00:00.000000Z', 13, 1), " +
+                        "('2026-08-04T01:00:00.000000Z', 23, 2), " +
+                        "('2026-08-04T02:00:00.000000Z', 33, 3), " +
+                        "('2026-08-05T00:00:00.000000Z', 14, 1), " +
+                        "('2026-08-05T01:00:00.000000Z', 24, 2), " +
+                        "('2026-08-05T02:00:00.000000Z', 34, 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "moving the same live set across buckets must not rebuild every map",
+                        1L,
+                        window.getCompactionCount()
+                );
+                Assert.assertEquals(3L, window.getAnchorMapSize());
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testNonMonotoneTimestampAnchorNeverCompacts() throws Exception {
         // A TIMESTAMP anchor that reads a NON-designated timestamp column is not
         // monotone with the base scan order: rows arrive in designated-ts (ts)
@@ -14659,6 +14800,52 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testLiveViewWindowRestoreRebuildsCompactionGenerations() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym INT, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 4, 40.0), " +
+                        "('2026-08-01T01:00:00.000000Z', 5, 50.0), " +
+                        "('2026-08-01T02:00:00.000000Z', 6, 60.0), " +
+                        "('2026-08-02T00:00:00.000000Z', 1, 10.0), " +
+                        "('2026-08-02T01:00:00.000000Z', 2, 20.0), " +
+                        "('2026-08-02T02:00:00.000000Z', 3, 30.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewWindow window = engine.getLiveViewRegistry().getViewInstance("lv").getAnchorWindow();
+                Assert.assertNotNull(window);
+                Assert.assertEquals(0L, window.getCompactionCount());
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    window.snapshot(sink);
+                    window.toTop();
+                    window.restore(sink);
+                }
+
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-08-03T00:00:00.000000Z', 1, 11.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals("restored day-1 generation is reclaimed on the next advance", 1L, window.getCompactionCount());
+                Assert.assertEquals(3L, window.getAnchorMapSize());
+                Assert.assertEquals(3L, window.getFunctions().getQuick(0).getPartitionMap().size());
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewWindowSnapshotRoundTrip() throws Exception {
         // LiveViewWindow's anchor map serialises into
         // the WINDOW_ANCHOR block payload via snapshot() and rehydrates via
@@ -14691,7 +14878,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertEquals("two partitions seeded", 2L, window.getAnchorMapSize());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    sink.putLong(0x0123_4567_89ab_cdefL);
+                    final long payloadStart = sink.getAppendOffset();
                     window.snapshot(sink);
+                    final long payloadLength = sink.getAppendOffset() - payloadStart;
 
                     // Sanity-check the documented payload prefix:
                     //   STR windowName (INT len + len * CHAR), INT keyCount=1,
@@ -14701,7 +14891,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     // LiveViewWindow.build rewrites SYMBOL partition columns as
                     // STRING in the anchor map's key types so cross-WAL-segment
                     // SYMBOL collisions can't corrupt the partition state.
-                    long off = 0;
+                    long off = payloadStart;
                     final int nameLen = sink.getInt(off);
                     off += Integer.BYTES;
                     Assert.assertEquals("window name 'w' is one char", 1, nameLen);
@@ -14719,7 +14909,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     window.toTop();
                     Assert.assertEquals(0L, window.getAnchorMapSize());
 
-                    window.restore(sink);
+                    window.restore(sink, payloadStart, payloadLength);
                     Assert.assertEquals("restore brought back both partitions", 2L, window.getAnchorMapSize());
                     Assert.assertEquals("no tombstones post-restore", 0L, window.getTombstoneCount());
 
@@ -14740,12 +14930,6 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testHeadCheckpointSetAndReadAtomicity() throws Exception {
-        // The head-checkpoint trio (lvSeqTxn, maxTs, stateBytes) is published
-        // via an immutable long[] reference store so the lock-free O3 head-hit
-        // reader cannot observe a torn (lvSeqTxn, maxTs) pair across a
-        // concurrent setHeadCheckpoint. Stress: writer alternates between two
-        // known tuples; reader spins and asserts every snapshot it sees is
-        // exactly one of those tuples.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -14754,58 +14938,142 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
 
+            final int minimumReadCount = 100_000;
+            final int publicationCount = 1_000_001;
             final long lvSeqA = 10L;
             final long maxTsA = 100L;
             final long baseSeqA = 5L;
             final long lvSeqB = 20L;
             final long maxTsB = 200L;
             final long baseSeqB = 15L;
-            // Seed with tuple A so the reader sees a known value on first read.
             instance.setHeadCheckpoint(lvSeqA, baseSeqA, maxTsA, 1L, 1L);
 
-            final AtomicBoolean stop = new AtomicBoolean(false);
-            final AtomicBoolean tornObserved = new AtomicBoolean(false);
+            final AtomicBoolean isStopped = new AtomicBoolean(false);
+            final AtomicBoolean isWriterDone = new AtomicBoolean(false);
+            final AtomicInteger observedA = new AtomicInteger();
+            final AtomicInteger observedB = new AtomicInteger();
+            final AtomicInteger reads = new AtomicInteger();
+            final AtomicInteger writes = new AtomicInteger();
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final CountDownLatch done = new CountDownLatch(2);
+            final CountDownLatch observedSeedA = new CountDownLatch(1);
+            final CountDownLatch observedSeedB = new CountDownLatch(1);
+            final CountDownLatch ready = new CountDownLatch(2);
+            final CountDownLatch start = new CountDownLatch(1);
+            final CountDownLatch stressReadStarted = new CountDownLatch(1);
 
             final Thread writer = new Thread(() -> {
-                int n = 0;
-                while (!stop.get()) {
-                    if ((n & 1) == 0) {
-                        instance.setHeadCheckpoint(lvSeqA, baseSeqA, maxTsA, 1L, 1L);
-                    } else {
-                        instance.setHeadCheckpoint(lvSeqB, baseSeqB, maxTsB, 2L, 2L);
+                try {
+                    observedSeedA.await();
+                    if (isStopped.get()) {
+                        return;
                     }
-                    n++;
-                    if ((n & 0xff) == 0) {
-                        Thread.yield();
+                    instance.setHeadCheckpoint(lvSeqB, baseSeqB, maxTsB, 2L, 2L);
+                    observedSeedB.await();
+                    if (isStopped.get()) {
+                        return;
                     }
+                    ready.countDown();
+                    start.await();
+                    for (int i = 0; i < publicationCount && !isStopped.get(); i++) {
+                        if ((i & 1) == 0) {
+                            instance.setHeadCheckpoint(lvSeqA, baseSeqA, maxTsA, 1L, 1L);
+                        } else {
+                            instance.setHeadCheckpoint(lvSeqB, baseSeqB, maxTsB, 2L, 2L);
+                        }
+                        writes.incrementAndGet();
+                        if (i == publicationCount / 2) {
+                            stressReadStarted.await();
+                        } else if ((i & 0xff) == 0) {
+                            Thread.yield();
+                        }
+                    }
+                } catch (Throwable th) {
+                    failure.compareAndSet(null, th);
+                    isStopped.set(true);
+                } finally {
+                    isWriterDone.set(true);
+                    observedSeedA.countDown();
+                    observedSeedB.countDown();
+                    ready.countDown();
+                    start.countDown();
+                    stressReadStarted.countDown();
+                    done.countDown();
                 }
             }, "lv-head-checkpoint-writer");
             final Thread reader = new Thread(() -> {
-                while (!stop.get()) {
+                try {
                     long[] pair = instance.getHeadCheckpointSeqAndMaxTs();
-                    long lvSeq = pair[0];
-                    long maxTs = pair[1];
-                    boolean isA = lvSeq == lvSeqA && maxTs == maxTsA;
-                    boolean isB = lvSeq == lvSeqB && maxTs == maxTsB;
-                    if (!isA && !isB) {
-                        tornObserved.set(true);
+                    Assert.assertArrayEquals(new long[]{lvSeqA, maxTsA}, pair);
+                    reads.incrementAndGet();
+                    observedA.incrementAndGet();
+                    observedSeedA.countDown();
+
+                    while (!isStopped.get()) {
+                        pair = instance.getHeadCheckpointSeqAndMaxTs();
+                        reads.incrementAndGet();
+                        final long lvSeq = pair[0];
+                        final long maxTs = pair[1];
+                        if (lvSeq == lvSeqB && maxTs == maxTsB) {
+                            observedB.incrementAndGet();
+                            observedSeedB.countDown();
+                            break;
+                        }
+                        Assert.assertEquals(lvSeqA, lvSeq);
+                        Assert.assertEquals(maxTsA, maxTs);
+                    }
+                    if (isStopped.get()) {
                         return;
                     }
+
+                    ready.countDown();
+                    start.await();
+                    int stressReadCount = 0;
+                    while (!isStopped.get() && (!isWriterDone.get() || stressReadCount < minimumReadCount)) {
+                        pair = instance.getHeadCheckpointSeqAndMaxTs();
+                        reads.incrementAndGet();
+                        stressReadCount++;
+                        final long lvSeq = pair[0];
+                        final long maxTs = pair[1];
+                        final boolean isA = lvSeq == lvSeqA && maxTs == maxTsA;
+                        final boolean isB = lvSeq == lvSeqB && maxTs == maxTsB;
+                        Assert.assertTrue("reader observed a torn (lvSeqTxn, maxTs) pair", isA || isB);
+                        if (isA) {
+                            observedA.incrementAndGet();
+                        } else {
+                            observedB.incrementAndGet();
+                        }
+                        stressReadStarted.countDown();
+                    }
+                } catch (Throwable th) {
+                    failure.compareAndSet(null, th);
+                    isStopped.set(true);
+                } finally {
+                    observedSeedA.countDown();
+                    observedSeedB.countDown();
+                    ready.countDown();
+                    start.countDown();
+                    stressReadStarted.countDown();
+                    done.countDown();
                 }
             }, "lv-head-checkpoint-reader");
 
             writer.start();
             reader.start();
-            Thread.sleep(250);
-            stop.set(true);
-            writer.join(5_000);
-            reader.join(5_000);
+            ready.await();
+            start.countDown();
+            done.await();
+            writer.join();
+            reader.join();
             Assert.assertFalse("writer thread must have stopped", writer.isAlive());
             Assert.assertFalse("reader thread must have stopped", reader.isAlive());
-            Assert.assertFalse(
-                    "reader observed a torn (lvSeqTxn, maxTs) pair",
-                    tornObserved.get()
-            );
+            if (failure.get() != null) {
+                throw new AssertionError("head-checkpoint worker failed", failure.get());
+            }
+            Assert.assertEquals("writer must publish the fixed stress count", publicationCount, writes.get());
+            Assert.assertTrue("reader must perform the fixed minimum stress reads", reads.get() >= minimumReadCount + 2);
+            Assert.assertTrue("reader must observe tuple A", observedA.get() > 0);
+            Assert.assertTrue("reader must observe tuple B", observedB.get() > 0);
 
             execute("DROP LIVE VIEW lv");
         });
@@ -19285,6 +19553,64 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("flush every"));
             }
+        });
+    }
+
+    @Test
+    public void testDedupForwardRefreshSeeksToTimestampLowerBound() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base WHERE x > 0 " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-01-01T00:00:00.000000Z', 'a', 1), " +
+                        "('2026-01-02T00:00:00.000000Z', 'a', 2), " +
+                        "('2026-01-03T00:00:00.000000Z', 'a', 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The duplicate key makes apply report a real dedup divergence,
+                // forcing drainAppliedBase. Both surviving rows are above the
+                // frontier, so this is the strictly-forward (non-O3) branch.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base VALUES " +
+                        "('2026-01-04T00:00:00.000000Z', 'a', 4), " +
+                        "('2026-01-04T00:00:00.000000Z', 'a', 5)");
+                drainWalQueue();
+
+                engine.releaseAllReaders();
+                final IntList openedBasePartitions = new IntList();
+                engine.setReaderListener((tableToken, partitionIndex) -> {
+                    if (baseToken.equals(tableToken)) {
+                        openedBasePartitions.add(partitionIndex);
+                    }
+                });
+                try {
+                    drainJob(job);
+                } finally {
+                    engine.setReaderListener(null);
+                }
+                drainWalQueue();
+
+                Assert.assertEquals("forward dedup refresh must open only the boundary and suffix partitions",
+                        "[2,3]", openedBasePartitions.toString());
+                assertQuery("SELECT ts, sym, x, s FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns(
+                        "ts\tsym\tx\ts\n" +
+                                "2026-01-01T00:00:00.000000Z\ta\t1\t1.0\n" +
+                                "2026-01-02T00:00:00.000000Z\ta\t2\t2.0\n" +
+                                "2026-01-03T00:00:00.000000Z\ta\t3\t3.0\n" +
+                                "2026-01-04T00:00:00.000000Z\ta\t5\t5.0\n"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
         });
     }
 

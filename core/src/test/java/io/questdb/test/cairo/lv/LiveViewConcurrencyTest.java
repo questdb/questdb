@@ -60,6 +60,9 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -1000,9 +1003,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         worker.join(60_000);
         if (worker.isAlive()) {
-            // Pre-fix deadlock. Interrupt to unwind (waitForUnfrozen returns on
-            // interrupt), join both threads, then fail.
-            worker.interrupt();
+            // Release a leaked freeze so both threads can unwind before failing.
+            // waitForUnfrozen deliberately ignores interrupts until this gate clears.
+            instance.endCheckpoint();
             worker.join(60_000);
             agent.join(60_000);
             Assert.fail("advanceLiveViewConsumedSeqTxn deadlocked against a concurrent checkpoint freeze while holding the refresh latch");
@@ -1786,6 +1789,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final AtomicBoolean applied = new AtomicBoolean(false);
+        final AtomicBoolean interruptedAfterApply = new AtomicBoolean(false);
         final CountDownLatch entered = new CountDownLatch(1);
 
         // Off-latch replica apply: the default (waiting) applyLiveViewData variant must
@@ -1799,6 +1803,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 entered.countDown();
                 engine.applyLiveViewData(lvToken, advanceApplied, bfw, path);
                 applied.set(true);
+                interruptedAfterApply.set(Thread.currentThread().isInterrupted());
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
@@ -1820,6 +1825,29 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 Thread.onSpinWait();
             }
             Assert.assertFalse("off-latch apply completed while the checkpoint freeze was active", applied.get());
+
+            // Interrupting a checkpoint waiter must not let the _lv.s rewrite pass the
+            // freeze gate. waitedCount provides a deterministic acknowledgement that
+            // waitForUnfrozen processed the interrupt and entered Object.wait() again.
+            final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+            final ThreadInfo beforeInterrupt = threadMXBean.getThreadInfo(replicaApply.getId());
+            Assert.assertNotNull(beforeInterrupt);
+            final long waitedCount = beforeInterrupt.getWaitedCount();
+            replicaApply.interrupt();
+            ThreadInfo afterInterrupt;
+            do {
+                afterInterrupt = threadMXBean.getThreadInfo(replicaApply.getId());
+                if (afterInterrupt == null || afterInterrupt.getWaitedCount() > waitedCount) {
+                    break;
+                }
+                if (System.currentTimeMillis() > deadline) {
+                    throw new AssertionError("off-latch apply did not process the interrupt");
+                }
+                Thread.onSpinWait();
+            } while (true);
+            Assert.assertNotNull("interrupted apply escaped the freeze gate", afterInterrupt);
+            Assert.assertEquals(Thread.State.WAITING, afterInterrupt.getThreadState());
+            Assert.assertFalse("interrupted apply completed while the checkpoint freeze was active", applied.get());
         } finally {
             // Release the freeze; the parked apply must now complete.
             instance.endCheckpoint();
@@ -1828,6 +1856,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         replicaApply.join(60_000);
         Assert.assertFalse("off-latch apply did not resume after endCheckpoint", replicaApply.isAlive());
         Assert.assertTrue("off-latch apply did not complete after the freeze cleared", applied.get());
+        Assert.assertTrue("waitForUnfrozen must restore interrupt status after the freeze clears", interruptedAfterApply.get());
 
         if (!errors.isEmpty()) {
             throw new RuntimeException("replica apply thread failed", errors.peek());

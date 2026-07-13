@@ -1471,7 +1471,9 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link #isFreezeInProgress()} is true. Must be invoked from within a
      * {@code synchronized(instance)} block; releases the monitor while waiting
      * and reacquires it before returning. {@link #endCheckpoint()} wakes
-     * waiters once the freeze clears.
+     * waiters once the freeze clears. The wait is uninterruptible because returning
+     * early would let the caller race its durable-state rewrite against the checkpoint
+     * copy; the method restores interrupt status after the freeze clears.
      * <p>
      * Out-of-band {@code _lv.s} mutators (engine-side invalidation paths) call
      * this at the top of their synchronized block so the snapshot agent's
@@ -1482,13 +1484,16 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void waitForUnfrozen() {
         assert Thread.holdsLock(this);
+        boolean isInterrupted = false;
         while (freezeInProgress) {
             try {
                 wait();
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
+                isInterrupted = true;
             }
+        }
+        if (isInterrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 

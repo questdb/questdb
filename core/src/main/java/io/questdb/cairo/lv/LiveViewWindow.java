@@ -56,6 +56,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Per-row driver that wires a named WINDOW's ANCHOR clause to live-view window
@@ -142,6 +143,10 @@ public class LiveViewWindow implements QuietCloseable {
     // guard; the runtime latch is a backstop for a monotone-looking anchor that
     // nonetheless produces a decrease at runtime.
     private boolean compactionViable;
+    private long compactionCount;
+    private long currentBucketPartitionCount;
+    private long previousBucketPartitionCount;
+    private long stalePartitionCount;
     private boolean frontierInitialized;
     private long lastCompactedFrontier = Long.MIN_VALUE;
     // Highest anchor value seen (the current bucket); prevFrontier is the bucket
@@ -331,6 +336,11 @@ public class LiveViewWindow implements QuietCloseable {
         return anchorMap.size();
     }
 
+    @TestOnly
+    public long getCompactionCount() {
+        return compactionCount;
+    }
+
     public ObjList<WindowFunction> getFunctions() {
         return functions;
     }
@@ -399,10 +409,12 @@ public class LiveViewWindow implements QuietCloseable {
         key.put(record, partitionKeySink);
         MapValue value = key.createValue();
 
-        long currentAnchor = readAnchorValue(record);
+        final boolean isNewPartition = value.isNew();
+        final byte initialized = isNewPartition ? 0 : value.getByte(SLOT_INITIALIZED);
+        final long lastAnchor = initialized == 0 ? 0 : value.getLong(SLOT_ANCHOR_VALUE);
+        final long currentAnchor = readAnchorValue(record);
         trackFrontier(currentAnchor);
-        boolean shouldReset;
-        boolean isNewPartition = value.isNew();
+        final boolean shouldReset = initialized == 0 || lastAnchor != currentAnchor;
 
         if (isNewPartition) {
             // First row for this partition - anchor map didn't carry it yet. Functions
@@ -414,17 +426,13 @@ public class LiveViewWindow implements QuietCloseable {
             // can all leave stale bytes in the heap region the new entry lands on);
             // a stale 1 would make the anchor snapshot drop a live partition.
             value.putByte(SLOT_TOMBSTONE, (byte) 0);
-            shouldReset = true;
-        } else {
-            byte initialized = value.getByte(SLOT_INITIALIZED);
-            long lastAnchor = value.getLong(SLOT_ANCHOR_VALUE);
-            shouldReset = initialized == 0 || lastAnchor != currentAnchor;
         }
 
         if (shouldReset) {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).resetPartition(record);
             }
+            movePartitionToCurrentBucket(initialized == 0, lastAnchor);
             value.putLong(SLOT_ANCHOR_VALUE, currentAnchor);
             value.putByte(SLOT_INITIALIZED, (byte) 1);
         }
@@ -462,7 +470,15 @@ public class LiveViewWindow implements QuietCloseable {
      * replay path. Same disposition as a CRC failure on the file as a whole.
      */
     public void restore(MemoryR source) {
-        long offset = 0;
+        restore(source, 0, Long.MAX_VALUE);
+    }
+
+    public void restore(MemoryR source, long offset) {
+        restore(source, offset, Long.MAX_VALUE);
+    }
+
+    public void restore(MemoryR source, long offset, long payloadLength) {
+        final long payloadStart = offset;
         final CharSequence storedName = source.getStrA(offset);
         if (storedName == null || !storedName.toString().equals(windowName)) {
             throw CairoException.nonCritical()
@@ -517,18 +533,28 @@ public class LiveViewWindow implements QuietCloseable {
 
         anchorMap.clear();
         tombstoneCount = 0;
-        // Re-learn the frontier from rows that arrive after the restore; the
-        // rehydrated entries' buckets are all <= the checkpoint's max, so the first
-        // forward row re-establishes the maximum without a spurious decrease.
+        // Reconstruct the two retained frontier generations while reading the
+        // checkpoint so the first post-restore sweep has exact reclaimable counts.
         resetFrontier();
         for (long i = 0; i < partitionCount; i++) {
             MapKey key = anchorMap.withKey();
             offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, partitionKeyTypes);
             MapValue value = key.createValue();
-            value.putLong(SLOT_ANCHOR_VALUE, source.getLong(offset));
+            long restoredAnchor = source.getLong(offset);
+            value.putLong(SLOT_ANCHOR_VALUE, restoredAnchor);
             value.putByte(SLOT_INITIALIZED, (byte) 1);
             value.putByte(SLOT_TOMBSTONE, (byte) 0);
+            restoreFrontierEntry(restoredAnchor);
             offset += Long.BYTES;
+        }
+        final long consumed = offset - payloadStart;
+        if (payloadLength != Long.MAX_VALUE && consumed != payloadLength) {
+            throw CairoException.critical(0)
+                    .put("live view anchor snapshot payload length mismatch [expected=")
+                    .put(payloadLength)
+                    .put(", consumed=")
+                    .put(consumed)
+                    .put(']');
         }
     }
 
@@ -681,7 +707,9 @@ public class LiveViewWindow implements QuietCloseable {
         anchorMap = scratchAnchorMap;
         scratchAnchorMap = old;
         tombstoneCount = 0;
+        stalePartitionCount = 0;
         lastCompactedFrontier = maxAnchorValue;
+        compactionCount++;
     }
 
     /**
@@ -702,6 +730,9 @@ public class LiveViewWindow implements QuietCloseable {
             maxAnchorValue = currentAnchor;
             frontierInitialized = true;
         } else if (currentAnchor > maxAnchorValue) {
+            stalePartitionCount += previousBucketPartitionCount;
+            previousBucketPartitionCount = currentBucketPartitionCount;
+            currentBucketPartitionCount = 0;
             prevFrontier = maxAnchorValue;
             maxAnchorValue = currentAnchor;
         } else if (currentAnchor < maxAnchorValue) {
@@ -710,10 +741,14 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     private void maybeCompact() {
+        final long mapSize = anchorMap.size();
+        final long halfMapSize = mapSize - mapSize / 2;
         if (compactionViable
                 && prevFrontier != Long.MIN_VALUE
                 && maxAnchorValue > lastCompactedFrontier
-                && anchorMap.size() > compactThreshold) {
+                && mapSize > compactThreshold
+                && stalePartitionCount >= compactThreshold
+                && stalePartitionCount >= halfMapSize) {
             compact();
         }
     }
@@ -721,9 +756,62 @@ public class LiveViewWindow implements QuietCloseable {
     private void resetFrontier() {
         frontierInitialized = false;
         maxAnchorValue = 0;
+        currentBucketPartitionCount = 0;
+        previousBucketPartitionCount = 0;
+        stalePartitionCount = 0;
         prevFrontier = Long.MIN_VALUE;
         lastCompactedFrontier = Long.MIN_VALUE;
         compactionViable = isAnchorMonotone && ColumnType.tagOf(anchorValueType) == ColumnType.TIMESTAMP;
+    }
+
+    private void movePartitionToCurrentBucket(boolean untracked, long lastAnchor) {
+        if (!compactionViable) {
+            return;
+        }
+        if (untracked) {
+            currentBucketPartitionCount++;
+        } else if (lastAnchor != maxAnchorValue) {
+            if (lastAnchor == prevFrontier) {
+                previousBucketPartitionCount--;
+            } else {
+                stalePartitionCount--;
+            }
+            currentBucketPartitionCount++;
+        }
+    }
+
+    private void restoreFrontierEntry(long anchor) {
+        if (!compactionViable) {
+            return;
+        }
+        if (anchor == Numbers.LONG_NULL) {
+            compactionViable = false;
+            return;
+        }
+        if (!frontierInitialized) {
+            maxAnchorValue = anchor;
+            currentBucketPartitionCount = 1;
+            frontierInitialized = true;
+        } else if (anchor == maxAnchorValue) {
+            currentBucketPartitionCount++;
+        } else if (anchor > maxAnchorValue) {
+            stalePartitionCount += previousBucketPartitionCount;
+            prevFrontier = maxAnchorValue;
+            previousBucketPartitionCount = currentBucketPartitionCount;
+            maxAnchorValue = anchor;
+            currentBucketPartitionCount = 1;
+        } else if (prevFrontier == Long.MIN_VALUE) {
+            prevFrontier = anchor;
+            previousBucketPartitionCount = 1;
+        } else if (anchor == prevFrontier) {
+            previousBucketPartitionCount++;
+        } else if (anchor > prevFrontier) {
+            stalePartitionCount += previousBucketPartitionCount;
+            prevFrontier = anchor;
+            previousBucketPartitionCount = 1;
+        } else {
+            stalePartitionCount++;
+        }
     }
 
     private long readAnchorValue(Record record) {

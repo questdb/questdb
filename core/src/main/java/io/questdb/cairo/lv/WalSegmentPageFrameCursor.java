@@ -44,7 +44,6 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalReader;
-import io.questdb.std.Chars;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -418,7 +417,6 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
     }
 
     private static final class WalSymbolTable implements StaticSymbolTable {
-        private final DirectString scanView = new DirectString();
         private final DirectString viewA = new DirectString();
         private final DirectString viewB = new DirectString();
         // Start of the overlay's key band: this txn's diff keys occupy the
@@ -478,8 +476,8 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
         // the same reason {@link #resolve} prefers it: cross-txn local-id collisions
         // can leave stale cumulative entries. Filter Functions like
         // {@link io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory.ConstCheckColumnFunc}
-        // call this once at filter init per segment, so the O(N) scan in
-        // {@link WalReader#getSymbolKey} is acceptable.
+        // call this at filter init per transaction and segment; both maps lazily
+        // build reverse indexes that retain their explicit WAL keys.
         @Override
         public int keyOf(CharSequence value) {
             if (value == null) {
@@ -496,20 +494,17 @@ public class WalSegmentPageFrameCursor implements PageFrameCursor {
                 // that staleness for this txn's rows. valueOf is a keyed lookup, so a
                 // dense-from-zero scan would probe absent keys, miss, and fall through
                 // to the stale reader map.
-                final int hi = cleanSymbolCount + txnDiff.size();
-                for (int k = cleanSymbolCount; k < hi; k++) {
-                    CharSequence v = txnDiff.valueOf(k, scanView);
-                    if (v != null && Chars.equals(value, v)) {
-                        return k;
-                    }
+                final int key = txnDiff.keyOf(value, cleanSymbolCount, cleanSymbolCount + txnDiff.size());
+                if (key > -1) {
+                    return key;
                 }
             }
             // Falls through for clean symbols (below the overlay band), which the reader resolves
-            // correctly. The scan MUST stop at cleanSymbolCount: above it the cumulative map holds
-            // every OTHER txn's dirty band, and local ids restart per commit - so an unbounded scan
+            // correctly. The lookup MUST stop at cleanSymbolCount: above it the cumulative map holds
+            // every OTHER txn's dirty band, and local ids restart per commit - so an unbounded lookup
             // could return a key valid in a sibling txn, and every row of THIS txn carrying that
             // same local id would match, admitting rows that violate the view's own WHERE.
-            return reader.getSymbolKey(walColumnIndex, value, scanView, cleanSymbolCount);
+            return reader.getSymbolKey(walColumnIndex, value, cleanSymbolCount);
         }
 
         public void of(int walColumnIndex, WalReader reader, @Nullable DirectSymbolMap txnDiff, int cleanSymbolCount) {

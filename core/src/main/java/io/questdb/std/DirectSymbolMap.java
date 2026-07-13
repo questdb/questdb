@@ -50,8 +50,9 @@ import io.questdb.std.str.DirectString;
  *       as a drop-in replacement for {@code ObjList&lt;String&gt;.indexOf}-based
  *       symbol tables.</li>
  * </ul>
- * Both modes are fully off-heap: {@link #intern} lazily allocates a nested
- * {@link ValueToKeyMap} slot table whose entries store only
+ * Both modes are fully off-heap. {@link #intern} maintains a {@link ValueToKeyMap};
+ * bounded lookup on externally assigned keys lazily builds an
+ * independent {@link ValueToKeyMap}. Both slot tables store only
  * {@code (offsetInBuf, symbolKey)} pairs and defer byte-wise equality checks
  * to the primary buffer — no heap-side copy of the symbol string is kept.
  */
@@ -62,11 +63,13 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     private final long initialBufCapacity;
     private final int initialMapCapacity;
     private final DirectIntIntHashMap keyToOffset;
+    private ValueToKeyMap explicitValueToKey;
     private final int memoryTag;
     private final DirectString reusableView = new DirectString();
     private long bufCapacity;
     private long bufPtr;
     private long bufSize;
+    private boolean explicitValueToKeyDirty;
     private ValueToKeyMap valueToKey;
 
     public DirectSymbolMap(long initialBufCapacity, int initialMapCapacity, int memoryTag) {
@@ -98,6 +101,10 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     @Override
     public void clear() {
         keyToOffset.clear();
+        if (explicitValueToKey != null) {
+            explicitValueToKey.clear();
+        }
+        explicitValueToKeyDirty = false;
         if (valueToKey != null) {
             valueToKey.clear();
         }
@@ -107,6 +114,10 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     @Override
     public void close() {
         keyToOffset.close();
+        if (explicitValueToKey != null) {
+            explicitValueToKey.close();
+            explicitValueToKey = null;
+        }
         if (valueToKey != null) {
             valueToKey.close();
             valueToKey = null;
@@ -180,6 +191,20 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     }
 
     /**
+     * Returns an externally assigned key in {@code [loInclusive, hiExclusive)}
+     * whose value equals {@code value}, or {@code -1} when no such key exists. The
+     * reverse index is built lazily from the current explicit mappings and retains
+     * duplicate values so bounds can select the correct caller-assigned key.
+     */
+    public int keyOf(CharSequence value, int loInclusive, int hiExclusive) {
+        if (value == null || loInclusive >= hiExclusive) {
+            return -1;
+        }
+        buildExplicitValueToKeyIfNeeded();
+        return explicitValueToKey.keyOf(value, loInclusive, hiExclusive);
+    }
+
+    /**
      * Associates {@code value} with the caller-supplied {@code key}. If the key
      * is already present its value is overwritten. The previous bytes stay in
      * the buffer until the next {@link #clear} or {@link #close}. Must not be
@@ -189,6 +214,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         long idx = keyToOffset.keyIndex(key);
         long offset = append(value);
         keyToOffset.putAt(idx, key, toIntOffset(offset));
+        explicitValueToKeyDirty = true;
     }
 
     @Override
@@ -199,6 +225,9 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             bufSize = 0;
         }
         keyToOffset.reopen();
+        if (explicitValueToKey != null) {
+            explicitValueToKey.reopen();
+        }
         if (valueToKey != null) {
             valueToKey.reopen();
         }
@@ -255,6 +284,28 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         }
         bufSize += required;
         return offset;
+    }
+
+    private void buildExplicitValueToKeyIfNeeded() {
+        if (explicitValueToKey == null) {
+            explicitValueToKey = new ValueToKeyMap(initialMapCapacity, memoryTag);
+        }
+        if (!explicitValueToKeyDirty) {
+            return;
+        }
+
+        explicitValueToKey.clear();
+        for (int i = 0, n = keyToOffset.capacity(); i < n; i++) {
+            final int key = keyToOffset.keyAt(i);
+            if (key != NO_ENTRY_KEY) {
+                final int offset = keyToOffset.get(key);
+                // Null symbols have no string key and are deliberately absent.
+                if (Unsafe.getUnsafe().getInt(bufPtr + offset) >= 0) {
+                    explicitValueToKey.insertExplicit(offset, key);
+                }
+            }
+        }
+        explicitValueToKeyDirty = false;
     }
 
     private void ensureCapacity(long required) {
@@ -348,6 +399,39 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             Unsafe.getUnsafe().putInt(p + 4, symbolKey);
             if (--free == 0) {
                 rehash();
+            }
+        }
+
+        /**
+         * Inserts an externally keyed mapping without deduplicating equal values.
+         * Multiple explicit keys may carry the same content and bounded lookup must
+         * retain all of them.
+         */
+        public void insertExplicit(int offsetInBuf, int symbolKey) {
+            long index = hashBytes(offsetInBuf) & mask;
+            while (Unsafe.getUnsafe().getInt(slotsPtr + (index << 3)) != EMPTY_OFFSET) {
+                index = (index + 1) & mask;
+            }
+            insertAt(index, offsetInBuf, symbolKey);
+        }
+
+        /**
+         * Returns a matching explicit key in {@code [loInclusive, hiExclusive)},
+         * or {@code -1}. The probe continues across equal values outside the band.
+         */
+        public int keyOf(CharSequence value, int loInclusive, int hiExclusive) {
+            long index = Chars.hashCode(value) & mask;
+            while (true) {
+                final long p = slotsPtr + (index << 3);
+                final int slotOffset = Unsafe.getUnsafe().getInt(p);
+                if (slotOffset == EMPTY_OFFSET) {
+                    return -1;
+                }
+                final int symbolKey = Unsafe.getUnsafe().getInt(p + 4);
+                if (symbolKey >= loInclusive && symbolKey < hiExclusive && matches(slotOffset, value)) {
+                    return symbolKey;
+                }
+                index = (index + 1) & mask;
             }
         }
 

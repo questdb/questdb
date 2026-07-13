@@ -3329,6 +3329,46 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalReaderSymbolKeyMissUsesNotFoundSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final TableToken tableToken = createTable(
+                    new TableModel(configuration, tableName, PartitionBy.YEAR)
+                            .col("s", ColumnType.SYMBOL)
+                            .timestamp("ts")
+                            .wal()
+            );
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walName = walWriter.getWalName();
+
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putSym(0, "present");
+                row.append();
+
+                row = walWriter.newRow(1);
+                row.putSym(0, null);
+                row.append();
+                walWriter.commit();
+            }
+
+            try (WalReader reader = engine.getWalReader(
+                    sqlExecutionContext.getSecurityContext(),
+                    tableToken,
+                    walName,
+                    0,
+                    2
+            )) {
+                final int symbolCount = reader.getSymbolCount(0);
+                Assert.assertEquals(1, symbolCount);
+                Assert.assertEquals(0, reader.getSymbolKey(0, "present", symbolCount));
+                Assert.assertEquals(VALUE_NOT_FOUND, reader.getSymbolKey(0, "missing", symbolCount));
+            }
+        });
+    }
+
+    @Test
     public void testRemovingSymbolColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
