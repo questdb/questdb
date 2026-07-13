@@ -1438,11 +1438,11 @@ public class QwpUdpInsertTest extends AbstractCairoTest {
                     receiver.runSerially();
                     drainWalQueue();
                     assertQuery("SELECT count() FROM timer_drop").noLeakCheck()
-                        .expectSize()
-                        .noRandomAccess().returns("count\n1\n");
+                            .expectSize()
+                            .noRandomAccess().returns("count\n1\n");
                     assertQuery("SELECT count() FROM timer_active").noLeakCheck()
-                        .expectSize()
-                        .noRandomAccess().returns("count\n1\n");
+                            .expectSize()
+                            .noRandomAccess().returns("count\n1\n");
                 }, 10);
                 Assert.assertEquals("both tables cached", 2, receiver.getCachedTableCount());
 
