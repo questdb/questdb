@@ -83,13 +83,13 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
     // table) without colliding with the "no cache yet" sentinel.
     private TableToken cachedBaseToken;
     private long cachedBaseTxn = -1;
-    private boolean isBaseCacheValid;
     private long cachedMaxBaseTs = Long.MIN_VALUE;
     // Sampler is lazily allocated on first validated commit and reused across
     // subsequent commits on this writer. Sample interval and unit are fixed at
     // mat-view creation (changing either requires DROP + recreate), so the
     // cached sampler stays valid for the writer's lifetime.
     private TimestampSampler cachedSampler;
+    private boolean isBaseCacheValid;
 
     public MatViewBackfillValidator(CairoEngine engine, TableToken matViewToken) {
         assert matViewToken.isMatView();

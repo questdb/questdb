@@ -836,6 +836,68 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base_price VALUES ('1970-01-01T02:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT ts, count() cnt FROM base_price SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW mv_target SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("mv_target")));
+
+            try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration())) {
+                try {
+                    parseLine(parser, "mv_target cnt=99i 100000000000\n");
+                    parser.commitAll();
+                    Assert.fail("legacy UDP must reject materialized views");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=mv_target]");
+                }
+            }
+
+            Assert.assertTrue(engine.verifyTableName("mv_target").isMatView());
+            assertQuery("SELECT count() FROM mv_target").noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testMatViewRejectedOnWriterRetry() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE retry_target (val LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration())) {
+                try (TableWriter ignored = getWriter("retry_target")) {
+                    // cacheWriter() swallows the busy-writer failure after setting the cache entry
+                    // to retry state 1. The next line must re-check the replacement table token.
+                    parseLine(parser, "retry_target val=1i 100000000000\n");
+                }
+
+                execute("DROP TABLE retry_target");
+                execute("CREATE TABLE base_price (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO base_price VALUES ('1970-01-01T02:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("CREATE MATERIALIZED VIEW retry_target AS (SELECT ts, count() cnt FROM base_price SAMPLE BY 1h)");
+                drainWalAndMatViewQueues();
+                execute("ALTER MATERIALIZED VIEW retry_target SET REFRESH LIMIT 1 HOUR");
+                drainWalAndMatViewQueues();
+                Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("retry_target")));
+
+                try {
+                    parseLine(parser, "retry_target cnt=99i 100000000000\n");
+                    parser.commitAll();
+                    Assert.fail("legacy UDP retry must reject a replacement materialized view");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=retry_target]");
+                }
+            }
+
+            Assert.assertTrue(engine.verifyTableName("retry_target").isMatView());
+            assertQuery("SELECT count() FROM retry_target").noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
     public void testNoTag() throws Exception {
         String expected = """
                 uptime_format\ttimestamp
@@ -1088,6 +1150,23 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     private void assertThat(String expected, String lines, CharSequence tableName) throws Exception {
         assertThat(expected, lines, tableName, configuration);
+    }
+
+    private void parseLine(LineUdpParserImpl parser, String line) {
+        final byte[] bytes = line.getBytes(Files.UTF_8);
+        final long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(mem + i, bytes[i]);
+            }
+            try (LineUdpLexer lexer = new LineUdpLexer(4096)) {
+                lexer.withParser(parser);
+                lexer.parse(mem, mem + bytes.length);
+                lexer.parseLast();
+            }
+        } finally {
+            Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private void testAddColumnFloat(short colType, String expected) throws Exception {

@@ -77,6 +77,11 @@ public class MatViewState implements QuietCloseable {
     // single outlier (GC pause, O3 partition rewrite) from poisoning the EMA
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
+    // Enables an off-latch CAS on refreshRetryAfterMicros so MatViewTimerJob can clear only the
+    // exact deadline it observed due, without clobbering a fresh backoff a concurrent under-latch
+    // refresh may have just armed. See clearRefreshRetry(long).
+    private static final AtomicLongFieldUpdater<MatViewState> REFRESH_RETRY_AFTER_UPDATER =
+            AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Backfill frontier high-water mark in the base table's timestamp driver units:
     // the largest boundary anchor (min(max(base_ts), now)) any accepted user backfill was
     // validated against. Advanced lock-free from WAL commit threads via
@@ -90,11 +95,6 @@ public class MatViewState implements QuietCloseable {
     // bootstrap window would let a retreating max(base_ts) pull the boundary back over an
     // already-accepted backfill; see MatViewRefreshJob.findRefreshIntervals.
     private final AtomicLong backfillFrontier = new AtomicLong(Long.MIN_VALUE);
-    // Enables an off-latch CAS on refreshRetryAfterMicros so MatViewTimerJob can clear only the
-    // exact deadline it observed due, without clobbering a fresh backoff a concurrent under-latch
-    // refresh may have just armed. See clearRefreshRetry(long).
-    private static final AtomicLongFieldUpdater<MatViewState> REFRESH_RETRY_AFTER_UPDATER =
-            AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Protected by this.latch.

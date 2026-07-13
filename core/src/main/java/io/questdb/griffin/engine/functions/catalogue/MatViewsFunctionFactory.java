@@ -307,11 +307,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // Only needed when a frozen-zone cutoff could exist; skip the reader
                         // open (and the cache) entirely when there is no REFRESH LIMIT or the
                         // escape-hatch is on.
-                        final boolean frozenZonePossible = cachedSampler != null
+                        final boolean isFrozenZonePossible = cachedSampler != null
                                 && refreshLimitHoursOrMonths != 0
                                 && !configuration.isMatViewRefreshLimitWallClockEnabled();
                         long baseMaxTs = Long.MIN_VALUE;
-                        if (frozenZonePossible && baseTableToken != null) {
+                        if (isFrozenZonePossible && baseTableToken != null) {
                             if (baseTableToken == cachedBaseMaxTsToken && lastAppliedBaseTxn == cachedBaseMaxTsTxn) {
                                 baseMaxTs = cachedBaseMaxTs;
                             } else {
@@ -332,7 +332,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 cachedBaseMaxTs = baseMaxTs;
                             }
                         }
-                        final long backfillBucketFloor = !frozenZonePossible
+                        final long backfillBucketFloor = !isFrozenZonePossible
                                 ? Numbers.LONG_NULL
                                 : MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, viewDefinition, state, cachedSampler, baseMaxTs);
                         final long backfillMaxTs = backfillBucketFloor == Numbers.LONG_NULL

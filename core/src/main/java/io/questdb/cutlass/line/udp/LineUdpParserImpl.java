@@ -282,6 +282,18 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void cacheWriter(CacheEntry entry, CachedCharSequence tableName, TableToken tableToken) {
+        if (tableToken != null && tableToken.isView()) {
+            throw CairoException.nonCritical()
+                    .put("cannot modify view [view=")
+                    .put(tableToken.getTableName())
+                    .put(']');
+        }
+        if (tableToken != null && tableToken.isMatView()) {
+            throw CairoException.nonCritical()
+                    .put("cannot modify materialized view [view=")
+                    .put(tableToken.getTableName())
+                    .put(']');
+        }
         try {
             entry.writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
             this.tableToken = tableToken;
@@ -342,18 +354,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 int exists = engine.getTableStatus(path, tableToken);
                 switch (exists) {
                     case TABLE_EXISTS:
-                        if (tableToken != null && tableToken.isView()) {
-                            throw CairoException.nonCritical()
-                                    .put("cannot modify view [view=")
-                                    .put(tableToken.getTableName())
-                                    .put(']');
-                        }
-                        if (tableToken != null && tableToken.isMatView() && !engine.isBackfillableMatView(tableToken)) {
-                            throw CairoException.nonCritical()
-                                    .put("cannot modify materialized view [view=")
-                                    .put(tableToken.getTableName())
-                                    .put(']');
-                        }
                         entry.state = 1;
                         cacheWriter(entry, token, tableToken);
                         break;

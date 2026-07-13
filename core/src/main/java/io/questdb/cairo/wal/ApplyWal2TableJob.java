@@ -95,14 +95,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
+    private final BlockFileWriter blockFileWriter;
+    private final CairoConfiguration config;
+    private final CairoEngine engine;
     // Reader + reusable state reader for the backfill-frontier read-modify-write of the _mv.s
     // state file (preserves the existing refresh state + invalidation reason while bumping the
     // persisted frozen-zone frontier). Lazily allocated on first backfill persist.
     private final BlockFileReader matViewStateBlockReader;
     private final MatViewStateReader matViewStateReader = new MatViewStateReader();
-    private final BlockFileWriter blockFileWriter;
-    private final CairoConfiguration config;
-    private final CairoEngine engine;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
