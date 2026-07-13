@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
@@ -135,7 +136,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             );
 
             // count(*) stays correct.
-            assertSql("count\n3\n", "select count() from x");
+            assertQuery("select count() from x").expectSize().noRandomAccess().returns("count\n3\n");
 
             // An insert now triggers reconcile, which materializes the posting index over the parquet
             // partition (indexHistoricPartitions/indexParquetPartition) -- correctness on a non-skipping
@@ -148,19 +149,12 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             );
 
             // c='a' has 3 rows (rows 0,2 from native-then-parquet partition + the new native row).
-            assertSql("count\n3\n", "select count() from x where c = 'a'");
+            assertQuery("select count() from x where c = 'a'").expectSize().noRandomAccess().returns("count\n3\n");
             // Full distribution as an independent oracle.
-            assertSql("c\tcount\na\t3\nb\t1\n", "select c, count() from x order by c");
+            assertQuery("select c, count() from x order by c").expectSize().returns("c\tcount\na\t3\nb\t1\n");
         });
     }
 
-    // Full-battery result assertion: the fluent builder runs the second cursor pass, the
-    // calculateSize() cross-check and the variable-column check that a single printSql/assertEquals
-    // skips. sizeMayVary()/inferRandomAccess()/inferTimestamp() accommodate the heterogeneous
-    // full-scan-fallback factories these tests exercise.
-    private void assertSql(String expected, String query) throws Exception {
-        assertQuery(query).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
-    }
 
     // Regression for an O3 crash: out-of-order rows spanning multiple partitions drive the O3 open-
     // column path (O3PartitionJob.publishOpenColumnTasks), which counts indexed columns to allocate
@@ -185,12 +179,10 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
                     ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
             // Full-scan correctness: the skipped index must not change query results.
-            assertSql(
-                    "s\tv\tts\n" +
+            assertQuery("select s, v, ts from x where s = 'a'").timestamp("ts").returns("s\tv\tts\n" +
                             "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t3.0\t1970-01-01T00:00:02.000000Z\n" +
-                            "a\t5.0\t1970-01-02T00:00:01.000000Z\n",
-                    "select s, v, ts from x where s = 'a'");
+                            "a\t5.0\t1970-01-02T00:00:01.000000Z\n");
         });
     }
 
@@ -223,11 +215,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             assertMetadataFlags("x", "s");
 
             // Full-scan correctness: the skipped index must not change query results.
-            assertSql(
-                    "s\tts\n" +
+            assertQuery("select s, ts from x where s = 'a'").timestamp("ts").returns("s\tts\n" +
                             "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\n",
-                    "select s, ts from x where s = 'a'");
+                            "a\t1970-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -285,12 +275,10 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             assertMetadataFlags("x", "s2");
 
             // Full-scan correctness over the parquet partition: results must be unaffected.
-            assertSql(
-                    "s\ts2\tts\n" +
+            assertQuery("select s, s2, ts from x where s = 'a'").timestamp("ts").returns("s\ts2\tts\n" +
                             "a\t\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t\t1970-01-01T00:00:02.000000Z\n" +
-                            "a\tx\t1970-01-01T00:00:04.000000Z\n",
-                    "select s, s2, ts from x where s = 'a'");
+                            "a\tx\t1970-01-01T00:00:04.000000Z\n");
         });
     }
 
@@ -376,11 +364,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             );
 
             // table remains queryable; the skipped index must not change results
-            assertSql(
-                    "s\tts\n" +
+            assertQuery("select s, ts from x where s = 'a'").timestamp("ts").returns("s\tts\n" +
                             "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\n",
-                    "select s, ts from x where s = 'a'");
+                            "a\t1970-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -404,7 +390,7 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             assertMetadataFlags("x", "s");
 
             // empty + queryable
-            assertSql("count\n0\n", "select count() from x");
+            assertQuery("select count() from x").expectSize().noRandomAccess().returns("count\n0\n");
         });
     }
 
@@ -440,11 +426,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             Assert.assertFalse("no index files expected after DROP INDEX", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
             // table remains queryable
-            assertSql(
-                    "s\tts\n" +
+            assertQuery("select s, ts from x where s = 'a'").timestamp("ts").returns("s\tts\n" +
                             "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\n",
-                    "select s, ts from x where s = 'a'");
+                            "a\t1970-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -477,12 +461,10 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             assertMetadataFlags("x", "s");
 
             // Full-scan correctness across both partitions.
-            assertSql(
-                    "s\tv\tts\n" +
+            assertQuery("select s, v, ts from x where s = 'a' order by ts").timestamp("ts").returns("s\tv\tts\n" +
                             "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
                             "a\t4.0\t1970-01-01T00:00:00.500000Z\n" +
-                            "a\t6.0\t1970-01-02T00:00:00.500000Z\n",
-                    "select s, v, ts from x where s = 'a' order by ts");
+                            "a\t6.0\t1970-01-02T00:00:00.500000Z\n");
         });
     }
 
@@ -513,11 +495,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             Assert.assertFalse("no posting index files expected on skipping primary", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
 
-            assertSql(
-                    "s\tv\tts\n" +
+            assertQuery("select s, v, ts from x where s = 'a' order by ts").timestamp("ts").returns("s\tv\tts\n" +
                             "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t4.0\t1970-01-01T00:00:00.500000Z\n",
-                    "select s, v, ts from x where s = 'a' order by ts");
+                            "a\t4.0\t1970-01-01T00:00:00.500000Z\n");
         });
     }
 
@@ -657,12 +637,10 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
             Assert.assertFalse("attach must not materialize the replica-only index", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
-            assertSql(
-                    "s\ti\tts\n" +
+            assertQuery("select s, i, ts from x order by ts").timestamp("ts").expectSize().returns("s\ti\tts\n" +
                             "a\t1\t1970-01-01T00:00:00.000000Z\n" +
                             "b\t2\t1970-01-01T01:00:00.000000Z\n" +
-                            "a\t3\t1970-01-02T00:00:00.000000Z\n",
-                    "select s, i, ts from x order by ts");
+                            "a\t3\t1970-01-02T00:00:00.000000Z\n");
         });
     }
 
@@ -699,12 +677,10 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
             Assert.assertFalse("attach must not materialize the replica-only index on a skipping primary", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
-            assertSql(
-                    "s\ti\tts\n" +
+            assertQuery("select s, i, ts from x order by ts").timestamp("ts").expectSize().returns("s\ti\tts\n" +
                             "a\t1\t1970-01-01T00:00:00.000000Z\n" +
                             "b\t2\t1970-01-01T01:00:00.000000Z\n" +
-                            "a\t3\t1970-01-02T00:00:00.000000Z\n",
-                    "select s, i, ts from x order by ts");
+                            "a\t3\t1970-01-02T00:00:00.000000Z\n");
         });
     }
 
@@ -734,6 +710,53 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testTouchSkipsInactiveReplicaOnlyIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', 1, 0), ('b', 2, 1_000_000)");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT touch((SELECT s, v, ts FROM x))", sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                TestUtils.assertContains(cursor.getRecord().getStrA(0), "data_pages");
+                Assert.assertFalse(cursor.hasNext());
+            }
+            Assert.assertFalse(
+                    "touch() must not require or materialize the inactive replica-only index",
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
+            );
+        });
+    }
+
+    @Test
+    public void testUpdateUsesFullScanAndDoesNotMaterializeReplicaOnlyIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('a', 1, 0), ('b', 2, 1_000_000), ('a', 3, 2_000_000)");
+            drainWalQueue();
+
+            execute("UPDATE x SET v = v + 10 WHERE s = 'a'");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "UPDATE must not materialize the replica-only index on a skipping primary",
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
+            );
+            assertMetadataFlags("x", "s");
+            assertQuery("SELECT s, v, ts FROM x ORDER BY ts")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tv\tts
+                            a\t11.0\t1970-01-01T00:00:00.000000Z
+                            b\t2.0\t1970-01-01T00:00:01.000000Z
+                            a\t13.0\t1970-01-01T00:00:02.000000Z
+                            """);
         });
     }
 

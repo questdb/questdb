@@ -41,23 +41,18 @@ public class TableWriterReplicaOnlyNoSkipTest extends AbstractCairoTest {
     public void testReplicaNodeBuildsReplicaOnlyIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x values ('a', 0), ('b', 1000000), ('a', 2000000)");
+            execute("INSERT INTO x VALUES ('a', 0), ('b', 1_000_000), ('a', 2_000_000), (NULL, 3_000_000)");
             drainWalQueue();
 
             Assert.assertTrue("index files MUST exist on a non-skipping node", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
-            assertSql(
+            assertQuery("select s, ts from x where s = 'a'").timestamp("ts").returns(
                     "s\tts\n" +
                             "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\n",
-                    "select s, ts from x where s = 'a'"
+                            "a\t1970-01-01T00:00:02.000000Z\n"
             );
+            assertQuery("SELECT s, ts FROM x WHERE s IS NULL")
+                    .timestamp("ts")
+                    .returns("s\tts\n\t1970-01-01T00:00:03.000000Z\n");
         });
-    }
-
-    // Full-battery result assertion via the QueryAssertion builder (second cursor pass + calculateSize
-    // cross-check + variable-column check); sizeMayVary()/inferRandomAccess()/inferTimestamp() adopt each
-    // heterogeneous factory's own capabilities.
-    private void assertSql(String expected, String query) throws Exception {
-        assertQuery(query).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
     }
 }

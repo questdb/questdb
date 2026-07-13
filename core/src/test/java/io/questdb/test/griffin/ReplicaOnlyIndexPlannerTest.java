@@ -51,6 +51,25 @@ public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testActualNullFullScansCorrectly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (NULL, 1, 0), ('a', 2, 1_000_000), (NULL, 3, 2_000_000)");
+            drainWalQueue();
+
+            assertQuery("SELECT s, v, ts FROM x WHERE s IS NULL")
+                    .timestamp("ts")
+                    .returns("""
+                            s\tv\tts
+                            \t1.0\t1970-01-01T00:00:00.000000Z
+                            \t3.0\t1970-01-01T00:00:02.000000Z
+                            """);
+            assertQuery("SELECT s, v, ts FROM x WHERE s IS NULL")
+                    .assertsPlanNotContaining("Index forward scan", "Index backward scan", "DeferredSingleSymbolFilterPageFrame");
+        });
+    }
+
+    @Test
     public void testLatestByFullScansCorrectly() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y (s symbol index replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
@@ -93,6 +112,63 @@ public class ReplicaOnlyIndexPlannerTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlanNotContaining("Index forward scan", "Index backward scan", "DeferredSingleSymbolFilterPageFrame");
+        });
+    }
+
+    @Test
+    public void testAsofIndexHintFallsBackWhenReplicaOnlyIndexIsInactive() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (s SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE quotes (s SYMBOL INDEX REPLICA ONLY, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO trades VALUES ('a', 10, 1_000_000), ('b', 20, 2_000_000)");
+            execute("INSERT INTO quotes VALUES ('a', 1, 0), ('b', 2, 1_000_000)");
+            drainWalQueue();
+
+            final String query = "SELECT /*+ asof_index(t q) */ t.s, t.price, q.bid " +
+                    "FROM trades t ASOF JOIN quotes q ON (s)";
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tprice\tbid
+                            a\t10.0\t1.0
+                            b\t20.0\t2.0
+                            """);
+            assertQuery(query).assertsPlanNotContaining("AsOf Join Indexed");
+        });
+    }
+
+    @Test
+    public void testDistinctOrderAndWindowFullScanShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('a', 1, 0), ('b', 2, 1_000_000), ('a', 3, 2_000_000)");
+            drainWalQueue();
+
+            assertQuery("SELECT DISTINCT s FROM x ORDER BY s")
+                    .expectSize()
+                    .returns("""
+                            s
+                            a
+                            b
+                            """);
+            final String orderedFilter = "SELECT s, v FROM x WHERE s = 'a' ORDER BY v DESC";
+            assertQuery(orderedFilter)
+                    .returns("""
+                            s\tv
+                            a\t3.0
+                            a\t1.0
+                            """);
+            assertQuery(orderedFilter)
+                    .assertsPlanNotContaining("Index forward scan", "Index backward scan", "DeferredSingleSymbolFilterPageFrame");
+            assertQuery("SELECT s, row_number() OVER (PARTITION BY s ORDER BY ts) rn FROM x ORDER BY s, rn")
+                    .expectSize()
+                    .returns("""
+                            s\trn
+                            a\t1
+                            a\t2
+                            b\t1
+                            """);
         });
     }
 

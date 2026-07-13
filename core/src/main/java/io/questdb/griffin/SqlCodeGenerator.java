@@ -529,6 +529,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    private boolean isRoleSensitive;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     private IQueryModel lastSeenOrderByModel;
@@ -685,6 +686,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();
+        isRoleSensitive = false;
     }
 
     @Override
@@ -759,6 +761,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public RecordComparatorCompiler getRecordComparatorCompiler() {
         return recordComparatorCompiler;
+    }
+
+    @TestOnly
+    public int getSharedFactoryCacheSize() {
+        return sharedFactoryCache.size();
+    }
+
+    public boolean isRoleSensitive() {
+        return isRoleSensitive;
     }
 
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
@@ -10177,6 +10188,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Transient @Nullable TableReader reader,
             @Transient TableRecordMetadata metadata
     ) throws SqlException {
+        if (!isRoleSensitive) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.isColumnReplicaOnlyIndex(i)) {
+                    isRoleSensitive = true;
+                    break;
+                }
+            }
+        }
+
         // create metadata based on top-down columns that are required
         final IntList columnIndexes = new IntList();
         final IntList columnSizeShifts = new IntList();

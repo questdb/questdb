@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Verifies that {@link TableSnapshotRestore} (the checkpoint/snapshot rebuild path) respects the
- * replica-only index gate introduced in Task 14:
+ * replica-only index gate for native and parquet partitions:
  * <ul>
  *   <li>On a <em>skipping primary</em> ({@code skipReplicaOnlyIndexes()==true}), a REPLICA ONLY
  *       index column must NOT be rebuilt during restore — no {@code .k}/{@code .v} files should
@@ -78,8 +78,8 @@ public class SnapshotReplicaOnlyRebuildTest extends AbstractCairoTest {
     }
 
     /**
-     * skip=true path — full checkpoint + engine.checkpointRecover().
-     * The replica-only column must NOT get its index rebuilt; the normal column MUST.
+     * skip=true path - full checkpoint + engine.checkpointRecover().
+     * The replica-only column must NOT get its parquet index rebuilt; the normal column MUST.
      */
     @Test
     public void testSkipNodeDoesNotRebuildReplicaOnlyIndex() throws Exception {
@@ -97,8 +97,13 @@ public class SnapshotReplicaOnlyRebuildTest extends AbstractCairoTest {
                     "  ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
 
-            execute("INSERT INTO x VALUES ('a', 'A', '2024-01-01T00:00:00.000000Z')");
-            execute("INSERT INTO x VALUES ('b', 'B', '2024-01-01T01:00:00.000000Z')");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('a', 'A', '2024-01-01T00:00:00.000000Z'),
+                    ('b', 'B', '2024-01-01T01:00:00.000000Z'),
+                    ('c', 'C', '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
             // Take a checkpoint, then simulate an engine restart so recovery fires.
             execute("checkpoint create");
@@ -117,13 +122,15 @@ public class SnapshotReplicaOnlyRebuildTest extends AbstractCairoTest {
                     "normal-indexed column 't' MUST have index files after restore on a skipping node",
                     ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "t")
             );
+            assertQuery("SELECT s, t FROM x WHERE s = 'a'")
+                    .returns("s\tt\na\tA\n");
 
             engine.checkpointRelease();
         });
     }
 
     /**
-     * skip=false path — directly invokes {@link TableSnapshotRestore#rebuildTableFiles} with a
+     * skip=false path - directly invokes {@link TableSnapshotRestore#rebuildTableFiles} with a
      * configuration wrapper that returns {@code skipReplicaOnlyIndexes()==false}.
      * Both the replica-only column AND the normal column must get their indexes rebuilt.
      */
@@ -137,8 +144,13 @@ public class SnapshotReplicaOnlyRebuildTest extends AbstractCairoTest {
                     "  ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
 
-            execute("INSERT INTO y VALUES ('a', 'A', '2024-01-02T00:00:00.000000Z')");
-            execute("INSERT INTO y VALUES ('b', 'B', '2024-01-02T01:00:00.000000Z')");
+            execute("""
+                    INSERT INTO y VALUES
+                    ('a', 'A', '2024-01-02T00:00:00.000000Z'),
+                    ('b', 'B', '2024-01-02T01:00:00.000000Z'),
+                    ('c', 'C', '2024-01-03T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE y CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
 
             // Release writer so the table files are fully flushed.
             engine.releaseAllWriters();
@@ -175,11 +187,8 @@ public class SnapshotReplicaOnlyRebuildTest extends AbstractCairoTest {
                     "normal-indexed column 't' MUST have index files after rebuild on a non-skipping node",
                     ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "y", "t")
             );
+            assertQuery("SELECT s, t FROM y WHERE s = 'a'")
+                    .returns("s\tt\na\tA\n");
         });
     }
-
-    // -------------------------------------------------------------------------
-    // Helpers (mirrored from TableWriterReplicaOnlySkipTest)
-    // -------------------------------------------------------------------------
-
 }

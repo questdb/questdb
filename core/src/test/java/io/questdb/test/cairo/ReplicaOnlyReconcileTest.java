@@ -25,10 +25,25 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Verifies Task 16: node-local reconcile of replica-only indexes on a role change, made
@@ -45,19 +60,103 @@ import org.junit.Test;
  */
 public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
 
+    private static final AtomicBoolean failPurge = new AtomicBoolean();
+    private static final AtomicInteger skipCallCount = new AtomicInteger();
     private static volatile boolean skip;
+    private static volatile int skipFromCall;
+    private static FilesFacade testFf;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         skip = false;
+        testFf = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (Utf8s.containsAscii(name, "1970-01-01")
+                        && Utf8s.containsAscii(name, "/s.k")
+                        && failPurge.compareAndSet(true, false)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        ff = testFf;
         configurationFactory = (root, telemetry, overrides) ->
                 new CairoTestConfiguration(root, telemetry, overrides) {
                     @Override
+                    public FilesFacade getFilesFacade() {
+                        return testFf;
+                    }
+
+                    @Override
                     public boolean skipReplicaOnlyIndexes() {
-                        return skip;
+                        final int transitionCall = skipFromCall;
+                        return transitionCall < Integer.MAX_VALUE
+                                ? skipCallCount.incrementAndGet() >= transitionCall
+                                : skip;
                     }
                 };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void resetRoleTransition() {
+        failPurge.set(false);
+        skipCallCount.set(0);
+        skipFromCall = Integer.MAX_VALUE;
+    }
+
+    @Test
+    public void testComputedProjectionParquetModePreservesRoleValidation() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = false;
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', 1, 0), ('b', 2, 1_000_000)");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT s, v + 1 adjusted FROM x",
+                         sqlExecutionContext
+                 ).getRecordCursorFactory()) {
+                Assert.assertEquals(
+                        ParquetExportMode.PAGE_FRAME_BACKED,
+                        ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+                );
+
+                skip = true;
+                engine.bumpRoleGeneration();
+                try (PageFrameCursor ignored = ParquetExportMode.getPageFrameBackedCursor(
+                        factory,
+                        sqlExecutionContext,
+                        io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC
+                )) {
+                    Assert.fail("page-frame-backed export must reject a stale role-sensitive factory");
+                } catch (TableReferenceOutOfDateException expected) {
+                    // expected
+                }
+            }
+
+            execute("CREATE TABLE n (s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO n VALUES ('a', 1, 0), ('b', 2, 1_000_000)");
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "SELECT s, v + 1 adjusted FROM n",
+                         sqlExecutionContext
+                 ).getRecordCursorFactory()) {
+                Assert.assertEquals(
+                        ParquetExportMode.PAGE_FRAME_BACKED,
+                        ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+                );
+                engine.bumpRoleGeneration();
+                try (PageFrameCursor pageFrameCursor = ParquetExportMode.getPageFrameBackedCursor(
+                        factory,
+                        sqlExecutionContext,
+                        io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC
+                )) {
+                    Assert.assertNotNull("non-sensitive computed projection must remain executable", pageFrameCursor.next());
+                }
+            }
+        });
     }
 
     @Test
@@ -66,7 +165,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             // Replica/standalone node (skip=false): the replica-only index is materialized on apply.
             skip = false;
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
+            execute("insert into x values ('a',1,0),('b',2,1_000_000),('a',3,2_000_000)");
             drainWalQueue();
             Assert.assertTrue("replica-only index files must exist after WAL apply on a replica", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
@@ -78,7 +177,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
 
             // Force a writer reopen + apply. The constructor reconcile rebuilds the missing index;
             // the apply then maintains it for the new row.
-            execute("insert into x values ('b',4,3000000)");
+            execute("insert into x values ('b',4,3_000_000)");
             drainWalQueue();
 
             Assert.assertTrue("reconcile-on-open must rebuild the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
@@ -90,16 +189,43 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReconcilePurgesFilesCreatedDuringOpenRoleTransition() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = false;
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', 0)");
+            engine.releaseAllWriters();
+            ReplicaOnlyIndexTestUtils.deleteIndexFiles(engine, "x", "s");
+            Assert.assertFalse(ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+
+            // The constructor samples the replica role while taking the absence snapshot, append
+            // setup then fabricates empty index files, and reconciliation samples the primary role.
+            // The call boundary is deterministic for this one-column schema.
+            skipCallCount.set(0);
+            skipFromCall = 4;
+            final TableToken token = engine.verifyTableName("x");
+            try (io.questdb.cairo.TableWriter ignored = engine.getWriter(token, "role transition")) {
+                Assert.assertTrue("transition must occur during writer open", skipCallCount.get() >= skipFromCall);
+            }
+
+            Assert.assertFalse(
+                    "open-time promotion must purge files fabricated after the absence snapshot",
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
+            );
+        });
+    }
+
+    @Test
     public void testReconcileRepairsMissingOlderPartitionIndex() throws Exception {
         assertMemoryLeak(() -> {
             skip = false;
             execute("create table x (s symbol index replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x values ('a',1,0),('b',2,86400000000)");
+            execute("insert into x values ('a',1,0),('b',2,86_400_000_000)");
             drainWalQueue();
             engine.releaseAllWriters();
 
             ReplicaOnlyIndexTestUtils.deleteIndexFilesInPartition(engine, "x", "s", "1970-01-01");
-            execute("insert into x values ('a',3,86401000000)");
+            execute("insert into x values ('a',3,86_401_000_000)");
             drainWalQueue();
 
             assertIndexUsed();
@@ -115,7 +241,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             // 1. Replica (skip=false): index materialized + used.
             skip = false;
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
+            execute("insert into x values ('a',1,0),('b',2,1_000_000),('a',3,2_000_000)");
             drainWalQueue();
             Assert.assertTrue("index files must exist on a replica", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertIndexUsed();
@@ -127,7 +253,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             //    insert triggers the WAL-apply self-heal which PURGES the index sidecars.
             skip = true;
             engine.bumpRoleGeneration();
-            execute("insert into x values ('a',4,4000000)");
+            execute("insert into x values ('a',4,4_000_000)");
             drainWalQueue();
 
             Assert.assertFalse("role flip to primary must purge the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
@@ -142,7 +268,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             // 3. Hot demotion back to a replica: flip role back, bump generation, apply -> REBUILD.
             skip = false;
             engine.bumpRoleGeneration();
-            execute("insert into x values ('b',5,5000000)");
+            execute("insert into x values ('b',5,5_000_000)");
             drainWalQueue();
 
             Assert.assertTrue("role flip back to replica must rebuild the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
@@ -167,7 +293,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             // 1. Replica (skip=false): two partitions, index materialized.
             skip = false;
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,86400000000)"); // day0 + day1
+            execute("insert into x values ('a',1,0),('b',2,1_000_000),('a',3,86_400_000_000)"); // day0 + day1
             drainWalQueue();
             Assert.assertTrue("index files must exist on a replica", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
@@ -183,7 +309,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
                 //    WITHOUT rebuilding the index (skip=true).
                 skip = true;
                 engine.bumpRoleGeneration();
-                execute("insert into x values ('a',4,500000)"); // out-of-order within day0
+                execute("insert into x values ('a',4,500_000)"); // out-of-order within day0
                 drainWalQueue();
                 Assert.assertFalse("promote must purge the replica-only index files", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
@@ -214,7 +340,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             skip = false; // role is irrelevant for a normal index; it is never purged
             execute("create table n (s symbol index capacity 256, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into n values ('a',1,0),('b',2,1000000),('a',3,86400000000)");
+            execute("insert into n values ('a',1,0),('b',2,1_000_000),('a',3,86_400_000_000)");
             drainWalQueue();
             Assert.assertTrue(ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "n", "s"));
 
@@ -226,7 +352,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
 
                 // Rewrite partition 0 (closes + reopens its columns), then delete the rebuilt index
                 // files to simulate genuine corruption -- a normal index is never legitimately absent.
-                execute("insert into n values ('a',4,500000)");
+                execute("insert into n values ('a',4,500_000)");
                 drainWalQueue();
                 ReplicaOnlyIndexTestUtils.deleteIndexFiles(engine, "n", "s");
 
@@ -249,7 +375,7 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             // Replica (skip=false): index materialized on apply.
             skip = false;
             execute("create table x (s symbol index capacity 256 replica only, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into x values ('a',1,0),('b',2,1000000),('a',3,2000000)");
+            execute("insert into x values ('a',1,0),('b',2,1_000_000),('a',3,2_000_000)");
             drainWalQueue();
             Assert.assertTrue("index files must exist on a replica", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
 
@@ -278,6 +404,122 @@ public class ReplicaOnlyReconcileTest extends AbstractCairoTest {
             assertContents("s\tv\tts\n" +
                     "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
                     "a\t3.0\t1970-01-01T00:00:02.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testReconcileRetriesPartialPurge() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = false;
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', 0), ('b', 86_400_000_000)");
+            Assert.assertTrue(ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+
+            skip = true;
+            engine.bumpRoleGeneration();
+            failPurge.set(true);
+            final TableToken token = engine.verifyTableName("x");
+            boolean hasFailed = false;
+            try (io.questdb.cairo.TableWriter writer = engine.getWriter(token, "partial purge")) {
+                writer.reconcileReplicaOnlyIndexesIfRoleChanged();
+            } catch (io.questdb.cairo.CairoException e) {
+                hasFailed = true;
+            }
+            Assert.assertTrue("injected unlink failure must fail reconciliation", hasFailed);
+            Assert.assertTrue("failed purge must leave the injected key file", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
+            Assert.assertFalse("failure injection must fire exactly once", failPurge.get());
+
+            try (io.questdb.cairo.TableWriter writer = engine.getWriter(token, "partial purge retry")) {
+                writer.reconcileReplicaOnlyIndexesIfRoleChanged();
+            }
+            Assert.assertFalse(
+                    "retry must remove residual files even though the index is already incomplete",
+                    ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s")
+            );
+        });
+    }
+
+    @Test
+    public void testRetainedFactoryIsRejectedAfterRoleChange() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = false;
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', 1, 0), ('b', 2, 1_000_000)");
+            assertIndexUsed();
+
+            final String query = "SELECT s, v, ts FROM x WHERE s = 'a'";
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                skip = true;
+                engine.bumpRoleGeneration();
+                final TableToken token = engine.verifyTableName("x");
+                try (io.questdb.cairo.TableWriter writer = engine.getWriter(token, "role change")) {
+                    writer.reconcileReplicaOnlyIndexesIfRoleChanged();
+                }
+
+                boolean hasRejectedStaleFactory = false;
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("factory compiled for the old role must be rejected");
+                } catch (TableReferenceOutOfDateException e) {
+                    hasRejectedStaleFactory = true;
+                }
+                Assert.assertTrue(hasRejectedStaleFactory);
+            }
+
+            // Standard query callers catch TableReferenceOutOfDateException and compile a fresh
+            // full-scan plan. Verify that the fresh plan runs after the replica-only sidecars were purged.
+            assertIndexNotUsed();
+            assertContents("s\tv\tts\n" +
+                    "a\t1.0\t1970-01-01T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testRoleChangeDuringSharedCteCompilationRetriesCleanly() throws Exception {
+        assertMemoryLeak(() -> {
+            skip = false;
+            execute("CREATE TABLE x (s SYMBOL INDEX REPLICA ONLY, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('a', 1, 0), ('b', 2, 1_000_000)");
+
+            final AtomicInteger planCount = new AtomicInteger();
+            final AtomicInteger prePlanCount = new AtomicInteger();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                compiler.setRoleGenerationPrePlanObserver(cacheSize -> {
+                    final int attempt = prePlanCount.incrementAndGet();
+                    Assert.assertEquals(
+                            "shared-factory cache must be empty at the start of compile attempt " + attempt,
+                            0,
+                            cacheSize
+                    );
+                });
+                compiler.setRoleGenerationPlanObserver(cacheSize -> {
+                    Assert.assertTrue("plan must populate the shared-factory cache", cacheSize > 0);
+                    if (planCount.incrementAndGet() == 1) {
+                        skip = true;
+                        engine.bumpRoleGeneration();
+                    }
+                });
+                try {
+                    final String query = "SELECT o.s, o.total, sub.v " +
+                            "FROM (SELECT s, sum(v) total FROM x GROUP BY s) o " +
+                            "JOIN LATERAL (SELECT v FROM x WHERE v <= o.total) sub";
+                    try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertEquals("role change must trigger exactly one compile retry", 2, planCount.get());
+                        Assert.assertEquals("both compile attempts must start with an empty shared cache", 2, prePlanCount.get());
+                        int rowCount = 0;
+                        while (cursor.hasNext()) {
+                            rowCount++;
+                        }
+                        Assert.assertEquals(3, rowCount);
+                    }
+                } finally {
+                    compiler.setRoleGenerationPlanObserver(null);
+                    compiler.setRoleGenerationPrePlanObserver(null);
+                }
+            }
         });
     }
 

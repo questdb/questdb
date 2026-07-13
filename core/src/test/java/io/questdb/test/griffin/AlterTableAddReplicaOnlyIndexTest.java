@@ -46,6 +46,18 @@ public class AlterTableAddReplicaOnlyIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterReplicaWithoutOnlyErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL)");
+            assertException(
+                    "ALTER TABLE x ALTER COLUMN s ADD INDEX REPLICA",
+                    46,
+                    "'only' expected"
+            );
+        });
+    }
+
+    @Test
     public void testDropIndexClearsReplicaOnlyFlag() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (s symbol index capacity 256 replica only, ts timestamp) timestamp(ts) partition by day wal");

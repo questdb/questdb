@@ -205,11 +205,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                     case DIRECT_PAGE_FRAME ->
                                             state.pageFrameCursor = state.recordCursorFactory.getPageFrameCursor(sqlExecutionContext, order);
                                     case PAGE_FRAME_BACKED -> {
-                                        // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
-                                        // when unwrapped instanceof VirtualRecordCursorFactory.
-                                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
-                                        VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
-                                        state.pageFrameCursor = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                                        // determineExportMode() only returns PAGE_FRAME_BACKED when
+                                        // the shape-unwrapped factory is virtual. Acquire its base page
+                                        // frames through the execution wrapper so role validation runs.
+                                        state.pageFrameCursor = ParquetExportMode.getPageFrameBackedCursor(
+                                                state.recordCursorFactory,
+                                                sqlExecutionContext,
+                                                ORDER_ASC
+                                        );
                                     }
                                     case CURSOR_BASED ->
                                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
@@ -247,13 +250,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     // Set up materializer for parquet export modes that need it
                     if (isParquet && state.parquetExportMode == ParquetExportMode.PAGE_FRAME_BACKED) {
                         // Safe cast: determineExportMode() only returns PAGE_FRAME_BACKED
-                        // when unwrapped instanceof VirtualRecordCursorFactory.
-                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
+                        // when shape-unwrapped factory is a VirtualRecordCursorFactory.
+                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactoryShape(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                         state.pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
-                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
+                        RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactoryShape(state.recordCursorFactory);
                         if (unwrapped instanceof VirtualRecordCursorFactory vf) {
                             state.materializer.setUpCursorBacked(vf);
                         } else {
