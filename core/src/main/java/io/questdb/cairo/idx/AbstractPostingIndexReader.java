@@ -73,6 +73,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private static final int FSST_DECODE_CHUNK_SIZE = 256;
     private static final String INDEX_CORRUPT = "posting index is corrupt";
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
+    private static final ThreadLocal<FrozenBaseOrdinalObserver> TEST_FROZEN_BASE_ORDINAL_OBSERVER = new ThreadLocal<>();
     protected final PostingIndexChainEntry.Snapshot entryScratch = new PostingIndexChainEntry.Snapshot();
     protected final PostingGenLookup genLookup = new PostingGenLookup();
     // Reusable ascending-gen-order scratch for populateCacheForKey's metadata-only
@@ -538,6 +539,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         if (key < 0 || !genLookup.anySparseGen()) {
             return;
         }
+        final FrozenBaseOrdinalObserver observer = TEST_FROZEN_BASE_ORDINAL_OBSERVER.get();
+        if (observer != null) {
+            sidecarPrefixSum.setFrozenBaseOrdinalObserver(observer);
+        }
         cacheBuilderEntries.clear();
         for (int g = 0; g < genCount; g++) {
             if (genLookup.getGenKeyCount(g) >= 0) {
@@ -572,7 +577,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 final int activeKeyCount = -genLookup.getGenKeyCount(g);
                 final long genAddr = valueMem.addressOf(genLookup.getGenFileOffset(g));
                 final long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
-                sidecarPrefixSum.prime(genLookup.getCacheVersion(), genCount, g, countsBase, activeKeyCount);
+                sidecarPrefixSum.prime(genLookup.getCacheVersion(), genCount, g, start, countsBase, activeKeyCount);
             }
         }
         genLookup.putCacheEntries(key, cacheBuilderEntries);
@@ -811,6 +816,16 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * be primed here, otherwise the worker would build the memo lazily and race.
      */
     @TestOnly
+    public static void clearFrozenBaseOrdinalObserverForTesting() {
+        TEST_FROZEN_BASE_ORDINAL_OBSERVER.remove();
+    }
+
+    @TestOnly
+    public boolean isSidecarGenFullPrefixForTesting(int gen) {
+        return sidecarPrefixSum.isFullPrefix(gen);
+    }
+
+    @TestOnly
     public boolean isSidecarGenPrimedForTesting(int gen) {
         return sidecarPrefixSum.isPrimed(gen);
     }
@@ -818,6 +833,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     @TestOnly
     public void setGenLookupCacheBudget(long budget) {
         genLookup.setCacheMemoryBudget(budget);
+    }
+
+    @TestOnly
+    public static void setFrozenBaseOrdinalObserverForTesting(FrozenBaseOrdinalObserver observer) {
+        TEST_FROZEN_BASE_ORDINAL_OBSERVER.set(observer);
     }
 
     @Override
@@ -1487,11 +1507,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return newlyFound;
     }
 
-    // ----- selectKthMatch support: per-gen random-access reads, parameterized by
-    // ----- key (the outer reader has no requestedKey field). These mirror, byte for
-    // ----- byte, the offset arithmetic the cursor's loadDenseGenerationCached /
-    // ----- loadSparseGenByPrefixSum / readDeltaBlockMetadata / decode*Block use, so a
-    // ----- random-access read at index j yields exactly the cursor's j-th value.
+    // selectKthMatch uses per-gen random-access reads parameterized by key (the outer reader
+    // has no requestedKey field). These mirror, byte for byte, the offset arithmetic the cursor's
+    // loadDenseGenerationCached / loadSparseGenByPrefixSum / readDeltaBlockMetadata / decode*Block
+    // methods use, so a random-access read at index j yields exactly the cursor's j-th value.
 
     /**
      * Count of {@code key}'s postings in dense gen {@code gen}. Mirrors the cursor's
@@ -3135,44 +3154,91 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * drop / grow) happens while frozen — i.e. that priming was complete — turning
      * a would-be silent data race into a deterministic {@code -ea} failure.
      */
+    @TestOnly
+    public interface FrozenBaseOrdinalObserver {
+        void onFrozenBaseOrdinal();
+    }
+
     protected static final class SparseGenSidecarPrefixSum {
-        // perGen[gen][slot] = sum(counts[0..slot)) for the sparse gen; a null row
-        // means "not built yet for the current snapshot". Rebuilt lazily.
+        private static final int FULL_PREFIX_PROMOTION_SLOTS = 16;
+        // Sparse rows hold (slot, ordinal) pairs. After enough distinct requests, a row is promoted
+        // to a full prefix array. This keeps a selective slot-zero lookup bounded and allocation-small.
+        private FrozenBaseOrdinalObserver frozenBaseOrdinalObserver;
+        private boolean[] isFullPrefix;
         private int[][] perGen;
-        // getCacheVersion() the memo was last (re)built against. A mismatch means a
-        // new gen snapshot was committed, so every cached row is dropped.
+        private int[] slotCounts;
+        // getCacheVersion() the memo was last (re)built against. A mismatch drops every cached row.
         private long version = -1;
 
-        /**
-         * O(1) sidecar base ordinal for {@code slot} in {@code gen}, i.e.
-         * {@code sum(counts[0..slot))}. Reads the gen's prefix row, building it on
-         * first use. On the parallel-decode path the row must already have been
-         * primed single-threaded (see {@link #prime}) before the reader froze; the
-         * {@code frozen} flag asserts that so a missed prime fails deterministically
-         * rather than racing the shared memo.
-         *
-         * @param cacheVersion   current {@link PostingGenLookup#getCacheVersion()}
-         * @param genCount       number of gens visible in the current snapshot
-         *                       (sizes the per-gen row table)
-         * @param gen            the sparse gen index, in {@code [0, genCount)}
-         * @param slot           the key's dense slot within the gen
-         * @param countsBase     native address of this gen's per-slot counts array
-         *                       (already computed by the caller from the current
-         *                       snapshot's gen file offset)
-         * @param activeKeyCount number of slots in the sparse gen
-         * @param frozen         true when called from a frozen reader (a concurrent
-         *                       worker decode); the row must be pre-primed, so no
-         *                       build/version-drop/grow may occur here
-         */
-        int baseOrdinal(long cacheVersion, int genCount, int gen, int slot, long countsBase, int activeKeyCount, boolean frozen) {
-            return rowFor(cacheVersion, genCount, gen, countsBase, activeKeyCount, frozen)[slot];
+        int baseOrdinal(
+                long cacheVersion,
+                int genCount,
+                int gen,
+                int slot,
+                long countsBase,
+                int activeKeyCount,
+                boolean isFrozen
+        ) {
+            if (isFrozen && frozenBaseOrdinalObserver != null) {
+                final FrozenBaseOrdinalObserver observer = frozenBaseOrdinalObserver;
+                frozenBaseOrdinalObserver = null;
+                observer.onFrozenBaseOrdinal();
+            }
+            if (slot == 0) {
+                return 0;
+            }
+            ensureSnapshot(cacheVersion, genCount, isFrozen);
+            int[] memo = perGen[gen];
+            if (memo != null) {
+                if (isFullPrefix[gen]) {
+                    return memo[slot];
+                }
+                for (int i = 0, n = slotCounts[gen]; i < n; i++) {
+                    if (memo[2 * i] == slot) {
+                        return memo[2 * i + 1];
+                    }
+                }
+            }
+
+            assert !isFrozen : "sidecar memo slot built while frozen: gen " + gen + ", slot " + slot + " was not primed before parallel decode";
+            final int ordinal = computeOrdinal(slot, countsBase);
+            final int slotCount = slotCounts[gen];
+            if (slotCount + 1 >= Math.min(activeKeyCount, FULL_PREFIX_PROMOTION_SLOTS)) {
+                int[] prefix = new int[activeKeyCount];
+                int acc = 0;
+                for (int i = 0; i < activeKeyCount; i++) {
+                    prefix[i] = acc;
+                    acc += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
+                }
+                perGen[gen] = prefix;
+                isFullPrefix[gen] = true;
+                slotCounts[gen] = activeKeyCount;
+            } else {
+                if (memo == null) {
+                    memo = new int[Math.min(8, 2 * activeKeyCount)];
+                } else if (2 * (slotCount + 1) > memo.length) {
+                    memo = Arrays.copyOf(memo, Math.min(2 * activeKeyCount, memo.length * 2));
+                }
+                memo[2 * slotCount] = slot;
+                memo[2 * slotCount + 1] = ordinal;
+                perGen[gen] = memo;
+                slotCounts[gen] = slotCount + 1;
+            }
+            return ordinal;
         }
 
         void clear() {
             if (perGen != null) {
                 Arrays.fill(perGen, null);
+                Arrays.fill(isFullPrefix, false);
+                Arrays.fill(slotCounts, 0);
             }
             version = -1;
+        }
+
+        @TestOnly
+        boolean isFullPrefix(int gen) {
+            return isFullPrefix != null && gen >= 0 && gen < isFullPrefix.length && isFullPrefix[gen];
         }
 
         @TestOnly
@@ -3180,53 +3246,38 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return perGen != null && gen >= 0 && gen < perGen.length && perGen[gen] != null;
         }
 
-        /**
-         * Force-build the prefix row for {@code gen} single-threaded, BEFORE the
-         * reader is frozen for parallel decode, so later frozen {@link #baseOrdinal}
-         * reads are pure reads with no shared-state mutation across worker threads.
-         */
-        void prime(long cacheVersion, int genCount, int gen, long countsBase, int activeKeyCount) {
-            rowFor(cacheVersion, genCount, gen, countsBase, activeKeyCount, false);
+        void setFrozenBaseOrdinalObserver(FrozenBaseOrdinalObserver observer) {
+            frozenBaseOrdinalObserver = observer;
         }
 
-        // Ensures perGen[gen] exists for the current snapshot and returns it. Mutates
-        // shared state (version reset, grow, row build) only when !frozen; while
-        // frozen (concurrent worker decode over one shared reader) the row must
-        // already have been primed, which the asserts enforce deterministically.
-        private int[] rowFor(long cacheVersion, int genCount, int gen, long countsBase, int activeKeyCount, boolean frozen) {
+        void prime(long cacheVersion, int genCount, int gen, int slot, long countsBase, int activeKeyCount) {
+            baseOrdinal(cacheVersion, genCount, gen, slot, countsBase, activeKeyCount, false);
+        }
+
+        private static int computeOrdinal(int slot, long countsBase) {
+            int ordinal = 0;
+            for (int i = 0; i < slot; i++) {
+                ordinal += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
+            }
+            return ordinal;
+        }
+
+        private void ensureSnapshot(long cacheVersion, int genCount, boolean isFrozen) {
             if (version != cacheVersion) {
-                // A new gen snapshot was committed since we last built: every
-                // cached row may reference stale offsets/counts. Drop and rebind.
-                assert !frozen : "sidecar memo version changed while frozen";
+                assert !isFrozen : "sidecar memo version changed while frozen";
                 if (perGen != null) {
                     Arrays.fill(perGen, null);
+                    Arrays.fill(isFullPrefix, false);
+                    Arrays.fill(slotCounts, 0);
                 }
                 version = cacheVersion;
             }
             if (perGen == null || perGen.length < genCount) {
-                assert !frozen : "sidecar memo grown while frozen";
-                int[][] grown = new int[genCount][];
-                if (perGen != null) {
-                    System.arraycopy(perGen, 0, grown, 0, perGen.length);
-                }
-                perGen = grown;
+                assert !isFrozen : "sidecar memo grown while frozen";
+                perGen = perGen == null ? new int[genCount][] : Arrays.copyOf(perGen, genCount);
+                isFullPrefix = isFullPrefix == null ? new boolean[genCount] : Arrays.copyOf(isFullPrefix, genCount);
+                slotCounts = slotCounts == null ? new int[genCount] : Arrays.copyOf(slotCounts, genCount);
             }
-            int[] prefix = perGen[gen];
-            if (prefix == null) {
-                // Building here on a frozen reader would be a cross-worker data race on
-                // the shared memo (silent wrong covered values). The row must have been
-                // primed by populateCacheForKey / warmForKeys before the freeze.
-                assert !frozen : "sidecar memo row built while frozen: gen " + gen + " was not primed before parallel decode";
-                // prefix[i] = sum(counts[0..i)); prefix[0] = 0.
-                prefix = new int[activeKeyCount];
-                int acc = 0;
-                for (int i = 0; i < activeKeyCount; i++) {
-                    prefix[i] = acc;
-                    acc += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
-                perGen[gen] = prefix;
-            }
-            return prefix;
         }
     }
 }

@@ -656,6 +656,8 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                         // must have primed its memo row so a frozen worker never builds it.
                         assertTrue("populateCacheForKey must prime the covered sparse gen's sidecar memo",
                                 reader.isSidecarGenPrimedForTesting(0));
+                        assertFalse("one selective key must not allocate the full sparse-gen prefix",
+                                reader.isSidecarGenFullPrefixForTesting(0));
                     }
                 } finally {
                     Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
@@ -781,7 +783,7 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                 writer.commit();
                             }
 
-                            // --- FROZEN: reloadConditionally must do nothing observable. ---
+                            // While frozen, reloadConditionally must do nothing observable.
                             reader.setFrozen(true);
                             reader.reloadConditionally();
 
@@ -808,7 +810,7 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                     preRows.size(), fi);
                             Misc.free(frozenCursor);
 
-                            // --- UNFROZEN: reload resumes and picks up the new chain state. ---
+                            // Once unfrozen, reload resumes and picks up the new chain state.
                             reader.setFrozen(false);
                             reader.reloadConditionally();
 

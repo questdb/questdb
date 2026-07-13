@@ -106,12 +106,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // Test-only crossover override; -1 means "use HEAP_MERGE_MIN_KEYS".
     @TestOnly
     static int heapMergeMinKeysOverride = -1;
+    private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
     private final IntList columnIndexes;
 
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
     private final int keyQueryPosition;
     private final ObjList<Function> keyValueFuncs;
+    // Runtime-owned key list for adaptive symbol-pattern routing. The adaptive factory refreshes this
+    // list before opening this delegate and retains ownership; this factory only reads it.
+    private final IntList patternKeys;
     private final boolean latestBy;
     private final Function latestByFilter;
     private final RecordMetadata metadata;
@@ -141,11 +145,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @Nullable TableReader reader,
             boolean latestBy,
             @Nullable Function latestByFilter,
-            @Nullable Function patternProviderFunction
+            @Nullable Function patternProviderFunction,
+            @Nullable IntList patternKeys
     ) {
         // keyValueFuncs (IN/= key list) and patternProviderFunction (positive pattern's key-set provider)
         // are two mutually exclusive ways to drive the multi-key merge; never both.
         assert keyValueFuncs == null || patternProviderFunction == null;
+        assert keyValueFuncs == null || patternKeys == null;
+        assert patternProviderFunction == null || patternKeys == null;
         assert patternProviderFunction == null || patternProviderFunction instanceof SymbolKeySetProvider;
         this.metadata = metadata;
         this.dfcFactory = dfcFactory;
@@ -156,6 +163,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         this.symbolFunctionRuntimeConstant = symbolKey == SymbolTable.VALUE_NOT_FOUND;
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
+        this.patternKeys = patternKeys;
         this.patternProviderFunction = patternProviderFunction;
         this.queryColToIncludeIdx = queryColToIncludeIdx;
         // Defensive copy. The caller passes intrinsicModel.keyValueFuncs, which is a
@@ -176,9 +184,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // the copy is the reference this factory owns and frees in close(); using it consistently avoids
         // a refactor hazard if the defensive copy above is ever changed or removed.
         final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
-        if (keyValueFuncsCopy != null || patternProviderFunction != null) {
+        if (keyValueFuncsCopy != null || patternProviderFunction != null || patternKeys != null) {
             final int multiKeyCapacity;
-            if (patternProviderFunction != null) {
+            if (patternProviderFunction != null || patternKeys != null) {
                 // Provider path: the matched-key set is not known until getCursor (it is resolved from the
                 // static symbol table at execution time, so it also reflects symbols added after compile).
                 // Leave resolvedKeys null and size the merge with a small growable default.
@@ -196,10 +204,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                 }
             }
-            this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
+            final MergeObserver mergeObserver = TEST_MERGE_OBSERVER.get();
+            this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
             this.singleKeyCursor = null;
             this.multiKeyPageFrameCursor = !latestBy
-                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
+                    ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes, mergeObserver)
                     : null;
             this.singleKeyPageFrameCursor = null;
         } else {
@@ -251,6 +260,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         CoveringPageFrameCursor.coveredRowsWrittenForTesting = 0;
     }
 
+    @TestOnly
+    public static void clearMergeObserverForTesting() {
+        TEST_MERGE_OBSERVER.remove();
+    }
+
     /**
      * Test-only hook that lowers the multi-key merge crossover so the O(log N)
      * heap k-way merge (see {@link MultiKeyCoveringCursor}) can be exercised with
@@ -260,6 +274,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @TestOnly
     public static void setHeapMergeMinKeysForTesting(int n) {
         heapMergeMinKeysOverride = n;
+    }
+
+    @TestOnly
+    public static void setMergeObserverForTesting(MergeObserver observer) {
+        TEST_MERGE_OBSERVER.set(observer);
     }
 
     @Override
@@ -284,7 +303,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         );
         try {
             if (multiKeyCursor != null) {
-                if (patternProviderFunction != null) {
+                if (patternKeys != null) {
+                    multiKeyCursor.multiKeys = patternKeys;
+                    multiKeyCursor.of(frameCursor);
+                } else if (patternProviderFunction != null) {
                     // SP3 provider path. Bind the cursor to the frame FIRST: the provider's sym SymbolColumn
                     // references the indexed symbol column by QUERY position, and multiKeyCursor is the
                     // SymbolTableSource that maps query position -> reader index (via columnIndexes). Init'ing
@@ -298,11 +320,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // every getCursor (never cached), so deferred symbols added after compile are included.
                     patternProviderFunction.init(multiKeyCursor, executionContext);
                     final IntList keys = ((SymbolKeySetProvider) patternProviderFunction).getMatchedSymbolKeys();
-                    multiKeyCursor.multiKeys.clear();
-                    for (int i = 0, n = keys.size(); i < n; i++) {
-                        multiKeyCursor.multiKeys.add(keys.getQuick(i));
-                    }
-                    // of() above sized the per-key merge arrays from the (then empty) multiKeys; re-run the
+                    // The provider owns this read-only list until its next init(). Cursor opens are already
+                    // serialized by the shared cursor state, so reference it directly instead of copying O(K).
+                    multiKeyCursor.multiKeys = keys;
+                    // of() above sized the per-key merge arrays from the previous multiKeys; re-run the
                     // sizing now that the keys are filled, so hasNext()'s k-way merge (which indexes
                     // keyHeads[0..multiKeys.size()) before the first openNextPartitionCursors()) has arrays
                     // wide enough. Harmless no-op when the key count did not grow.
@@ -398,6 +419,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         try {
             TableReader reader = frameCursor.getTableReader();
             if (multiKeyPageFrameCursor != null) {
+                if (patternKeys != null) {
+                    multiKeyPageFrameCursor.multiKeys = patternKeys;
+                    multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false);
+                    return multiKeyPageFrameCursor;
+                }
                 if (patternProviderFunction != null) {
                     // SP3 provider path: see getCursor(). Bind the cursor to the frame FIRST so the provider's
                     // sym SymbolColumn resolves its static symbol table via query-position -> reader-index
@@ -408,10 +434,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false);
                     patternProviderFunction.init(multiKeyPageFrameCursor, executionContext);
                     final IntList keys = ((SymbolKeySetProvider) patternProviderFunction).getMatchedSymbolKeys();
-                    multiKeyPageFrameCursor.multiKeys.clear();
-                    for (int i = 0, n = keys.size(); i < n; i++) {
-                        multiKeyPageFrameCursor.multiKeys.add(keys.getQuick(i));
-                    }
+                    // See getCursor(): provider initialization and cursor consumption are serialized.
+                    multiKeyPageFrameCursor.multiKeys = keys;
                     return multiKeyPageFrameCursor;
                 }
                 if (keyValueFuncs != null) {
@@ -2298,11 +2322,18 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
+    @TestOnly
+    public interface MergeObserver {
+        void onMergeStrategy(boolean isHeapMerge, boolean isPageFrame);
+
+        void onPageFrame(long lo, long hi);
+    }
+
     private static class MultiKeyCoveringCursor extends CoveringCursor {
         // Row-id sentinel: the per-key cursor is exhausted, or the key is absent
         // from the current partition. Real row ids are non-negative.
         private static final long NO_ROW = -1;
-        final IntList multiKeys;
+        IntList multiKeys;
         // latestBy iteration cursor over multiKeys (used only by hasNextLatestBy).
         private int currentKeyIdx;
         // Per-key open cursors for the current partition and their peeked head
@@ -2330,12 +2361,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // Whether the current merge uses the heap (multiKeys.size() > crossover).
         // Recomputed per reset; stable across a partition switch (key set fixed).
         private boolean isHeapMerge;
+        private boolean isMergeObserved;
+        private final MergeObserver mergeObserver;
 
         MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
                                int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
-                               boolean latestBy, RecordMetadata metadata) {
+                               boolean latestBy, RecordMetadata metadata, MergeObserver mergeObserver) {
             super(indexColumnIndex, SymbolTable.VALUE_NOT_FOUND, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
             this.multiKeys = new IntList(multiKeyCapacity);
+            this.mergeObserver = mergeObserver;
         }
 
         @Override
@@ -2462,6 +2496,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // Fix the merge strategy for this scan by key count, and start with an
             // empty heap; openNextPartitionCursors() rebuilds it from primed heads.
             isHeapMerge = n > effectiveHeapMergeMinKeys();
+            isMergeObserved = false;
             heap.clear();
         }
 
@@ -2515,6 +2550,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                 }
                 if (any) {
+                    if (!isMergeObserved && mergeObserver != null) {
+                        mergeObserver.onMergeStrategy(isHeapMerge, false);
+                        isMergeObserved = true;
+                    }
                     if (isHeapMerge) {
                         // (Re)build the heap from this partition's primed heads;
                         // NO_ROW keys are simply absent from the heap.
@@ -2536,7 +2575,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // Row-id sentinel: per-key cursor exhausted, or key absent from the
         // partition being merged. Real row ids are non-negative.
         private static final long NO_ROW = -1;
-        final IntList multiKeys = new IntList();
+        IntList multiKeys = new IntList();
         // Per-key open cursors for the partition currently being merged and their
         // peeked head row ids. Merging the per-key cursors by row id makes each
         // emitted frame hold rows in ascending designated-timestamp order (with
@@ -2560,15 +2599,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // advance: peek -> writeCoveredRow -> pollAndReplace / pollValue.
         private final IntLongSortedList heap = new IntLongSortedList();
         private boolean isHeapMerge;
+        private boolean isMergeObserved;
+        private final MergeObserver mergeObserver;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
                 int[] queryColToIncludeIdx,
                 int[] requiredIncludeIndices,
                 RecordMetadata metadata,
-                IntList columnIndexes
+                IntList columnIndexes,
+                MergeObserver mergeObserver
         ) {
             super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes);
+            this.mergeObserver = mergeObserver;
         }
 
         @Override
@@ -2617,6 +2660,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
             }
             heap.clear();
+            isMergeObserved = false;
             mergePartitionIndex = -1;
         }
 
@@ -2715,6 +2759,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // worker arm skips multi-key frames; this keeps the metadata coherent.)
             final long firstAbs = firstRowId + mergeRowLo;
             final long lastAbs = lastRowId + mergeRowLo;
+            if (mergeObserver != null) {
+                mergeObserver.onPageFrame(firstAbs, lastAbs + 1);
+            }
             // materialized == true: the worker arm SKIPS multi-key (VALUE_NOT_FOUND)
             // frames, so these eagerly filled buffers are the only decode. Their
             // real page addresses MUST be published.
@@ -2762,6 +2809,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     mergeCursors[i] = Misc.free(c);
                     mergeHeads[i] = NO_ROW;
                 }
+            }
+            if (any && !isMergeObserved && mergeObserver != null) {
+                mergeObserver.onMergeStrategy(isHeapMerge, true);
+                isMergeObserved = true;
             }
             if (any && isHeapMerge) {
                 heap.clear();

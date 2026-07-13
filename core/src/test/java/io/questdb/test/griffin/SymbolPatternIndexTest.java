@@ -34,12 +34,15 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -102,6 +105,183 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAdaptiveCoveringPageFrameRoutesSelectiveAndBroadPatterns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('AA', 1.0, 0), ('AB', 2.0, 1)");
+            execute("INSERT INTO t SELECT 'BA', x::DOUBLE, timestamp_sequence(2, 1) FROM long_sequence(1_000)");
+
+            assertQuery("SELECT sum(price) FROM t WHERE sym LIKE 'A%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("AdaptiveSymbolPattern");
+            assertQuery("SELECT sum(price) FROM t WHERE sym LIKE 'A%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("CoveringIndex");
+            assertQuery("SELECT sum(price) FROM t WHERE sym LIKE 'A%'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("PageFrame");
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sum(price) FROM t WHERE sym LIKE 'A%'"),
+                    select("SELECT sum(price) FROM t WHERE sym LIKE 'A%'")
+            );
+            Assert.assertTrue(AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get() > 0);
+            Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get());
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sum(price) FROM t WHERE sym LIKE 'B%'"),
+                    select("SELECT sum(price) FROM t WHERE sym LIKE 'B%'")
+            );
+            Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get());
+            Assert.assertTrue(AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get() > 0);
+        });
+    }
+
+    @Test
+    public void testAdaptiveRecordRoutesHotOneKeyAndManyColdKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT 'HOT', x, timestamp_sequence(0, 1) FROM long_sequence(10_000)");
+            execute("INSERT INTO t SELECT 'C' || x, 10_000 + x, timestamp_sequence(10_000, 1) FROM long_sequence(100)");
+
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'C%' ORDER BY v")
+                    .noLeakCheck()
+                    .assertsPlanContaining("AdaptiveSymbolPattern");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'C%' ORDER BY v")
+                    .noLeakCheck()
+                    .assertsPlanContaining("SymbolPatternIndex");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'C%' ORDER BY v")
+                    .noLeakCheck()
+                    .assertsPlanContaining("PageFrame");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'HOT' ORDER BY v"),
+                    select("SELECT sym, v FROM t WHERE sym LIKE 'HOT' ORDER BY v")
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
+            Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0);
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'C%' ORDER BY v"),
+                    select("SELECT sym, v FROM t WHERE sym LIKE 'C%' ORDER BY v")
+            );
+            Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0);
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+        });
+    }
+
+    @Test
+    public void testAdaptiveRecordRoutesNegatedSelectiveAndBroadPatterns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT 'AA', x, timestamp_sequence(0, 1) FROM long_sequence(10_000)");
+            execute("INSERT INTO t VALUES ('BA', 10_001, 10_001), ('BB', 10_002, 10_002)");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym NOT LIKE 'A%' ORDER BY v"),
+                    select("SELECT sym, v FROM t WHERE sym NOT LIKE 'A%' ORDER BY v")
+            );
+            Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0);
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym NOT LIKE 'Z%' ORDER BY v"),
+                    select("SELECT sym, v FROM t WHERE sym NOT LIKE 'Z%' ORDER BY v")
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
+            Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0);
+        });
+    }
+
+    @Test
+    public void testBindVariableKeysRefreshAcrossCursorReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('AA', 1, 0), ('BB', 2, 1)");
+            bindVariableService.setStr("pattern", "A%");
+            final String query = "SELECT sym, v FROM t WHERE sym LIKE :pattern ORDER BY v";
+            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+
+                execute("INSERT INTO t VALUES ('AC', 3, 2)");
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+
+                bindVariableService.setStr("pattern", null);
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+
+                bindVariableService.setStr("pattern", "");
+                TestUtils.assertEquals(select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v"), printFactory(factory));
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableKeysRefreshOnCoveringPageFrameCursorReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('AA', 1.0, 0), ('BB', 2.0, 1)");
+            bindVariableService.setStr("pattern", "A%");
+            final String query = "SELECT sym, sum(price) total FROM t WHERE sym LIKE :pattern ORDER BY sym";
+            final String oracle = "SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, sum(price) total FROM t WHERE sym LIKE :pattern ORDER BY sym";
+            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                execute("INSERT INTO t VALUES ('AC', 3.0, 2)");
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                bindVariableService.setStr("pattern", null);
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                bindVariableService.setStr("pattern", "");
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableKeysRefreshOnCoveringRecordCursorReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('AA', 1.0, 0), ('BB', 2.0, 1)");
+            bindVariableService.setStr("pattern", "A%");
+            final String query = "SELECT sym, price FROM t WHERE sym LIKE :pattern ORDER BY price";
+            final String oracle = "SELECT /*+ no_symbol_pattern_index(t) no_covering(t) */ sym, price FROM t WHERE sym LIKE :pattern ORDER BY price";
+            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                execute("INSERT INTO t VALUES ('AC', 3.0, 2)");
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                bindVariableService.setStr("pattern", null);
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                bindVariableService.setStr("pattern", "");
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableKeysRefreshOnNegatedCursorReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('AA', 1, 0), ('BB', 2, 1)");
+            bindVariableService.setStr("pattern", "A%");
+            final String query = "SELECT sym, v FROM t WHERE sym NOT LIKE :pattern ORDER BY v";
+            final String oracle = "SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym NOT LIKE :pattern ORDER BY v";
+            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                execute("INSERT INTO t VALUES ('AC', 3, 2)");
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                bindVariableService.setStr("pattern", null);
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                bindVariableService.setStr("pattern", "");
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+            }
+        });
+    }
+
+    @Test
     public void testHintConstantWiring() {
         // A plain string-equality check on the constant is tautological: it would still pass if
         // SqlHints never consulted the constant. Assert the real wiring instead -- that a model
@@ -141,11 +321,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "2");
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
-            // AA/AB/AC (3 keys) match 'A%'; 3 > threshold(2) -> fallback (default 100 would index).
-            execute("insert into t select rnd_symbol('AA','AB','AC','BA','BB'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
-            String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, count() from t where sym like 'A%' order by sym");
+            // Three cold matching keys require three posting probes. The configured budget of two
+            // conservatively selects the scan even though the posting-row estimate is selective.
+            execute("INSERT INTO t VALUES ('AA', 1, 0), ('AB', 2, 1), ('AC', 3, 2)");
+            execute("INSERT INTO t SELECT 'BA', x, timestamp_sequence(3, 1) FROM long_sequence(100)");
+            String expected = select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'A%' ORDER BY v");
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-            String actual = select("select sym, count() from t where sym like 'A%' order by sym");
+            String actual = select("SELECT sym, v FROM t WHERE sym LIKE 'A%' ORDER BY v");
             io.questdb.test.tools.TestUtils.assertEquals(expected, actual);
             Assert.assertTrue(
                     "custom threshold=2 must force the fallback for 3 matched keys, got fallback="
@@ -157,6 +339,29 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     0,
                     SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
             );
+        });
+    }
+
+    @Test
+    public void testCustomThresholdExactBoundaryUsesIndex() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "2");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('AA', 1, 0), ('AB', 2, 1)");
+            execute("INSERT INTO t SELECT 'BA', x, timestamp_sequence(2, 1) FROM long_sequence(100)");
+
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            select("SELECT sym, v FROM t WHERE sym LIKE 'A%' ORDER BY v");
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+            Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0);
+
+            execute("CREATE TABLE t2 (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t2 VALUES ('BA', 1, 0), ('BB', 2, 1)");
+            execute("INSERT INTO t2 SELECT 'AA', x, timestamp_sequence(2, 1) FROM long_sequence(100)");
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            select("SELECT sym, v FROM t2 WHERE sym NOT LIKE 'A%' ORDER BY v");
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+            Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0);
         });
     }
 
@@ -410,7 +615,9 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t select rnd_symbol('AA','AB','BA','BB'), x, timestamp_sequence(0, 60000000) from long_sequence(3000)");
-            for (String order : new String[]{"order by ts", "order by ts desc"}) {
+            final ObjList<String> orders = new ObjList<>("order by ts", "order by ts desc");
+            for (int i = 0, n = orders.size(); i < n; i++) {
+                final String order = orders.getQuick(i);
                 String fastPath = "select sym, v, ts from t where sym like 'A%%' " + order;
                 String hinted = "select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%%' " + order;
                 String expected = select(hinted.trim());
@@ -469,8 +676,8 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     public void testLowSelectivityUsesIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
-            // rnd_symbol gives 5 distinct values; 3 match 'A%': AA, AB, AC.  3 <= 100 => index path.
-            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            execute("INSERT INTO t VALUES ('AA', 1, 0), ('AB', 2, 1), ('AC', 3, 2)");
+            execute("INSERT INTO t SELECT 'BA', x, timestamp_sequence(3, 1) FROM long_sequence(2_000)");
             // Ground truth: hint goes immediately after SELECT (not in WHERE).
             String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym like 'A%' order by ts, v");
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
@@ -527,7 +734,8 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     public void testNegatedLowComplementUsesIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
-            execute("insert into t select rnd_symbol('AA','AB','BA','BB','AC'), x, timestamp_sequence(0, 60000000) from long_sequence(2000)");
+            execute("INSERT INTO t VALUES ('BA', 1, 0), ('BB', 2, 1)");
+            execute("INSERT INTO t SELECT 'AA', x, timestamp_sequence(2, 1) FROM long_sequence(2_000)");
             String expected = select("select /*+ no_symbol_pattern_index(t) */ sym, v, ts from t where sym not like 'A%' order by ts, v");
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
             String actual = select("select sym, v, ts from t where sym not like 'A%' order by ts, v");
@@ -555,7 +763,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t select rnd_symbol('alpha','alto','beta','ALPHA','al_x','gamma',null), x, timestamp_sequence(0, 3600000000) from long_sequence(5000)");
-            String[] preds = {
+            final ObjList<String> predicates = new ObjList<>(
                     "sym like 'al%'",
                     "sym like '%ta'",
                     "sym like '%lph%'",
@@ -563,12 +771,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     "sym ilike 'ALPHA'",
                     "sym ~ '^al'",
                     "sym ~ 'a'",
-                    "sym ~ 'zzz'",                  // matches nothing
-                    "sym like 'al\\_x'",             // underscore escape
-                    "sym like 'al%' and v > 100",   // residual filter
-                    "sym like 'no_such%'"            // empty match
-            };
-            for (String p : preds) {
+                    "sym ~ 'zzz'",
+                    "sym like 'al\\_x'",
+                    "sym like 'al%' and v > 100",
+                    "sym like 'no_such%'"
+            );
+            for (int i = 0, n = predicates.size(); i < n; i++) {
+                final String p = predicates.getQuick(i);
                 // Hint goes right after SELECT (a WHERE-position hint is a silent no-op).
                 // Use %s as a placeholder for the hint (or empty string), then escape any real % in pred.
                 String base = "select %s sym, v, ts from t where " + p.replace("%", "%%") + " order by ts, v";
@@ -580,13 +789,9 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     }
 
     /**
-     * Ground-truth oracle for SP2: pins that {@code NOT LIKE} and {@code !~} INCLUDE rows whose symbol
-     * is NULL.  The semantics are: {@code like(NULL) = NULL} which is not TRUE, so {@code NOT like(NULL) = NULL}
-     * which is also not TRUE… but QuestDB follows SQL three-valued logic where the WHERE clause only passes
-     * rows for which the predicate is TRUE.  However, the current scan+filter engine evaluates
-     * {@code not(null) = false} for NULL symbols in a NOT LIKE context (the NULL sentinel becomes false after
-     * negation).  This test documents the ACTUAL observed behaviour so that the SP2 excluded-complement fast
-     * path can reproduce it exactly.
+     * Ground-truth oracle for SP2: QuestDB's symbol-pattern functions evaluate a NULL symbol as no match,
+     * so {@code NOT LIKE} and {@code !~} include NULL-symbol rows. The adaptive complement route must
+     * reproduce that established engine behavior exactly.
      *
      * <p>Concretely: with 300 rows of {@code rnd_symbol('alpha','beta','gamma')} and 50 explicit NULL rows,
      * {@code sym NOT LIKE 'al%'} must return exactly (non-alpha non-null rows) + (null rows).
@@ -628,19 +833,20 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             execute("create table t (sym symbol index, v long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t select rnd_symbol('alpha','alto','beta','ALPHA','al_x','gamma'), x, timestamp_sequence(0, 3600000000) from long_sequence(4000)");
             execute("insert into t select null, x, timestamp_sequence(4000*3600000000L, 3600000000) from long_sequence(400)");
-            String[] preds = {
+            final ObjList<String> predicates = new ObjList<>(
                     "sym not like 'al%'",
                     "sym not like '%ta'",
                     "sym not like '%lph%'",
                     "sym not ilike 'al%'",
                     "sym !~ '^al'",
                     "sym !~ 'a'",
-                    "sym not like 'zzz%'",           // matches nothing -> complement is everything (+null)
-                    "sym not like '%'",              // LIKE '%' is NullCheck (not a provider) -> must NOT lift; stays scan+filter
-                    "sym not like 'al\\_x'",         // underscore escape
-                    "sym not like 'al%' and v > 100" // residual filter alongside negation
-            };
-            for (String p : preds) {
+                    "sym not like 'zzz%'",
+                    "sym not like '%'",
+                    "sym not like 'al\\_x'",
+                    "sym not like 'al%' and v > 100"
+            );
+            for (int i = 0, n = predicates.size(); i < n; i++) {
+                final String p = predicates.getQuick(i);
                 // Hint goes right after SELECT (a WHERE-position hint is a silent no-op).
                 // Use %s as placeholder for the hint; escape any real % in the predicate.
                 String base = "select %s sym, v, ts from t where " + p.replace("%", "%%") + " order by ts, v";
@@ -800,17 +1006,18 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             execute("insert into t select rnd_symbol('alpha','alto','beta','ALPHA','al_x','gamma'), x::double, timestamp_sequence(0, 3600000000L) from long_sequence(4000)");
             // Explicit NULL-symbol rows in a separate partition to prove NULL exclusion on the covered path.
             execute("insert into t select null, x::double, timestamp_sequence(4000*3600000000L, 3600000000L) from long_sequence(300)");
-            String[] preds = {
-                    "sym like 'al%'",         // prefix
-                    "sym like '%ta'",          // endswith
-                    "sym like '%lph%'",        // contains
-                    "sym ilike 'al%'",         // ilike prefix
-                    "sym ~ '^al'",             // regex
-                    "sym like 'zzz%'",         // empty match
-                    "sym like 'al\\_x'",       // underscore escape
-                    "sym like 'al%' and price > 100" // residual conjunct
-            };
-            for (String p : preds) {
+            final ObjList<String> predicates = new ObjList<>(
+                    "sym like 'al%'",
+                    "sym like '%ta'",
+                    "sym like '%lph%'",
+                    "sym ilike 'al%'",
+                    "sym ~ '^al'",
+                    "sym like 'zzz%'",
+                    "sym like 'al\\_x'",
+                    "sym like 'al%' and price > 100"
+            );
+            for (int i = 0, n = predicates.size(); i < n; i++) {
+                final String p = predicates.getQuick(i);
                 // Projection: only covered columns (price from INCLUDE, sym as the index key).
                 // ts is NOT in INCLUDE and must NOT appear here — it would cause buildCoveringIndexMapping
                 // to return null and silently drop to the bitmap SymbolPatternIndex path.

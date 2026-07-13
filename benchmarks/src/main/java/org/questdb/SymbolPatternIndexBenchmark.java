@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -103,7 +104,9 @@ public class SymbolPatternIndexBenchmark {
     static final long ROWS = Long.getLong("sympat.rows", 10_000_000L);
 
     // Canonical scenario ordering for the summary table
-    private static final String[] SCEN = {"pos_bitmap", "pos_covering", "covering_broad", "pos_broad", "neg_bitmap", "neg_broad"};
+    private static final ObjList<String> SCENARIOS = new ObjList<>(
+            "pos_bitmap", "pos_covering", "covering_broad", "pos_broad", "neg_bitmap", "neg_broad"
+    );
     private static final Map<String, String> PRED = Map.of(
             "pos_bitmap", "LIKE 'r%'",
             "pos_covering", "LIKE 'r%'",
@@ -137,9 +140,8 @@ public class SymbolPatternIndexBenchmark {
             taken = probePath();
         }
 
-        // Determine which path the FAST factory actually takes: probe the runtime bitmap
-        // counters (index vs fallback), else covering (covering does not touch those counters),
-        // else scan. Reset -> run once -> read.
+        // Determine which path the FAST factory actually takes after the adaptive posting-probe
+        // budget and row-selectivity check: bitmap index, covering index, or scan fallback.
         private String probePath() throws SqlException {
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
             drain(fastFactory);
@@ -202,7 +204,9 @@ public class SymbolPatternIndexBenchmark {
                 .with(config.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                         null, null, -1, null);
 
-        for (String tbl : new String[]{"t_bitmap", "t_covering"}) {
+        final ObjList<String> tables = new ObjList<>("t_bitmap", "t_covering");
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            final String tbl = tables.getQuick(i);
             String indexClause = tbl.equals("t_covering")
                     ? "sym symbol index type posting include (price)"
                     : "sym symbol index";
@@ -219,8 +223,9 @@ public class SymbolPatternIndexBenchmark {
             //   k < 100              -> NULL          (~1%)
             //   100 <= k < 150       -> 'r' || (k-100)  50 distinct rare symbols  (~0.5%)
             //   150 <= k < 10000     -> 'c' || (k-150)  9850 distinct common symbols (~98.5%)
-            // Threshold sizing: neg `NOT LIKE 'c%'` complement = 50 rare + 1 NULL key = 51 <= 100 (default
-            // cairo.sql.symbol.pattern.index.threshold) -> index path taken.
+            // The default cairo.sql.symbol.pattern.index.threshold value of 100 is now a global
+            // (partition-frame, key) metadata-probe budget per cursor open, not a distinct-key cutoff.
+            // Multi-partition scenarios can exhaust it and conservatively select the scan fallback.
             sharedEngine.execute(
                     "INSERT INTO " + tbl + " SELECT "
                             + "  CASE"
@@ -324,7 +329,8 @@ public class SymbolPatternIndexBenchmark {
     private static void probeAllPaths() throws Exception {
         if (sharedEngine == null) return;
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(sharedEngine)) {
-            for (String scen : SCEN) {
+            for (int i = 0, n = SCENARIOS.size(); i < n; i++) {
+                final String scen = SCENARIOS.getQuick(i);
                 try (RecordCursorFactory factory = compiler.compile(scenarioFastSql(scen), sharedCtx).getRecordCursorFactory()) {
                     SymbolPatternIndexRecordCursorFactory.resetTestCounters();
                     drain(factory);
@@ -360,7 +366,8 @@ public class SymbolPatternIndexBenchmark {
                 "scenario", "predicate", "baseline(ms)", "fast(ms)", "speedup", "taken");
         System.out.printf("%-13s  %-16s  %13s  %10s  %8s   %s%n",
                 "-------------", "----------------", "-------------", "----------", "--------", "--------");
-        for (String scen : SCEN) {
+        for (int i = 0, n = SCENARIOS.size(); i < n; i++) {
+            final String scen = SCENARIOS.getQuick(i);
             Double b = base.get(scen), f = fast.get(scen);
             if (b == null || f == null) continue;
             String taken = TAKEN.getOrDefault(scen, "?");

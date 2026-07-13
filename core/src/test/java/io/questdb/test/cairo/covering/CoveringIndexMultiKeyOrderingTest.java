@@ -131,18 +131,23 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
             // Guard against a vacuous pass: the query must actually route through
             // the covering (posting) index, otherwise neither run exercises the
             // merge under test.
-            String plan = getPlan(q);
-            Assert.assertTrue("expected a covering plan, got:\n" + plan, plan.contains("CoveringIndex"));
+            assertQuery(q).noLeakCheck().assertsPlanContaining("CoveringIndex");
 
             // Linear branch (default crossover 16 > 8 keys): ground truth.
-            String linear = runToString(q);
+            final TestMergeObserver linearObserver = new TestMergeObserver();
+            String linear = runToString(q, linearObserver);
             Assert.assertFalse("linear ground truth errored:\n" + linear, linear.startsWith("ERROR"));
+            Assert.assertTrue(linearObserver.hasRecordLinearMerge);
+            Assert.assertFalse(linearObserver.hasRecordHeapMerge);
 
             // Force the heap branch (crossover 2 < 8 keys) and require identity.
             CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
             try {
-                String heap = runToString(q);
+                final TestMergeObserver heapObserver = new TestMergeObserver();
+                String heap = runToString(q, heapObserver);
                 io.questdb.test.tools.TestUtils.assertEquals(linear, heap);
+                Assert.assertTrue(heapObserver.hasRecordHeapMerge);
+                Assert.assertFalse(heapObserver.hasRecordLinearMerge);
             } finally {
                 CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
             }
@@ -158,24 +163,31 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         // crossover below the key count (8) and diff against the default (linear) run.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_pf_heap (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t_pf_heap SELECT rnd_symbol('a','b','c','d','e','f','g','h'), x::DOUBLE, timestamp_sequence(0, 60000000) FROM long_sequence(5000)");
+            execute("INSERT INTO t_pf_heap SELECT rnd_symbol('a','b','c','d','e','f','g','h'), x::DOUBLE, timestamp_sequence(0, 1) FROM long_sequence(5000)");
             final String q = "SELECT sym, sum(price) FROM t_pf_heap WHERE sym IN ('a','b','c','d','e','f','g','h') ORDER BY sym";
 
             // Guard: the aggregate query must actually route through the covering page-frame cursor.
-            String plan = getPlan(q);
-            Assert.assertTrue("expected a covering plan, got:\n" + plan, plan.contains("CoveringIndex"));
+            assertQuery(q).noLeakCheck().assertsPlanContaining("CoveringIndex");
 
             // Linear branch (default crossover 16 > 8 keys): ground truth.
-            String linear = runToString(q);
+            final TestMergeObserver linearObserver = new TestMergeObserver();
+            String linear = runToString(q, linearObserver);
             Assert.assertFalse("linear ground truth errored:\n" + linear, linear.startsWith("ERROR"));
+            Assert.assertTrue(linearObserver.hasPageFrameLinearMerge);
+            Assert.assertFalse(linearObserver.hasPageFrameHeapMerge);
             // 8 symbol groups must produce 8 data rows (header + 8); proves results are non-trivial.
             Assert.assertTrue("expected at least 9 lines (header + 8 groups), got:\n" + linear, linear.split("\n").length >= 9);
 
             // Force heap branch (crossover 2 < 8 keys) and require identity.
             CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
             try {
-                String heap = runToString(q);
+                final TestMergeObserver heapObserver = new TestMergeObserver();
+                String heap = runToString(q, heapObserver);
                 io.questdb.test.tools.TestUtils.assertEquals(linear, heap);
+                Assert.assertTrue(heapObserver.hasPageFrameHeapMerge);
+                Assert.assertFalse(heapObserver.hasPageFrameLinearMerge);
+                Assert.assertEquals(0, heapObserver.lastPageFrameLo);
+                Assert.assertEquals(5_000, heapObserver.lastPageFrameHi);
             } finally {
                 CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(-1);
             }
@@ -651,12 +663,43 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         return s.replace("\n", " ").trim();
     }
 
-    private String runToString(String query) {
+    private String runToString(String query) throws SqlException {
+        printSql(query);
+        return sink.toString();
+    }
+
+    private String runToString(String query, TestMergeObserver observer) throws SqlException {
+        CoveringIndexRecordCursorFactory.setMergeObserverForTesting(observer);
         try {
-            printSql(query);
-            return sink.toString();
-        } catch (Throwable t) {
-            return "ERROR " + t.getClass().getSimpleName() + ": " + t.getMessage();
+            return runToString(query);
+        } finally {
+            CoveringIndexRecordCursorFactory.clearMergeObserverForTesting();
+        }
+    }
+
+    private static final class TestMergeObserver implements CoveringIndexRecordCursorFactory.MergeObserver {
+        private boolean hasPageFrameHeapMerge;
+        private boolean hasPageFrameLinearMerge;
+        private boolean hasRecordHeapMerge;
+        private boolean hasRecordLinearMerge;
+        private long lastPageFrameHi = -1;
+        private long lastPageFrameLo = -1;
+
+        @Override
+        public void onMergeStrategy(boolean isHeapMerge, boolean isPageFrame) {
+            if (isPageFrame) {
+                hasPageFrameHeapMerge |= isHeapMerge;
+                hasPageFrameLinearMerge |= !isHeapMerge;
+            } else {
+                hasRecordHeapMerge |= isHeapMerge;
+                hasRecordLinearMerge |= !isHeapMerge;
+            }
+        }
+
+        @Override
+        public void onPageFrame(long lo, long hi) {
+            lastPageFrameLo = lo;
+            lastPageFrameHi = hi;
         }
     }
 }

@@ -283,6 +283,7 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -6641,6 +6642,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             true,
                                             filter,
+                                            null,
                                             null
                                     );
                                     symbolValueFunc = null;
@@ -6724,6 +6726,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     reader,
                                     true,
                                     filter,
+                                    null,
                                     null
                             );
                         }
@@ -10498,6 +10501,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 null,
                                                 false,
                                                 null,
+                                                null,
                                                 null
                                         );
                                         // coveringFactory now owns dfcFactory and symbolFunc; clear our
@@ -10602,6 +10606,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         intrinsicModel.keyValueFuncs,
                                         reader,
                                         false,
+                                        null,
                                         null,
                                         null
                                 );
@@ -11393,9 +11398,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * conjunct does not compile to a {@link SymbolKeySetProvider}; in that case the caller keeps
      * {@code dfcFactory} and continues with the ordinary scan+filter path.
      * <p>
-     * On success the returned factory owns {@code dfcFactory}, the provider function, the residual filter
-     * and the full filter (all freed in the factory's {@code _close()}); the caller nulls its
-     * {@code dfcFactory} reference so the outer catch does not double-free it.
+     * On success the adaptive factory exclusively owns {@code dfcFactory} and its close-no-op delegate
+     * wrappers. The outer prepared filter owns the provider and residual filter. The caller clears its
+     * {@code dfcFactory} reference after both owners have been assembled, so every failure path closes
+     * the partition factory exactly once.
      */
     private RecordCursorFactory tryGenerateSymbolPatternIndex(
             IQueryModel model,
@@ -11414,20 +11420,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // 2) find the first qualifying conjunct on an indexed symbol column: a positive pattern, or a
         //    negation (NOT LIKE / NOT ILIKE / !~) whose POSITIVE equivalent we compile as the provider.
         int patternIdx = -1;
-        boolean negated = false;
+        boolean isNegated = false;
         ExpressionNode positiveNode = null; // the node compiled as the provider (matched keys)
         for (int i = 0, n = conjuncts.size(); i < n; i++) {
             if (isPatternOnIndexedSymbol(conjuncts.getQuick(i), queryMeta, reader, columnIndexes)) {
                 patternIdx = i;
                 positiveNode = conjuncts.getQuick(i);
-                negated = false;
+                isNegated = false;
                 break;
             }
             final ExpressionNode p = negatedPatternPositiveNode(conjuncts.getQuick(i), queryMeta, reader, columnIndexes);
             if (p != null) {
                 patternIdx = i;
                 positiveNode = p;
-                negated = true;
+                isNegated = true;
                 break;
             }
         }
@@ -11439,9 +11445,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // the POSITIVE node is compiled as the provider. For both polarities positiveNode.lhs is the symbol-column literal.
         final int keyColumnIndex = queryMeta.getColumnIndexQuiet(positiveNode.lhs.token);
 
+        AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter patternFilter = null;
         Function providerFunction = null;
         Function residualFilter = null;
-        Function fullFilter = null;
+        RecordCursorFactory coveringDelegate = null;
+        RecordCursorFactory indexDelegate = null;
+        RecordCursorFactory scanDelegate = null;
         try {
             // 4) compile the POSITIVE pattern predicate; bail out (freeing it) unless it is a key-set provider
             providerFunction = functionParser.parseFunction(positiveNode, queryMeta, executionContext);
@@ -11473,75 +11482,94 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 residualFilter = compileBooleanFilter(residualRoot, queryMeta, executionContext);
             }
 
-            // 6) Covering route (POSITIVE only): when the projection is fully covered by the posting
-            // index (indexed symbol + INCLUDE-d columns), read covered values from the sidecars via the
-            // multi-key covering merge, with the matched-key set supplied by the provider. The positive
-            // pattern never matches NULL, so the covered result has no null-symbol rows -- correct. A
-            // negated pattern must NOT take this route: its complement includes NULL-symbol rows the
-            // covered merge cannot produce, so it stays on the SP2 classic complement scan below.
-            // Decided before fullFilter is compiled: the covering path drives its selection from the
-            // provider + residual and never needs the (pattern AND residual) fullFilter.
-            if (!negated && !SqlHints.hasNoCoveringHint(model) && executionContext.isCoveringIndexEnabled()) {
+            // The adaptive owner is the sole owner of dfcFactory. Its delegates receive close-no-op
+            // wrappers, so every construction and failure path closes the partition factory exactly once.
+            // The prepared filter owns the provider and residual; it initializes the provider once before
+            // costing, then both the record and page-frame scan routes reuse the resulting key set.
+            final IntList effectiveKeys = new IntList();
+            patternFilter = new AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter(
+                            providerFunction,
+                            residualFilter,
+                            isNegated,
+                            keyColumnIndex
+                    );
+            providerFunction = null;
+            residualFilter = null;
+
+            indexDelegate = new SymbolPatternIndexRecordCursorFactory(
+                    configuration,
+                    queryMeta,
+                    new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
+                    keyColumnIndex,
+                    effectiveKeys,
+                    isOrderByDesignatedTimestampOnly(model),
+                    IndexReader.DIR_FORWARD,
+                    columnIndexes,
+                    columnSizeShifts
+            );
+
+            if (!isNegated && !SqlHints.hasNoCoveringHint(model) && executionContext.isCoveringIndexEnabled()) {
                 final int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                 final int[] coveringMapping = buildCoveringIndexMapping(reader, keyReaderColIdx, columnIndexes, queryMeta);
                 if (coveringMapping != null) {
-                    final CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                    coveringDelegate = new CoveringIndexRecordCursorFactory(
                             queryMeta,
-                            dfcFactory,
+                            new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
                             keyReaderColIdx,
                             SymbolTable.VALUE_NOT_FOUND,
-                            null, // symbolFunction (single-key) unused on the provider path
+                            null,
                             columnIndexes,
                             coveringMapping,
-                            null, // keyValueFuncs (IN/=) -- mutually exclusive with the provider
+                            null,
                             reader,
-                            false, // latestBy
-                            null, // latestByFilter
-                            providerFunction // patternProviderFunction: the positive pattern's key-set provider
+                            false,
+                            null,
+                            null,
+                            effectiveKeys
                     );
-                    // Ownership transferred: coveringFactory now owns dfcFactory AND providerFunction.
-                    // Null the locals so this method's catch does NOT re-free them. This matters when the
-                    // residual wrap below throws: wrapCoveringWithFilter's own catch already frees
-                    // coveringFactory (-> dfcFactory + providerFunction) and residualFilter, so the outer
-                    // catch here must be a no-op for those references (Misc.free(null) is safe) to avoid a
-                    // double free. fullFilter is never compiled on this path, so it cannot leak.
-                    dfcFactory = null;
-                    providerFunction = null;
-                    if (residualFilter != null) {
-                        // wrapCoveringWithFilter takes ownership of residualFilter (and frees the whole
-                        // chain on any throw). residualRoot is the ExpressionNode it needs as filterExpr.
-                        final Function residual = residualFilter;
-                        residualFilter = null;
-                        return wrapCoveringWithFilter(coveringFactory, residual, residualRoot, queryMeta, model, executionContext);
-                    }
-                    return coveringFactory;
                 }
             }
 
-            // 6b) full filter (pattern AND residual) drives the > threshold fallback scan (classic path)
-            fullFilter = compileFilter(intrinsicModel, queryMeta, executionContext);
-
-            // 7) ordering: only the designated-timestamp-only advice requests a heap-based merge.
-            // followedOrderByAdvice() is false (sort-elision deferred), so DESC direction cannot be
-            // satisfied by flipping the per-key scan to DIR_BACKWARD — doing so would be inert and
-            // misleading. Always pass DIR_FORWARD.
-            boolean orderByTimestamp = isOrderByDesignatedTimestampOnly(model);
-            int indexDirection = IndexReader.DIR_FORWARD;
-
-            return new SymbolPatternIndexRecordCursorFactory(
+            scanDelegate = new PageFrameRecordCursorFactory(
                     configuration,
                     queryMeta,
-                    dfcFactory,
-                    keyColumnIndex,
-                    providerFunction,
-                    residualFilter,
-                    fullFilter,
-                    negated,
-                    orderByTimestamp,
-                    indexDirection,
-                    configuration.getSymbolPatternIndexThreshold(),
+                    new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(dfcFactory),
+                    new PageFrameRowCursorFactory(dfcFactory.getOrder()),
+                    false,
+                    null,
+                    true,
                     columnIndexes,
-                    columnSizeShifts
+                    columnSizeShifts,
+                    true,
+                    false
+            );
+            final AdaptiveSymbolPatternRecordCursorFactory adaptiveFactory =
+                    new AdaptiveSymbolPatternRecordCursorFactory(
+                            queryMeta,
+                            dfcFactory,
+                            columnIndexes,
+                            effectiveKeys,
+                            columnIndexes.getQuick(keyColumnIndex),
+                            isNegated,
+                            configuration.getSymbolPatternIndexThreshold(),
+                            patternFilter,
+                            indexDelegate,
+                            coveringDelegate,
+                            scanDelegate
+                    );
+            dfcFactory = null;
+            indexDelegate = null;
+            coveringDelegate = null;
+            scanDelegate = null;
+            final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter preparedFilter = patternFilter;
+            patternFilter = null;
+            return wrapAdaptiveSymbolPatternWithFilter(
+                    adaptiveFactory,
+                    preparedFilter,
+                    intrinsicModel.filter,
+                    queryMeta,
+                    model,
+                    executionContext
             );
         } catch (Throwable th) {
             // Free dfcFactory here so it is released EXACTLY ONCE on every throw. It is null on the
@@ -11549,10 +11577,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // non-null on the classic path (no factory took ownership yet). The caller nulls its own
             // reference on catch, so the outer Misc.free(dfcFactory) never re-frees -- this closes the
             // double-free when wrapCoveringWithFilter throws after ownership transfer.
+            Misc.free(coveringDelegate);
+            Misc.free(indexDelegate);
+            Misc.free(scanDelegate);
             Misc.free(dfcFactory);
+            Misc.free(patternFilter);
             Misc.free(providerFunction);
             Misc.free(residualFilter);
-            Misc.free(fullFilter);
             throw th;
         }
     }
@@ -11876,6 +11907,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(slaveModel.getJoinKeywordPosition(),
                         "ASOF/LT JOIN cannot use designated timestamp as a join key");
             }
+        }
+    }
+
+    private RecordCursorFactory wrapAdaptiveSymbolPatternWithFilter(
+            AdaptiveSymbolPatternRecordCursorFactory adaptiveFactory,
+            AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter,
+            ExpressionNode filterExpr,
+            RecordMetadata queryMeta,
+            IQueryModel model,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        try {
+            if (executionContext.isParallelFilterEnabled()
+                    && adaptiveFactory.supportsPageFrameCursor()
+                    && filter.isThreadSafe()) {
+                final IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+                return new AsyncFilteredRecordCursorFactory(
+                        executionContext.getCairoEngine(),
+                        configuration,
+                        executionContext.getMessageBus(),
+                        adaptiveFactory,
+                        filter,
+                        filterUsedColumnIndexes,
+                        reduceTaskFactory,
+                        null,
+                        deepClone(expressionNodePool, filterExpr),
+                        null,
+                        0,
+                        executionContext.getSharedQueryWorkerCount(),
+                        SqlHints.hasEnablePreTouchHint(model, model.getName())
+                );
+            }
+            return new FilteredRecordCursorFactory(adaptiveFactory, filter);
+        } catch (Throwable th) {
+            Misc.free(filter);
+            Misc.free(adaptiveFactory);
+            throw th;
         }
     }
 
