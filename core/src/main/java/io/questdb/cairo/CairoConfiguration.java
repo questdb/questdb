@@ -387,7 +387,16 @@ public interface CairoConfiguration {
      * windows it is rewritten once per window, so a very small value multiplies write amplification and
      * transiently leaves one orphaned prior-version partition directory per multi-window partition (reclaimed
      * asynchronously by the partition-purge job). At the default a partition of up to ~1M rows is a single
-     * window, so neither effect occurs.
+     * window, so neither effect occurs. Must be {@code >= 1}; {@code PropServerConfiguration} rejects a smaller
+     * value at startup.
+     * <p>
+     * <b>Limitation (timestamp-clustered rows):</b> the ~one-window memory bound assumes an approximately
+     * UNIFORM designated-timestamp distribution, because the window is TIME-based - a ts-width chosen to span
+     * roughly this many rows at the average row density. A dense cluster of rows sharing a single timestamp, or
+     * packed into a very narrow sub-interval (e.g. from dedup-disabled bursty ingestion), falls in one
+     * indivisible window and is staged together: such a cluster cannot be split by timestamp windowing, so a
+     * window over it stages more than this target. It is still strictly better than the pre-windowing
+     * whole-table staging - the peak is bounded by the densest cluster, not the whole table.
      */
     long getWalDeleteRowsPerStep();
 
@@ -966,6 +975,13 @@ public interface CairoConfiguration {
      * progress (it is still crash-safe - a crash re-applies the whole delete). When {@code false} (default),
      * the atomic windowed survivor-replace is used, which bounds staged memory but converts all Parquet
      * partitions up front. Only affects the arbitrary route; pure time-range deletes are unaffected.
+     * <p>
+     * <b>Concurrent-reader disk caveat:</b> the single-window transient-disk bound holds only while no reader or
+     * checkpoint is pinned at an older transaction. A superseded partition version is normally unlinked
+     * synchronously as the next window supersedes it, but while a long-lived reader (or open checkpoint) still
+     * references an older txn the reclaim is deferred to the asynchronous partition-purge job, so superseded
+     * native partition versions accumulate for that reader's lifetime and the transient footprint can approach
+     * the whole-range conversion this route exists to avoid.
      */
     boolean getWalDeleteDiskBounded();
 

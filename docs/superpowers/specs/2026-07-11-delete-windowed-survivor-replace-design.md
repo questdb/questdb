@@ -156,6 +156,7 @@ Independent of C1/H1, close the lvl3 Enterprise test gaps:
 
 ## 13. Non-goals / residuals
 
+- **Timestamp-clustered memory limitation** — the ~`rows.per.step` peak-memory bound assumes an approximately uniform designated-timestamp distribution, because the window is time-based. A dense cluster of rows sharing one timestamp (or packed into a very narrow sub-interval, e.g. dedup-disabled bursty ingestion) falls in one indivisible window and is staged together; it cannot be split by timestamp windowing. Still strictly better than the pre-windowing whole-table staging — bounded by the densest cluster, not the table. Documented on `CairoConfiguration.getWalDeleteRowsPerStep()`.
 - **Zero-match short-circuit** — a delete matching nothing still rewrites every window as a no-op (bounded memory, but O(table) work). Optimisation deferred.
 - **Cross-window parallelism** — windows are applied sequentially (disjoint partitions would allow parallel apply, but that complicates the single-commit bookkeeping); deferred.
 - **SYNC-mode Parquet-convert fsync residual** — unchanged from the shipped DELETE (documented v1 residual); per-window convert does not worsen it.
