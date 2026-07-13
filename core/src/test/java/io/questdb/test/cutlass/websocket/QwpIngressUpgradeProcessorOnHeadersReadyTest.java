@@ -457,6 +457,25 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             QwpIngressProcessorState state = lv.get(context);
             Assert.assertNotNull("state must be populated after successful handshake", state);
             Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
+
+            // Backward-compat guarantee for the confirm-token refactor of
+            // QwpIngressHttpProcessor.responseSize/writeResponse: this ingress
+            // processor still drives those methods through the legacy
+            // `boolean durableAckEnabled` overloads (tier negotiation lands in
+            // a later task), so the wire bytes must be byte-identical to
+            // before the refactor -- either the exact historical
+            // "X-QWP-Durable-Ack: enabled" confirmation, or no such header at
+            // all.
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            if (expectedEnabled) {
+                Assert.assertTrue(
+                        "enabled handshake must carry the legacy X-QWP-Durable-Ack: enabled confirmation, got: " + response,
+                        response.contains("\r\nX-QWP-Durable-Ack: enabled\r\n"));
+            } else {
+                Assert.assertFalse(
+                        "disabled handshake must not carry an X-QWP-Durable-Ack header, got: " + response,
+                        response.contains("X-QWP-Durable-Ack"));
+            }
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             engine.setDurableAckRegistry(previous);

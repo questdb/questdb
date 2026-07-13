@@ -106,12 +106,22 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
             "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
-    // Echoed back to clients that opted in via X-QWP-Request-Durable-Ack and
-    // landed on a server where the durable-ack registry is enabled. Absence
-    // tells an opted-in client that this server will never emit STATUS_DURABLE_ACK
-    // frames, so the client must fail at handshake rather than wait forever.
-    private static final byte[] RESPONSE_DURABLE_ACK_ENABLED =
-            "\r\nX-QWP-Durable-Ack: enabled".getBytes(StandardCharsets.US_ASCII);
+    // Header prefix for the optional X-QWP-Durable-Ack confirmation. Echoed
+    // back to clients that opted in via X-QWP-Request-Durable-Ack and landed
+    // on a server that granted a durability tier. Absence tells an opted-in
+    // client that this server will never emit STATUS_DURABLE_ACK frames, so
+    // the client must fail at handshake rather than wait forever. Written
+    // verbatim before the confirm token by the responseSize/writeResponse
+    // overloads below.
+    private static final byte[] RESPONSE_DURABLE_ACK_PREFIX =
+            "\r\nX-QWP-Durable-Ack: ".getBytes(StandardCharsets.US_ASCII);
+    // Legacy confirmation token written by the `boolean durableAckEnabled`
+    // overloads (pre-DurabilityTier callers). Concatenated after
+    // RESPONSE_DURABLE_ACK_PREFIX this reproduces the exact historical
+    // response bytes ("X-QWP-Durable-Ack: enabled"), so callers that have
+    // not migrated to a specific DurabilityTier confirm token see no change
+    // on the wire.
+    private static final Utf8String RESPONSE_DURABLE_ACK_TOKEN_ENABLED = new Utf8String("enabled");
     // Advertises the server's hard cap on QWP message payload bytes so the
     // ingest client can size its batches without trial-and-error. Without this
     // hint a wide-row sender would have to discover the cap by sending an
@@ -303,25 +313,42 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
+     * Same as {@link #responseSize(byte[], int, byte[], Utf8Sequence, byte[], byte[])}
+     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
+     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
+     * response bytes; {@code false} maps to no confirmation (null token).
+     */
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes,
+                durableAckEnabled ? RESPONSE_DURABLE_ACK_TOKEN_ENABLED : null,
+                roleBytes, maxBatchSizeBytes);
+    }
+
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, null);
+    }
+
+    /**
      * Same as {@link #responseSize(byte[], int)} but accounts for an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
-     * codec, an optional {@code X-QWP-Durable-Ack: enabled} confirmation
+     * codec, an optional {@code X-QWP-Durable-Ack: <token>} confirmation
      * header, an optional {@code X-QuestDB-Role} header advertising the
      * server role, and an optional {@code X-QWP-Max-Batch-Size} header
      * advertising the server's ingest payload cap in bytes. Pass {@code null}
-     * / {@code false} to skip any of them. All byte[] arguments are written
-     * verbatim, so callers are expected to cache them on the hot path rather
-     * than allocating per handshake.
+     * to skip any of them -- a null {@code durableAckConfirmToken} means
+     * durable-ack is disabled for this connection. All byte[] arguments are
+     * written verbatim, so callers are expected to cache them on the hot path
+     * rather than allocating per handshake.
      */
-    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
         if (contentEncodingBytes != null) {
             size += RESPONSE_CONTENT_ENCODING_PREFIX.length + contentEncodingBytes.length;
         }
-        if (durableAckEnabled) {
-            size += RESPONSE_DURABLE_ACK_ENABLED.length;
+        if (durableAckConfirmToken != null) {
+            size += RESPONSE_DURABLE_ACK_PREFIX.length + durableAckConfirmToken.size();
         }
         if (roleBytes != null) {
             size += RESPONSE_ROLE_PREFIX.length + roleBytes.length;
@@ -420,19 +447,36 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
+     * Same as {@link #writeResponse(long, byte[], int, byte[], Utf8Sequence, byte[], byte[])}
+     * but takes the legacy {@code boolean} durable-ack flag: {@code true} maps to the
+     * historical {@code "enabled"} confirm token, reproducing the exact pre-refactor
+     * response bytes; {@code false} maps to no confirmation (null token).
+     */
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes,
+                durableAckEnabled ? RESPONSE_DURABLE_ACK_TOKEN_ENABLED : null,
+                roleBytes, maxBatchSizeBytes);
+    }
+
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, null);
+    }
+
+    /**
      * Same as {@link #writeResponse(long, byte[], int)} but appends an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
      * codec (e.g. {@code zstd;level=1}), an optional
-     * {@code X-QWP-Durable-Ack: enabled} confirmation that this connection
-     * will receive {@code STATUS_DURABLE_ACK} frames, an optional
-     * {@code X-QuestDB-Role} header advertising the server role, and an
-     * optional {@code X-QWP-Max-Batch-Size} header advertising the server's
-     * ingest payload cap in bytes. Pass {@code null} / {@code false} to skip
-     * any of them. All byte[] arguments are written verbatim, so callers are
-     * expected to cache them on the hot path rather than allocating per
-     * handshake.
+     * {@code X-QWP-Durable-Ack: <token>} confirmation that this connection
+     * will receive {@code STATUS_DURABLE_ACK} frames for the granted
+     * durability tier, an optional {@code X-QuestDB-Role} header advertising
+     * the server role, and an optional {@code X-QWP-Max-Batch-Size} header
+     * advertising the server's ingest payload cap in bytes. Pass {@code null}
+     * to skip any of them -- a null {@code durableAckConfirmToken} means
+     * durable-ack is disabled for this connection. All byte[] arguments are
+     * written verbatim, so callers are expected to cache them on the hot path
+     * rather than allocating per handshake.
      */
-    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -460,14 +504,18 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
 
         // Optional X-QWP-Durable-Ack confirmation. Emitted only when the
-        // client opted in AND this server has the durable-ack registry
-        // enabled. Absence tells an opted-in client that this connection
-        // will never receive durable acks, so its store-and-forward path
-        // must not be allowed to start.
-        if (durableAckEnabled) {
-            for (byte b : RESPONSE_DURABLE_ACK_ENABLED) {
+        // caller supplies a non-null confirm token -- i.e. the client opted
+        // in AND this server granted a durability tier for the connection.
+        // Absence tells an opted-in client that this connection will never
+        // receive durable acks, so its store-and-forward path must not be
+        // allowed to start.
+        if (durableAckConfirmToken != null) {
+            for (byte b : RESPONSE_DURABLE_ACK_PREFIX) {
                 Unsafe.putByte(buf + offset++, b);
             }
+            int tokenSize = durableAckConfirmToken.size();
+            Utf8s.strCpy(durableAckConfirmToken, tokenSize, buf + offset);
+            offset += tokenSize;
         }
 
         if (roleBytes != null) {
