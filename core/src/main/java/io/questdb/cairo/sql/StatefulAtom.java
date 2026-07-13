@@ -28,6 +28,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
 
 public interface StatefulAtom extends QuietCloseable, Mutable {
 
@@ -37,6 +38,28 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
 
     @Override
     default void close() {
+    }
+
+    /**
+     * Returns the number of per-worker slots this atom currently holds, or -1 when the atom
+     * guards no per-worker state at all.
+     * <p>
+     * Every slot a reducer acquires must be released, so the count is zero once the frame
+     * sequence has been awaited and no worker sits inside a locked section. A non-zero count
+     * at that point means a slot leaked: {@link io.questdb.griffin.engine.PerWorkerLocks} has
+     * no reset and the atom belongs to the factory, so the slot is lost for as long as the
+     * factory stays in the SQL cache, and the pool eventually starves.
+     * <p>
+     * The -1 sentinel keeps a test honest. An atom may legitimately hold no locks - an
+     * {@link io.questdb.griffin.engine.table.AsyncFilterAtom} over a thread-safe filter clones
+     * no per-worker filters and so never acquires a slot. A query that lands on such an atom
+     * cannot exercise the leak, and asserting zero against it would pass for the wrong reason.
+     *
+     * @return the number of slots held, or -1 when this atom holds no per-worker locks
+     */
+    @TestOnly
+    default int getAcquiredSlotCount() {
+        return -1;
     }
 
     /**

@@ -70,6 +70,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -226,6 +227,12 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         } finally {
             executionContext.restoreToDefaultPageFrameSizes();
         }
+    }
+
+    @Override
+    @TestOnly
+    public AsyncWindowJoinFastAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override

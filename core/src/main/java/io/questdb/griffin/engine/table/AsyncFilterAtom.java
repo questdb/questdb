@@ -45,6 +45,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -103,6 +104,16 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     @Override
     public void close() {
         Misc.freeObjList(perWorkerFilters);
+    }
+
+    /**
+     * Returns -1 when the filter is thread-safe: the code generator then clones no per-worker
+     * filters, the atom builds no locks, and no reducer ever acquires a slot.
+     */
+    @Override
+    @TestOnly
+    public int getAcquiredSlotCount() {
+        return perWorkerLocks != null ? perWorkerLocks.getAcquiredSlotCount() : -1;
     }
 
     public Function getFilter(int filterId) {

@@ -68,6 +68,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -261,6 +262,12 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    @TestOnly
+    public AsyncWindowJoinAtom getAtom() {
+        return frameSequence.getAtom();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return masterFactory;
     }
@@ -354,13 +361,19 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        slaveRowIds.of(0);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-        slaveTimestamps.of(0);
-
+        // The slot is held from here on. clearTemporaryData() drops the temporary allocator's
+        // chunks, so every of() below mallocs a fresh one through the per-query memory tracker and
+        // can breach the limit. They must therefore sit inside the try that releases the slot:
+        // PerWorkerLocks has no reset and the atom belongs to the factory, so a slot leaked here is
+        // lost for as long as the factory stays in the SQL cache, and once every slot has leaked
+        // each later execution spins in acquireSlot for a slot nobody will release.
         try {
+            atom.clearTemporaryData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            slaveRowIds.of(0);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+            slaveTimestamps.of(0);
+
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
             record.setRowIndex(0);
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
@@ -477,13 +490,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final char hiTimeUnit = atom.getHiTimeUnit();
         final TimestampDriver timestampDriver = atom.getTimestampDriver();
 
-        atom.clearTemporaryData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        slaveRowIds.of(0);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-        slaveTimestamps.of(0);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            slaveRowIds.of(0);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+            slaveTimestamps.of(0);
+
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
 
             // First pass: compute overall slave bounds from all master rows.
@@ -624,13 +638,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final char hiTimeUnit = atom.getHiTimeUnit();
         final TimestampDriver timestampDriver = atom.getTimestampDriver();
 
-        atom.clearTemporaryData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        slaveRowIds.of(0);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-        slaveTimestamps.of(0);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            slaveRowIds.of(0);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+            slaveTimestamps.of(0);
+
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
 
             // First pass: compute overall slave bounds from all master rows.
@@ -770,13 +785,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final char hiTimeUnit = atom.getHiTimeUnit();
         final TimestampDriver timestampDriver = atom.getTimestampDriver();
 
-        atom.clearTemporaryData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        slaveRowIds.of(0);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-        slaveTimestamps.of(0);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            slaveRowIds.of(0);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+            slaveTimestamps.of(0);
+
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
 
             // First pass: compute overall slave bounds from all master rows.
@@ -1000,14 +1016,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
-        slaveColumnSinkPtrs.of(0);
-        slaveColumnSinkPtrs.checkCapacity(columnCount);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-        slaveTimestamps.of(0);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
+            slaveColumnSinkPtrs.of(0);
+            slaveColumnSinkPtrs.checkCapacity(columnCount);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+            slaveTimestamps.of(0);
+
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
             record.setRowIndex(0);
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
@@ -1126,14 +1143,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
-        slaveColumnSinkPtrs.of(0);
-        slaveColumnSinkPtrs.checkCapacity(columnCount);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-        slaveTimestamps.of(0);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final GroupByLongList slaveColumnSinkPtrs = atom.getLongList(slotId);
+            slaveColumnSinkPtrs.of(0);
+            slaveColumnSinkPtrs.checkCapacity(columnCount);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+            slaveTimestamps.of(0);
+
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
             record.setRowIndex(0);
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
@@ -1247,13 +1265,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        slaveRowIds.of(0);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-        slaveTimestamps.of(0);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            slaveRowIds.of(0);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+            slaveTimestamps.of(0);
+
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
             record.setRowIndex(0);
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);
@@ -1359,13 +1378,14 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final long slaveTsScale = atom.getSlaveTsScale();
         final long masterTsScale = atom.getMasterTsScale();
 
-        atom.clearTemporaryData(slotId);
-        final GroupByLongList slaveRowIds = atom.getLongList(slotId);
-        slaveRowIds.of(0);
-        final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
-        slaveTimestamps.of(0);
-
+        // See aggregate() for why the slot must be held across the calls below.
         try {
+            atom.clearTemporaryData(slotId);
+            final GroupByLongList slaveRowIds = atom.getLongList(slotId);
+            slaveRowIds.of(0);
+            final GroupByLongList slaveTimestamps = atom.getTimestampList(slotId);
+            slaveTimestamps.of(0);
+
             final int slaveTimestampIndex = slaveTimeFrameHelper.getTimestampIndex();
             record.setRowIndex(0);
             final long masterTimestampLo = record.getTimestamp(masterTimestampIndex);

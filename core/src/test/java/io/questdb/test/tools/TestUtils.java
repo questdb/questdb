@@ -54,6 +54,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -817,6 +818,26 @@ public final class TestUtils {
         Assert.fail("SQL statement should have failed");
     }
 
+    /**
+     * Asserts that the factory tree, walked down the base factories, contains an instance of the
+     * expected class. Pinning the factory keeps a test honest: the reduce phase follows from the
+     * factory the optimizer picks, so a query that quietly moved to a different one would still
+     * run, still pass, and cover nothing.
+     */
+    public static void assertFactoryInTree(RecordCursorFactory factory, Class<?> expected) {
+        assertFactoryInTree(factory, expected, null);
+    }
+
+    public static void assertFactoryInTree(RecordCursorFactory factory, Class<?> expected, @Nullable CharSequence context) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (expected.isInstance(f)) {
+                return;
+            }
+        }
+        Assert.fail("expected " + expected.getSimpleName() + " in the factory tree, but top was "
+                + factory.getClass().getSimpleName() + (context != null ? ": " + context : ""));
+    }
+
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
         try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
              BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))
@@ -862,6 +883,93 @@ public final class TestUtils {
             } catch (Throwable e) {
                 ignore.skipChecks();
                 throw e;
+            }
+        }
+    }
+
+    /**
+     * Asserts that the first parallel factory in the tree holds no per-worker slots.
+     * <p>
+     * Call this once the cursor is closed, so the frame sequence has been awaited and no worker
+     * is inside a locked section. A reducer that acquires a slot and then throws before entering
+     * the try that releases it leaves the slot held forever: {@link io.questdb.griffin.engine.PerWorkerLocks}
+     * has no reset and the atom belongs to the factory, so the next execution of the same cached
+     * factory finds one slot fewer, and once all of them have leaked every worker spins in
+     * acquireSlot for a slot nobody will release.
+     * <p>
+     * The assertion is only meaningful when the atom actually guards per-worker state, so a
+     * -1 count - an atom that holds no locks at all, such as an
+     * {@link io.questdb.griffin.engine.table.AsyncFilterAtom} over a thread-safe filter - fails
+     * loudly rather than passing for the wrong reason.
+     *
+     * @param factory the compiled factory, re-executed at least once and with its cursor closed
+     * @param context what is being asserted, for the failure message
+     */
+    public static void assertNoSlotLeak(RecordCursorFactory factory, CharSequence context) {
+        StatefulAtom atom = null;
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            atom = f.getAtom();
+            if (atom != null) {
+                break;
+            }
+        }
+        Assert.assertNotNull(
+                "no parallel factory with an atom in the tree, top was " + factory.getClass().getSimpleName() + ": " + context,
+                atom
+        );
+        final int slots = atom.getAcquiredSlotCount();
+        Assert.assertTrue(
+                atom.getClass().getSimpleName() + " holds no per-worker locks, so this query cannot"
+                        + " exercise the slot-leak path: " + context,
+                slots >= 0
+        );
+        Assert.assertEquals("worker slot leaked: " + context, 0, slots);
+    }
+
+    /**
+     * Compiles the query once and re-executes that single cached factory more times than a 4-worker
+     * pool has slots. Every execution must breach the per-query memory limit, and every execution
+     * must leave the atom holding no per-worker slots.
+     * <p>
+     * Re-executing the cached factory is what makes the leak observable. A single execution hides
+     * it: the first error cancels the frame sequence, and the reducers that already leaked a slot
+     * are never asked for another one. The leak also accumulates - PerWorkerLocks has no reset - so
+     * a slot lost in any iteration is still missing in every later one, which is what keeps this
+     * robust against an iteration where the owner thread happens to reduce every frame itself.
+     * <p>
+     * The query must therefore produce many more page frames than the owner can steal while it
+     * waits, or no pool worker ever acquires a slot and the assertion passes for the wrong reason.
+     *
+     * @param compiler        the compiler to compile the query with, once
+     * @param ctx             the execution context
+     * @param query           a query that breaches the per-query memory limit inside a parallel reduce
+     * @param expectedFactory the parallel factory the query must reach. Pinning it keeps the test
+     *                        honest: the reducer follows from the factory the optimizer picks, so a
+     *                        query that quietly moves to a different one would still breach, still
+     *                        release its slots, and cover nothing
+     */
+    public static void assertNoSlotLeakOnBreach(
+            SqlCompiler compiler,
+            SqlExecutionContext ctx,
+            String query,
+            Class<?> expectedFactory
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+            assertFactoryInTree(factory, expectedFactory, query);
+            for (int i = 0; i < 6; i++) {
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                        // drain until breach
+                    }
+                    Assert.fail("expected per-query memory breach on iteration " + i + " of: " + query);
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                }
+                // The cursor is closed by now, so the frame sequence has been awaited and no worker
+                // is inside a locked section.
+                assertNoSlotLeak(factory, "iteration " + i + " of: " + query);
             }
         }
     }

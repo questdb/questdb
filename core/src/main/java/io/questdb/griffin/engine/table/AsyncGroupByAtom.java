@@ -293,10 +293,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         Misc.free(filterCtx);
     }
 
-    /**
-     * Returns the number of per-worker slots currently held. Zero once a query has finished;
-     * anything else means a reducer leaked a slot and the atom has permanently lost capacity.
-     */
+    @Override
     @TestOnly
     public int getAcquiredSlotCount() {
         return perWorkerLocks.getAcquiredSlotCount();

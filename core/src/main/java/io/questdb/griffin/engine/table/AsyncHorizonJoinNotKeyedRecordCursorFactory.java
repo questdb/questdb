@@ -64,6 +64,7 @@ import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
@@ -181,6 +182,12 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             close();
             throw th;
         }
+    }
+
+    @Override
+    @TestOnly
+    public AsyncHorizonJoinNotKeyedAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override

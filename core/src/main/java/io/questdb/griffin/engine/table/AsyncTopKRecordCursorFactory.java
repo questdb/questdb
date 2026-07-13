@@ -133,13 +133,10 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    /**
-     * Returns the number of per-worker slots the atom currently holds. The atom outlives every
-     * execution of this factory, so a slot leaked by a failing reducer is never recovered.
-     */
+    @Override
     @TestOnly
-    public int getAcquiredSlotCount() {
-        return frameSequence.getAtom().getAcquiredSlotCount();
+    public AsyncTopKAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override

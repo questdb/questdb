@@ -53,6 +53,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
@@ -131,6 +132,12 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public PageFrameSequence<AsyncFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, order);
+    }
+
+    @Override
+    @TestOnly
+    public AsyncFilterAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override
@@ -276,21 +283,26 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final boolean isParquetFrame = task.isParquetFrame();
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
-        final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
-
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = task.populateFrameMemory();
-        }
-        record.init(frameMemory);
-
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
-
-        final Function filter = atom.getFilter(filterId);
+        // The slot is held from here on, so everything below belongs inside the try that releases
+        // it. populateFrameMemory() navigates to the frame, which decodes parquet and can breach the
+        // per-query memory limit. PerWorkerLocks has no reset and the atom belongs to the factory, so
+        // a slot leaked here would be lost for as long as the factory stayed in the SQL cache, and
+        // once every slot had leaked each later execution would spin in acquireSlot forever.
         try {
+            final boolean useLateMaterialization = atom.shouldUseLateMaterialization(filterId, isParquetFrame, task.isCountOnly());
+
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = task.populateFrameMemory(atom.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = task.populateFrameMemory();
+            }
+            record.init(frameMemory);
+
+            final DirectLongList rows = task.getFilteredRows();
+            rows.clear();
+
+            final Function filter = atom.getFilter(filterId);
             if (task.isCountOnly()) {
                 long count = 0;
                 for (long r = 0; r < frameRowCount; r++) {

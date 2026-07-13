@@ -65,6 +65,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.table.AsyncFilterUtils.prepareBindVarMemory;
 
@@ -426,6 +427,12 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
                 Misc.freeObjList(perWorkerGroupByFunctions.getQuick(i));
             }
         }
+    }
+
+    @Override
+    @TestOnly
+    public int getAcquiredSlotCount() {
+        return perWorkerLocks.getAcquiredSlotCount();
     }
 
     public ObjList<Function> getBindVarFunctions() {

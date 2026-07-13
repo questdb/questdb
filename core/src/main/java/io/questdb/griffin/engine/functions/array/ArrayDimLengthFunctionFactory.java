@@ -66,19 +66,39 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
         final int dimArgPos = argPositions.getQuick(1);
         if (dimArg.isConstant()) {
             final int dim = dimArg.getInt(null);
-            dimArg.close();
             if (dim == Numbers.INT_NULL) {
                 // A NULL dimension is not an out-of-bounds dimension: there is no dimension to
                 // measure, so the length is NULL. This mirrors the array access function, where
                 // arr[NULL] is NULL rather than an error. Neither arg survives into the constant,
                 // so this branch owns both of them. arrayArg may be a constant array literal holding
                 // native memory, so failing to close it leaks.
+                dimArg.close();
                 arrayArg.close();
                 return IntConstant.NULL;
             }
+            // Every throw below leaves both args to the caller: FunctionParser frees the argument
+            // list when newInstance() throws, so closing them here would free them twice.
             if (dim < 1 || dim > ColumnType.ARRAY_NDIMS_LIMIT) {
                 throw SqlException.position(dimArgPos).put("array dimension out of bounds [dim=").put(dim).put(']');
             }
+            if (arrayArg.isConstant()) {
+                // A constant array makes the whole call constant, and FunctionParser folds a constant
+                // function by calling getInt(null) on it - it never calls init(), which is where
+                // ConstFunc checks the dimension against the array. So a constant array has to be
+                // checked here, or the fold reads past the end of the shape header. An array bind
+                // variable is not constant, so it does not fold, and init() still checks it once the
+                // bound value has given it a type.
+                final int dims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+                if (dim > dims) {
+                    throw SqlException.position(dimArgPos)
+                            .put("array dimension out of bounds [dim=")
+                            .put(dim)
+                            .put(", dims=")
+                            .put(dims)
+                            .put(']');
+                }
+            }
+            dimArg.close();
             return new ConstFunc(arrayArg, dim, dimArgPos);
         }
         return new Func(arrayArg, dimArg, dimArgPos);
@@ -118,7 +138,8 @@ public class ArrayDimLengthFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            // init() has already checked dim against the column's dimensionality.
+            // dim is already checked against the array's dimensionality: in newInstance() when the
+            // array is constant, and in init() otherwise.
             if (arrayColumnIndex >= 0) {
                 return rec.getArrayDimLen(arrayColumnIndex, arrayColumnType, dim);
             }

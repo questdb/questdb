@@ -2816,6 +2816,64 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLengthColumnTop() throws Exception {
+        // A column added to a table that already has rows has a column top: the rows below it hold no
+        // data for the column, and the page frame hands out a zero aux address for them. dim_length()
+        // reads the shape header straight out of the aux/data vectors, so it has to answer NULL for
+        // those rows rather than reading from address zero. The pre-existing rows below the top are
+        // the only ones that reach that branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[][]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tango VALUES " +
+                    "('1970-01-01T00:00:00.000000Z', ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]]), " +
+                    "('1970-01-01T00:00:01.000000Z', ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]])"
+            );
+            execute("ALTER TABLE tango ADD COLUMN arr2 DOUBLE[][]");
+            execute("INSERT INTO tango VALUES " +
+                    "('1970-01-01T00:00:02.000000Z', ARRAY[[1.0, 2]], ARRAY[[1.0, 2, 3], [4.0, 5, 6]])"
+            );
+            // The first two rows sit below the column top: no shape to read, so NULL.
+            assertQuery("SELECT dim_length(arr2, 1) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\nnull\n2\n");
+            assertQuery("SELECT dim_length(arr2, 2) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\nnull\n3\n");
+        });
+    }
+
+    @Test
+    public void testLengthConstantArrayInvalidDim() throws Exception {
+        // A constant array argument makes the whole call constant, so the parser folds it by calling
+        // getInt(null) - and folding never runs init(), which is where the dimensionality check used
+        // to live. The check therefore has to happen at compile time, in newInstance(). A NULL array
+        // is no different: a dimension the array does not have is out of bounds whether or not there
+        // is an array to measure, so it must report the error rather than quietly answer NULL.
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("SELECT dim_length(ARRAY[1.0, 2, 3], 2)",
+                    36, "array dimension out of bounds [dim=2, dims=1]");
+            assertExceptionNoLeakCheck("SELECT dim_length(ARRAY[[1.0, 2], [3.0, 4]], 3)",
+                    45, "array dimension out of bounds [dim=3, dims=2]");
+            assertExceptionNoLeakCheck("SELECT dim_length(NULL::double[], 2)",
+                    34, "array dimension out of bounds [dim=2, dims=1]");
+            assertExceptionNoLeakCheck("SELECT dim_length(NULL::double[][], 3)",
+                    36, "array dimension out of bounds [dim=3, dims=2]");
+            // In bounds, the constant array still folds and answers.
+            assertQuery("SELECT dim_length(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], 2) len")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n2\n");
+            // In bounds over a NULL array: no shape to read, so NULL.
+            assertQuery("SELECT dim_length(NULL::double[][], 2) len")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\nnull\n");
+        });
+    }
+
+    @Test
     public void testLengthInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
@@ -2865,6 +2923,36 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("len\nnull\n");
+        });
+    }
+
+    @Test
+    public void testLengthOverArrayExpression() throws Exception {
+        // Every other dim_length() test passes a plain array column, which takes the shape-header fast
+        // path and never builds an ArrayView. An array-valued expression has no column index, so both
+        // function paths fall back to the ArrayView route instead - the only route that can see a NULL
+        // ArrayView, which carries no shape and so has no length to report.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][], n INT)");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]], 1), " +
+                    "(NULL, 1), " +
+                    "(NULL, NULL)"
+            );
+            // Constant dimension: the ConstFunc path.
+            assertQuery("SELECT dim_length(transpose(arr), 1) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n2\nnull\nnull\n");
+            assertQuery("SELECT dim_length(transpose(arr), 2) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n3\nnull\nnull\n");
+            // Non-constant dimension: the Func path.
+            assertQuery("SELECT dim_length(transpose(arr), n) len FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("len\n2\nnull\nnull\n");
         });
     }
 

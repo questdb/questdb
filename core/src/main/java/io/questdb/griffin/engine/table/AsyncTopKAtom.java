@@ -231,6 +231,12 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         Misc.freeObjListAndKeepObjects(perWorkerRecordsB);
     }
 
+    @Override
+    @TestOnly
+    public int getAcquiredSlotCount() {
+        return perWorkerLocks.getAcquiredSlotCount();
+    }
+
     public RecordComparator getComparator(int slotId) {
         if (slotId == -1) {
             return ownerComparator;
@@ -247,15 +253,6 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             return ownerEncoder;
         }
         return perWorkerEncoders.getQuick(slotId);
-    }
-
-    /**
-     * Returns the number of per-worker slots currently held. Zero once a query has finished;
-     * anything else means a reducer leaked a slot and the atom has permanently lost capacity.
-     */
-    @TestOnly
-    public int getAcquiredSlotCount() {
-        return perWorkerLocks.getAcquiredSlotCount();
     }
 
     public AsyncFilterContext getFilterContext() {
