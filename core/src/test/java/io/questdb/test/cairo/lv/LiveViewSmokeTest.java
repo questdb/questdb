@@ -15061,6 +15061,103 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testMemoryLimitChargesTransientParquetDecodeBuffers() throws Exception {
+        // Pins the semantics of cairo.live.view.refresh.memory.limit.bytes: it caps the PEAK of a
+        // refresh cycle, not the state the view retains between cycles.
+        //
+        // LiveViewRefreshSqlExecutionContext.getMemoryTracker() hands the per-view tracker to
+        // AbstractPageFrameRecordCursor, which binds it into the frame memory pool and so into
+        // RowGroupBuffers. A parquet row group therefore decodes ON the view's tracker, and a
+        // decode that alone exceeds the limit invalidates the view even though its persistent
+        // state is a few kilobytes.
+        //
+        // The view is built to make that the ONLY possible source of the breach: two symbols, so
+        // the anchor and partition maps hold two keys, and a 5-row frame, so the ring buffers are
+        // a handful of slots. What does not fit the 1 MiB limit is the 100k-row row group the
+        // backfill sweep decodes. The native control below is the other half of the proof.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1024 * 1024);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        // Shrink the window store page from its 1 MiB default. The ring buffers are charged to the
+        // view's tracker too, and one default-sized page would exhaust the whole 1 MiB limit on its
+        // own - masking the decode buffer this test is about (and invalidating the native control).
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base (ts, sym, i)
+                    SELECT timestamp_sequence('2026-01-01', 100),
+                           CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END,
+                           x
+                    FROM long_sequence(100_000)
+                    """);
+            drainWalQueue();
+            // A second day keeps 2026-01-01 non-active, so it converts.
+            execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:00:00.000000Z', 'a', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE base CONVERT PARTITION TO PARQUET WHERE ts < '2026-01-02'");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS v " +
+                    "FROM base");
+            // Not driveBackfillToCompletion: the breach invalidates the view mid-sweep, so it never
+            // leaves BACKFILLING. Drive the job directly and let the invalidation assertion below
+            // be the outcome under test.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertTrue(
+                    "a parquet decode buffer that alone exceeds the limit must invalidate the view: "
+                            + "the limit caps the cycle's peak, transients included",
+                    instance.isInvalid()
+            );
+            final CharSequence reason = instance.getStateReader().getInvalidationReason();
+            Assert.assertNotNull(reason);
+            Assert.assertTrue(
+                    "the invalidation reason must name the memory limit [reason=" + reason + ']',
+                    Chars.contains(reason, "query memory limit exceeded")
+            );
+            execute("DROP LIVE VIEW lv");
+
+            // Control: the same rows, the same view, the same limit - but a NATIVE base. Native
+            // page frames are memory-mapped rather than decoded into tracker-bound buffers, so the
+            // only thing charged is the persistent state, which fits comfortably. This is what
+            // isolates the breach above to the parquet decode transients: if the persistent state
+            // were what crossed the limit, this view would be invalidated too.
+            execute("CREATE TABLE base_native (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base_native (ts, sym, i)
+                    SELECT timestamp_sequence('2026-01-01', 100),
+                           CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END,
+                           x
+                    FROM long_sequence(100_000)
+                    """);
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv_native FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW) AS v " +
+                    "FROM base_native");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            final LiveViewInstance nativeInstance = engine.getLiveViewRegistry().getViewInstance("lv_native");
+            Assert.assertNotNull(nativeInstance);
+            Assert.assertFalse(
+                    "the same view over a native base holds the same persistent state and must stay "
+                            + "valid under the same limit, so the parquet breach above is the decode buffer",
+                    nativeInstance.isInvalid()
+            );
+            execute("DROP LIVE VIEW lv_native");
+        });
+    }
+
+    @Test
     public void testMemoryLimitInvalidatesUnanchoredView() throws Exception {
         // An UNANCHORED view has no anchor window, so it has no frontier compaction machinery
         // at all - strictly worse than the LONG-anchor case. Only a BOUNDED frame may go
@@ -15070,6 +15167,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // or the limit silently protects nothing here.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1024 * 1024);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
+        // Shrink the window store page from its 1 MiB default. The bounded frame's ring buffers are
+        // charged to the view's tracker, so a single default-sized page would exhaust the whole
+        // 1 MiB limit on the FIRST allocation - the view would invalidate even at cardinality 1 and
+        // this test would pass without ever exercising the per-partition growth it is about. At
+        // 4 KiB the first page is noise and only the growth across 200k keys can breach.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4 * 1024);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +

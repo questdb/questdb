@@ -388,15 +388,31 @@ public interface CairoConfiguration {
     int getLiveViewPartitionCompactThreshold();
 
     /**
-     * @return the byte limit applied to one live view's persistent per-partition state:
-     * the anchor map plus each anchored window function's partition map. Unlike a query
-     * or a materialized-view refresh, this state outlives the refresh cycle that built
-     * it, so the tracker's lifetime matches the view's cached state rather than one
-     * refresh attempt. {@code 0} means unlimited; only the global RSS limit applies.
+     * @return the byte limit applied to one live view's refresh, measured as the PEAK of a
+     * refresh cycle. {@code 0} means unlimited; only the global RSS limit applies.
      * <p>
-     * The limit is the only backstop for a view whose ANCHOR cannot drive frontier
-     * compaction (a LONG/INT anchor, or any anchor not provably monotone with the base
-     * scan order): such a view retains every partition key it has ever seen.
+     * The tracker is per-view and its lifetime matches the view's cached state, not one
+     * refresh attempt, because the persistent part of that state - the anchor map plus each
+     * anchored window function's partition map and ring buffers - outlives the cycle that
+     * built it. Unlike a query or a materialized-view refresh, this state is what the limit
+     * exists to bound: it is the only backstop for a view whose ANCHOR cannot drive frontier
+     * compaction (a LONG/INT anchor, or any anchor not provably monotone with the base scan
+     * order), since such a view retains every partition key it has ever seen.
+     * <p>
+     * The tracker also charges the transient per-cycle buffers of the view's compiled SELECT:
+     * LiveViewRefreshSqlExecutionContext hands it to AbstractPageFrameRecordCursor, which binds
+     * it into the frame memory pool and so into RowGroupBuffers. Parquet decode buffers are
+     * therefore charged alongside the persistent state, and freed at cursor close, so the
+     * accounting stays symmetric across cycles but the limit bounds the cycle's peak rather
+     * than its residue. Size the limit to include those transients: a peak that crosses it
+     * invalidates the view (LiveViewRefreshJob.handleRefreshFailure invalidates immediately on
+     * a limit breach rather than spending the retry budget), and invalidation is durable and
+     * sticky - recovery is an operator DROP + CREATE.
+     * <p>
+     * Two floors dominate that sizing. A view with a bounded (ROWS) window frame allocates a
+     * whole window store page for its ring buffer on the first row ({@link
+     * #getSqlWindowStorePageSize()}, 1 MiB by default), so such a view cannot run under a limit
+     * of one page at all. A view reading parquet partitions decodes a whole row group at a time.
      */
     long getLiveViewRefreshMemoryLimitBytes();
 

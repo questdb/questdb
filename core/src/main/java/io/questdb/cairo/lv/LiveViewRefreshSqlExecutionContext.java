@@ -57,10 +57,20 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
 
     /**
      * Resolves to the tracker of the view being refreshed, so the anchored functions'
-     * partition maps - which WindowRecordCursorFactory binds at cursor open - allocate
-     * against the view that owns them. The lookup must be dynamic: the worker acquires the
-     * tracker part-way through the cycle (when it builds the anchor window), so a value
+     * partition maps and ring buffers - which WindowRecordCursorFactory binds at cursor open -
+     * allocate against the view that owns them. The lookup must be dynamic: the worker acquires
+     * the tracker part-way through the cycle (when it builds the anchor window), so a value
      * snapshotted at cycle start would still be null and the maps would go untracked.
+     * <p>
+     * This getter is also what charges the cycle's TRANSIENT buffers to the view:
+     * AbstractPageFrameRecordCursor binds whatever tracker the execution context returns into
+     * the frame memory pool, which reaches RowGroupBuffers, so the parquet decode buffers of
+     * the view's compiled SELECT are charged here alongside the persistent partition state.
+     * They are freed at cursor close, so the accounting stays symmetric across cycles, but it
+     * makes cairo.live.view.refresh.memory.limit.bytes a cap on the cycle's PEAK rather than on
+     * the state the view retains between cycles. That is deliberate - the property bounds a
+     * refresh, not a residue - and the limit must be sized to cover the transients: a breach
+     * invalidates the view outright. See CairoConfiguration.getLiveViewRefreshMemoryLimitBytes().
      */
     @Override
     public @Nullable MemoryTracker getMemoryTracker() {
