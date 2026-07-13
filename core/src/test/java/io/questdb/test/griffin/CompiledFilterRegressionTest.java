@@ -2334,6 +2334,32 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntWideLaneBatchLengthsAndBooleanMasks() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int rowCount = 0; rowCount <= 9; rowCount++) {
+                execute("drop table if exists wide_i");
+                if (rowCount == 0) {
+                    execute("create table wide_i (i32 int)");
+                } else {
+                    execute("create table wide_i as (select cast(case x "
+                            + "when 1 then null when 2 then -2147483647 "
+                            + "when 3 then 7 else x end as int) i32 "
+                            + "from long_sequence(" + rowCount + "))");
+                }
+
+                assertJitMatchesJava("wide_i where i32 < 5000000000", true);
+                assertJitMatchesJava("wide_i where i32 = 7 and i32 < 5000000000", true);
+                assertJitMatchesJava("wide_i where i32 < 5000000000 and i32 = 7", true);
+                assertJitMatchesJava("wide_i where i32 = 7 or i32 > 5000000000", true);
+                assertJitMatchesJava("wide_i where i32 > 5000000000 or i32 = 7", true);
+                assertJitMatchesJava("select count() from wide_i where i32 < 5000000000", true);
+                assertJitMatchesJava("select count() from wide_i "
+                        + "where i32 = 7 or i32 > 5000000000", true);
+            }
+        });
+    }
+
+    @Test
     public void testIntColumnsCount() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +

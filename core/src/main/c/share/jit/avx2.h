@@ -60,7 +60,7 @@ namespace questdb::avx2 {
                     case data_type_t::i64: {
                         int64_t value = instr.ipayload.lo;
                         Vec dummy;
-                        if (!cache.findInt(value, dummy)) {
+                        if (!cache.findInt(value, type, dummy)) {
                             Vec reg = c.new_ymm("const_ymm_%lld", value);
                             switch (type) {
                                 case data_type_t::i8: {
@@ -89,7 +89,7 @@ namespace questdb::avx2 {
                                 default:
                                     break;
                             }
-                            cache.addInt(value, reg);
+                            cache.addInt(value, type, reg);
                         }
                         break;
                     }
@@ -315,7 +315,7 @@ namespace questdb::avx2 {
     }
 
     jit_value_t
-    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index,
+    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index, bool wide_lane,
              const ColumnAddressCache &cache) {
         if (type == data_type_t::varchar_header) {
             return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
@@ -349,7 +349,24 @@ namespace questdb::avx2 {
         Mem m;
         uint32_t shift = type_shift(type);
         if (shift < 4) {
-            m = ymmword_ptr(column_address, input_index, shift);
+            if (wide_lane) {
+                switch (type) {
+                    case data_type_t::i8:
+                        m = dword_ptr(column_address, input_index, shift);
+                        break;
+                    case data_type_t::i16:
+                        m = qword_ptr(column_address, input_index, shift);
+                        break;
+                    case data_type_t::i32:
+                    case data_type_t::f32:
+                        m = xmmword_ptr(column_address, input_index, shift);
+                        break;
+                    default:
+                        __builtin_unreachable();
+                }
+            } else {
+                m = ymmword_ptr(column_address, input_index, shift);
+            }
         } else {
             Gp offset = c.new_gp64("row_offset");
             c.mov(offset, input_index);
@@ -359,14 +376,33 @@ namespace questdb::avx2 {
         Vec row_data = c.new_ymm();
         switch (type) {
             case data_type_t::i8:
+                if (wide_lane) {
+                    c.vmovd(row_data.xmm(), m);
+                    break;
+                }
+                [[fallthrough]];
             case data_type_t::i16:
+                if (wide_lane) {
+                    c.vmovq(row_data.xmm(), m);
+                    break;
+                }
+                [[fallthrough]];
             case data_type_t::i32:
+                if (wide_lane) {
+                    c.vmovdqu(row_data.xmm(), m);
+                    break;
+                }
+                [[fallthrough]];
             case data_type_t::i64:
             case data_type_t::i128:
                 c.vmovdqu(row_data, m);
                 break;
             case data_type_t::f32:
-                c.vmovups(row_data, m);
+                if (wide_lane) {
+                    c.vmovups(row_data.xmm(), m);
+                } else {
+                    c.vmovups(row_data, m);
+                }
                 break;
             case data_type_t::f64:
                 c.vmovupd(row_data, m);
@@ -384,7 +420,7 @@ namespace questdb::avx2 {
         if (type == data_type_t::i8 || type == data_type_t::i16 ||
             type == data_type_t::i32 || type == data_type_t::i64) {
             Vec cached;
-            if (cache.findInt(instr.ipayload.lo, cached)) {
+            if (cache.findInt(instr.ipayload.lo, type, cached)) {
                 return {cached, type, data_kind_t::kConst};
             }
         }
@@ -460,22 +496,51 @@ namespace questdb::avx2 {
         return {mask_not(c, lhs.vec()), dt, dk};
     }
 
-    jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
-        auto dt = lhs.dtype();
-        auto dk = dst_kind(lhs, rhs);
-        return {mask_and(c, lhs.vec(), rhs.vec()), dt, dk};
+    jit_value_t normalize_wide_mask(Compiler &c, const jit_value_t &value) {
+        if (value.dtype() != data_type_t::i32) {
+            return value;
+        }
+        Vec dst = c.new_ymm("wide_mask");
+        c.vpmovsxdq(dst, value.vec().xmm());
+        return {dst, data_type_t::i64, value.dkind()};
     }
 
-    jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
-        auto dt = lhs.dtype();
-        auto dk = dst_kind(lhs, rhs);
-        return {mask_or(c, lhs.vec(), rhs.vec()), dt, dk};
+    jit_value_t sx_i64(Compiler &c, const jit_value_t &value, bool null_check) {
+        if (value.dtype() != data_type_t::i32) {
+            __builtin_unreachable();
+        }
+
+        Vec extended = c.new_ymm("sx_i64");
+        c.vpmovsxdq(extended, value.vec().xmm());
+        if (null_check) {
+            Vec null_mask_i32 = c.new_ymm("sx_i64_null_i32");
+            c.vpcmpeqd(null_mask_i32, value.vec(), vec_int_null(c));
+            Vec null_mask_i64 = c.new_ymm("sx_i64_null_i64");
+            c.vpmovsxdq(null_mask_i64, null_mask_i32.xmm());
+            extended = select_bytes(c, null_mask_i64, extended, vec_long_null(c));
+        }
+        return {extended, data_type_t::i64, value.dkind()};
+    }
+
+    jit_value_t bin_and(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool wide_lane) {
+        auto left = wide_lane ? normalize_wide_mask(c, lhs) : lhs;
+        auto right = wide_lane ? normalize_wide_mask(c, rhs) : rhs;
+        auto dk = dst_kind(left, right);
+        return {mask_and(c, left.vec(), right.vec()), left.dtype(), dk};
+    }
+
+    jit_value_t bin_or(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, bool wide_lane) {
+        auto left = wide_lane ? normalize_wide_mask(c, lhs) : lhs;
+        auto right = wide_lane ? normalize_wide_mask(c, rhs) : rhs;
+        auto dk = dst_kind(left, right);
+        return {mask_or(c, left.vec(), right.vec()), left.dtype(), dk};
     }
 
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
-        return {cmp_eq(c, dt, lhs.vec(), rhs.vec()), data_type_t::i32, dk};
+        auto mt = mask_type(dt);
+        return {cmp_eq(c, dt, lhs.vec(), rhs.vec()), mt, dk};
     }
 
     jit_value_t cmp_ne(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
@@ -597,16 +662,16 @@ namespace questdb::avx2 {
         return convert(c, lhs, rhs, ncheck);
     }
 
-    void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool ncheck) {
+    void emit_bin_op(Compiler &c, Arena &arena, const instruction_t &instr, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane) {
         auto args = get_arguments(c, values, ncheck);
         auto lhs = args.first;
         auto rhs = args.second;
         switch (instr.opcode) {
             case opcodes::And:
-                values.append(arena, bin_and(c, lhs, rhs));
+                values.append(arena, bin_and(c, lhs, rhs, wide_lane));
                 break;
             case opcodes::Or:
-                values.append(arena, bin_or(c, lhs, rhs));
+                values.append(arena, bin_or(c, lhs, rhs, wide_lane));
                 break;
             case opcodes::Eq:
                 values.append(arena, cmp_eq(c, lhs, rhs));
@@ -644,7 +709,7 @@ namespace questdb::avx2 {
     }
 
     void
-    emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values, bool ncheck,
+    emit_code(Compiler &c, Arena &arena, const instruction_t *istream, size_t size, ArenaVector<jit_value_t> &values, bool ncheck, bool wide_lane,
               const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index,
               const ColumnAddressCache &addr_cache, const ConstantCacheYmm&const_cache) {
         for (size_t i = 0; i < size; ++i) {
@@ -663,7 +728,7 @@ namespace questdb::avx2 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, addr_cache));
+                    values.append(arena, read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index, wide_lane, addr_cache));
                 }
                     break;
                 case opcodes::Imm:
@@ -679,10 +744,15 @@ namespace questdb::avx2 {
                 case opcodes::Or_Sc:
                 case opcodes::Begin_Sc:
                 case opcodes::End_Sc:
-                case opcodes::Sx_I64: // Sx_I64 only feeds narrow+i8 mixed predicates, which force scalar
                     return; // Compilation error: opcode not supported in SIMD path
+                case opcodes::Sx_I64:
+                    if (!wide_lane) {
+                        return;
+                    }
+                    values.append(arena, sx_i64(c, get_argument(values), ncheck));
+                    break;
                 default:
-                    emit_bin_op(c, arena, instr, values, ncheck);
+                    emit_bin_op(c, arena, instr, values, ncheck, wide_lane);
                     break;
             }
         }

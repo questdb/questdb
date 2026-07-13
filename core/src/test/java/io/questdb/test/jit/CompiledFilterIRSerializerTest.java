@@ -931,6 +931,26 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testOptionsDirectIntLongComparisonUsesWideLane() throws Exception {
+        int options = serialize("anint < 5000000000", false, false, true);
+        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(<)(ret)");
+        assertOptionsHint("anint < 5000000000", options, OptionsHint.WIDE_LANE);
+
+        options = serialize("anint = 7 and anint < 5000000000", false, false, true);
+        assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(<)"
+                + "(i32 7L)(i32 anint)(=)(&&)(ret)");
+        assertOptionsHint("mixed AND", options, OptionsHint.WIDE_LANE);
+
+        options = serialize("anint < 5000000000 or anint = 7", false, false, true);
+        assertIR("(i32 7L)(i32 anint)(=)"
+                + "(i64 5000000000L)(i32 anint)(sx_i64)(<)(||)(ret)");
+        assertOptionsHint("mixed OR", options, OptionsHint.WIDE_LANE);
+
+        options = serialize("anint < 5000000000", true, false, true);
+        assertOptionsHint("forced scalar", options, OptionsHint.SCALAR);
+    }
+
+    @Test
     public void testOptionsDebugFlag() throws Exception {
         int options = serialize("abyte = 0", false, true, false);
         assertOptionsDebug(options, true);
@@ -1544,7 +1564,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     private enum OptionsHint {
-        SCALAR(0), SINGLE_SIZE(1), MIXED_SIZES(2);
+        SCALAR(0), SINGLE_SIZE(1), MIXED_SIZES(2), WIDE_LANE(3);
 
         final int code;
 

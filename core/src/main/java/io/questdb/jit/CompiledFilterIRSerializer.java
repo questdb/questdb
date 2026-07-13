@@ -123,6 +123,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
+    private static final int EXEC_HINT_WIDE_LANE = 3;
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // Maximum number of labels supported by the backend (must match LabelArray::MAX_LABELS in x86.h)
     private static final int MAX_LABELS = 8;
@@ -193,6 +194,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
+    private boolean emittedI64Widening;
+    private boolean wideLaneMode;
     // Per-element width override for a narrow-int arithmetic IN key. A multi-value IN re-serializes
     // the key once per element (serializeIn), and each key = element comparison must read the key at
     // that element's width - I8 (widen) against a LONG/TIMESTAMP element, I4 (wrap) against an INT
@@ -214,6 +217,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         metadata = null;
         pageFrameCursor = null;
         forceScalarMode = false;
+        emittedI64Widening = false;
+        wideLaneMode = false;
         predicateContext.clear();
         backfillNodes.clear();
         collectedPredicates.clear();
@@ -314,6 +319,75 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return this;
     }
 
+    private boolean isWideLaneEligible(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2) {
+            return false;
+        }
+        if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
+            return isWideLaneEligible(node.lhs) && isWideLaneEligible(node.rhs);
+        }
+        if (!isComparisonOperator(node.token)) {
+            return false;
+        }
+        return isWideLaneOperand(node.lhs)
+                && isWideLaneOperand(node.rhs)
+                && (isIntColumn(node.lhs) || isIntColumn(node.rhs));
+    }
+
+    private boolean isWideLaneOperand(ExpressionNode node) {
+        return isIntColumn(node) || isIntegerConstant(node);
+    }
+
+    private boolean isIntColumn(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        final int columnIndex = metadata.getColumnIndexQuiet(node.token);
+        return columnIndex > -1 && ColumnType.tagOf(metadata.getColumnType(columnIndex)) == ColumnType.INT;
+    }
+
+    private boolean isIntegerConstant(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.CONSTANT) {
+            return false;
+        }
+        try {
+            Numbers.parseLong(node.token);
+            return true;
+        } catch (NumericException ignored) {
+            return false;
+        }
+    }
+
+    private boolean isComparisonOperator(CharSequence token) {
+        return Chars.equals(token, "=")
+                || Chars.equals(token, "!=")
+                || Chars.equals(token, "<>")
+                || Chars.equals(token, "<")
+                || Chars.equals(token, "<=")
+                || Chars.equals(token, ">")
+                || Chars.equals(token, ">=");
+    }
+
+    private boolean requiresWideLane(ExpressionNode node) {
+        if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
+            return requiresWideLane(node.lhs) || requiresWideLane(node.rhs);
+        }
+        return (isIntColumn(node.lhs) && isOutOfIntRangeIntegerConstant(node.rhs))
+                || (isIntColumn(node.rhs) && isOutOfIntRangeIntegerConstant(node.lhs));
+    }
+
+    private boolean isOutOfIntRangeIntegerConstant(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.CONSTANT) {
+            return false;
+        }
+        try {
+            final long value = Numbers.parseLong(node.token);
+            return value < Integer.MIN_VALUE || value > Integer.MAX_VALUE;
+        } catch (NumericException ignored) {
+            return false;
+        }
+    }
+
     /**
      * Writes IR of the filter described by the given expression tree to memory.
      *
@@ -325,7 +399,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * <ul>
      * <li>1 LSB - debug flag</li>
      * <li>2-4 LSBs - filter's arithmetic type size (widest type size): 0 - 1B, 1 - 2B, 2 - 4B, 3 - 8B, 4 - 16B</li>
-     * <li>5-6 LSBs - filter's execution hint: 0 - scalar, 1 - single size (SIMD-friendly), 2 - mixed sizes</li>
+     * <li>5-6 LSBs - execution hint: 0 - scalar, 1 - single size (SIMD-friendly),
+     * 2 - mixed sizes, 3 - four-lane SIMD</li>
      * <li>7 LSB - flag to include null checks for column values in compiled filter</li>
      * </ul>
      * <p>
@@ -340,11 +415,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Reset the per-element IN-key width override: the serializer instance is reused across
         // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
         inKeyWidthOverride = UNDEFINED_CODE;
+        emittedI64Widening = false;
+        wideLaneMode = !forceScalar && isWideLaneEligible(node) && requiresWideLane(node);
         // Detect if scalar mode is guaranteed by checking for mixed column sizes.
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
         // in scalar mode, so we only enable them when scalar mode is certain.
         boolean scalarModeDetected = forceScalar;
-        if (!scalarModeDetected) {
+        if (!scalarModeDetected && !wideLaneMode) {
             scalarModeDetector.clear();
             traverseAlgo.traverse(node, scalarModeDetector);
             scalarModeDetected = scalarModeDetector.hasMixedSizes();
@@ -411,16 +488,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // (e.g. SHORT * SHORT for c1=200 yields -25536, not 40000); scalar mode upcasts
             // to int. This applies whether the predicate is all-narrow (maxSize <= 2) or
             // mixes narrow with wider operands -- both are unsafe under SIMD.
-            // Also force scalar when narrow-to-i64 widening is in play; SX_I64 is not
-            // implemented on the SIMD path (see avx2.h) and the compiled SIMD filter
-            // would silently miscompare a sign-extended narrow column against an i64
-            // operand. The float-suppressed widen set (i64WidenLeaves) emits SX_I64
-            // too, so it forces scalar as well.
+            // Also force scalar when narrow-to-i64 widening is in play outside the
+            // conservatively selected four-lane mode. The float-suppressed widen set
+            // (i64WidenLeaves) emits SX_I64 too, so unsupported shapes remain scalar.
             forceScalarMode |= (predicateContext.hasArithmeticOperations
                     && (predicateContext.localTypesObserver.maxSize() <= 2
                     || predicateContext.localTypesObserver.hasNarrowInt()
                     || predicateContext.needsNarrowI64Widening))
-                    || i64WidenLeaves.size() > 0;
+                    || (!wideLaneMode && i64WidenLeaves.size() > 0);
 
             // Then backfill constants and symbol bind variables and clean up
             try {
@@ -1088,6 +1163,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private int getExecHint(boolean forceScalar) {
         final TypesObserver typesObserver = predicateContext.globalTypesObserver;
         if (!forceScalar && !forceScalarMode) {
+            if (wideLaneMode && emittedI64Widening) {
+                return EXEC_HINT_WIDE_LANE;
+            }
             return typesObserver.hasMixedSizes() ? EXEC_HINT_MIXED_SIZE_TYPE : EXEC_HINT_SINGLE_SIZE_TYPE;
         }
         return EXEC_HINT_SCALAR;
@@ -1918,8 +1996,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (isWidened) {
             putOperator(SX_I64);
-            // SX_I64 has no AVX2 implementation (avx2.h dispatches it to a bare return), so any
-            // filter that emits it must run scalar. Every trigger that reaches here today also
+            // SX_I64 is supported only by the conservatively selected four-lane AVX2 mode. Other
+            // shapes that emit it must retain the scalar correctness fallback. Every other trigger
+            // that reaches here today also
             // flips a flag the predicate-exit forceScalarMode computation (see serialize) already
             // catches: the only IN-key override that widens is a genuine LONG/TIMESTAMP element,
             // and that flips needsNarrowI64Widening too (an untyped NULL and an overflowing
@@ -1927,7 +2006,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // forceScalarMode to the emission itself keeps that a hard invariant rather than a
             // coincidence of the current width rules, so a future override path cannot let a
             // value-correct SX_I64 escape to the vectorized path.
-            forceScalarMode = true;
+            emittedI64Widening = true;
+            if (!wideLaneMode) {
+                forceScalarMode = true;
+            }
         }
     }
 
