@@ -201,6 +201,10 @@ public class OperationExecutor implements Closeable {
                 }
             }
             try (DeleteOperation deleteOp = compiledQuery.getDeleteOperation()) {
+                // Hoisted above the inner try so the catch (CairoException) below can read it. Default false is the
+                // SAFE value: if the assignment itself throws (before any window commits) the catch treats this as
+                // the atomic route - correct, because nothing was durably committed for this delete yet.
+                boolean diskBounded = false;
                 try {
                     // Opt-in non-atomic disk-bounded route (H1, cairo.wal.delete.disk.bounded): only for the
                     // arbitrary (non-time-range) survivor-replace on a table that actually has Parquet
@@ -213,7 +217,7 @@ public class OperationExecutor implements Closeable {
                     // apply. Still crash-safe: a crash mid-loop leaves durable S-1, the whole delete re-applies,
                     // finished windows re-apply as no-ops (survivors-of-survivors) and already-native partitions
                     // re-convert as no-ops.
-                    final boolean diskBounded = !deleteOp.isPureTimeRange()
+                    diskBounded = !deleteOp.isPureTimeRange()
                             && engine.getConfiguration().getWalDeleteDiskBounded()
                             && tableWriterHasParquet(tableWriter);
                     // Observability (M1): one line per DELETE apply naming the route taken. The strategy label
@@ -268,13 +272,34 @@ public class OperationExecutor implements Closeable {
                     // Rollback in case of any dirty state. Do not catch rollback exceptions here:
                     // let the calling code handle a distressed writer (mirrors TableWriter.apply).
                     tableWriter.rollback();
-                    if (ex.isWALTolerable()) {
+                    // A WAL-tolerable error is "skip this txn, mark it applied" (mirrors TableWriter.apply) ONLY on
+                    // the atomic routes, where NOTHING was durably committed for this delete. On the opt-in
+                    // disk-bounded route, earlier windows already committed at the durable seqTxn S-1; finalizing at
+                    // S here would mark a PARTIALLY-applied delete complete and it would never be retried (silent
+                    // partial delete / data loss). Force not-applied and suspend instead, so ApplyWal2TableJob
+                    // re-runs txn S and idempotently completes the whole delete. (Today no WAL-tolerable exception
+                    // can arise inside the disk-bounded loop - convert/replace/getCursor raise only critical errnos -
+                    // so this is a defense-in-depth guard, not a live-bug fix.)
+                    if (ex.isWALTolerable() && !diskBounded) {
                         // Mark this txn applied and skip it (mirrors TableWriter.apply).
                         tableWriter.commitSeqTxn(seqTxn);
                         return 0;
                     }
                     // Mark as not applied so the apply job can retry.
                     tableWriter.setSeqTxn(seqTxn - 1);
+                    if (diskBounded && ex.isWALTolerable()) {
+                        // setSeqTxn(S-1)+throw is NOT enough to suspend on this route: our CALLER,
+                        // ApplyWal2TableJob.processWalSql, has its own catch (CairoException) that treats a rethrown
+                        // WAL-tolerable error exactly like the atomic route here does - it re-finalizes with
+                        // commitSeqTxn(seqTxn), silently marking this PARTIAL disk-bounded delete complete at S. Only a
+                        // NON-WAL-tolerable (critical) error makes that caller rethrow-and-suspend. So convert it:
+                        // rethrow as critical, preserving the original errno/message, to force suspend + retry of the
+                        // whole delete. (Belt-and-braces with the !diskBounded skip-guard above; both are needed
+                        // because both this catch AND the caller's catch would otherwise skip a WAL-tolerable error.)
+                        throw CairoException.critical(0)
+                                .put("WAL-tolerable error on the non-atomic disk-bounded DELETE path must suspend, not skip [origErrno=")
+                                .put(ex.getErrno()).put(", msg=").put(ex.getFlyweightMessage()).put(']');
+                    }
                     throw ex;
                 } catch (Throwable th) {
                     // Any other throwable (an Error such as OOM, a SqlException thrown by

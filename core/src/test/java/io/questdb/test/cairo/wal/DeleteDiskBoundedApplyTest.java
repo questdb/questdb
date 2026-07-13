@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -125,6 +126,109 @@ public class DeleteDiskBoundedApplyTest extends AbstractCairoTest {
 
             // Crash-restart model: resume the suspended table and re-drain. executeDelete re-runs the WHOLE delete
             // for txn S over the partially-committed (still-at-S-1) table.
+            execute("alter table t resume wal");
+            drainWalQueue();
+
+            Assert.assertFalse("re-apply must leave the table healthy (not suspended)",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            // Durable seqTxn advanced by EXACTLY 1 for the delete (S-1 -> S).
+            Assert.assertEquals("durable seqTxn must have advanced by exactly 1 for the delete",
+                    writerTxnBefore + 1, writerTxn(tt));
+            Assert.assertEquals("durable seqTxn must match the sequencer after full apply",
+                    seqTxn(tt), writerTxn(tt));
+            // Idempotent re-apply: final table is exactly the NOT-predicate survivor set, in table order.
+            assertSqlCursors("select * from t_ref where not (" + PRED + ")", "select * from t");
+        });
+    }
+
+    /**
+     * T6-harden guard. A WAL-tolerable {@link CairoException} thrown MID-LOOP on the disk-bounded path must
+     * SUSPEND the table at the durable seqTxn {@code S-1} (so {@code ApplyWal2TableJob} re-runs the WHOLE
+     * delete idempotently) and must NOT be finalized. A WAL-tolerable error means "skip this txn, mark it
+     * applied" ({@code commitSeqTxn(S)}); that is correct only on the atomic routes (nothing durably committed
+     * yet), but on the disk-bounded route earlier windows already committed at {@code S-1}, so finalizing at
+     * {@code S} here would silently mark a PARTIALLY-applied delete complete = data loss.
+     * <p>
+     * The guard is TWO parts in {@code executeDelete}'s catch, BOTH required, because a WAL-tolerable error is
+     * skipped-and-finalized at TWO layers: (1) that catch's own {@code !diskBounded} branch stops IT from
+     * finalizing; (2) but the CALLER {@code ApplyWal2TableJob.processWalSql} has its own
+     * {@code catch (CairoException)} that ALSO {@code commitSeqTxn(seqTxn)}'s any rethrown WAL-tolerable error -
+     * so on the disk-bounded route the catch additionally rethrows it as a CRITICAL error, the only kind that
+     * caller rethrows-and-suspends. (A guard that only did (1) and rethrew the WAL-tolerable error as-is would
+     * STILL be silently finalized by (2) - verified during development.)
+     * <p>
+     * Unlike the {@link #testPerWindowCommitReappliesIdempotentlyAfterMidLoopCrash} spike (which makes
+     * {@code openRW} RETURN -1 -> a CRITICAL, non-WAL-tolerable error that already suspends safely), this test
+     * makes the {@link FilesFacade} THROW a genuine WAL-tolerable {@code CairoException}
+     * ({@link CairoException#partitionManipulationRecoverable()}, whose {@code isWALTolerable()==true}) at the
+     * same day-4 point, so it reaches the catch as WAL-tolerable and exercises the guard specifically.
+     */
+    @Test
+    public void testDiskBoundedWalTolerableMidLoopSuspendsNotFinalizes() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_DISK_BOUNDED, "true");
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // tiny step -> ~1 window per hourly row
+
+        // Throws a WAL-TOLERABLE CairoException (partition-manipulation-recoverable) on the FIRST native openAppend
+        // targeting the day-4 partition, but only while armed (during DELETE apply). Days 1-3 commit first, so this
+        // is a genuine mid-loop crash that reaches executeDelete's catch with isWALTolerable()==true.
+        //
+        // Why openAppend (not openRW like the spike): the day-4 window first CONVERTS its Parquet partition to
+        // native (convertParquetPartitionsForDeleteWindow -> produceNativeFromParquet), which writes the native
+        // column files via ff.openAppend; that call site propagates a thrown CairoException UNCHANGED
+        // (produceNativeFromParquet's catch and convertPartitionParquetToNative's catch both rethrow it as-is), so
+        // a WAL-tolerable errno survives to executeDelete's catch. The spike's openRW=-1 instead fires later, in the
+        // window's O3 replaceRange, whose machinery re-wraps the failure into a CRITICAL (non-WAL-tolerable) errno -
+        // which would NOT exercise this guard.
+        final boolean[] armed = {false};
+        final boolean[] faulted = {false};
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openAppend(LPSZ name) {
+                if (armed[0] && !faulted[0] && Utf8s.containsAscii(name, "1970-01-04")) {
+                    faulted[0] = true;
+                    throw CairoException.partitionManipulationRecoverable()
+                            .put("injected WAL-tolerable fault writing day-4 native files");
+                }
+                return super.openAppend(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            createParquetFixture();
+            final TableToken tt = engine.verifyTableName("t");
+            final long writerTxnBefore = writerTxn(tt);
+            final long seqTxnBefore = seqTxn(tt);
+
+            execute("delete from t where " + PRED);
+            Assert.assertEquals("sequencer must have exactly one new (delete) txn", seqTxnBefore + 1, seqTxn(tt));
+
+            // Crash mid-apply: arm the fault and drain. Day-4's convert/replace throws a WAL-tolerable error
+            // after days 1-3 committed at S-1.
+            armed[0] = true;
+            drainWalQueue();
+            armed[0] = false;
+
+            Assert.assertTrue("the mid-loop WAL-tolerable fault must have actually fired", faulted[0]);
+
+            // The guard forces NOT-applied + suspend: a WAL-tolerable error on the disk-bounded route must NOT be
+            // finalized (finalizing at S would mark the PARTIALLY-applied delete complete = silent data loss). So the
+            // table SUSPENDS and the durable seqTxn stays S-1 (final commitSeqTxn(S) never ran) - the delete is not
+            // durably applied and ApplyWal2TableJob can re-run it.
+            Assert.assertTrue("a WAL-tolerable mid-loop error on the disk-bounded path must SUSPEND (not finalize)",
+                    engine.getTableSequencerAPI().isSuspended(tt));
+            Assert.assertEquals("durable seqTxn must remain S-1 after a suspended mid-loop WAL-tolerable error",
+                    writerTxnBefore, writerTxn(tt));
+
+            // NON-ATOMICITY / partial commit is observable: days 1-3 windows committed at S-1, day-4+ never applied.
+            final long remainingMatched = count("select count(*) from t where " + PRED);
+            Assert.assertTrue(
+                    "a mid-loop crash must leave a PARTIAL delete: 0 < remaining matched (" + remainingMatched + ") < 20",
+                    remainingMatched > 0 && remainingMatched < 20
+            );
+
+            // Crash-restart model: resume the suspended table and re-drain. executeDelete re-runs the WHOLE delete
+            // for txn S over the partially-committed (still-at-S-1) table - the guard is what made this retry
+            // reachable instead of a silent finalize.
             execute("alter table t resume wal");
             drainWalQueue();
 
