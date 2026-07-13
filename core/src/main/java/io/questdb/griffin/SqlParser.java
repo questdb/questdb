@@ -5246,10 +5246,7 @@ public class SqlParser {
     }
 
     private int parseShowCreateDatabaseInclude(GenericLexer lexer) throws SqlException {
-        // Peek with fetchNext, not optTok: optTok swallows a subquery-closing ')' (returning null without
-        // unparsing) when this runs inside parentheses, e.g. "(show create database) where ...". That would
-        // eat the ')' the outer parser still needs. fetchNext leaves the ')' (or ';', or a WHERE token) for
-        // the unparseLast() path below so the caller can consume it.
+        // fetchNext() returns a subquery-closing ')' so unparseLast() can restore it for the outer parser.
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
             return ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
@@ -5275,9 +5272,7 @@ public class SqlParser {
         do {
             tok = tok(lexer, "category");
             mask |= showCreateDatabaseCategory(lexer, tok);
-            // tokIncludingLocalBrace, not tok: this ')' closes the category list and is local to the
-            // INCLUDE/EXCLUDE clause. Inside a subquery - e.g. "(show create database include (tables)) where ..."
-            // - tok()'s optTok would mistake it for the subquery terminator and swallow it.
+            // Read the list's local ')' without treating it as the enclosing subquery terminator.
             tok = tokIncludingLocalBrace(lexer, "',' or ')'");
         } while (Chars.equals(tok, ','));
         if (!Chars.equals(tok, ')')) {

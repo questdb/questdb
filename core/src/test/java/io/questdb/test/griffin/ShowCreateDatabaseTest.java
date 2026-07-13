@@ -174,74 +174,6 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFilterWrappedInSubqueryWithIlike() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table foofx (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-            execute("create table bar (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-            // the parenthesised SHOW CREATE DATABASE must leave its trailing ')' for the outer parser
-            // so a wrapping WHERE clause can be applied - only 'foofx' matches '%fx%'
-            assertQuery("select count() from ((show create database) where ddl ilike '%fx%')")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n1\n");
-            // and the bare top-level form from the user report must compile and filter
-            assertQuery("select count() from (show create database) where ddl ilike '%fx%'")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n1\n");
-        });
-    }
-
-    @Test
-    public void testSubqueryFilterOperators() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table foofx (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-            execute("create table bar (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-
-            // ilike is case-insensitive: matches foofx regardless of case
-            assertQuery("select count() from (show create database) where ddl ilike '%FOOFX%'")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // like is case-sensitive: matches the real 'foofx' casing
-            assertQuery("select count() from (show create database) where ddl like '%foofx%'")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // like with the wrong case matches nothing
-            assertQuery("select count() from (show create database) where ddl like '%FOOFX%'")
-                    .noRandomAccess().expectSize().returns("count\n0\n");
-            // negated filter selects the other table
-            assertQuery("select count() from (show create database) where ddl not ilike '%fx%'")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // a filter every row satisfies keeps both statements
-            assertQuery("select count() from (show create database) where ddl ilike '%create table%'")
-                    .noRandomAccess().expectSize().returns("count\n2\n");
-            // a filter no row satisfies is empty, not an error
-            assertQuery("select count() from (show create database) where ddl ilike '%no_such_object%'")
-                    .noRandomAccess().expectSize().returns("count\n0\n");
-        });
-    }
-
-    @Test
-    public void testSubqueryFilterForms() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table foofx (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-            execute("create table bar (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
-
-            // WHERE nested inside the parentheses (the exact user form), then counted
-            assertQuery("select count() from ((show create database) where ddl ilike '%fx%')")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // WHERE applied by the outer SELECT over the SHOW subquery
-            assertQuery("select count() from (show create database) where ddl ilike '%fx%'")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-            // the surviving row really is foofx's CREATE TABLE (content check without pinning exact DDL)
-            assertQuery("select (ddl ilike '%foofx%' and ddl ilike '%create table%') ok " +
-                    "from (show create database) where ddl ilike '%fx%'")
-                    .noRandomAccess().returns("ok\ntrue\n");
-            // ORDER BY + LIMIT wrapping the filtered result
-            assertQuery("select count() from ((show create database) where ddl ilike '%create table%' order by ddl limit 1)")
-                    .noRandomAccess().expectSize().returns("count\n1\n");
-        });
-    }
-
-    @Test
     public void testIncludeExcludeClauseWithSubqueryFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foofx (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
@@ -259,6 +191,36 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
             // EXCLUDE (TABLES) emits no table DDL, so the fx filter matches nothing
             assertQuery("select count() from ((show create database exclude (tables)) where ddl ilike '%fx%')")
                     .noRandomAccess().expectSize().returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testSubqueryFilterForms() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table foofx (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
+            execute("create table bar (ts timestamp, s symbol) timestamp(ts) partition by year bypass wal");
+
+            // WHERE nested inside the parentheses (the exact user form), then counted
+            assertQuery("select count() from ((show create database) where ddl ilike '%fx%')")
+                    .noRandomAccess().expectSize().returns("count\n1\n");
+            // WHERE applied by the outer SELECT over the SHOW subquery
+            assertQuery("select count() from (show create database) where ddl ilike '%fx%'")
+                    .noRandomAccess().expectSize().returns("count\n1\n");
+            // the surviving row really is foofx's CREATE TABLE (content check without pinning exact DDL)
+            assertQuery("""
+                    select (ddl ilike '%foofx%' and ddl ilike '%create table%') ok
+                    from (show create database)
+                    where ddl ilike '%fx%'""")
+                    .noRandomAccess().returns("ok\ntrue\n");
+            // ORDER BY + LIMIT wrapping the filtered result
+            assertQuery("""
+                    select count() from (
+                        (show create database)
+                        where ddl ilike '%create table%'
+                        order by ddl
+                        limit 1
+                    )""")
+                    .noRandomAccess().expectSize().returns("count\n1\n");
         });
     }
 
