@@ -573,6 +573,13 @@ public class OperationExecutor implements Closeable {
      * Because each window is its own commit here, {@code txWriter.txn} advances every window, so Task 5's
      * same-bracket corruption guard (which only fires when {@code srcNameTxn == txWriter.txn} within a single
      * frozen-txn bracket) is inherently a no-op on this path - safe.
+     * <p>
+     * <b>Concurrent-reader disk caveat:</b> the "at most one window transiently native at a time" bound holds
+     * only while no reader or checkpoint is pinned at an older transaction. A superseded partition version is
+     * normally unlinked SYNCHRONOUSLY as the next window supersedes it; but while a long-lived reader (or an
+     * open checkpoint) still references an older txn, that reclaim is deferred to the ASYNCHRONOUS
+     * partition-purge job, so superseded native partition versions accumulate for the reader's lifetime and the
+     * transient native-format footprint can approach the whole-range conversion this route exists to avoid.
      */
     private long replaceWithSurvivorsDiskBounded(SqlCompiler compiler, TableWriter tableWriter, DeleteOperation deleteOp, long seqTxn) throws SqlException {
         final RecordCursorFactory survivorFactory = deleteOp.getSurvivorFactory();
@@ -639,8 +646,11 @@ public class OperationExecutor implements Closeable {
      * Parquet partition in place). Its own physical commit (
      * {@link TableWriter#commitPendingParquetToNativeConversions()}), which is correct here because the
      * disk-bounded path is intentionally multi-commit (each window commits at seqTxn {@code S-1}). Bounds transient
-     * native-format disk to one window's partitions. On WAL re-apply after a crash, an already-native partition is
-     * skipped (format gate) and a re-issued {@code convertPartitionParquetToNative(false)} is an idempotent no-op.
+     * native-format disk to one window's partitions - but only absent a concurrent reader or checkpoint pinned at
+     * an older txn; see {@link #replaceWithSurvivorsDiskBounded}'s concurrent-reader caveat, under which superseded
+     * versions are reclaimed asynchronously and can instead accumulate for that reader's lifetime. On WAL re-apply
+     * after a crash, an already-native partition is skipped (format gate) and a re-issued
+     * {@code convertPartitionParquetToNative(false)} is an idempotent no-op.
      */
     private void convertParquetPartitionsForDeleteWindow(TableWriter tableWriter, long wLo, long wHiExcl) {
         final int partitionCount = tableWriter.getPartitionCount();
@@ -650,9 +660,12 @@ public class OperationExecutor implements Closeable {
                 continue;
             }
             final long floor = tableWriter.getPartitionTimestamp(i);
-            // Physical next floor is a sound UPPER bound on this partition's data extent; the last partition can
-            // never be Parquet (the active partition is never converted), so getMaxTimestamp()+1 is only a
-            // defensive fallback here.
+            // For a NON-last partition the next partition's floor is the exact upper extent of this one. The LAST
+            // partition has no next floor, so use getMaxTimestamp()+1 - a sound upper bound whether or not that
+            // partition is Parquet. The active/last partition CAN be Parquet on a WAL table (a born-Parquet table,
+            // or ALTER TABLE ... CONVERT PARTITION TO PARQUET over a range that includes the active day; see
+            // TableWriter.isLastPartitionParquet), and this path handles it correctly because [floor, maxTs+1)
+            // still covers the whole last partition's data.
             final long nextFloor = (i == partitionCount - 1) ? (tableWriter.getMaxTimestamp() + 1) : tableWriter.getPartitionTimestamp(i + 1);
             if (floor < wHiExcl && nextFloor > wLo) { // partition [floor, nextFloor) overlaps window [wLo, wHiExcl)
                 tableWriter.convertPartitionParquetToNative(floor, false);
@@ -692,8 +705,13 @@ public class OperationExecutor implements Closeable {
         if (tableRows <= 0) {
             return Long.MAX_VALUE;
         }
+        // PropServerConfiguration rejects cairo.wal.delete.rows.per.step < 1, but getWalDeleteRowsPerStep() is an
+        // overridable CairoConfiguration getter, so a programmatic override could still supply a degenerate value;
+        // clamp to >= 1 so estimateBucketsForRows can never floor the window to 1 ts-unit and explode the window
+        // count to the whole timestamp span.
+        final long safeRowsPerStep = Math.max(1, rowsPerStep);
         final long span = maxTs - minTs + 1; // caller guarantees maxTs >= minTs (non-empty populated range)
-        return MatViewRefreshJob.estimateBucketsForRows(rowsPerStep, tableRows, 1, span, 1);
+        return MatViewRefreshJob.estimateBucketsForRows(safeRowsPerStep, tableRows, 1, span, 1);
     }
 
     /**
