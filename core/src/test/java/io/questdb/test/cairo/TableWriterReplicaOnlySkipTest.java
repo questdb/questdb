@@ -180,9 +180,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             assertMetadataFlags("x", "s");
             // Full-scan correctness: the skipped index must not change query results.
             assertQuery("select s, v, ts from x where s = 'a'").timestamp("ts").returns("s\tv\tts\n" +
-                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t3.0\t1970-01-01T00:00:02.000000Z\n" +
-                            "a\t5.0\t1970-01-02T00:00:01.000000Z\n");
+                    "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t3.0\t1970-01-01T00:00:02.000000Z\n" +
+                    "a\t5.0\t1970-01-02T00:00:01.000000Z\n");
         });
     }
 
@@ -216,8 +216,8 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
             // Full-scan correctness: the skipped index must not change query results.
             assertQuery("select s, ts from x where s = 'a'").timestamp("ts").returns("s\tts\n" +
-                            "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\n");
+                    "a\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t1970-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -276,9 +276,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
             // Full-scan correctness over the parquet partition: results must be unaffected.
             assertQuery("select s, s2, ts from x where s = 'a'").timestamp("ts").returns("s\ts2\tts\n" +
-                            "a\t\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t\t1970-01-01T00:00:02.000000Z\n" +
-                            "a\tx\t1970-01-01T00:00:04.000000Z\n");
+                    "a\t\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t\t1970-01-01T00:00:02.000000Z\n" +
+                    "a\tx\t1970-01-01T00:00:04.000000Z\n");
         });
     }
 
@@ -365,8 +365,8 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
             // table remains queryable; the skipped index must not change results
             assertQuery("select s, ts from x where s = 'a'").timestamp("ts").returns("s\tts\n" +
-                            "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\n");
+                    "a\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t1970-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -427,8 +427,8 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
             // table remains queryable
             assertQuery("select s, ts from x where s = 'a'").timestamp("ts").returns("s\tts\n" +
-                            "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t1970-01-01T00:00:02.000000Z\n");
+                    "a\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t1970-01-01T00:00:02.000000Z\n");
         });
     }
 
@@ -462,9 +462,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
 
             // Full-scan correctness across both partitions.
             assertQuery("select s, v, ts from x where s = 'a' order by ts").timestamp("ts").returns("s\tv\tts\n" +
-                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t4.0\t1970-01-01T00:00:00.500000Z\n" +
-                            "a\t6.0\t1970-01-02T00:00:00.500000Z\n");
+                    "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t4.0\t1970-01-01T00:00:00.500000Z\n" +
+                    "a\t6.0\t1970-01-02T00:00:00.500000Z\n");
         });
     }
 
@@ -496,8 +496,8 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             assertMetadataFlags("x", "s");
 
             assertQuery("select s, v, ts from x where s = 'a' order by ts").timestamp("ts").returns("s\tv\tts\n" +
-                            "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
-                            "a\t4.0\t1970-01-01T00:00:00.500000Z\n");
+                    "a\t1.0\t1970-01-01T00:00:00.000000Z\n" +
+                    "a\t4.0\t1970-01-01T00:00:00.500000Z\n");
         });
     }
 
@@ -638,9 +638,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             Assert.assertFalse("attach must not materialize the replica-only index", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
             assertQuery("select s, i, ts from x order by ts").timestamp("ts").expectSize().returns("s\ti\tts\n" +
-                            "a\t1\t1970-01-01T00:00:00.000000Z\n" +
-                            "b\t2\t1970-01-01T01:00:00.000000Z\n" +
-                            "a\t3\t1970-01-02T00:00:00.000000Z\n");
+                    "a\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "b\t2\t1970-01-01T01:00:00.000000Z\n" +
+                    "a\t3\t1970-01-02T00:00:00.000000Z\n");
         });
     }
 
@@ -678,9 +678,9 @@ public class TableWriterReplicaOnlySkipTest extends AbstractCairoTest {
             Assert.assertFalse("attach must not materialize the replica-only index on a skipping primary", ReplicaOnlyIndexTestUtils.indexFilesExist(engine, "x", "s"));
             assertMetadataFlags("x", "s");
             assertQuery("select s, i, ts from x order by ts").timestamp("ts").expectSize().returns("s\ti\tts\n" +
-                            "a\t1\t1970-01-01T00:00:00.000000Z\n" +
-                            "b\t2\t1970-01-01T01:00:00.000000Z\n" +
-                            "a\t3\t1970-01-02T00:00:00.000000Z\n");
+                    "a\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "b\t2\t1970-01-01T01:00:00.000000Z\n" +
+                    "a\t3\t1970-01-02T00:00:00.000000Z\n");
         });
     }
 
