@@ -1163,8 +1163,8 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // fcol=3000000256.0 the JIT dropped the row on "> 3000000200" (3000000256f > 3000000256f
         // is false) that Java kept (3000000256.0 > 3000000200.0 is true), and it spuriously
         // matched the row on "= 3000000200" that Java rejected.
-        // The serializer now widens the constant to a full I8 IMM and forces scalar mode, where
-        // the scalar convert() promotes the float column to double. JIT stays enabled.
+        // The serializer now widens the constant to a full I8 IMM; four-lane AVX2 promotes the
+        // float column to double. JIT stays enabled and vectorized.
         assertMemoryLeak(() -> {
             execute("create table t (fcol float, dcol double, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values " +
@@ -1631,20 +1631,13 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInOperatorOverflowLongElementForcesScalar() throws Exception {
-        // C3: a value-correct SX_I64 must not escape to the vectorized (AVX2) path. An IN element
-        // that widens a narrow-int arithmetic key via inKeyWidthOverride == I8 emits SX_I64, an
-        // opcode AVX2 does not implement (it bails with a bare return, leaving a partial value
-        // stack and wrong rows). forceScalarMode is a hard consequence of any SX_I64 emission, so
-        // such a filter always runs the scalar backend.
-        //
-        // A genuine LONG element is the only widening pairing left: an untyped NULL element and an
-        // overflowing constant fold both take the I4 override (they wrap the key, matching '=' and
-        // the Java folder), so they emit no SX_I64 and keep the filter vectorized. A LONG element
-        // also flips needsNarrowI64Widening, which forces scalar on its own, so the emission-site
-        // tie is now defensive - it is what keeps the invariant from depending on that coincidence.
+    public void testInOperatorOverflowLongElementUsesWideLane() throws Exception {
+        // A LONG element widens the narrow arithmetic key for that pairing, while an INT or
+        // untyped-NULL element keeps the key at I4 and preserves its wrapping semantics. The
+        // serializer emits SX_I64 only on the wide arm and selects four-lane AVX2; boolean-mask
+        // normalization then combines the I8 and I4 equality results safely.
         // See CompiledFilterIRSerializerTest#testInNullElementKeepsNarrowKeyVectorized for the
-        // exec-hint pins (NULL -> SINGLE_SIZE, LONG -> SCALAR).
+        // exact IR and exec-hint pins.
         //
         // The table has >= 64 rows so the vectorized loop is genuinely exercised (a 1-row table runs
         // entirely in the scalar tail and hides the bug). Row 1 overflows: a*b = 1000000*1000000
@@ -2355,6 +2348,33 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 assertJitMatchesJava("select count() from wide_i where i32 < 5000000000", true);
                 assertJitMatchesJava("select count() from wide_i "
                         + "where i32 = 7 or i32 > 5000000000", true);
+            }
+        });
+    }
+
+    @Test
+    public void testWideLaneFloatArithmeticAndInBatchLengths() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int rowCount = 0; rowCount <= 9; rowCount++) {
+                execute("drop table if exists wide_mixed");
+                if (rowCount == 0) {
+                    execute("create table wide_mixed (i32 int, i64 long, f32 float)");
+                } else {
+                    execute("create table wide_mixed as (select "
+                            + "cast(case x when 1 then null when 2 then -7 else x end as int) i32, "
+                            + "cast(case x when 1 then null else 2 end as long) i64, "
+                            + "cast(case x when 1 then null when 2 then 1.0 else 2.5 end as float) f32 "
+                            + "from long_sequence(" + rowCount + "))");
+                }
+
+                assertJitMatchesJava("wide_mixed where f32 < 1.00000003", true);
+                assertJitMatchesJava("wide_mixed where f32 = 1.00000003", true);
+                assertJitMatchesJava("wide_mixed where f32 + 0 < 1.00000003", true);
+                assertJitMatchesJava("wide_mixed where f32 in (1.00000003, 2.5)", true);
+                assertJitMatchesJava("wide_mixed where i32 * i64 = 14", true);
+                assertJitMatchesJava("wide_mixed where i32 * 2 in (1, 5000000000)", true);
+                assertJitMatchesJava("select count() from wide_mixed where f32 > 0.99999998", true);
+                assertJitMatchesJava("select count() from wide_mixed where i32 * 2 in (1, 5000000000)", true);
             }
         });
     }

@@ -408,15 +408,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testFloatCmpConstWithNoExactFloat() throws Exception {
         // A FLOAT column always compares at DOUBLE width in the Java filter, so a constant with no
         // exact float must not be emitted as a 32-bit float - the nearest one selects different
-        // rows. It goes to the compiled filter as a full double instead, which forces the scalar
-        // backend, whose convert() promotes the float column to double: both filters then run the
-        // same tolerance-aware double comparison. (A float bound rounded in the direction the
+        // rows. It goes to the compiled filter as a full double instead; the four-lane AVX2 mode
+        // promotes the float column to double, so both filters then run the same tolerance-aware
+        // double comparison. (A float bound rounded in the direction the
         // operator preserves would reproduce EXACT IEEE ordering, but QuestDB compares with a 1e-10
         // tolerance and a float ulp near 1.0 is 1.2e-7 - the rounded bound steps over the band and
         // flips rows inside it. See markFloatCmpConst.)
         int options = serialize("afloat < 1.00000003", false, false, false);
         assertIR("(f64 1.00000003D)(f32 afloat)(<)(ret)");
-        assertOptionsHint("afloat < 1.00000003", options, OptionsHint.SCALAR);
+        assertOptionsHint("afloat < 1.00000003", options, OptionsHint.WIDE_LANE);
         serialize("afloat <= 1.00000003");
         assertIR("(f64 1.00000003D)(f32 afloat)(<=)(ret)");
         serialize("afloat > 0.99999998");
@@ -436,6 +436,14 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // The 64-bit arm emits it exactly, as an I8 rather than a double.
         serialize("afloat < 16_777_217");
         assertIR("(i64 16777217L)(f32 afloat)(<)(ret)");
+
+        options = serialize("afloat + 0 < 1.00000003", false, false, true);
+        assertIR("(f64 1.00000003D)(i32 0L)(f32 afloat)(+)(<)(ret)");
+        assertOptionsHint("float arithmetic", options, OptionsHint.WIDE_LANE);
+
+        options = serialize("afloat IN (1.00000003, 2.5)", false, false, true);
+        assertIR("(f32 2.5D)(f32 afloat)(=)(f64 1.00000003D)(f32 afloat)(=)(||)(ret)");
+        assertOptionsHint("float IN", options, OptionsHint.WIDE_LANE);
 
         // A constant WITH an exact float is left alone: it compares the same at either width, so it
         // keeps its F4 immediate and the vectorized path - the fix costs nothing there.
@@ -593,10 +601,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // (BYTE and SHORT keys never reach here with a NULL element: serializeNull rejects the
         // filter outright, since neither type is nullable.)
 
-        // A genuinely wide element still widens the key, which does force scalar mode.
+        // A genuinely wide element widens the key and selects four-lane AVX2.
         options = serialize("anint IN (1, 5_000_000_000)", false, false, false);
         assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 1L)(i32 anint)(=)(||)(ret)");
-        assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.SCALAR);
+        assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.WIDE_LANE);
 
         // An arithmetic key wraps against the NULL element too: '=' resolves an untyped null to
         // EqInt, which reads the key with getInt(), so the key is null exactly when its getInt()
@@ -606,12 +614,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 -2147483648L)(i32 2L)(i32 anint)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
         assertOptionsHint("anint * 2 IN (1, null)", arithOptions, OptionsHint.SINGLE_SIZE);
 
-        // A genuinely wide element still widens the arithmetic key, and any sx_i64 emission forces
-        // the scalar backend - AVX2 has no sx_i64 opcode (see
-        // CompiledFilterRegressionTest#testInOperatorOverflowLongElementForcesScalar).
+        // A genuinely wide element widens the arithmetic key in four-lane AVX2. The in-range arm
+        // remains I4 so its product still wraps at INT width.
         arithOptions = serialize("anint * 2 IN (1, 5_000_000_000)", false, false, false);
         assertIR("(i64 5000000000L)(i64 2L)(i32 anint)(sx_i64)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
-        assertOptionsHint("anint * 2 IN (1, 5_000_000_000)", arithOptions, OptionsHint.SCALAR);
+        assertOptionsHint("anint * 2 IN (1, 5_000_000_000)", arithOptions, OptionsHint.WIDE_LANE);
     }
 
     @Test
@@ -746,16 +753,15 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i16 122L)(i16 achar)(=)(i16 120L)(i16 achar)(=)(||)(!)(ret)");
         assertOptionsHint("achar NOT IN ('x', 'z')", options, OptionsHint.SINGLE_SIZE);
 
-        // Control: a genuine narrow-int key still wraps against narrow elements, and still widens (and
-        // goes scalar) against an out-of-INT-range one - the width sensitivity symbol / char must not
-        // inherit.
+        // Control: a genuine narrow-int key still wraps against narrow elements and widens against an
+        // out-of-INT-range one - the width sensitivity symbol / char must not inherit.
         options = serialize("abyte IN (1, 2)", false, false, true);
         assertIR("(i8 2L)(i8 abyte)(=)(i8 1L)(i8 abyte)(=)(||)(ret)");
         assertOptionsHint("abyte IN (1, 2)", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("anint IN (1, 5_000_000_000)", false, false, true);
         assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 1L)(i32 anint)(=)(||)(ret)");
-        assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.SCALAR);
+        assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.WIDE_LANE);
     }
 
     @Test
@@ -764,10 +770,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         bindVariableService.setInt("anint", 1);
         bindVariableService.setLong(0, 2);
 
-        serialize("anint IN (:anint, $1)");
+        int options = serialize("anint IN (:anint, $1)", false, false, true);
         // anint is INT; the $1 (LONG) key widens the column per element via sx_i64,
         // while the :anint (INT) key needs no widening.
         assertIR("(i64 :0)(i32 anint)(sx_i64)(=)(i32 :1)(i32 anint)(=)(||)(ret)");
+        assertOptionsHint("mixed-width IN bind variables", options, OptionsHint.WIDE_LANE);
 
         Assert.assertEquals(2, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(0).getType());
@@ -966,8 +973,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("ashort - ashort = 0", 2);
         filterToOptions.put("abyte * ashort = 0", 2);
         filterToOptions.put("1 * abyte / ashort = 0", 2);
-        // Narrow int mixed with a wider operand in arithmetic also forces scalar:
-        // SIMD would compute at the narrow width and overflow, while scalar upcasts.
+        // BYTE arithmetic still requires scalar promotion when mixed with FLOAT.
         filterToOptions.put("afloat / abyte = 0", 4);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
@@ -999,14 +1005,17 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testOptionsNarrowI64WideningForcesScalar() throws Exception {
-        // Predicates that mix narrow-int and i64 operands with arithmetic emit
-        // SX_I64 to widen the narrow side. The SIMD code path does not
-        // implement SX_I64 (see avx2.h), so scalar mode is the only safe
-        // execution hint for these.
+    public void testOptionsNarrowI64ArithmeticUsesWideLane() throws Exception {
         for (String filter : new String[]{
                 "anint * along = 0",
-                "anint + along = 0",
+                "anint + along = 0"
+        }) {
+            int options = serialize(filter, false, false, false);
+            assertOptionsHint(filter, options, OptionsHint.WIDE_LANE);
+        }
+
+        // BYTE/SHORT arithmetic still relies on scalar promotion to INT.
+        for (String filter : new String[]{
                 "abyte * along = 0",
                 "ashort - along = 0"
         }) {

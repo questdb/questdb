@@ -618,6 +618,10 @@ namespace questdb::avx2 {
                 break;
             case data_type_t::i64:
                 switch (rhs.dtype()) {
+                    case data_type_t::f32:
+                        return std::make_pair(
+                                jit_value_t(cvt_ltod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()),
+                                jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
                     case data_type_t::f64:
                         return std::make_pair(
                                 jit_value_t(cvt_ltod(c, lhs.vec(), null_check), data_type_t::f64, lhs.dkind()), rhs);
@@ -630,6 +634,13 @@ namespace questdb::avx2 {
                     case data_type_t::i32:
                         return std::make_pair(lhs, jit_value_t(cvt_itof(c, rhs.vec(), null_check), data_type_t::f32,
                                                                rhs.dkind()));
+                    case data_type_t::i64:
+                        return std::make_pair(
+                                jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind()),
+                                jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64, rhs.dkind()));
+                    case data_type_t::f64:
+                        return std::make_pair(
+                                jit_value_t(cvt_ftod(c, lhs.vec()), data_type_t::f64, lhs.dkind()), rhs);
                     default:
                         break;
                 }
@@ -639,6 +650,8 @@ namespace questdb::avx2 {
                     case data_type_t::i64:
                         return std::make_pair(lhs, jit_value_t(cvt_ltod(c, rhs.vec(), null_check), data_type_t::f64,
                                                                rhs.dkind()));
+                    case data_type_t::f32:
+                        return std::make_pair(lhs, jit_value_t(cvt_ftod(c, rhs.vec()), data_type_t::f64, rhs.dkind()));
                     default:
                         break;
                 }

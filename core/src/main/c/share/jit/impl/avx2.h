@@ -756,6 +756,12 @@ namespace questdb::avx2 {
         return dst;
     }
 
+    inline Vec cvt_ftod(Compiler &c, const Vec &rhs) {
+        Vec dst = c.new_ymm();
+        c.vcvtps2pd(dst, rhs.xmm());
+        return dst;
+    }
+
     inline Vec cvt_ltod(Compiler &c, const Vec &rhs, bool null_check) {
         Vec dst = c.new_ymm();
 

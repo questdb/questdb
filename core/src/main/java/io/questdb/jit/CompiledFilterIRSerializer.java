@@ -194,7 +194,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private SqlExecutionContext executionContext;
     // internal flag used to forcefully enable scalar mode based on filter's contents
     private boolean forceScalarMode;
-    private boolean emittedI64Widening;
+    private boolean emittedWideLaneConversion;
     private boolean wideLaneMode;
     // Per-element width override for a narrow-int arithmetic IN key. A multi-value IN re-serializes
     // the key once per element (serializeIn), and each key = element comparison must read the key at
@@ -217,7 +217,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         metadata = null;
         pageFrameCursor = null;
         forceScalarMode = false;
-        emittedI64Widening = false;
+        emittedWideLaneConversion = false;
         wideLaneMode = false;
         predicateContext.clear();
         backfillNodes.clear();
@@ -320,42 +320,144 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private boolean isWideLaneEligible(ExpressionNode node) {
-        if (node == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2) {
+        if (node == null) {
             return false;
         }
-        if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
+        if (node.type == ExpressionNode.OPERATION
+                && (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token))) {
             return isWideLaneEligible(node.lhs) && isWideLaneEligible(node.rhs);
         }
-        if (!isComparisonOperator(node.token)) {
-            return false;
+        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isNotKeyword(node.token)) {
+            return isWideLaneEligible(node.rhs != null ? node.rhs : node.lhs);
         }
-        return isWideLaneOperand(node.lhs)
-                && isWideLaneOperand(node.rhs)
-                && (isIntColumn(node.lhs) || isIntColumn(node.rhs));
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
+            return isWideLaneInEligible(node);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 2 && isComparisonOperator(node.token)) {
+            if (isWideLaneIntegerExpression(node.lhs) && isWideLaneIntegerExpression(node.rhs)) {
+                return true;
+            }
+            return isWideLaneFloatComparisonOperand(node.lhs)
+                    && isWideLaneFloatComparisonOperand(node.rhs)
+                    && (containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs));
+        }
+        return false;
     }
 
-    private boolean isWideLaneOperand(ExpressionNode node) {
-        return isIntColumn(node) || isIntegerConstant(node);
+    private boolean isWideLaneFloatComparisonOperand(ExpressionNode node) {
+        return isWideLaneFloatExpression(node) || isWideLaneNumericConstant(node);
     }
 
-    private boolean isIntColumn(ExpressionNode node) {
-        if (node == null || node.type != ExpressionNode.LITERAL) {
+    private boolean isWideLaneFloatExpression(ExpressionNode node) {
+        if (node == null) {
             return false;
         }
-        final int columnIndex = metadata.getColumnIndexQuiet(node.token);
-        return columnIndex > -1 && ColumnType.tagOf(metadata.getColumnType(columnIndex)) == ColumnType.INT;
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            final int type = arithExprType(node);
+            return type == F4_TYPE || type == F8_TYPE;
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isWideLaneFloatExpression(node.rhs != null ? node.rhs : node.lhs);
+        }
+        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+            return isWideLaneFloatArithmeticOperand(node.lhs)
+                    && isWideLaneFloatArithmeticOperand(node.rhs)
+                    && (containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs));
+        }
+        return false;
+    }
+
+    private boolean isWideLaneFloatArithmeticOperand(ExpressionNode node) {
+        return isWideLaneFloatExpression(node) || isWideLaneNumericConstant(node);
+    }
+
+    private boolean isWideLaneInEligible(ExpressionNode node) {
+        final ObjList<ExpressionNode> args = node.args;
+        final ExpressionNode key = args.size() > 0 ? args.getLast() : node.lhs;
+        if (isWideLaneIntegerExpression(key)) {
+            if (args.size() > 0) {
+                for (int i = 0, n = args.size() - 1; i < n; i++) {
+                    if (!isWideLaneIntegerInElement(args.getQuick(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return isWideLaneIntegerInElement(node.rhs);
+        }
+        if (isWideLaneFloatExpression(key)) {
+            if (args.size() > 0) {
+                for (int i = 0, n = args.size() - 1; i < n; i++) {
+                    if (!isWideLaneFloatInElement(args.getQuick(i))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return isWideLaneFloatInElement(node.rhs);
+        }
+        return false;
+    }
+
+    private boolean isWideLaneIntegerExpression(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            final int type = arithExprType(node);
+            return type == I4_TYPE || type == I8_TYPE;
+        }
+        if (node.type == ExpressionNode.CONSTANT) {
+            return isIntegerConstant(node);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isWideLaneIntegerExpression(node.rhs != null ? node.rhs : node.lhs);
+        }
+        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+            return isWideLaneIntegerExpression(node.lhs) && isWideLaneIntegerExpression(node.rhs);
+        }
+        return false;
+    }
+
+    private boolean isWideLaneIntegerInElement(ExpressionNode node) {
+        return isWideLaneIntegerExpression(node) || isNullConstant(node);
+    }
+
+    private boolean isWideLaneFloatInElement(ExpressionNode node) {
+        return isWideLaneNumericConstant(node) || isNullConstant(node);
+    }
+
+    private boolean isWideLaneNumericConstant(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isWideLaneNumericConstant(node.rhs != null ? node.rhs : node.lhs);
+        }
+        final int type = arithExprType(node);
+        return node.type == ExpressionNode.CONSTANT
+                && (type == I4_TYPE || type == I8_TYPE || type == F4_TYPE || type == F8_TYPE);
     }
 
     private boolean isIntegerConstant(ExpressionNode node) {
-        if (node == null || node.type != ExpressionNode.CONSTANT) {
+        if (node != null && node.type == ExpressionNode.OPERATION
+                && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isIntegerConstant(node.rhs != null ? node.rhs : node.lhs);
+        }
+        return node != null
+                && node.type == ExpressionNode.CONSTANT
+                && (arithExprType(node) == I4_TYPE || arithExprType(node) == I8_TYPE);
+    }
+
+    private boolean containsFloatExpression(ExpressionNode node) {
+        if (node == null) {
             return false;
         }
-        try {
-            Numbers.parseLong(node.token);
-            return true;
-        } catch (NumericException ignored) {
-            return false;
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            final int type = arithExprType(node);
+            return type == F4_TYPE || type == F8_TYPE;
         }
+        return containsFloatExpression(node.lhs) || containsFloatExpression(node.rhs);
     }
 
     private boolean isComparisonOperator(CharSequence token) {
@@ -369,23 +471,70 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private boolean requiresWideLane(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
         if (SqlKeywords.isAndKeyword(node.token) || SqlKeywords.isOrKeyword(node.token)) {
             return requiresWideLane(node.lhs) || requiresWideLane(node.rhs);
         }
-        return (isIntColumn(node.lhs) && isOutOfIntRangeIntegerConstant(node.rhs))
-                || (isIntColumn(node.rhs) && isOutOfIntRangeIntegerConstant(node.lhs));
+        if (SqlKeywords.isNotKeyword(node.token)) {
+            return requiresWideLane(node.rhs != null ? node.rhs : node.lhs);
+        }
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isInKeyword(node.token)) {
+            final ObjList<ExpressionNode> args = node.args;
+            final ExpressionNode key = args.size() > 0 ? args.getLast() : node.lhs;
+            if (args.size() > 0) {
+                for (int i = 0, n = args.size() - 1; i < n; i++) {
+                    if (requiresWideLanePair(key, args.getQuick(i))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            return requiresWideLanePair(key, node.rhs);
+        }
+        return requiresWideLanePair(node.lhs, node.rhs)
+                || requiresWideLaneArithmetic(node.lhs)
+                || requiresWideLaneArithmetic(node.rhs);
     }
 
-    private boolean isOutOfIntRangeIntegerConstant(ExpressionNode node) {
-        if (node == null || node.type != ExpressionNode.CONSTANT) {
+    private boolean requiresWideLaneArithmetic(ExpressionNode node) {
+        if (node == null) {
             return false;
         }
-        try {
-            final long value = Numbers.parseLong(node.token);
-            return value < Integer.MIN_VALUE || value > Integer.MAX_VALUE;
-        } catch (NumericException ignored) {
+        if (node.type == ExpressionNode.OPERATION && isArithmeticOperation(node)) {
+            if (arithExprType(node) == I8_TYPE && containsNarrowIntegerValue(node)) {
+                return true;
+            }
+            return requiresWideLaneArithmetic(node.lhs) || requiresWideLaneArithmetic(node.rhs);
+        }
+        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return requiresWideLaneArithmetic(node.rhs != null ? node.rhs : node.lhs);
+        }
+        return false;
+    }
+
+    private boolean requiresWideLanePair(ExpressionNode lhs, ExpressionNode rhs) {
+        if ((containsFloatExpression(lhs) && isFloatWideningConst(rhs))
+                || (containsFloatExpression(rhs) && isFloatWideningConst(lhs))) {
+            return true;
+        }
+        final int lhsType = arithExprType(lhs);
+        final int rhsType = arithExprType(rhs);
+        return (lhsType == I8_TYPE && rhsType == I4_TYPE && containsNarrowIntegerValue(rhs))
+                || (rhsType == I8_TYPE && lhsType == I4_TYPE && containsNarrowIntegerValue(lhs))
+                || requiresWideLaneArithmetic(lhs)
+                || requiresWideLaneArithmetic(rhs);
+    }
+
+    private boolean containsNarrowIntegerValue(ExpressionNode node) {
+        if (node == null) {
             return false;
         }
+        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
+            return arithExprType(node) == I4_TYPE;
+        }
+        return containsNarrowIntegerValue(node.lhs) || containsNarrowIntegerValue(node.rhs);
     }
 
     /**
@@ -415,7 +564,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Reset the per-element IN-key width override: the serializer instance is reused across
         // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
         inKeyWidthOverride = UNDEFINED_CODE;
-        emittedI64Widening = false;
+        emittedWideLaneConversion = false;
         wideLaneMode = !forceScalar && isWideLaneEligible(node) && requiresWideLane(node);
         // Detect if scalar mode is guaranteed by checking for mixed column sizes.
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
@@ -494,7 +643,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             forceScalarMode |= (predicateContext.hasArithmeticOperations
                     && (predicateContext.localTypesObserver.maxSize() <= 2
                     || predicateContext.localTypesObserver.hasNarrowInt()
-                    || predicateContext.needsNarrowI64Widening))
+                    || (!wideLaneMode && predicateContext.needsNarrowI64Widening)))
                     || (!wideLaneMode && i64WidenLeaves.size() > 0);
 
             // Then backfill constants and symbol bind variables and clean up
@@ -1163,7 +1312,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private int getExecHint(boolean forceScalar) {
         final TypesObserver typesObserver = predicateContext.globalTypesObserver;
         if (!forceScalar && !forceScalarMode) {
-            if (wideLaneMode && emittedI64Widening) {
+            if (wideLaneMode && emittedWideLaneConversion) {
                 return EXEC_HINT_WIDE_LANE;
             }
             return typesObserver.hasMixedSizes() ? EXEC_HINT_MIXED_SIZE_TYPE : EXEC_HINT_SINGLE_SIZE_TYPE;
@@ -1526,8 +1675,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Routes a constant with no exact 32-bit float that a comparison puts against a FLOAT leaf (see
      * {@link #isFloatInexactConst}) onto the double-width path: {@link #serializeConstant} emits it
-     * through the 64-bit arm and the marker forces scalar mode, whose convert() promotes the float
-     * leaf to double. Both filters then run the SAME comparison - QuestDB compares floating point
+     * through the 64-bit arm. The four-lane AVX2 mode promotes the float leaf to double. Both
+     * filters then run the SAME comparison - QuestDB compares floating point
      * with a tolerance ({@code Numbers.DOUBLE_TOLERANCE}, 1e-10: {@code LtDoubleVVFunctionFactory}
      * is {@code !Numbers.equals(l, r) && l < r}, and the backend's cmp_lt / cmp_eq apply
      * DOUBLE_EPSILON the same way) - so this is exact agreement rather than an approximation of it.
@@ -1544,6 +1693,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      */
     private void markFloatCmpConst(ExpressionNode constNode) {
         addI64WidenLeaf(constNode);
+        if (wideLaneMode) {
+            emittedWideLaneConversion = true;
+        }
     }
 
     /**
@@ -1862,8 +2014,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * width (the constant is a LONG literal that promotes the column via getLong), so
      * no INT value equals it. Mirror that: sign-extend the leaf (value-preserving -
      * see {@link #markI64WrapArithLeaves}) and emit the constant as a full I8 IMM. The
-     * mark is per node, so a sibling in-range comparison is unaffected; it forces
-     * scalar mode (SX_I64 has no AVX2 path).
+     * mark is per node, so a sibling in-range comparison is unaffected; eligible integer
+     * comparisons, arithmetic, and IN shapes use the four-lane AVX2 path.
      * <p>
      * For an IN whose key is a narrow-int leaf and any element is out-of-INT-range,
      * the Java InLong path reads the key at long width for that element, so widen the
@@ -1907,13 +2059,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // with no exact float has no float bound that reproduces it: any float emitted
                     // would match the rows that round to it, so the JIT returned rows whose value is
                     // not the one asked for (and NOT IN dropped them). Widen every such element to
-                    // double - the scalar convert() promotes the float key alongside it. The
+                    // double - four-lane AVX2 promotes the float key alongside it. The
                     // single-value form keeps key / element in lhs / rhs and takes the pair path
                     // below, which routes to the same rule via markFloatCmpConst.
                     for (int i = 0, n = node.args.size() - 1; i < n; i++) {
                         final ExpressionNode element = node.args.getQuick(i);
                         if (isFloatWideningConst(element)) {
-                            addI64WidenLeaf(element);
+                            markFloatCmpConst(element);
                         }
                     }
                 }
@@ -2006,7 +2158,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // forceScalarMode to the emission itself keeps that a hard invariant rather than a
             // coincidence of the current width rules, so a future override path cannot let a
             // value-correct SX_I64 escape to the vectorized path.
-            emittedI64Widening = true;
+            emittedWideLaneConversion = true;
             if (!wideLaneMode) {
                 forceScalarMode = true;
             }
@@ -2306,10 +2458,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // select different rows, and '=' would even match a row holding a different value.
                 // Route it through the 64-bit arm, which emits an exact I8 IMM for an integer
                 // literal (above 2^24 a float cannot hold one) and a full F8 double otherwise.
-                // Either way the marker forces scalar mode, whose convert() promotes the float leaf
-                // to double - (f32, i64) and (f32, f64) both land on float_to_double - so both
-                // filters run the same tolerance-aware double comparison. AVX2 implements neither
-                // conversion, which is why this must not escape the scalar backend.
+                // The four-lane AVX2 convert() promotes the float leaf to double for both
+                // (f32, i64) and (f32, f64), so both filters run the same tolerance-aware
+                // double comparison.
                 numberTypeCode = F8_TYPE;
             }
             serializeNumber(offset, position, token, numberTypeCode, negated);
