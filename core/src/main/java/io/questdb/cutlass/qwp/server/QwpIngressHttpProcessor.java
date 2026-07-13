@@ -120,8 +120,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // RESPONSE_DURABLE_ACK_PREFIX this reproduces the exact historical
     // response bytes ("X-QWP-Durable-Ack: enabled"), so callers that have
     // not migrated to a specific DurabilityTier confirm token see no change
-    // on the wire.
-    private static final Utf8String RESPONSE_DURABLE_ACK_TOKEN_ENABLED = new Utf8String("enabled");
+    // on the wire. Package-private (not private) so QwpIngressUpgradeProcessor's
+    // tier-negotiation handshake can echo the same legacy token for a DEFAULT
+    // (legacy "true") grant, keeping that response byte-identical too.
+    static final Utf8String RESPONSE_DURABLE_ACK_TOKEN_ENABLED = new Utf8String("enabled");
     // Advertises the server's hard cap on QWP message payload bytes so the
     // ingest client can size its batches without trial-and-error. Without this
     // hint a wide-row sender would have to discover the cap by sending an

@@ -25,7 +25,9 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cairo.wal.DefaultDurableAckRegistry;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.LocalDurableAckRegistry;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
@@ -409,6 +411,52 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         });
     }
 
+    @Test
+    public void testTierNegotiation() throws Exception {
+        // OSS-adaptive registry offers LOCAL only (no upload pipeline for
+        // REPLICATED). Install it explicitly so this test does not depend on
+        // whichever DurableAckRegistry the harness defaults to.
+        assertMemoryLeak(() -> {
+            DurableAckRegistry previous = engine.getDurableAckRegistry();
+            engine.setDurableAckRegistry(new LocalDurableAckRegistry(engine));
+            try {
+                // Explicit "replicated" on a local-only server is unsupported --
+                // fail-loud: no confirmation header at all (never silently
+                // downgrade to a weaker tier the client didn't ask for), and the
+                // connection state records NONE.
+                HandshakeResult replicatedOnLocalOnly = doHandshake("replicated");
+                Assert.assertFalse(
+                        "response must carry no X-QWP-Durable-Ack header for an explicit tier "
+                                + "this server cannot offer, got: " + replicatedOnLocalOnly.response(),
+                        replicatedOnLocalOnly.response().contains("X-QWP-Durable-Ack"));
+                Assert.assertEquals(DurabilityTier.NONE, replicatedOnLocalOnly.durableAckTier());
+
+                // Legacy "true" resolves to the server's strongest available tier
+                // (LOCAL here) and must echo the legacy "enabled" token verbatim --
+                // byte-identical to the pre-tier-negotiation response -- so
+                // existing clients see no change on the wire.
+                HandshakeResult legacyTrue = doHandshake("true");
+                Assert.assertTrue(
+                        "legacy true handshake must carry the legacy X-QWP-Durable-Ack: enabled "
+                                + "confirmation, got: " + legacyTrue.response(),
+                        legacyTrue.response().contains("\r\nX-QWP-Durable-Ack: enabled\r\n"));
+                Assert.assertEquals(DurabilityTier.LOCAL, legacyTrue.durableAckTier());
+
+                // Explicit "local" is available on this registry -> granted
+                // verbatim, echoing the explicit tier token rather than the
+                // legacy word.
+                HandshakeResult explicitLocal = doHandshake("local");
+                Assert.assertTrue(
+                        "explicit local handshake must carry the X-QWP-Durable-Ack: local "
+                                + "confirmation, got: " + explicitLocal.response(),
+                        explicitLocal.response().contains("\r\nX-QWP-Durable-Ack: local\r\n"));
+                Assert.assertEquals(DurabilityTier.LOCAL, explicitLocal.durableAckTier());
+            } finally {
+                engine.setDurableAckRegistry(previous);
+            }
+        });
+    }
+
     private static void assertBufferTooSmallFailure(
             QwpIngressUpgradeProcessor processor,
             TestableContext context,
@@ -558,6 +606,48 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    /**
+     * Drives a single handshake with the given {@code X-QWP-Request-Durable-Ack}
+     * header value (null omits the header) and captures both the raw response
+     * bytes and the negotiated {@link QwpIngressProcessorState#getDurableAckTier()},
+     * for tests that need to assert on the granted tier rather than just the
+     * boolean enabled/disabled outcome. Assumes the caller has already installed
+     * the desired {@link DurableAckRegistry} on {@code engine}.
+     */
+    private static HandshakeResult doHandshake(String durableAckHeaderValue) throws Exception {
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            if (durableAckHeaderValue != null) {
+                header.setHeader("X-QWP-Request-Durable-Ack", durableAckHeaderValue);
+            }
+
+            processor.onHeadersReady(context);
+            // onHeadersReady stages the 101 bytes; onRequestComplete performs
+            // the rawSocket.send and finalises the protocol switch.
+            processor.onRequestComplete(context);
+
+            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
+            QwpIngressProcessorState state = lv.get(context);
+            Assert.assertNotNull("state must be populated after successful handshake", state);
+
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            return new HandshakeResult(response, state.getDurableAckTier());
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static LocalValue<QwpIngressProcessorState> getLV() throws Exception {
         Field lvField = QwpIngressUpgradeProcessor.class.getDeclaredField("LV");
@@ -583,6 +673,15 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         public boolean isEnabled() {
             return true;
         }
+
+        // Mirrors LocalDurableAckRegistry: LOCAL is the only tier this fake
+        // offers. Needed so the DEFAULT (legacy "true") grant path -- which
+        // resolves via strongestAvailableTier(), not isEnabled() alone --
+        // actually grants a tier instead of falling through to NONE.
+        @Override
+        public boolean isTierAvailable(int tier) {
+            return tier == DurabilityTier.LOCAL;
+        }
     }
 
     private record FakeRoleProvider(byte role) implements QwpServerInfoProvider {
@@ -606,6 +705,14 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         public CharSequence getNodeId() {
             return "";
         }
+    }
+
+    /**
+     * Captures the outcome of a single {@link #doHandshake} call: the raw
+     * response bytes and the tier negotiated onto the connection's
+     * {@link QwpIngressProcessorState}.
+     */
+    private record HandshakeResult(String response, int durableAckTier) {
     }
 
     private static class MockHttpRequestHeader implements HttpRequestHeader, AutoCloseable {
