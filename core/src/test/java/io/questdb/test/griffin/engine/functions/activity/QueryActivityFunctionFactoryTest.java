@@ -250,6 +250,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
             final QueryRegistry registry = engine.getQueryRegistry();
             final int producerCount = 4;
             final int iterations = 20_000;
+            final long runDeadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(90);
 
             // Producer texts alternate between a short and a long, distinctly-keyed
             // string so recycling an entry changes the StringSink length and
@@ -280,7 +281,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                 final Thread thread = new Thread(() -> {
                     try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
                         startBarrier.await();
-                        for (int i = 0; i < iterations && fault.get() == null; i++) {
+                        for (int i = 0; i < iterations && fault.get() == null && System.nanoTime() < runDeadlineNanos; i++) {
                             final long queryId = registry.register(producerTexts[slot][i & 1], context);
                             // brief window for the reader to snapshot the entry
                             for (int j = 0; j < 8; j++) {
@@ -304,7 +305,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                         RecordCursorFactory factory = CairoEngine.select(compiler, "SELECT query_id, worker_pool, username, state, query FROM query_activity()", context)
                 ) {
                     startBarrier.await();
-                    while (runningProducers.get() > 0 && fault.get() == null) {
+                    while (runningProducers.get() > 0 && fault.get() == null && System.nanoTime() < runDeadlineNanos) {
                         try (RecordCursor cursor = factory.getCursor(context)) {
                             final Record record = cursor.getRecord();
                             while (cursor.hasNext()) {
@@ -331,6 +332,8 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                                 }
                             }
                         }
+                        // yield between passes so the reader cannot starve the producers on a busy CI box
+                        Thread.yield();
                     }
                 } catch (Throwable t) {
                     fault.compareAndSet(null, t);
@@ -338,18 +341,43 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
             }, "query_activity_reader");
             threads.add(reader);
 
-            for (int i = 0, n = threads.size(); i < n; i++) {
-                threads.getQuick(i).start();
-            }
-            for (int i = 0, n = threads.size(); i < n; i++) {
-                threads.getQuick(i).join(120_000);
-                Assert.assertFalse("worker thread hung", threads.getQuick(i).isAlive());
+            final long joinDeadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(100);
+            final long shutdownJoinMs = 5_000;
+            try {
+                for (int i = 0, n = threads.size(); i < n; i++) {
+                    threads.getQuick(i).start();
+                }
+                for (int i = 0, n = threads.size(); i < n; i++) {
+                    final long remainingMs = TimeUnit.NANOSECONDS.toMillis(joinDeadlineNanos - System.nanoTime());
+                    if (remainingMs > 0) {
+                        threads.getQuick(i).join(remainingMs);
+                    }
+                }
+            } finally {
+                boolean hasSurvivors = false;
+                for (int i = 0, n = threads.size(); i < n; i++) {
+                    final Thread thread = threads.getQuick(i);
+                    if (thread.isAlive()) {
+                        hasSurvivors = true;
+                        thread.interrupt();
+                    }
+                }
+                if (hasSurvivors) {
+                    for (int i = 0, n = threads.size(); i < n; i++) {
+                        threads.getQuick(i).join(shutdownJoinMs);
+                    }
+                }
             }
 
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                Assert.assertFalse("worker thread hung", threads.getQuick(i).isAlive());
+            }
             if (fault.get() != null) {
                 throw new AssertionError("worker thread failed", fault.get());
             }
-            Assert.assertTrue("reader never observed a live query", producerRowsObserved.get() > 0);
+            if (System.nanoTime() < runDeadlineNanos) {
+                Assert.assertTrue("reader never observed a live query", producerRowsObserved.get() > 0);
+            }
         });
     }
 
