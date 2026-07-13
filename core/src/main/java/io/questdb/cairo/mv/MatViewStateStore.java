@@ -53,9 +53,19 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
 
     void enqueueFullRefresh(TableToken matViewToken);
 
+    void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner);
+
     void enqueueIncrementalRefresh(TableToken matViewToken);
 
     void enqueueInvalidate(TableToken matViewToken, String invalidationReason);
+
+    void enqueueInvalidate(
+            TableToken matViewToken,
+            String invalidationReason,
+            @Nullable TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isInvalidationForced
+    );
 
     void enqueueInvalidateDependentViews(TableToken baseTableToken, String invalidationReason);
 
@@ -82,12 +92,24 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // Wakes up the timer job at the given deadline to re-drive the deferred refresh.
     void notifyRefreshRetry(TableToken matViewToken, long retryAfterMicros);
 
+    // Re-publishes marker facets whose previous queue publication failed.
+    void reenqueueFailedPendingTasks();
+
+    // Called after RESUME WAL succeeds. Re-publishes retained invalidation and full-refresh intent
+    // that a suspended view could not process.
+    void reenqueuePendingOnResume(TableToken matViewToken);
+
     // Re-publishes a dequeued task verbatim so the refresh job can put one back when the
     // suspend gate is observed set after the dequeue (the promote window), letting the task
     // run after writes open instead of being refused and dropped.
     void reenqueueRefreshTask(MatViewRefreshTask task);
 
     void removeViewState(TableToken matViewToken);
+
+    // Records allocation-free recovery intent after a marker-bearing queue publication fails.
+    void requestPendingFullRefreshReenqueue(MatViewState viewState);
+
+    void requestPendingInvalidationReenqueue(MatViewState viewState);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
 

@@ -76,6 +76,11 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void enqueueFullRefresh(TableToken matViewToken, Object fullRefreshOwner) {
+        delegate.enqueueFullRefresh(matViewToken, fullRefreshOwner);
+    }
+
+    @Override
     public void enqueueIncrementalRefresh(TableToken matViewToken) {
         delegate.enqueueIncrementalRefresh(matViewToken);
     }
@@ -83,6 +88,23 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     @Override
     public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
         delegate.enqueueInvalidate(matViewToken, invalidationReason);
+    }
+
+    @Override
+    public void enqueueInvalidate(
+            TableToken matViewToken,
+            String invalidationReason,
+            @Nullable TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isInvalidationForced
+    ) {
+        delegate.enqueueInvalidate(
+                matViewToken,
+                invalidationReason,
+                invalidationBaseTableToken,
+                invalidationBaseTxn,
+                isInvalidationForced
+        );
     }
 
     @Override
@@ -130,6 +152,16 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void reenqueueFailedPendingTasks() {
+        delegate.reenqueueFailedPendingTasks();
+    }
+
+    @Override
+    public void reenqueuePendingOnResume(TableToken matViewToken) {
+        delegate.reenqueuePendingOnResume(matViewToken);
+    }
+
+    @Override
     public void reenqueueRefreshTask(MatViewRefreshTask task) {
         delegate.reenqueueRefreshTask(task);
     }
@@ -137,6 +169,16 @@ public class ForwardingMatViewStateStore implements MatViewStateStore {
     @Override
     public void removeViewState(TableToken matViewToken) {
         delegate.removeViewState(matViewToken);
+    }
+
+    @Override
+    public void requestPendingFullRefreshReenqueue(MatViewState viewState) {
+        delegate.requestPendingFullRefreshReenqueue(viewState);
+    }
+
+    @Override
+    public void requestPendingInvalidationReenqueue(MatViewState viewState) {
+        delegate.requestPendingInvalidationReenqueue(viewState);
     }
 
     /**

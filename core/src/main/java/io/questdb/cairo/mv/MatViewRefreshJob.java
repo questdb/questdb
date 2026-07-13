@@ -103,7 +103,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
     private final WalTxnRangeLoader txnRangeLoader;
     @TestOnly
+    private volatile Runnable onBaseReaderSnapshotForTesting;
+    @TestOnly
+    private volatile Runnable onFullRefreshTerminalFailureForTesting;
+    @TestOnly
     private volatile Runnable onHoldingLockForTesting;
+    @TestOnly
+    private volatile Runnable onInvalidationPublishedForTesting;
+    @TestOnly
+    private volatile Runnable onRefreshTaskDequeuedForTesting;
 
     public MatViewRefreshJob(int workerId, CairoEngine engine, int sharedQueryWorkerCount) {
         // workerId is accepted for source-compatibility; the rotation framework
@@ -112,12 +120,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount) {
+        this(engine, sharedQueryWorkerCount, engine.getMatViewStateStore());
+    }
+
+    @TestOnly
+    public MatViewRefreshJob(CairoEngine engine, int sharedQueryWorkerCount, MatViewStateStore stateStore) {
         try {
             this.engine = engine;
             this.sharedQueryWorkerCount = sharedQueryWorkerCount;
             this.refreshSqlExecutionContext = new MatViewRefreshSqlExecutionContext(engine, sharedQueryWorkerCount);
             this.graph = engine.getMatViewGraph();
-            this.stateStore = engine.getMatViewStateStore();
+            this.stateStore = stateStore;
             this.configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration);
             this.microsecondClock = configuration.getMicrosecondClock();
@@ -149,15 +162,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Completes a {@link MatViewState#tryLock()} hold: clears the marker of any invalidation that
-     * deferred while the caller held the latch (see {@link #finalizeDeferredInvalidation}), unlocks,
-     * then re-enqueues that INVALIDATE. Every lock-holder must route its unlock through here --
+     * Completes a {@link MatViewState#tryLock()} hold, then wakes any invalidation or full refresh
+     * that published its intent before losing this latch. Every lock-holder must route its unlock through here --
      * including holders outside this class, such as the {@code REFRESH ... STATS} reset in
      * {@code SqlCompilerImpl} -- or a deferral landing during its hold freezes the view
-     * valid-but-stale. The one deliberate exception is {@code invalidateView}'s auth-rollback
-     * self-deferral ({@code isSelfDeferred}), which unlocks inline: finalizing there would clear the
-     * marker that branch just set and busy-spin against the sticky read-only writer refusal.
-     * {@code shouldIncrementRefreshSeq} additionally bumps {@link MatViewState#incrementRefreshSeq()}
+     * valid-but-stale. {@code shouldIncrementRefreshSeq} additionally bumps
+     * {@link MatViewState#incrementRefreshSeq()}
      * before the unlock: data-refresh completions (incremental, full) pass {@code true} so
      * {@code MatViewTimerJob} skips enqueueing refreshes made redundant by the one that just ran; the
      * other holders pass {@code false}.
@@ -170,27 +180,57 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             boolean shouldIncrementRefreshSeq
     ) {
         assert viewState.isLocked() : "finalizeAndUnlock requires the caller to hold the view latch";
-        // Only an OutOfMemoryError can throw out of finalizeDeferredInvalidation, but if one does, unlock()
-        // must still run: a skipped unlock wedges the latch forever and leaks the parked cursorFactory at
-        // teardown (close/tryCloseIf* all need the latch). The marker clear runs under the latch (inner
-        // try); the INVALIDATE enqueue runs after the unlock, so a sibling worker that dequeues the
-        // re-enqueued task can win the freed latch instead of re-deferring against this still-held one
-        // (enqueueing under the latch would re-open that self-fed lost-update variant). An OOM thrown
-        // between the clear and the enqueue still drops the deferral outright (marker cleared, no task
-        // queued: the view reads healthy while stale); enqueue-before-clear would be no better -- a second
-        // worker could dequeue and swallow the task against the still-set marker -- and under OOM the
-        // process is lost anyway.
-        String deferredInvalidationReason = null;
         try {
-            deferredInvalidationReason = finalizeDeferredInvalidation(engine, viewState);
-        } finally {
             if (shouldIncrementRefreshSeq) {
                 viewState.incrementRefreshSeq();
             }
+        } finally {
             unlockAndTryClose(viewState);
         }
-        if (deferredInvalidationReason != null) {
-            stateStore.enqueueInvalidate(viewToken, deferredInvalidationReason);
+
+        // The invalidator publishes the marker before attempting the latch. Consequently either it
+        // acquires the released latch itself, or this post-release read observes its publication and
+        // wakes one authoritative retry. Keep the marker until the operation succeeds: queue growth can
+        // throw, and clearing before publication would turn a recoverable OOM into silent stale data.
+        final Object pendingMarker = viewState.getPendingInvalidationMarker();
+        if (pendingMarker == null
+                || viewState.isDropped()
+                || viewState.isClosed()
+                || engine.isReadOnlyMode()) {
+            return;
+        }
+        final String pendingInvalidationReason = viewState.getPendingInvalidationReason(pendingMarker);
+        final Object fullRefreshOwner = viewState.getPendingFullRefreshOwner(pendingMarker);
+        // A successful invalidation already covers reason-bearing publications that raced its WAL mint,
+        // but it does not satisfy an independently requested full rebuild. Keep the gates separate so an
+        // INVALIDATE holder cannot strand a FULL task that published while losing this latch.
+        if (pendingInvalidationReason != null && !viewState.isInvalid()) {
+            try {
+                stateStore.enqueueInvalidate(
+                        viewToken,
+                        pendingInvalidationReason,
+                        viewState.getPendingInvalidationBaseTableToken(pendingMarker),
+                        viewState.getPendingInvalidationBaseTxn(pendingMarker),
+                        viewState.isPendingInvalidationForced(pendingMarker)
+                );
+            } catch (Throwable th) {
+                // The store passed here may be a test/interposition wrapper. Signal the engine's
+                // canonical store so a normal job tick can discover this allocation-free retry state.
+                final MatViewStateStore engineStateStore = engine.getMatViewStateStore();
+                engineStateStore.requestPendingInvalidationReenqueue(viewState);
+                if (fullRefreshOwner != null) {
+                    engineStateStore.requestPendingFullRefreshReenqueue(viewState);
+                }
+                throw th;
+            }
+        }
+        if (fullRefreshOwner != null) {
+            try {
+                stateStore.enqueueFullRefresh(viewToken, fullRefreshOwner);
+            } catch (Throwable th) {
+                engine.getMatViewStateStore().requestPendingFullRefreshReenqueue(viewState);
+                throw th;
+            }
         }
     }
 
@@ -231,6 +271,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test seam: runs after a full refresh fixes its base-table reader snapshot but before it resets
+     * the view state. A test can apply a newer base transaction here to pin snapshot ownership.
+     */
+    @TestOnly
+    public void setOnBaseReaderSnapshotForTesting(Runnable onBaseReaderSnapshotForTesting) {
+        this.onBaseReaderSnapshotForTesting = onBaseReaderSnapshotForTesting;
+    }
+
+    /**
+     * Test seam: runs after full refresh records a missing-base failure but before it releases the
+     * view latch. Tests use it to stop a broken self-requeue deterministically.
+     */
+    @TestOnly
+    public void setOnFullRefreshTerminalFailureForTesting(Runnable onFullRefreshTerminalFailureForTesting) {
+        this.onFullRefreshTerminalFailureForTesting = onFullRefreshTerminalFailureForTesting;
+    }
+
+    /**
      * Test seam: runs while a lock-holder (a refresh, or {@code invalidateView} itself) holds the view lock,
      * letting a test mark the view pending mid-hold exactly as a losing concurrent {@code invalidateView}
      * would, so the holder's completion must finalize it. Production never sets it and {@code cloneInstance}
@@ -239,6 +297,24 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setOnHoldingLockForTesting(Runnable onHoldingLockForTesting) {
         this.onHoldingLockForTesting = onHoldingLockForTesting;
+    }
+
+    /**
+     * Test seam: runs once after an invalidation publishes its marker but before it attempts the view latch.
+     * Tests use it to let a concurrent full refresh consume a covered marker before the publisher locks.
+     */
+    @TestOnly
+    public void setOnInvalidationPublishedForTesting(Runnable onInvalidationPublishedForTesting) {
+        this.onInvalidationPublishedForTesting = onInvalidationPublishedForTesting;
+    }
+
+    /**
+     * Test seam: runs once for each task removed from the refresh queue, before the task executes.
+     * Tests use it to put a deterministic upper bound on self-republishing contender paths.
+     */
+    @TestOnly
+    public void setOnRefreshTaskDequeuedForTesting(Runnable onRefreshTaskDequeuedForTesting) {
+        this.onRefreshTaskDequeuedForTesting = onRefreshTaskDequeuedForTesting;
     }
 
     private static long approxStepDuration(long step, long approxBucketSize) {
@@ -438,6 +514,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
+    private void clearBlockedFullRefresh(
+            TableToken viewToken,
+            MatViewState viewState,
+            Object fullRefreshOwner
+    ) {
+        if (fullRefreshOwner == null || !viewState.tryLock()) {
+            return;
+        }
+        try {
+            viewState.clearPendingFullRefresh(fullRefreshOwner);
+        } finally {
+            finalizeAndUnlock(viewToken, viewState, false);
+        }
+    }
+
     private void commitMatView(
             @NotNull MatViewState viewState,
             @NotNull WalWriter walWriter,
@@ -550,46 +641,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void finalizeAndUnlock(TableToken viewToken, MatViewState viewState, boolean shouldIncrementRefreshSeq) {
         finalizeAndUnlock(engine, stateStore, viewToken, viewState, shouldIncrementRefreshSeq);
-    }
-
-    private static String finalizeDeferredInvalidation(CairoEngine engine, MatViewState viewState) {
-        // A lock-holder (a refresh, invalidateView's own hold, or a REFRESH ... STATS reset) just completed
-        // while holding this view's lock. If a concurrent INVALIDATE deferred in
-        // that window it called markAsPendingInvalidation(reason) and re-enqueued a task that the invalidateView
-        // top guard then swallowed (the guard skips a view that is already pending), so nothing else would
-        // finalize it and the view would stay valid on disk with stale rows. Clear the pending marker under
-        // the latch and return the reason; finalizeAndUnlock re-enqueues a fresh INVALIDATE after the
-        // unlock. With the marker cleared the guard no longer swallows the re-delivered task, so a later
-        // worker mints invalid durably through the normal path. A null reason marks a full-refresh
-        // reschedule (see fullRefresh), not an invalidation, so leave it for the queued full refresh. Skip
-        // while read-only: a demote rebuilds derived state from disk on promote, and re-enqueueing here
-        // would self-feed the demote quiesce drain. Skip a closed state the same way: close() means the
-        // owner store is discarded (engine shutdown, or a demote teardown whose quiesce this hold
-        // survived), the marker dies with the state, and nothing must be fed back into the queue --
-        // closed is terminal, so the skip is unconditionally correct and does not rely on the demote
-        // flipping the read-only flag first.
-        //
-        // The marker clears regardless of getLastRefreshBaseTxn(): the re-enqueued view task re-delivers as
-        // force=true (see invalidate()), which mints regardless of lastRefreshBaseTxn, so a range-only view
-        // (lastRefreshBaseTxn == -1) ends cleanly invalid -- visible, REFRESH ... FULL recovers it. That is
-        // stricter than the no-contention path, where invalidateView's own force || getLastRefreshBaseTxn()
-        // != -1 gate declines a base-scoped (non-forced) invalidate for a never-incrementally-refreshed view
-        // and leaves it valid. Finalize cannot replicate that here -- the deferral already queued a force=true
-        // retry -- and minting invalid is the safe terminal state (the rows are in fact stale). It beats the
-        // alternative of leaving the marker set, which freezes the view: silently stale, still reporting valid
-        // (getViewStatus reads the persisted invalid flag, not the in-memory pending marker), never recovering.
-        // One marker read covers both "not pending" (null marker) and the reschedule sentinel (a pending
-        // marker that reports a null reason): either way there is no reason-bearing deferral to finalize.
-        final String invalidationReason = viewState.getPendingInvalidationReason();
-        if (invalidationReason == null
-                || viewState.isInvalid()
-                || viewState.isDropped()
-                || viewState.isClosed()
-                || engine.isReadOnlyMode()) {
-            return null;
-        }
-        viewState.clearPendingInvalidation();
-        return invalidationReason;
     }
 
     private RefreshContext findRefreshIntervals(
@@ -868,6 +919,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (isRefreshBlocked(viewToken)) {
+            clearBlockedFullRefresh(viewToken, viewState, refreshTask.fullRefreshOwner);
             LOG.info().$("skipping materialized view full refresh, view is in the refresh block list [view=").$(viewToken).I$();
             return false;
         }
@@ -877,22 +929,29 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        // A fresh queue task publishes a distinct full-refresh owner. A handoff task carries the owner
+        // that already lost the latch; if terminal cleanup consumed it, the stale delivery is a no-op.
+        final Object fullRefreshOwner;
+        if (refreshTask.fullRefreshOwner == null) {
+            fullRefreshOwner = viewState.markAsPendingFullRefreshAndGetOwner();
+        } else {
+            fullRefreshOwner = refreshTask.fullRefreshOwner;
+            if (!viewState.isPendingFullRefreshOwner(fullRefreshOwner)) {
+                return false;
+            }
+        }
+        refreshTask.fullRefreshOwner = fullRefreshOwner;
         if (!viewState.tryLock()) {
-            // Someone is refreshing the view, so we're going for another attempt: mark the view pending
-            // (the no-reason reschedule sentinel) to block intermediate incremental refreshes and republish
-            // the task. The sentinel CASes only into an empty marker -- a reason-bearing deferral already
-            // parked here must survive for the current lock-holder's finalize, not be demoted to a marker
-            // that only the re-queued full refresh clears.
             LOG.debug().$("could not lock materialized view for full refresh, will retry [view=").$(viewToken).I$();
-            viewState.markAsPendingInvalidation();
-            stateStore.enqueueFullRefresh(viewToken);
             return false;
         }
 
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+        boolean isFullRefreshDeferred = false;
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken = verifyBaseTableToken(viewDefinition, viewState, walWriter);
             if (baseTableToken == null) {
+                runFullRefreshTerminalFailureSeamForTesting();
                 return false;
             }
 
@@ -914,15 +973,30 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
+                    runBaseReaderSnapshotSeamForTesting();
                     fencedMatViewCommit(walWriter::truncateSoft);
                     resetInvalidState(viewState, walWriter);
 
-                    // Seam fires after resetInvalidState cleared the marker, modelling an INVALIDATE that
-                    // defers during the pump (the lock is held for the whole insert-as-select).
+                    // Seam fires after resetInvalidState, modelling an INVALIDATE that arrives during the
+                    // pump while the lock and a fixed base snapshot are held.
                     runHoldingLockSeamForTesting();
 
                     final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, Numbers.LONG_NULL);
-                    insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp);
+                    final boolean didRefresh = insertAsSelect(
+                            viewDefinition,
+                            viewState,
+                            walWriter,
+                            refreshContext,
+                            refreshTriggerTimestamp
+                    );
+                    // intervalIterator == null with an unchanged watermark is a successful no-row FULL:
+                    // insertAsSelect skips only the no-op state commit. Other false returns have an
+                    // iterator and represent a handled refresh failure, so they must not publish coverage.
+                    if (didRefresh || refreshContext.intervalIterator == null) {
+                        assert !refreshContext.hasTruncateBarrier;
+                        viewState.recordFullRefreshSuccess(baseTableToken, refreshContext.toBaseTxn);
+                        viewState.clearPendingInvalidationIfCoveredByLastFullRefresh();
+                    }
                 } finally {
                     refreshSqlExecutionContext.clearReader();
                     engine.attachReader(baseTableReader);
@@ -941,13 +1015,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } catch (Throwable th) {
             if (isTableSuspendedError(th)) {
+                isFullRefreshDeferred = true;
                 LOG.info().$("skipping full refresh, materialized view is suspended [view=").$(viewToken).I$();
                 return false;
             }
+            // Retain the exact full owner before attempting retry publication. enqueue may allocate and
+            // throw; clearing ownership in finally would otherwise lose both marker and task.
+            isFullRefreshDeferred = true;
             if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
                 // Full refresh is re-scheduled.
                 return false;
             }
+            isFullRefreshDeferred = false;
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
             // invalid state transaction. Update the in-memory state and call it a day.
             LOG.error()
@@ -957,19 +1036,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshFailState(viewDefinition, viewState, null, th);
             return false;
         } finally {
-            // A base invalidation that defers after resetInvalidState() cleared the marker (i.e. during the
-            // full-table pump, which snapshots the base at lock time) sets pending again; finalize it here so
-            // the view does not end frozen-pending. Without this, the lone lock-holding path that skips
-            // finalize is fullRefresh, and that window is the entire pump -- far wider than the
-            // finalize-to-unlock gap the other holders retain.
-            //
-            // Tradeoff: if this full refresh won the lock race, its snapshot already incorporated the base
-            // change and rebuilt the view, yet finalize still re-enqueues the deferral force=true and ends the
-            // view invalid (cascading to dependents) -- a spurious-looking valid->invalid flip under the
-            // "UPDATE then REFRESH FULL" race. It is conservatively safe (invalid is visible, REFRESH ... FULL
-            // recovers it) and better than dropping finalize, which re-exposes the silent frozen-pending freeze
-            // across the whole pump. finalize is reason-blind, not txn-aware, so it cannot tell a deferral
-            // this rebuild already covered from a genuinely newer one.
+            if (!isFullRefreshDeferred) {
+                viewState.clearPendingFullRefresh(fullRefreshOwner);
+            }
+            // A base invalidation newer than the full snapshot, from another base token/epoch, or without
+            // txn provenance remains pending; the post-release handoff wakes it. A successful full pump
+            // consumed only a known marker covered by its fixed reader.
             finalizeAndUnlock(viewToken, viewState, true);
         }
 
@@ -1073,7 +1145,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
                         stateStore.enqueueIncrementalRefresh(viewToken);
                     } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
-                        stateStore.enqueueFullRefresh(viewToken);
+                        stateStore.enqueueFullRefresh(viewToken, refreshTask.fullRefreshOwner);
                     } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
                         stateStore.enqueueRangeRefresh(viewToken, refreshTask.rangeFrom, refreshTask.rangeTo);
                     } else if (refreshTask.operation == MatViewRefreshTask.UPDATE_REFRESH_INTERVALS) {
@@ -1099,7 +1171,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
                             stateStore.enqueueIncrementalRefresh(updatedToken);
                         } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
-                            stateStore.enqueueFullRefresh(updatedToken);
+                            stateStore.enqueueFullRefresh(updatedToken, refreshTask.fullRefreshOwner);
                         } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
                             stateStore.enqueueRangeRefresh(updatedToken, refreshTask.rangeFrom, refreshTask.rangeTo);
                         } else if (refreshTask.operation == MatViewRefreshTask.UPDATE_REFRESH_INTERVALS) {
@@ -1567,18 +1639,44 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void invalidate(MatViewRefreshTask refreshTask) {
         final String invalidationReason = refreshTask.invalidationReason;
         if (refreshTask.isBaseTableTask()) {
-            invalidateDependentViews(refreshTask.baseTableToken, invalidationReason);
+            invalidateDependentViews(
+                    refreshTask.baseTableToken,
+                    invalidationReason,
+                    refreshTask.invalidationBaseTableToken,
+                    refreshTask.invalidationBaseTxn
+            );
         } else {
-            invalidateView(refreshTask.matViewToken, invalidationReason, true);
+            invalidateView(
+                    refreshTask.matViewToken,
+                    invalidationReason,
+                    refreshTask.invalidationBaseTableToken,
+                    refreshTask.invalidationBaseTxn,
+                    refreshTask.isInvalidationForced
+            );
         }
     }
 
     private void invalidateDependentViews(TableToken baseTableToken, String invalidationReason) {
+        invalidateDependentViews(baseTableToken, invalidationReason, null, Numbers.LONG_NULL);
+    }
+
+    private void invalidateDependentViews(
+            TableToken baseTableToken,
+            String invalidationReason,
+            TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn
+    ) {
         childViewSink.clear();
         graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
-            invalidateView(viewToken, invalidationReason, false);
+            invalidateView(
+                    viewToken,
+                    invalidationReason,
+                    invalidationBaseTableToken,
+                    invalidationBaseTxn,
+                    false
+            );
         }
         stateStore.notifyBaseInvalidated(baseTableToken);
     }
@@ -1598,79 +1696,74 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return configuration.isMatViewRefreshBlocked(viewToken.getTableName());
     }
 
-    private void invalidateView(TableToken viewToken, String invalidationReason, boolean force) {
+    private void invalidateView(
+            TableToken viewToken,
+            String invalidationReason,
+            TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isForced
+    ) {
         final MatViewState viewState = stateStore.getViewState(viewToken);
-        // The pendingInvalidation guard swallows a re-enqueued INVALIDATE for an already-pending view. Every
-        // lock-holder finalizes a deferral on completion -- the incremental, range, interval-update and
-        // full-refresh holders, invalidateView's own force=false decline below (a never-refreshed view it
-        // holds without minting), and the REFRESH ... STATS reset in SqlCompilerImpl -- clearing the guard so
-        // the view ends invalid, not frozen. (MatViewState's close/tryCloseIf* holders are teardown-only: a
-        // closed or dropped state dies with its marker and finalize skips it anyway.) Residuals, each far
-        // narrower than the always-lost contended deferral this finalize replaces:
-        // - a read-only deferral: left for the promote-time rebuild from disk;
-        // - a deferral landing between finalize's marker read and the holder's unlock: too late for finalize
-        //   to see, and every queued task is then swallowed by this guard for good -- a terminal silent
-        //   freeze, never cleared automatically (every automatic refresh entry point bails on a pending
-        //   view before tryLock; REFRESH ... FULL and STATS deliberately do not, which is what makes
-        //   them -- or a restart -- the recovery). Each holder release re-runs the
-        //   window, so timer-driven refreshes -- re-admitted as holders once a finalize clears the marker --
-        //   raise how often it recurs; a sentinel CASed into the just-cleared marker before the re-enqueued
-        //   INVALIDATE is delivered swallows that task the same way;
-        // - a re-enqueued INVALIDATE delivered while the view is write-suspended: the suspended gate below
-        //   drops it without re-deferring (the marker is already cleared), leaving the view valid-and-stale
-        //   until REFRESH ... FULL after RESUME WAL -- the same outcome as a direct invalidation hitting
-        //   that gate;
-        // - a deferral during fullRefresh's hold whose queued task a sibling swallows before
-        //   resetInvalidState() runs is wiped together with the marker: the view ends valid with the
-        //   invalidation lost (see fullRefresh);
-        // - a stranded no-reason sentinel: the queued full refresh normally clears it, but its short-circuit
-        //   exits (refresh block list, write suspension, missing base table) return without finalizing,
-        //   freezing the view until a restart drops the in-memory marker or REFRESH ... FULL succeeds --
-        //   the replaced boolean marker froze identically on these paths.
-        // The marker is a single volatile reference and the sentinel cannot demote a reason-bearing
-        // deferral: see MatViewState#pendingInvalidationMarker.
-        if (viewState != null && !viewState.isDropped() && !viewState.isInvalid() && !viewState.isPendingInvalidation()) {
+        // Read the full flag before invalid. If FULL already cleared its flag, that volatile read also
+        // observes its earlier markAsValid write and this task takes the ordinary valid-view path. If FULL
+        // is still recovering an invalid view, a newer base invalidation must publish ownership now: FULL
+        // can otherwise reset the old invalid flag after a fixed snapshot that does not contain this change.
+        final boolean isFullRefreshPending = viewState != null && viewState.isPendingFullRefresh();
+        final boolean isInvalid = viewState != null && viewState.isInvalid();
+        final boolean isInvalidViewRecovery = isInvalid && isFullRefreshPending;
+        if (viewState != null && !viewState.isDropped() && (!isInvalid || isInvalidViewRecovery)) {
+            assert invalidationReason != null : DEFERRED_INVALIDATION_NEEDS_REASON;
+
+            // Publish intent before attempting the latch. This ordering forms a two-sided handoff with
+            // finalizeAndUnlock's post-release marker read: either this attempt acquires the free latch, or
+            // the holder that kept it observes the marker after release and wakes one retry. Contending
+            // invalidators only replace the marker; they do not each amplify the shared queue.
+            final Object requestedMarker = viewState.markAsPendingInvalidationAndGetMarker(
+                    invalidationReason,
+                    invalidationBaseTableToken,
+                    invalidationBaseTxn,
+                    isForced
+            );
+            runInvalidationPublishedSeamForTesting();
             if (engine.isReadOnlyMode()) {
                 // The node is, or just became, a replica: marking the view invalid acquires a WalWriter
                 // through the read-only chokepoint, which throws an authorization error that would escape
-                // the refresh worker's run() (a spurious CRITICAL plus a dropped invalidation, and a
-                // halt-on-error pool would stop). Defer instead -- mark the view pending and re-enqueue so
-                // the invalidation retries after a re-promote, mirroring the refresh face's read-only
-                // deferral. A materialized view is derived state.
-                assert invalidationReason != null : DEFERRED_INVALIDATION_NEEDS_REASON;
-                viewState.markAsPendingInvalidation(invalidationReason);
-                stateStore.enqueueInvalidate(viewToken, invalidationReason);
+                // the refresh worker's run(). Retain the marker for promote-time recovery.
                 return;
             }
             if (isViewWriteSuspended(viewToken)) {
-                // The view is hard-suspended and writes are denied. Acquiring its WAL writer to mint the
-                // invalid state would throw tableSuspended and escape run() (handleErrorRetryRefresh does not
-                // recognize it). Skip instead, mirroring the refresh paths: leave the view valid and do not
-                // cascade -- the view's data is unchanged. Recovery is REFRESH ... FULL after RESUME WAL; a
-                // rebased or dropped base is not picked up by a plain post-resume incremental refresh.
+                // The resume path re-drives this retained marker once writes open.
                 LOG.debug().$("skipping materialized view invalidation, view is suspended [view=").$(viewToken).I$();
                 return;
             }
             if (!viewState.tryLock()) {
                 LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
-                assert invalidationReason != null : DEFERRED_INVALIDATION_NEEDS_REASON;
-                viewState.markAsPendingInvalidation(invalidationReason);
-                stateStore.enqueueInvalidate(viewToken, invalidationReason);
                 return;
             }
 
-            // True once the auth-rollback branch below defers this invalidate itself (see the finally).
-            boolean isSelfDeferred = false;
             // True once setInvalidState persisted the invalid mint; gates the dependent cascade below.
             boolean isInvalidated = false;
             try {
+                // A publisher can acquire this latch only after FULL consumed its covered marker, and a
+                // delayed task can arrive after FULL completed. Resolve either case before snapshotting the
+                // reason: a covered or already-consumed marker is a successful no-op. CAS retries
+                // re-evaluate a concurrent publication; unknown, mismatched, or newer provenance can never
+                // be consumed.
+                if (viewState.clearPendingInvalidationIfCoveredByLastFullRefresh()) {
+                    return;
+                }
+                final Object pendingMarker = viewState.getPendingInvalidationMarker();
+                final String pendingInvalidationReason = viewState.getPendingInvalidationReason(pendingMarker);
+                final boolean isPendingInvalidationForced = viewState.isPendingInvalidationForced(pendingMarker);
+                assert pendingInvalidationReason != null : DEFERRED_INVALIDATION_NEEDS_REASON;
+
                 // Seam: a concurrent INVALIDATE deferring while THIS invalidateView holds the lock (see the
                 // method-top comment); the finally must finalize it.
                 runHoldingLockSeamForTesting();
 
                 // Mark the view invalid only if the operation is forced or the view has been incrementally
                 // refreshed before; a non-forced invalidate declines a never-refreshed view and leaves it valid.
-                if (force || viewState.getLastRefreshBaseTxn() != -1) {
+                if (isPendingInvalidationForced || isInvalidViewRecovery || viewState.getLastRefreshBaseTxn() != -1) {
                     final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                     while (true) {
                         // Just in case the view is being concurrently renamed.
@@ -1678,18 +1771,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                             final long invalidationTimestamp = microsecondClock.getTicks();
                             LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
-                                    .$(", reason=").$safe(invalidationReason)
+                                    .$(", reason=").$safe(pendingInvalidationReason)
                                     .$(", ts=").$ts(invalidationTimestamp)
                                     .I$();
 
-                            setInvalidState(viewState, walWriter, invalidationReason, invalidationTimestamp);
+                            setInvalidState(viewState, walWriter, pendingInvalidationReason, invalidationTimestamp);
+                            // A durable invalid state covers every concurrent invalidation publication,
+                            // including one that replaced pendingMarker while the WAL mint ran.
+                            viewState.clearPendingInvalidationReason();
                             isInvalidated = true;
                             break;
                         } catch (CairoException ex) {
                             if (isTableSuspendedError(ex)) {
                                 // The view was suspended between the isViewWriteSuspended gate and the
-                                // getWalWriter acquire. Skip without invalidating or cascading; RESUME WAL
-                                // plus REFRESH ... FULL recovers it.
+                                // getWalWriter acquire. Retain the marker so RESUME WAL can re-drive it.
                                 LOG.info().$("skipping materialized view invalidation, view is suspended [view=").$(viewToken).I$();
                                 return;
                             }
@@ -1701,18 +1796,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 // and persisted nothing -- leaving the view invalid in memory but valid on
                                 // disk. Roll that flag back to valid before deferring so the in-memory state
                                 // matches disk and the deferred invalidation is a clean pending retry, not a
-                                // half-applied one the re-enqueued task would then skip. Defer the same way
-                                // the top guard does -- mark pending and re-enqueue -- instead of looping on
-                                // the refused acquire forever. The finally unlocks. setInvalidState also
+                                // half-applied one. Retain the pending owner instead of looping on the refused
+                                // acquire forever. The finally unlocks. setInvalidState also
                                 // bumped the in-memory start timestamp before the fence refused; restore it
                                 // so the catalogue does not report this valid view as "refreshing" forever
                                 // (its in-memory start would otherwise sit ahead of the persisted finish).
                                 viewState.markAsValid();
                                 viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestampUs);
-                                assert invalidationReason != null : DEFERRED_INVALIDATION_NEEDS_REASON;
-                                viewState.markAsPendingInvalidation(invalidationReason);
-                                stateStore.enqueueInvalidate(viewToken, invalidationReason);
-                                isSelfDeferred = true;
                                 return;
                             }
                             if (!handleErrorRetryRefresh(ex, viewToken, null, null)) {
@@ -1720,18 +1810,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             }
                         }
                     }
+                } else {
+                    // This base-scoped invalidate deliberately declines a never-refreshed view. Clear only
+                    // the marker this invocation observed; a newer forceful publication must survive.
+                    viewState.clearPendingInvalidation(requestedMarker);
                 }
             } finally {
-                // Skip finalize for the auth-rollback path's own deferral: finalizeDeferredInvalidation would
-                // clear the marker it just set and re-enqueue. With the writer refusal sticky until a
-                // re-promote, clearing the marker lets the retry back past the top guard every pass -- a busy
-                // spin. The else branch still finalizes a deferral a concurrent invalidate left while this one
-                // held the lock.
-                if (isSelfDeferred) {
-                    unlockAndTryClose(viewState);
-                } else {
-                    finalizeAndUnlock(viewToken, viewState, false);
-                }
+                // finalizeAndUnlock retains the marker and suppresses its wake-up while the engine remains
+                // read-only. If promotion completed concurrently, the post-release handoff queues it now.
+                finalizeAndUnlock(viewToken, viewState, false);
             }
             // Invalidate dependent views recursively -- only after an actual mint. The force=false decline
             // above (a never-incrementally-refreshed view) leaves this view valid, and a valid parent must
@@ -1758,7 +1845,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // queued and run after the gate clears (writes open).
             return false;
         }
+        stateStore.reenqueueFailedPendingTasks();
         while (stateStore.tryDequeueRefreshTask(refreshTask)) {
+            runRefreshTaskDequeuedSeamForTesting();
             // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
             // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
             // this dequeue. The dequeue synchronizes-with that enqueue, which the promoter ordered
@@ -2351,10 +2440,39 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    private void runBaseReaderSnapshotSeamForTesting() {
+        final Runnable seam = onBaseReaderSnapshotForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
+    private void runFullRefreshTerminalFailureSeamForTesting() {
+        final Runnable seam = onFullRefreshTerminalFailureForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
     // Runs the onHoldingLockForTesting seam, if armed. Callers invoke it while holding the view
     // lock, inside the try whose finally unlocks, so even a throwing seam cannot leak the latch.
     private void runHoldingLockSeamForTesting() {
         final Runnable seam = onHoldingLockForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
+    private void runInvalidationPublishedSeamForTesting() {
+        final Runnable seam = onInvalidationPublishedForTesting;
+        if (seam != null) {
+            onInvalidationPublishedForTesting = null;
+            seam.run();
+        }
+    }
+
+    private void runRefreshTaskDequeuedSeamForTesting() {
+        final Runnable seam = onRefreshTaskDequeuedForTesting;
         if (seam != null) {
             seam.run();
         }

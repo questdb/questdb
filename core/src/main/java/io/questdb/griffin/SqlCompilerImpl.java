@@ -1647,6 +1647,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // is not swallowed. A config-listed table stays suspended until removed from config.
                 engine.removeWalApplySuspended(tableToken);
                 engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
+                engine.getMatViewStateStore().reenqueuePendingOnResume(tableToken);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             }
             compiledQuery.ofTableResume();
