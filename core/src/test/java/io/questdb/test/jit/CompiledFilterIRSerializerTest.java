@@ -1025,6 +1025,33 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testOptionsUnsupportedWideLaneShapesStayScalar() throws Exception {
+        // A supported widening predicate must not pull an unsupported sibling into the
+        // four-lane path. BYTE / SHORT arithmetic still relies on scalar INT promotion.
+        for (String filter : new String[]{
+                "anint < 5000000000 and abyte * along = 0",
+                "afloat < 1.00000003 or ashort - along = 0"
+        }) {
+            int options = serialize(filter, false, false, false);
+            assertOptionsHint(filter, options, OptionsHint.SCALAR);
+        }
+
+        // FLOAT/LONG arithmetic and FLOAT IN bind-variable elements are not in the
+        // capability allowlist. They must select a scalar execution hint.
+        int options = serialize("afloat + along < 1.00000003", false, false, false);
+        assertOptionsHint("FLOAT/LONG arithmetic", options, OptionsHint.SCALAR);
+
+        bindVariableService.setDouble("d", 1.00000003);
+        options = serialize("afloat in (1.00000003, :d)", false, false, false);
+        assertOptionsHint("FLOAT IN bind variable", options, OptionsHint.SCALAR);
+
+        // A non-integer element makes the whole integer IN shape ineligible even though
+        // another element requires INT-to-LONG widening.
+        options = serialize("anint in (1, 5000000000, 1.5)", false, false, false);
+        Assert.assertNotEquals(OptionsHint.WIDE_LANE.code, (options >> 4) & 0b11);
+    }
+
+    @Test
     public void testOptionsNullChecksFlag() throws Exception {
         int options = serialize("abyte = 0", false, false, true);
         assertOptionsNullChecks(options, true);
