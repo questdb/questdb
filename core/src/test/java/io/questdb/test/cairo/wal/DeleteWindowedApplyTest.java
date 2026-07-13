@@ -603,6 +603,66 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * F-G regression: a multi-window survivor-replace over a table with a REAL pre-existing SPLIT partition, where
+     * the delete FULLY empties a split sibling while survivors remain in the surrounding windows. This drives the
+     * unguarded split-partition removal sites (TableWriter o3ConsumePartitionUpdateSink :8740/:8795 and the parent
+     * line-split removal at :8999/:9005/:9015), which - proven by verification - queue removal candidates whose
+     * {@code nameTxn == txWriter.txn} (the frozen bracket txn) but never lose rows, because each such candidate is
+     * an already-detached partition disjoint from the survivors.
+     * <p>
+     * The TRUE guard here is NOT the result oracle. As the verification showed, a naive post-delete
+     * {@code assertSqlCursors} is INSUFFICIENT for this bug class: an unlinked-but-still-open partition dir stays
+     * readable in-process, so even a wrongly-unlinked live dir still passes the oracle. The real detector is the
+     * {@code -ea} drain-collision invariant assert added in {@code TableWriter.finishReplaceRange}
+     * (replaceRemoveCandidatesDisjointFromLivePartitions): with the load-bearing :8740/:8795 guard defeated it
+     * FIRES here (positive control, run manually during the fix). This test relies on that assert as the guard;
+     * the oracle below is a secondary sanity check.
+     */
+    @Test
+    public void testSplitPartitionSiblingEmptiedDrainKeepsLivePartitionsIntact() throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1"); // aggressive: prefix split threshold ~0 rows
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1");     // tile the split day into many windows
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            // Three days of minute data (x=1..4319), the last day (1970-01-03) full to 23:58 - mirrors the
+            // WAL split recipe in WalTableFailureTest#testForceDropPartitionRangeNotOnDiskWithSplits.
+            execute("insert into t select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*1000000L), x from long_sequence(60*24*3 - 1)");
+            drainWalQueue();
+            // O3-insert into the last day LATE at 23:00 (1970-01-03T23:00 == 255600000000us), x=7001..7060. A late
+            // O3 insert makes the prefix (00:00..22:59) dominate the suffix (23:00..23:58)+o3, satisfying the split
+            // heuristic (prefix > 2*(suffix+merge+o3)), so 1970-01-03 splits into two same-day-floor siblings.
+            execute("insert into t select (255600000000L + (x - 1) * 1000000L)::timestamp, 7000 + x from long_sequence(60)");
+            drainWalQueue();
+
+            // Self-verifying fixture: 1970-01-03 must now be a REAL split -> two same-day-floor partition versions.
+            Assert.assertEquals("fixture must produce a real split partition (two same-day-floor 1970-01-03 versions)",
+                    2, count("select count(*) from table_partitions('t') where minTimestamp >= '1970-01-03T00:00:00.000000Z' and minTimestamp < '1970-01-04T00:00:00.000000Z'"));
+
+            // Split boundary: rows with ts < 23:00 are the head sibling (x=1..headMaxX), the rest is the tail
+            // sibling. Read it rather than hardcode so the fixture stays valid if the split point ever shifts.
+            final long headMaxX = count("select max(x) from t where ts < '1970-01-03T23:00:00.000000Z'");
+
+            // Independent oracle snapshot of the survivors (x <= headMaxX), never touched by the DELETE.
+            execute("create table t_ref as (select * from t)");
+
+            // "keep only x <= headMaxX" (the verifier's fixture): FULLY empties the tail split sibling (all its
+            // rows have x > headMaxX) while the head sibling and the earlier days survive UNTOUCHED - driving the
+            // parent line-split removal branch that queues a frozen-txn (nameTxn == txWriter.txn) removal candidate.
+            execute("delete from t where x > " + headMaxX);
+            drainWalQueue();
+
+            // If the -ea invariant assert in finishReplaceRange fires (a drain-collision regression), the WAL
+            // apply throws and ApplyWal2TableJob suspends the table - so a suspended table here means the
+            // invariant caught harm. This hard check (not just the assertQuery idiom) is what turns the fired
+            // assert into a RED test in CI. Confirmed to FAIL under the :8740/:8795-defeated positive control.
+            Assert.assertFalse("a drain-collision (invariant assert firing) must surface as a suspended table",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+            // Secondary sanity check (see javadoc: the -ea invariant assert in finishReplaceRange is the real guard).
+            assertSqlCursors("select * from t_ref where not (x > " + headMaxX + ")", "select * from t");
+        });
+    }
+
     // Counts SUPERSEDED partition-version directories physically present under the table dir: for each calendar-day
     // partition (dir named yyyy-MM-dd, optionally with a .<nameTxn> version suffix), every physical version dir
     // beyond the first for that day is a duplicate = a superseded version not yet reclaimed. A correct multi-window

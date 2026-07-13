@@ -3345,6 +3345,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Persist and make the change visible; housekeep reclaims fully-dropped partition directories via
         // processPartitionRemoveCandidates (mirrors the WAL replace apply's post-commit sequence).
         commit00();
+        // F-G defensive invariant: at this drain point NO accumulated removal candidate may collide with a
+        // currently-LIVE attached partition. This enforces the safety proven for the unguarded split-partition
+        // removal sites (:8740/:8795 and the split-removal sites) - see replaceRemoveCandidatesDisjointFromLivePartitions.
+        assert replaceRemoveCandidatesDisjointFromLivePartitions()
+                : "windowed-replace drain: a partition-removal candidate collides with a live attached partition";
         // Reclaim partition directories superseded across ALL windows in one drain, AFTER the single commit00
         // - draining earlier would unlink dirs the not-yet-durable txn still references. Per-window candidates
         // were accumulated in replaceRangeRemoveCandidates because processO3Block clears partitionRemoveCandidates
@@ -3372,6 +3377,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Drop this failed bracket's accumulated removal candidates so they cannot leak into a later bracket on
         // the same writer. The caller rolls back the uncommitted surgery, so nothing must be unlinked here.
         replaceRangeRemoveCandidates.clear();
+    }
+
+    // F-G defensive invariant for the windowed survivor-replace drain. The split-partition removal sites in
+    // o3ConsumePartitionUpdateSink (the two guarded sites at :8740/:8795 and the parent line-split sites) can,
+    // during a multi-window replace over a table with pre-existing split partitions, queue removal candidates
+    // whose nameTxn == txWriter.txn (the frozen bracket txn). A verification PROVED this does NOT lose rows:
+    // every such frozen-txn candidate is an already-detached partition at a timestamp disjoint from the
+    // survivors, so the post-commit00 drain never unlinks a directory that still backs a live partition. This
+    // assert locks that safety in: iterating the accumulated (partitionTimestamp, nameTxn) candidates, NONE may
+    // match a currently-live ATTACHED partition (same partition timestamp, same nameTxn, size > 0). A naive
+    // post-delete result oracle CANNOT catch a violation - an unlinked-but-still-open partition dir stays
+    // readable in-process - but this in-memory drain-collision check can (with the load-bearing :8740/:8795
+    // guard defeated it fires here). Checked off the accumulator (inherently the windowed-replace drain), NOT
+    // gated on isCommitReplaceMode() - dedupMode was already reset to DEFAULT at the top of finishReplaceRange.
+    // Runs only under -ea (tests); assert compiles out in production, so zero prod cost. Not a behavior change.
+    private boolean replaceRemoveCandidatesDisjointFromLivePartitions() {
+        for (int i = 0, n = replaceRangeRemoveCandidates.size(); i < n; i += 2) {
+            final long candidateTs = replaceRangeRemoveCandidates.getQuick(i);
+            final long candidateNameTxn = replaceRangeRemoveCandidates.getQuick(i + 1);
+            final long liveNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(candidateTs, Long.MIN_VALUE);
+            if (liveNameTxn != Long.MIN_VALUE
+                    && liveNameTxn == candidateNameTxn
+                    && txWriter.getPartitionRowCountByTimestamp(candidateTs) > 0) {
+                LOG.critical().$("windowed-replace drain would unlink a live attached partition [table=").$(tableToken)
+                        .$(", ts=").$ts(timestampDriver, candidateTs)
+                        .$(", nameTxn=").$(candidateNameTxn)
+                        .$(", size=").$(txWriter.getPartitionRowCountByTimestamp(candidateTs))
+                        .I$();
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
