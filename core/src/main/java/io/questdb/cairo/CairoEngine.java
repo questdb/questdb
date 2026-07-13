@@ -820,11 +820,14 @@ public class CairoEngine implements Closeable, WriterSource {
                         continue;
                     }
                     if (!TableUtils.isLiveViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
-                        // Orphan LV directory: createLiveView writes _lv last as the
-                        // atomic commit marker, so a missing _lv means CREATE crashed
-                        // before finishing. Reap the directory so it does not pile up.
-                        // Best-effort: a failure here only delays cleanup, never loses
-                        // committed data (the LV never reached the visible state).
+                        // LV-typed token with no _lv on disk. TableUtils.createTable writes _lv
+                        // before _txn, so a crashed CREATE cannot produce this shape: the definition
+                        // is there before the directory even reports TABLE_EXISTS. What reaches here
+                        // is a committed view whose _lv was lost (deleted / truncated out of band),
+                        // so the reap below drops its data too. That is the deliberate trade: an LV
+                        // with no definition cannot be loaded, refreshed or recreated under its own
+                        // name, and leaving it strands the directory as an undroppable zombie.
+                        // Best-effort: a failure here only delays cleanup.
                         LOG.info().$("reaping half-created live view [view=").$(tableToken).I$();
                         try {
                             dropTableOrViewOrMatView(path, tableToken);
@@ -862,10 +865,13 @@ public class CairoEngine implements Closeable, WriterSource {
                                     metadata
                             );
                             LiveViewInstance instance = new LiveViewInstance(definition, tableToken);
-                            // _lv exists, so CREATE committed atomically (the engine writes
-                            // _lv.s first and _lv last). If _lv.s is somehow missing here,
-                            // the on-disk state is corrupt: refusing the load avoids re-
-                            // replaying the entire base table from seqTxn 0.
+                            // _lv is written before _txn and _lv.s after it, so a definition with no
+                            // state is the shape a CREATE that crashed mid-way leaves behind (and,
+                            // equally, an _lv.s lost out of band). Either way there is no resume
+                            // floor: loading with lastProcessed defaulted to -1 would re-replay the
+                            // entire base table from seqTxn 0. Refuse the load - the outer catch
+                            // surfaces it as a droppable state_unreadable stub, which is what a
+                            // half-created view should look like to an operator.
                             if (!TableUtils.isLiveViewStateFileExists(configuration, path, tableToken.getDirName())) {
                                 throw CairoException.critical(0)
                                         .put("live view state file missing alongside committed definition [view=")
@@ -1492,14 +1498,17 @@ public class CairoEngine implements Closeable, WriterSource {
             // From here on, any failure must roll back the table to avoid orphan
             // LV-typed directories the startup loader skips and never reclaims.
             try {
-                // _lv is the atomic CREATE commit marker for the table dir, so it
-                // must be written last. Order: _lv.s (state) first, then _lv
-                // (definition). A crash between the two leaves _lv missing and the
-                // partial CREATE looks like an orphan LV directory to the loader.
-                // Rolling that back is safe; loading a half-created LV is not
-                // (without _lv.s, lastProcessed would default to -1 and the next
-                // refresh would re-replay the entire base table). The seq-dir _lv
-                // (written above by SequencerMetadata.create) is a separate copy
+                // TableUtils.createTable already wrote the table-dir _lv (definition), BEFORE _txn -
+                // see the note there. _txn is what exists() keys on, so a crash between them leaves
+                // a directory the loader does not mistake for a plain WAL table.
+                //
+                // What is still written here is _lv.s (state), and it lands AFTER _lv. A crash in
+                // that window leaves a definition with no state, which buildViewGraphs surfaces as a
+                // droppable state_unreadable stub rather than loading it: without _lv.s,
+                // lastProcessed would default to -1 and the next refresh would re-replay the entire
+                // base table. The registry name commit below is the LV's atomic CREATE point.
+                //
+                // The seq-dir _lv (written above by SequencerMetadata.create) is a separate copy
                 // for replication and is rolled back with the table on failure.
 
                 // _checkpoints/ subdirectory holds the rolling head checkpoint.

@@ -3183,18 +3183,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // they may not create. Then optimise like the two arms above: falling through with
                 // the raw parser model made generateExplain() codegen an unoptimised SELECT, which
                 // trips "wtf? ts" under -ea and an AIOOBE without - an Error escaping compile(),
-                // i.e. a 500 on HTTP/pgwire instead of a plan. setLiveViewCompile pins the same
-                // codegen path the real create uses, so the plan reflects it.
+                // i.e. a 500 on HTTP/pgwire instead of a plan.
+                //
+                // The live-view codegen flag is armed in generateExplain, not here: nothing in
+                // SqlOptimiser reads isLiveViewCompile(), so arming it around this call alone would
+                // leave it false for the code generation that actually reads it.
                 executionContext.getSecurityContext().authorizeLiveViewCreate();
                 final CreateLiveViewOperationBuilder createLiveViewBuilder = (CreateLiveViewOperationBuilder) model;
                 if (createLiveViewBuilder.getQueryModel() != null) {
-                    executionContext.setLiveViewCompile(true);
-                    try {
-                        final IQueryModel selectModel = optimiser.optimise(createLiveViewBuilder.getQueryModel(), executionContext, this);
-                        createLiveViewBuilder.setSelectModel(selectModel);
-                    } finally {
-                        executionContext.setLiveViewCompile(false);
-                    }
+                    final IQueryModel selectModel = optimiser.optimise(createLiveViewBuilder.getQueryModel(), executionContext, this);
+                    createLiveViewBuilder.setSelectModel(selectModel);
                 }
                 return model;
         }
@@ -5045,9 +5043,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     executionContext
             );
             return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
-        } else {
-            return codeGenerator.generateExplain(model, executionContext);
         }
+        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.CREATE_LIVE_VIEW) {
+            // Arm the live-view compile flag around CODE GENERATION, which is the only thing that
+            // reads it: SqlCodeGenerator (the symbol partition-key sink, anchor collection),
+            // WhereClauseParser (a SqlCodeGenerator field - it suppresses indexed-symbol filters
+            // for a live view) and CompiledFilterIRSerializer. SqlOptimiser never reads it, so
+            // arming it only around optimise() in compileExplainExecutionModel0 left it false here
+            // and printed a plan the real CREATE never generates (an indexed symbol scan). Mirrors
+            // the arm CairoEngine.createLiveView wraps its compile() in.
+            executionContext.setLiveViewCompile(true);
+            try {
+                return codeGenerator.generateExplain(model, executionContext);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
+        }
+        return codeGenerator.generateExplain(model, executionContext);
     }
 
     private UpdateOperation generateUpdate(IQueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
@@ -5530,9 +5542,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'view' expected");
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
         }
-        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'view' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
     }
 
     protected void compileAlterMatViewExt(SqlExecutionContext executionContext, CharSequence tok, TableToken matViewToken, int matViewNamePosition) throws SqlException {

@@ -1559,6 +1559,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 WalEventCursor eventCursor = WalTxnDetails.openWalEFile(walPath, walEventReader, segmentTxn, txn);
 
                 if (!WalTxnType.isDataType(eventCursor.getType())) {
+                    if (eventCursor.getType() == WalTxnType.TRUNCATE && baseToken.isMatView()) {
+                        // A mat view's TRUNCATE is never data retirement - it is the rebuild half
+                        // of a full refresh, and the commits above it re-materialise rows this view
+                        // already consumed. ApplyWal2TableJob's TRUNCATE arm invalidates the view
+                        // for exactly that reason, but it is a different worker: this drain walks
+                        // the base's raw sequencer log with no apply gate (unlike drainAppliedBase),
+                        // so walking past the TRUNCATE here would emit those rows a second time -
+                        // over accumulators still holding pre-rebuild state - while the view still
+                        // reports ACTIVE, all before the apply job ever reaches this seqTxn.
+                        //
+                        // Stop the walk instead of skipping the commit. Rows drained from commits
+                        // BELOW the TRUNCATE stay valid and are committed by the normal exit path;
+                        // lastProcessedSeqTxn simply never crosses it. The view keeps serving its
+                        // pre-rebuild rows until the apply job applies this same seqTxn and
+                        // invalidates it. Until then each cycle re-drains to here and stops, which
+                        // is the same benign no-progress hold the apply-lag gate takes.
+                        break;
+                    }
                     // Non-data commit (schema change / DROP PARTITION / TRUNCATE / TTL) —
                     // walked past, no rewrite to the in-memory tier or LV WAL. Schema
                     // changes that touch referenced columns invalidate via
@@ -4919,7 +4937,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // them - the view under-reports until a later base commit drives another flush. On
             // a quiescent base that never comes. Retry the apply here instead; it is idempotent
             // (the block is committed, so it lands each row exactly once) and it is what lets
-            // ALTER TABLE ... RESUME WAL on a suspended live view take effect without waiting
+            // ALTER LIVE VIEW ... RESUME WAL on a suspended live view take effect without waiting
             // for the base to move.
             if (!leadOnly && hasPendingLiveViewApply(instance)) {
                 didWork |= retryPendingLiveViewApply(instance);

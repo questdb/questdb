@@ -439,8 +439,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.initPartitionBy(symbolTableSource, executionContext);
-            // volumeArg is a plain Function, so it rebinds via init() - as lead/lag does for
-            // its defaultValue.
+            // volumeArg is a plain Function, so it rebinds via init() - as
+            // BaseBivariateWindowFunction does for its second argument.
             volumeArg.init(symbolTableSource, executionContext);
         }
 
@@ -624,8 +624,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.initPartitionBy(symbolTableSource, executionContext);
-            // volumeArg is a plain Function, so it rebinds via init() - as lead/lag does for
-            // its defaultValue.
+            // volumeArg is a plain Function, so it rebinds via init() - as
+            // BaseBivariateWindowFunction does for its second argument.
             volumeArg.init(symbolTableSource, executionContext);
         }
 
@@ -855,8 +855,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.initPartitionBy(symbolTableSource, executionContext);
-            // volumeArg is a plain Function, so it rebinds via init() - as lead/lag does for
-            // its defaultValue.
+            // volumeArg is a plain Function, so it rebinds via init() - as
+            // BaseBivariateWindowFunction does for its second argument.
             volumeArg.init(symbolTableSource, executionContext);
         }
 
@@ -1054,8 +1054,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.initPartitionBy(symbolTableSource, executionContext);
-            // volumeArg is a plain Function, so it rebinds via init() - as lead/lag does for
-            // its defaultValue.
+            // volumeArg is a plain Function, so it rebinds via init() - as
+            // BaseBivariateWindowFunction does for its second argument.
             volumeArg.init(symbolTableSource, executionContext);
         }
 

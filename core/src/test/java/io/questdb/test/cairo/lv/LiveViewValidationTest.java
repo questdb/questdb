@@ -172,6 +172,30 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateLiveViewPlanMatchesTheRealCreate() throws Exception {
+        // A plan is only useful if it is the plan the real CREATE compiles. Every
+        // isLiveViewCompile() consumer sits in the code generator - here, WhereClauseParser's
+        // useIndexedSymbolFilters, which a live view must suppress: its refresh reads raw WAL
+        // segments, which carry no symbol index. Arming the flag only around optimiser.optimise()
+        // left it false at codegen, so EXPLAIN printed an "Index forward scan" that the real
+        // CREATE never generates.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS "
+                    + "SELECT ts, sym, x, row_number() OVER () AS rn FROM base WHERE sym = 'a'";
+
+            final StringSink plan = new StringSink();
+            printSql("EXPLAIN " + body, plan);
+            Assert.assertFalse(
+                    "the live view plan must not use the symbol index [plan=" + plan + ']',
+                    Chars.contains(plan, "Index forward scan") || Chars.contains(plan, "Index backward scan")
+            );
+            Assert.assertTrue("the plan must scan the base table [plan=" + plan + ']',
+                    Chars.contains(plan, "Frame forward scan on: base"));
+        });
+    }
+
+    @Test
     public void testCreateLiveViewWritesDefinitionBeforeTxn() throws Exception {
         // _lv must land BEFORE _txn, like _view and _mv. _txn is what TableUtils.exists() keys on,
         // so writing _lv after it leaves a crash window whose directory looks like a plain WAL
