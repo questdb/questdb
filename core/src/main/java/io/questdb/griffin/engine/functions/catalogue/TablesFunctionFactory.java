@@ -263,6 +263,10 @@ public class TablesFunctionFactory implements FunctionFactory {
             }
 
             private static class TableListRecord implements Record {
+                private final StringSink expiryCleanupEverySink = new StringSink();
+                private final StringSink expiryPredicateSink = new StringSink();
+                private boolean hasExpiryCleanupEvery;
+                private boolean hasExpiryPredicate;
                 private StringSink lazyStringSink = null;
                 private CairoTable table;
                 private TableSequencerAPI tableSequencerAPI;
@@ -378,9 +382,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                         case TABLE_NAME -> table.getTableName();
                         case PARTITION_BY_COLUMN -> table.getPartitionByName();
                         case TTL_UNIT_COLUMN -> getTtlUnit(table.getTtlHoursOrMonths());
-                        case EXPIRE_CLAUSE_COLUMN -> RowExpiryUtil.displayPredicate(table.getExpiryPredicate());
-                        case EXPIRE_CLEANUP_EVERY_COLUMN ->
-                                RowExpiryUtil.formatCleanupEvery(table.getExpiryCleanupIntervalMicros());
+                        case EXPIRE_CLAUSE_COLUMN -> hasExpiryPredicate ? expiryPredicateSink : null;
+                        case EXPIRE_CLEANUP_EVERY_COLUMN -> hasExpiryCleanupEvery ? expiryCleanupEverySink : null;
                         case DESIGNATED_TIMESTAMP_COLUMN -> table.getTimestampName();
                         case DIRECTORY_NAME_COLUMN -> {
                             if (table.isSoftLink()) {
@@ -427,6 +430,17 @@ public class TablesFunctionFactory implements FunctionFactory {
                     this.tableSequencerAPI = tableSequencerAPI;
                     this.writeStats = recentWriteTracker.getWriteStats(table.getTableToken());
                     this.timestampDriver = ColumnType.getTimestampDriver(table.getTimestampType());
+
+                    expiryPredicateSink.clear();
+                    hasExpiryPredicate = table.getExpiryPredicate() != null;
+                    if (hasExpiryPredicate) {
+                        RowExpiryUtil.appendDisplayPredicate(expiryPredicateSink, table.getExpiryPredicate());
+                    }
+                    expiryCleanupEverySink.clear();
+                    hasExpiryCleanupEvery = table.getExpiryCleanupIntervalMicros() > 0;
+                    if (hasExpiryCleanupEvery) {
+                        RowExpiryUtil.appendCleanupEvery(expiryCleanupEverySink, table.getExpiryCleanupIntervalMicros());
+                    }
                 }
             }
         }

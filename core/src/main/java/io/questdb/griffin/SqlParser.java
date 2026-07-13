@@ -917,8 +917,8 @@ public class SqlParser {
             // table's designated timestamp. LATEST ON cannot share a query level with WHERE, so isolating it
             // in this inner sub-query is exactly right: any outer predicate filters the already-latest rows.
             final CharSequence keys = RowExpiryUtil.keepLatestKeys(predicate);
-            final String latestSql = "SELECT * FROM \"" + tableName + "\" LATEST ON \""
-                    + designatedTimestampColumn + "\" PARTITION BY " + keys;
+            final String latestSql = "SELECT * FROM " + RowExpiryUtil.quoteIdentifier(tableName) + " LATEST ON "
+                    + RowExpiryUtil.quoteIdentifier(designatedTimestampColumn) + " PARTITION BY " + keys;
             final GenericLexer latestLexer = viewLexers.next();
             latestLexer.of(latestSql);
             final IQueryModel latestSubQuery = parseAsSubQuery(latestLexer, null, false, sqlParserCallback, model.getDecls(), true);
@@ -944,11 +944,15 @@ public class SqlParser {
             // (SELECT * / LATEST ON), so only this branch needs it.
             final String windowPredicate = RowExpiryUtil.windowPredicate(predicate, designatedTimestampColumn);
             final String windowSql = "SELECT " + buildQuotedColumnList(tableName) + " FROM (SELECT *, CASE WHEN ("
-                    + windowPredicate + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM \""
-                    + tableName + "\") timestamp(\"" + designatedTimestampColumn + "\") WHERE " + RowExpiryUtil.KEEP_COLUMN;
+                    + windowPredicate + ") THEN false ELSE true END " + RowExpiryUtil.KEEP_COLUMN + " FROM "
+                    + RowExpiryUtil.quoteIdentifier(tableName) + ") timestamp("
+                    + RowExpiryUtil.quoteIdentifier(designatedTimestampColumn) + ") WHERE " + RowExpiryUtil.KEEP_COLUMN;
             final GenericLexer windowLexer = viewLexers.next();
             windowLexer.of(windowSql);
             final IQueryModel windowSubQuery = parseAsSubQuery(windowLexer, null, false, sqlParserCallback, model.getDecls(), true);
+            markExpiryWindowBarrier(windowSubQuery);
+            model.setExpiryWindowBarrier(true);
+            model.getExpiryWindowPartitionBy().addAll(windowSubQuery.getExpiryWindowPartitionBy());
             model.setNestedModel(windowSubQuery);
             model.setNestedModelIsSubQuery(true);
             if (model.getAlias() == null) {
@@ -962,7 +966,8 @@ public class SqlParser {
         // visible. The keep-filter is parsed inline (so the sub-query model processes it like any WHERE);
         // see keepFilterWhereText for the NULL/three-valued and partition-pruning details.
         final boolean flip = isTimestampFlippablePredicate(predicate, designatedTimestampColumn, sqlParserCallback, model.getDecls());
-        final String syntheticSql = "SELECT * FROM \"" + tableName + "\" WHERE " + keepFilterWhereText(predicate, flip);
+        final String syntheticSql = "SELECT * FROM " + RowExpiryUtil.quoteIdentifier(tableName) + " WHERE "
+                + keepFilterWhereText(predicate, flip);
 
         final GenericLexer subLexer = viewLexers.next();
         subLexer.of(syntheticSql);
@@ -976,6 +981,75 @@ public class SqlParser {
         if (model.getAlias() == null) {
             model.setAlias(literal(tableName, position));
         }
+    }
+
+    private void markExpiryWindowBarrier(IQueryModel model) {
+        tempExprNodes.clear();
+        collectExpiryWindowExpressions(model);
+        model.setExpiryWindowBarrier(true);
+        if (tempExprNodes.size() == 0) {
+            return;
+        }
+
+        final ObjList<ExpressionNode> semanticKeys = model.getExpiryWindowPartitionBy();
+        final ObjList<ExpressionNode> firstKeys = tempExprNodes.getQuick(0).windowExpression.getPartitionBy();
+        semanticKeys.addAll(firstKeys);
+        for (int i = 1, n = tempExprNodes.size(); i < n && semanticKeys.size() > 0; i++) {
+            final ObjList<ExpressionNode> keys = tempExprNodes.getQuick(i).windowExpression.getPartitionBy();
+            if (!sameSemanticKeys(semanticKeys, keys)) {
+                // A raw policy may contain windows over different partitions. No predicate can cross that
+                // barrier unless it preserves every window, so leave the semantic key set empty.
+                semanticKeys.clear();
+            }
+        }
+    }
+
+    private void collectExpiryWindowExpressions(IQueryModel model) {
+        if (model == null) {
+            return;
+        }
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            collectExpiryWindowExpressions(columns.getQuick(i).getAst());
+        }
+        collectExpiryWindowExpressions(model.getNestedModel());
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            collectExpiryWindowExpressions(joinModels.getQuick(i));
+        }
+        collectExpiryWindowExpressions(model.getUnionModel());
+    }
+
+    private void collectExpiryWindowExpressions(ExpressionNode node) {
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.windowExpression != null) {
+                    tempExprNodes.add(node);
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.add(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+    }
+
+    private static boolean sameSemanticKeys(ObjList<ExpressionNode> a, ObjList<ExpressionNode> b) {
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (int i = 0, n = a.size(); i < n; i++) {
+            if (!ExpressionNode.compareNodesExact(a.getQuick(i), b.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -1002,7 +1076,7 @@ public class SqlParser {
                     if (i > 0) {
                         sink.putAscii(',');
                     }
-                    sink.putAscii('"').put(names.getQuick(i)).putAscii('"');
+                    sink.put(RowExpiryUtil.quoteIdentifier(names.getQuick(i)));
                 }
                 return sink.toString();
             }
@@ -1014,7 +1088,7 @@ public class SqlParser {
                 if (i > 0) {
                     sink.putAscii(',');
                 }
-                sink.putAscii('"').put(metadata.getColumnName(i)).putAscii('"');
+                sink.put(RowExpiryUtil.quoteIdentifier(metadata.getColumnName(i)));
             }
         } catch (CairoException ignore) {
             // Table concurrently dropped/renamed: getTableMetadata throws on open (before the loop), so the

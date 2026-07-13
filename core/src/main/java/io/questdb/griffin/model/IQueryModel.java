@@ -281,6 +281,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     IntHashSet getDependencies();
 
+    ObjList<ExpressionNode> getExpiryWindowPartitionBy();
+
     ObjList<ExpressionNode> getExpressionModels();
 
     ExpressionNode getFillFrom();
@@ -479,6 +481,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isExplicitTimestamp();
 
+    boolean isExpiryWindowBarrier();
+
     boolean isForceBackwardScan();
 
     boolean isNestedModelIsSubQuery();
@@ -560,6 +564,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setDistinct(boolean distinct);
 
     void setExplicitTimestamp(boolean explicitTimestamp);
+
+    void setExpiryWindowBarrier(boolean isExpiryWindowBarrier);
 
     void setFillFrom(ExpressionNode fillFrom);
 

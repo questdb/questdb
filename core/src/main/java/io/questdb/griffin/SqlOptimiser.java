@@ -5574,6 +5574,9 @@ public class SqlOptimiser implements Mutable {
         if (!model.isOptimisable()) {
             return;
         }
+        if (model.isExpiryWindowBarrier()) {
+            pushExpiryPartitionFiltersBelowWindow(model);
+        }
         if (
                 model.getSelectModelType() != IQueryModel.SELECT_MODEL_DISTINCT
                         // in theory, we could push down predicates as long as they align with ALL partition by clauses
@@ -5762,6 +5765,141 @@ public class SqlOptimiser implements Mutable {
         if (nested != null) {
             moveWhereInsideSubQueries(nested);
         }
+    }
+
+    private ExpressionNode cloneExpiryPartitionPredicate(ExpressionNode node, ExpressionNode semanticKey) {
+        final ExpressionNode clone = ExpressionNode.deepClone(expressionNodePool, node);
+        if (sameExpirySemanticExpression(node.lhs, semanticKey)) {
+            clone.lhs = ExpressionNode.deepClone(expressionNodePool, semanticKey);
+        } else {
+            clone.rhs = ExpressionNode.deepClone(expressionNodePool, semanticKey);
+        }
+        return clone;
+    }
+
+    private int expiryPartitionKeyIndex(ExpressionNode node, ObjList<ExpressionNode> semanticKeys) {
+        if (node.type != OPERATION || !Chars.equals(node.token, "=") || node.paramCount != 2) {
+            return -1;
+        }
+        final boolean isLhsValue = isExpiryPartitionValue(node.lhs);
+        final boolean isRhsValue = isExpiryPartitionValue(node.rhs);
+        if (isLhsValue == isRhsValue) {
+            return -1;
+        }
+        final ExpressionNode expression = isLhsValue ? node.rhs : node.lhs;
+        for (int i = 0, n = semanticKeys.size(); i < n; i++) {
+            if (sameExpirySemanticExpression(expression, semanticKeys.getQuick(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private IQueryModel findExpiryWindowInput(IQueryModel barrier) {
+        IQueryModel current = barrier;
+        IQueryModel tableModel = null;
+        while (current != null) {
+            if (current.getUnionModel() != null || current.getJoinModels().size() > 1) {
+                return null;
+            }
+            if (current.getTableNameExpr() != null) {
+                tableModel = current;
+            }
+            current = current.getNestedModel();
+        }
+        return tableModel;
+    }
+
+    private static boolean isExpiryPartitionValue(ExpressionNode node) {
+        return node != null && (node.type == CONSTANT || node.type == BIND_VARIABLE);
+    }
+
+    /**
+     * Clones a caller predicate below the synthetic expiry window only when every semantic partition key has
+     * an equality constraint to a constant (including NULL) or bind variable. The original predicates stay
+     * outside the window, preserving the public filter semantics. Exact expression trees qualify; a single
+     * table qualifier may be omitted or added by alias rewriting, but two different qualifiers never match.
+     *
+     * <p>OR predicates, ranges, IN lists, column-to-column/join predicates, partially constrained composite
+     * keys, global windows, shared CTE inputs, unions, and ambiguous nested joins stay whole-view. Raw policies
+     * expose semantic keys only when every window expression has the same non-empty PARTITION BY list.</p>
+     */
+    private void pushExpiryPartitionFiltersBelowWindow(IQueryModel model) {
+        final IQueryModel windowInput = findExpiryWindowInput(model);
+        final ObjList<ExpressionNode> semanticKeys = model.getExpiryWindowPartitionBy();
+        if (windowInput == null || windowInput.hasSharedRefs() || semanticKeys.size() == 0 || model.getWhereClause() == null) {
+            return;
+        }
+
+        final ObjList<ExpressionNode> predicates = model.parseWhereClause();
+        tempExprs.clear();
+        tempIntHashSet.clear();
+        for (int i = 0, n = predicates.size(); i < n; i++) {
+            final ExpressionNode predicate = predicates.getQuick(i);
+            final int keyIndex = expiryPartitionKeyIndex(predicate, semanticKeys);
+            if (keyIndex > -1) {
+                tempExprs.add(predicate);
+                tempIntHashSet.add(keyIndex);
+            }
+        }
+
+        if (tempIntHashSet.size() == semanticKeys.size()) {
+            for (int i = 0, n = tempExprs.size(); i < n; i++) {
+                final ExpressionNode predicate = tempExprs.getQuick(i);
+                final int keyIndex = expiryPartitionKeyIndex(predicate, semanticKeys);
+                addWhereNode(windowInput, cloneExpiryPartitionPredicate(predicate, semanticKeys.getQuick(keyIndex)));
+            }
+        }
+        predicates.clear();
+    }
+
+    private static boolean sameExpirySemanticExpression(ExpressionNode a, ExpressionNode b) {
+        if (a == null || b == null || a.type != b.type || a.paramCount != b.paramCount) {
+            return false;
+        }
+        if (a.type == LITERAL) {
+            if (!sameExpirySemanticLiteral(a.token, b.token)) {
+                return false;
+            }
+        } else if (a.type == FUNCTION) {
+            if (!Chars.equalsIgnoreCase(a.token, b.token)) {
+                return false;
+            }
+        } else if (!Chars.equals(a.token, b.token)) {
+            return false;
+        }
+        if (a.args.size() != b.args.size()) {
+            return false;
+        }
+        if (a.args.size() < 3) {
+            return sameExpirySemanticExpressionNullable(a.lhs, b.lhs)
+                    && sameExpirySemanticExpressionNullable(a.rhs, b.rhs);
+        }
+        for (int i = 0, n = a.args.size(); i < n; i++) {
+            if (!sameExpirySemanticExpression(a.args.getQuick(i), b.args.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean sameExpirySemanticExpressionNullable(ExpressionNode a, ExpressionNode b) {
+        return a == null ? b == null : b != null && sameExpirySemanticExpression(a, b);
+    }
+
+    private static boolean sameExpirySemanticLiteral(CharSequence a, CharSequence b) {
+        if (Chars.equalsIgnoreCase(a, b)) {
+            return true;
+        }
+        final int aDot = Chars.indexOfLastUnquoted(a, '.');
+        final int bDot = Chars.indexOfLastUnquoted(b, '.');
+        if (aDot > -1 && bDot > -1) {
+            return false;
+        }
+        if (aDot > -1) {
+            return Chars.equalsIgnoreCase(b, a, aDot + 1, a.length());
+        }
+        return bDot > -1 && Chars.equalsIgnoreCase(a, b, bDot + 1, b.length());
     }
 
     private QueryColumn nextColumn(CharSequence name) {

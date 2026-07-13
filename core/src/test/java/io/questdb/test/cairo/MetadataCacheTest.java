@@ -941,6 +941,50 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropClearsFailedHydrationPendingExpiryIdOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE bravo (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken alpha = engine.verifyTableName("alpha");
+            final TableToken bravo = engine.verifyTableName("bravo");
+            cache.markExpiryPolicyPossible(alpha.getTableId());
+            cache.markExpiryPolicyPossible(bravo.getTableId());
+
+            final File meta = metaFile("alpha");
+            final File hidden = new File(meta.getParentFile(), "_meta.hidden");
+            java.nio.file.Files.move(meta.toPath(), hidden.toPath());
+            try {
+                try (MetadataCacheWriter writer = cache.writeLock()) {
+                    Assert.assertThrows(CairoException.class, () -> writer.hydrateTable(alpha));
+                }
+                Assert.assertTrue(cache.mayTableHaveExpiryPolicy(alpha));
+                Assert.assertTrue(cache.mayTableHaveExpiryPolicy(bravo));
+
+                // The authoritative drop must clear alpha by table ID even though failed hydration removed its
+                // CairoTable. Bravo's independent pending ID must remain published.
+                try (MetadataCacheWriter writer = cache.writeLock()) {
+                    writer.dropTable(alpha);
+                }
+                Assert.assertFalse(cache.mayTableHaveExpiryPolicy(alpha));
+                Assert.assertTrue(cache.mayTableHaveExpiryPolicy(bravo));
+                Assert.assertTrue(cache.mayHaveExpiryPolicy());
+            } finally {
+                java.nio.file.Files.move(hidden.toPath(), meta.toPath());
+            }
+
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(bravo);
+            }
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(bravo));
+            Assert.assertFalse(cache.mayHaveExpiryPolicy());
+        });
+    }
+
+    @Test
     public void testHydrateAllTablesShortCircuitsWhenCacheComplete() throws Exception {
         // hydrateAllTables() backs the tables()/all_tables() startup-race fix, but it
         // must be a no-op once the cache is known complete: from then on writers keep
@@ -999,6 +1043,11 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 }
                 cache.onStartupAsyncHydrator();
 
+                // Failed hydration must leave expiry lookups conservative. Otherwise the read-path gate can
+                // suppress the authoritative predicate lookup for the missing table.
+                Assert.assertTrue(cache.mayHaveExpiryPolicy());
+                Assert.assertTrue(cache.mayTableHaveExpiryPolicy(engine.getTableTokenIfExists("charlie")));
+
                 // alpha + bravo hydrated; charlie could not be read and is absent.
                 try (MetadataCacheReader ro = cache.readLock()) {
                     Assert.assertEquals(2, ro.getTableCount());
@@ -1013,10 +1062,59 @@ public class MetadataCacheTest extends AbstractCairoTest {
             // reconcile still runs and now picks charlie up. With the pre-fix
             // unconditional latch this short-circuited and charlie stayed hidden.
             cache.hydrateAllTables();
+            Assert.assertFalse("complete policy-free cache may close the global expiry gate", cache.mayHaveExpiryPolicy());
             try (MetadataCacheReader ro = cache.readLock()) {
                 Assert.assertEquals(3, ro.getTableCount());
                 Assert.assertNotNull(ro.getTable(engine.getTableTokenIfExists("charlie")));
             }
+        });
+    }
+
+    @Test
+    public void testPendingExpiryPolicySurvivesUnrelatedPublishAndFailedHydrate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE alpha (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE charlie (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            Assert.assertFalse(cache.mayHaveExpiryPolicy());
+
+            final TableToken alpha = engine.verifyTableName("alpha");
+            final TableToken charlie = engine.verifyTableName("charlie");
+            cache.markExpiryPolicyPossible(charlie.getTableId());
+            Assert.assertTrue(cache.mayHaveExpiryPolicy());
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(charlie));
+
+            // Force an unrelated active-snapshot publication between the conservative mark and charlie's
+            // authoritative hydration. The publication must preserve charlie's pending ID even though no
+            // hydrated table currently carries a policy.
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.dropTable(alpha);
+            }
+            Assert.assertTrue(cache.mayHaveExpiryPolicy());
+            Assert.assertTrue(cache.mayTableHaveExpiryPolicy(charlie));
+
+            final File meta = metaFile("charlie");
+            final File hidden = new File(meta.getParentFile(), "_meta.hidden");
+            java.nio.file.Files.move(meta.toPath(), hidden.toPath());
+            try {
+                try (MetadataCacheWriter writer = cache.writeLock()) {
+                    Assert.assertThrows(CairoException.class, () -> writer.hydrateTable(charlie));
+                }
+                Assert.assertTrue("failed hydration must retain the conservative global gate", cache.mayHaveExpiryPolicy());
+                Assert.assertTrue("failed hydration must retain the pending table ID", cache.mayTableHaveExpiryPolicy(charlie));
+            } finally {
+                java.nio.file.Files.move(hidden.toPath(), meta.toPath());
+            }
+
+            // Successful authoritative hydration finds no real policy and clears the pending mark.
+            try (MetadataCacheWriter writer = cache.writeLock()) {
+                writer.hydrateTable(charlie);
+            }
+            Assert.assertFalse(cache.mayHaveExpiryPolicy());
+            Assert.assertFalse(cache.mayTableHaveExpiryPolicy(charlie));
         });
     }
 

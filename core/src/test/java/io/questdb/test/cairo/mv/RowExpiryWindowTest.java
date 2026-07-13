@@ -53,15 +53,6 @@ import org.junit.Test;
  */
 public class RowExpiryWindowTest extends AbstractCairoTest {
 
-    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
-    // calculate-size and variable-column cross-checks run against these deterministic projections.
-    // sizeMayVary() keeps the size-vs-iteration cross-check without pinning determinability, and
-    // inferRandomAccess()/inferTimestamp() adopt each heterogeneous factory's own capability.
-    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
-    }
-
     @Before
     public void setUp() {
         super.setUp();
@@ -69,20 +60,106 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExpiryWindowCompositeKeyRequiresEveryKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k, region");
+
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A' AND region = 'X'").noLeakCheck().returns("k\tregion\tv\n" +
+                            "A\tX\t9.0\n");
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A' AND region = 'X'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Index forward scan on: k");
+
+            // A predicate on only one component leaves the composite partition identity open. The barrier
+            // keeps the whole-view window plan rather than applying the partial key constraint below it.
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Index forward scan on: k");
+        });
+    }
+
+    @Test
+    public void testExpiryWindowPartitionKeyAliasAndBindPushDown() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+            sqlExecutionContext.getBindVariableService().clear();
+            sqlExecutionContext.getBindVariableService().setStr(0, "A");
+
+            assertQuery("SELECT x.k, x.region, x.v FROM mv x WHERE x.k = $1 ORDER BY region").noLeakCheck().returns("k\tregion\tv\n" +
+                            "A\tX\t9.0\n");
+            assertQuery("SELECT x.k, x.region, x.v FROM mv x WHERE x.k = $1")
+                    .noLeakCheck()
+                    .withContext(sqlExecutionContext)
+                    .assertsPlanContaining("Index forward scan on: k");
+        });
+    }
+
+    @Test
+    public void testExpiryWindowPartitionKeyPushDownPreservesResults() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+
+            final String expected = "k\tregion\tv\n" +
+                    "A\tX\t9.0\n";
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A' ORDER BY region").noLeakCheck().returns(expected);
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Index forward scan on: k");
+
+            // A non-key predicate must remain outside the window. Pushing v > 5 below KEEP HIGHEST would
+            // change ranks for other policies and is never part of the cloned partition constraint.
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A' AND v > 5 ORDER BY region").noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testExpiryWindowRawPolicyUsesOnlyCommonSemanticKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedView("EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k)");
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A' ORDER BY region").noLeakCheck().returns("k\tregion\tv\n" +
+                            "A\tX\t9.0\n");
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Index forward scan on: k");
+
+            execute("DROP MATERIALIZED VIEW mv");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base), INDEX (k) " +
+                    "EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k) " +
+                    "OR v < max(v) OVER (PARTITION BY region)");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT k, region, v FROM mv WHERE k = 'A'")
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Index forward scan on: k");
+        });
+    }
+
+    @Test
+    public void testExpiryWindowRepeatedReferencesPushDownIndependently() throws Exception {
+        assertMemoryLeak(() -> {
+            createIndexedView("EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+
+            assertQuery("SELECT k FROM mv WHERE k = 'A' UNION ALL SELECT k FROM mv WHERE k = 'B'").noRandomAccess().noLeakCheck().returns("k\n" +
+                            "A\n" +
+                            "B\n");
+            sink.clear();
+            printSql("EXPLAIN SELECT k FROM mv WHERE k = 'A' " +
+                    "UNION ALL SELECT k FROM mv WHERE k = 'B'", sink);
+            Assert.assertEquals(2, countOccurrences(sink.toString(), "Index forward scan on: k"));
+        });
+    }
+
+    @Test
     public void testKeepHighestAllTiesPerKey() throws Exception {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep highest v partition by k");
             // Keep every row tied at the per-key max; NULL-group rows survive (v<max is UNKNOWN, kept).
-            assertSql(
-                    "k\tv\tts\n" +
+            assertQuery("select k, v, ts from mv order by k, ts").noLeakCheck().returns("k\tv\tts\n" +
                             "A\t3.0\t2024-01-02T00:00:00.000000Z\n" +
                             "B\t5.0\t2024-01-01T00:00:00.000000Z\n" +
                             "B\t5.0\t2024-01-02T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-01T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-02T00:00:00.000000Z\n" +
-                            "D\t7.0\t2024-01-01T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by k, ts"
-            );
+                            "D\t7.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -90,15 +167,12 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     public void testKeepLowestPerKey() throws Exception {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep lowest v partition by k");
-            assertSql(
-                    "k\tv\tts\n" +
+            assertQuery("select k, v, ts from mv order by k, ts").noLeakCheck().returns("k\tv\tts\n" +
                             "A\t1.0\t2024-01-01T00:00:00.000000Z\n" +
                             "B\t4.0\t2024-01-03T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-01T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-02T00:00:00.000000Z\n" +
-                            "D\t7.0\t2024-01-01T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by k, ts"
-            );
+                            "D\t7.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -107,17 +181,14 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep 2 highest v partition by k");
             // top-2 by v desc, with the designated timestamp as the deterministic tiebreak.
-            assertSql(
-                    "k\tv\tts\n" +
+            assertQuery("select k, v, ts from mv order by k, v desc, ts desc").noLeakCheck().returns("k\tv\tts\n" +
                             "A\t3.0\t2024-01-02T00:00:00.000000Z\n" +
                             "A\t2.0\t2024-01-03T00:00:00.000000Z\n" +
                             "B\t5.0\t2024-01-02T00:00:00.000000Z\n" +
                             "B\t5.0\t2024-01-01T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-02T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-01T00:00:00.000000Z\n" +
-                            "D\t7.0\t2024-01-01T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by k, v desc, ts desc"
-            );
+                            "D\t7.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -138,12 +209,9 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows keep 2 highest v partition by k");
             drainWalAndMatViewQueues();
-            assertSql(
-                    "k\tv\n" +
+            assertQuery("select k, v from mv order by v").noLeakCheck().returns("k\tv\n" +
                             "A\t9.0\n" +
-                            "A\tnull\n",
-                    "select k, v from mv order by v"
-            );
+                            "A\tnull\n");
         });
     }
 
@@ -165,14 +233,11 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep 2 highest n partition by k");
             drainWalAndMatViewQueues();
             // ORDER BY n -- with NULLs sorting per QuestDB convention; only the two real top values survive.
-            assertSql(
-                    "k\tn\n" +
+            assertQuery("select k, n from mv order by n").noLeakCheck().returns("k\tn\n" +
                             "A\t8\n" +
-                            "A\t9\n",
-                    "select k, n from mv order by n"
-            );
+                            "A\t9\n");
             // The NULL row is NOT visible -- integer NULL expired first under KEEP N (opposite of DOUBLE).
-            assertSql("c\n0\n", "select count() c from mv where n is null");
+            assertQuery("select count() c from mv where n is null").noRandomAccess().expectSize().noLeakCheck().returns("c\n0\n");
         });
     }
 
@@ -191,14 +256,11 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows keep 2 highest w partition by k");
             drainWalAndMatViewQueues();
-            assertSql(
-                    "k\tw\n" +
+            assertQuery("select k, w from mv order by w").timestamp("w").noLeakCheck().returns("k\tw\n" +
                             "A\t2024-02-02T00:00:00.000000Z\n" +
-                            "A\t2024-03-03T00:00:00.000000Z\n",
-                    "select k, w from mv order by w"
-            );
+                            "A\t2024-03-03T00:00:00.000000Z\n");
             // The NULL-w row is NOT visible -- timestamp NULL expired first under KEEP N.
-            assertSql("c\n0\n", "select count() c from mv where w is null");
+            assertQuery("select count() c from mv where w is null").noRandomAccess().expectSize().noLeakCheck().returns("c\n0\n");
         });
     }
 
@@ -207,13 +269,10 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep highest v");
             // Global max is 7.0 (D). NULL rows (C) survive (v<max is UNKNOWN). Everything else expires.
-            assertSql(
-                    "k\tv\n" +
+            assertQuery("select k, v from mv order by k, ts").noLeakCheck().returns("k\tv\n" +
                             "C\tnull\n" +
                             "C\tnull\n" +
-                            "D\t7.0\n",
-                    "select k, v from mv order by k, ts"
-            );
+                            "D\t7.0\n");
         });
     }
 
@@ -222,16 +281,13 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createViewWith("expire rows when v < max(v) over (partition by k)");
             // Equivalent to KEEP HIGHEST v PARTITION BY k.
-            assertSql(
-                    "k\tv\tts\n" +
+            assertQuery("select k, v, ts from mv order by k, ts").noLeakCheck().returns("k\tv\tts\n" +
                             "A\t3.0\t2024-01-02T00:00:00.000000Z\n" +
                             "B\t5.0\t2024-01-01T00:00:00.000000Z\n" +
                             "B\t5.0\t2024-01-02T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-01T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-02T00:00:00.000000Z\n" +
-                            "D\t7.0\t2024-01-01T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by k, ts"
-            );
+                            "D\t7.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -240,13 +296,10 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createViewWith("expire rows keep highest v partition by k");
             // The outer predicate filters the already-kept (per-key max) rows.
-            assertSql(
-                    "k\tv\n" +
+            assertQuery("select k, v from mv where v > 3 order by k, ts").noLeakCheck().returns("k\tv\n" +
                             "B\t5.0\n" +
                             "B\t5.0\n" +
-                            "D\t7.0\n",
-                    "select k, v from mv where v > 3 order by k, ts"
-            );
+                            "D\t7.0\n");
         });
     }
 
@@ -256,10 +309,10 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             createBase();
             execute("create materialized view mv as (select * from base)");
             drainWalAndMatViewQueues();
-            assertSql("c\n9\n", "select count() c from mv");
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n9\n");
             execute("alter materialized view mv set expire rows keep 2 highest v partition by k");
             drainWalAndMatViewQueues();
-            assertSql("c\n7\n", "select count() c from mv"); // 9 rows -> top-2 per key keeps 7 (A2,B2,C2,D1)
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n7\n"); // 9 rows -> top-2 per key keeps 7 (A2,B2,C2,D1)
         });
     }
 
@@ -278,6 +331,39 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             sink.clear();
             printSql("show create materialized view mv2", sink);
             TestUtils.assertContains(sink.toString(), "EXPIRE ROWS WHEN v < max(v) over (partition by k)");
+        });
+    }
+
+    @Test
+    public void testReadAndCleanupEscapeTableName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, extra INT, ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES " +
+                    "('A', 1.0, 10, '2024-01-01T00:00:00.000000Z')," +
+                    "('B', 2.0, 20, '2024-01-01T01:00:00.000000Z')," +
+                    "('A', 3.0, 30, '2024-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW \"m v\" AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS KEEP HIGHEST v PARTITION BY k");
+            drainWalAndMatViewQueues();
+
+            final String expected = "k\tv\textra\tts\n" +
+                    "A\t3.0\t30\t2024-01-03T00:00:00.000000Z\n" +
+                    "B\t2.0\t20\t2024-01-01T01:00:00.000000Z\n";
+            assertQuery("SELECT * FROM \"m v\" ORDER BY k").noLeakCheck().returns(expected);
+
+            final TableToken token = engine.verifyTableName("m v");
+            final String predicate;
+            try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                predicate = metadata.getExpiryPredicate();
+            }
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertTrue(job.cleanupTable(token, predicate));
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT * FROM \"m v\" ORDER BY k").noLeakCheck().returns(expected);
+            assertQuery("SELECT count() p FROM table_partitions('m v')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
         });
     }
 
@@ -303,11 +389,8 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             createBase();
             execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k cleanup every 30m");
             drainWalAndMatViewQueues();
-            assertSql(
-                    "expire_clause\texpire_cleanup_every\n" +
-                            "KEEP HIGHEST v PARTITION BY k\t30m\n",
-                    "select expire_clause, expire_cleanup_every from tables() where table_name = 'mv'"
-            );
+            assertQuery("select expire_clause, expire_cleanup_every from tables() where table_name = 'mv'").noRandomAccess().noLeakCheck().returns("expire_clause\texpire_cleanup_every\n" +
+                            "KEEP HIGHEST v PARTITION BY k\t30m\n");
         });
     }
 
@@ -430,7 +513,7 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
             drainWalAndMatViewQueues();
 
-            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
 
             final TableToken token = engine.verifyTableName("mv");
             final String predicate;
@@ -439,18 +522,17 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 job.cleanupTable(token, predicate);
+                Assert.assertEquals("all replacement partitions share one survivor stream",
+                        1, job.getSurvivorStreamOpenCount());
             }
             drainWalAndMatViewQueues();
 
             // d1 partial (A@d1 expired, B@d1 kept) -> compacted to 1 row; d2 fully expired -> wiped; active
             // d3 untouched. 3 partitions/4 rows -> 2 partitions/2 rows. The read result is unchanged.
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql(
-                    "k\tv\tts\n" +
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select k, v, ts from mv order by k").noLeakCheck().returns("k\tv\tts\n" +
                             "A\t9.0\t2024-01-03T00:00:00.000000Z\n" +
-                            "B\t8.0\t2024-01-01T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by k"
-            );
+                            "B\t8.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -468,17 +550,14 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep lowest v partition by k");
             drainWalAndMatViewQueues();
 
-            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             runCleanup();
 
             // d1 partial (A@d1 expired, B@d1 kept) -> 1 row; d2 fully expired -> wiped; active d3 untouched.
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql(
-                    "k\tv\tts\n" +
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select k, v, ts from mv order by k").noLeakCheck().returns("k\tv\tts\n" +
                             "A\t1.0\t2024-01-03T00:00:00.000000Z\n" +
-                            "B\t2.0\t2024-01-01T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by k"
-            );
+                            "B\t2.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -496,36 +575,28 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep 2 highest v partition by k");
             drainWalAndMatViewQueues();
 
-            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             runCleanup();
 
             // top-2 by v desc = {10@d3, 9@d1}. d1 partial (9 kept, 5 expired) -> 1 row; d2 wiped; active d3 kept.
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql(
-                    "k\tv\tts\n" +
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select k, v, ts from mv order by v desc").noLeakCheck().returns("k\tv\tts\n" +
                             "A\t10.0\t2024-01-03T00:00:00.000000Z\n" +
-                            "A\t9.0\t2024-01-01T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by v desc"
-            );
+                            "A\t9.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
     @Test
-    public void testCleanupRawWindowWhenIdempotent() throws Exception {
-        // Physical cleanup for a RAW window WHEN (the isWindow survivor-query branch, not isKeepBy), and that a
-        // second sweep is a no-op once nothing expired remains.
+    public void testCleanupRawWindowWhenNonMonotonic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base (k symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
-            execute("insert into base values " +
-                    "('A', 1.0, '2024-01-01T00:00:00.000000Z')," +   // expired (A max=9)
-                    "('B', 8.0, '2024-01-01T00:00:00.000000Z')," +   // B max -> survives in d1
-                    "('A', 5.0, '2024-01-02T00:00:00.000000Z')," +   // expired (A max=9)
-                    "('A', 9.0, '2024-01-03T00:00:00.000000Z')");    // A max (active partition)
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES " +
+                    "(9.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(10.0, '2024-01-02T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            execute("create materialized view mv as (select * from base) expire rows when v < max(v) over (partition by k)");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS WHEN row_number() OVER (ORDER BY v DESC) = 2");
             drainWalAndMatViewQueues();
-
-            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
 
             final TableToken token = engine.verifyTableName("mv");
             final String predicate;
@@ -533,23 +604,15 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                 predicate = m.getExpiryPredicate();
             }
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                Assert.assertTrue("first sweep should reclaim", job.cleanupTable(token, predicate));
+                Assert.assertFalse("non-monotonic window policy must skip physical cleanup", job.cleanupTable(token, predicate));
             }
-            drainWalAndMatViewQueues();
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
 
-            // Second sweep: nothing expired remains -> no work, partitions unchanged.
-            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                Assert.assertFalse("second sweep must be a no-op", job.cleanupTable(token, predicate));
-            }
+            // The current rank-2 row becomes rank 3 after refresh and must become visible again.
+            execute("INSERT INTO base VALUES (11.0, '2024-01-03T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql(
-                    "k\tv\tts\n" +
-                            "A\t9.0\t2024-01-03T00:00:00.000000Z\n" +
-                            "B\t8.0\t2024-01-01T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by k"
-            );
+            assertQuery("SELECT v, ts FROM mv ORDER BY v DESC").noLeakCheck().returns("v\tts\n" +
+                            "11.0\t2024-01-03T00:00:00.000000Z\n" +
+                            "9.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 
@@ -569,18 +632,15 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
             drainWalAndMatViewQueues();
 
-            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
             runCleanup();
 
             // d1 partial (A expired, C null kept) -> 1 row; d2 all-NULL kept -> skipped; d3 active untouched.
-            assertSql("p\tr\n3\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql(
-                    "k\tv\tts\n" +
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t3\n");
+            assertQuery("select k, v, ts from mv order by ts").timestamp("ts").noLeakCheck().returns("k\tv\tts\n" +
                             "C\tnull\t2024-01-01T00:00:00.000000Z\n" +
                             "C\tnull\t2024-01-02T00:00:00.000000Z\n" +
-                            "A\t9.0\t2024-01-03T00:00:00.000000Z\n",
-                    "select k, v, ts from mv order by ts"
-            );
+                            "A\t9.0\t2024-01-03T00:00:00.000000Z\n");
         });
     }
 
@@ -603,14 +663,14 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
             drainWalAndMatViewQueues();
 
-            assertSql("p\tr\n2\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t4\n");
             // Every row is visible (all are per-key maxima or the lone active row).
-            assertSql("c\n4\n", "select count() c from mv");
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n4\n");
 
             // No expired rows anywhere reclaimable -> cleanup is a NO-OP; partitions unchanged.
             Assert.assertFalse("all-survivors + protected-active partition => no work", runCleanupReturning());
-            assertSql("p\tr\n2\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql("c\n4\n", "select count() c from mv");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t4\n");
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n4\n");
         });
     }
 
@@ -630,12 +690,12 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep 5 highest v partition by k");
             drainWalAndMatViewQueues();
 
-            assertSql("p\tr\n2\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql("c\n3\n", "select count() c from mv"); // N >= rows -> all visible
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t3\n");
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n3\n"); // N >= rows -> all visible
 
             Assert.assertFalse("N >= rows in every non-active partition => no work", runCleanupReturning());
-            assertSql("p\tr\n2\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql("c\n3\n", "select count() c from mv");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t3\n");
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n3\n");
         });
     }
 
@@ -655,13 +715,13 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             // One physical partition, 3 rows; the read filter shows the two per-key maxima.
-            assertSql("p\tr\n1\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql("c\n2\n", "select count() c from mv");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n1\t3\n");
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n2\n");
 
             // The only partition is the active one -> protected -> cleanup is a no-op; 3 rows stay on disk.
             Assert.assertFalse("the lone active partition must not be reclaimed", runCleanupReturning());
-            assertSql("p\tr\n1\t3\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql("c\n2\n", "select count() c from mv");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n1\t3\n");
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n2\n");
         });
     }
 
@@ -717,6 +777,33 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
     }
 
+    private int countOccurrences(String value, String fragment) {
+        int count = 0;
+        int from = 0;
+        while ((from = value.indexOf(fragment, from)) > -1) {
+            count++;
+            from += fragment.length();
+        }
+        return count;
+    }
+
+    private void createIndexedView(String expireClause) throws Exception {
+        execute("CREATE TABLE base (k SYMBOL INDEX, region SYMBOL, v DOUBLE, ts TIMESTAMP) " +
+                "TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO base VALUES
+                    ('A', 'X', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 'X', 9.0, '2024-01-02T00:00:00.000000Z'),
+                    ('A', 'Y', 8.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 'Y', 2.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', 'X', 7.0, '2024-01-01T00:00:00.000000Z'),
+                    ('B', 'X', 3.0, '2024-01-02T00:00:00.000000Z')
+                """);
+        drainWalAndMatViewQueues();
+        execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base), INDEX (k) " + expireClause);
+        drainWalAndMatViewQueues();
+    }
+
     private void createViewWith(String expireClause) throws Exception {
         createBase();
         execute("create materialized view mv as (select * from base) " + expireClause);
@@ -741,22 +828,22 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows keep highest v partition by k");
             drainWalAndMatViewQueues();
             // kept per key: A -> (3.0 @ 01-02), B -> (5.0 @ 01-01)
-            assertSql("k\tv\tts\n" +
+            assertQuery("select k, v, ts from mv order by ts").timestamp("ts").noLeakCheck().returns("k\tv\tts\n" +
                     "B\t5.0\t2024-01-01T00:00:00.000000Z\n" +
-                    "A\t3.0\t2024-01-02T00:00:00.000000Z\n", "select k, v, ts from mv order by ts");
+                    "A\t3.0\t2024-01-02T00:00:00.000000Z\n");
 
             // ASOF JOIN over the window-policied view: previously failed to compile.
             execute("create table probe (k symbol, p double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into probe values ('A', 100.0, '2024-01-05T00:00:00.000000Z'),('B', 200.0, '2024-01-05T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            assertSql("k\tp\tv\n" +
+            assertQuery("select p.k, p.p, mv.v from probe p asof join mv on (k) order by p.k").expectSize().noLeakCheck().returns("k\tp\tv\n" +
                     "A\t100.0\t3.0\n" +
-                    "B\t200.0\t5.0\n", "select p.k, p.p, mv.v from probe p asof join mv on (k) order by p.k");
+                    "B\t200.0\t5.0\n");
 
             // SAMPLE BY over the same view also needs the designated timestamp.
-            assertSql("ts\tc\n" +
+            assertQuery("select ts, count() c from mv sample by 1d").noRandomAccess().timestamp("ts").noLeakCheck().returns("ts\tc\n" +
                     "2024-01-01T00:00:00.000000Z\t1\n" +
-                    "2024-01-02T00:00:00.000000Z\t1\n", "select ts, count() c from mv sample by 1d");
+                    "2024-01-02T00:00:00.000000Z\t1\n");
         });
     }
 }

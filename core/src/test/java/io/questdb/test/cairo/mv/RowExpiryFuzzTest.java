@@ -50,19 +50,10 @@ import java.util.Random;
  */
 public class RowExpiryFuzzTest extends AbstractCairoTest {
 
-    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
-    // calculate-size and variable-column cross-checks run against the quiesced (deterministic) oracle data.
-    // sizeMayVary() keeps the size-vs-iteration cross-check without pinning determinability, and
-    // inferRandomAccess()/inferTimestamp() adopt each heterogeneous factory's own capability.
-    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
-    }
-
-    private static final long BASE_TS = 1_704_067_200_000_000L;   // 2024-01-01T00:00:00Z
+    private static final long BASE_TS = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
     private static final int NUM_KEYS = 4;
     private static final int ROWS = 40;
-    private static final long STEP = 21_600_000_000L;        // 6h -> ROWS rows span ROWS/4 days (partitions)
+    private static final long STEP = 21_600_000_000L; // 6h -> ROWS rows span ROWS/4 days (partitions)
 
     @Before
     public void setUp() {
@@ -124,7 +115,7 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
 
         final String expected = expectedIds(mode, id, k, v, vNull, ts);
         final String msg = "seed=" + seed + " mode=" + mode;
-        assertSql(expected, "select id from " + view + " order by id");
+        assertQuery("select id from " + view + " order by id").sizeMayVary().noLeakCheck().returns(expected);
 
         // Physical cleanup must not change what is visible (it only removes already-expired rows).
         final TableToken token = engine.verifyTableName(view);
@@ -137,7 +128,7 @@ public class RowExpiryFuzzTest extends AbstractCairoTest {
         }
         drainWalAndMatViewQueues();
         try {
-            assertSql(expected, "select id from " + view + " order by id");
+            assertQuery("select id from " + view + " order by id").sizeMayVary().noLeakCheck().returns(expected);
         } catch (AssertionError e) {
             throw new AssertionError("cleanup changed visible rows [" + msg + "]: " + e.getMessage(), e);
         }

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.ExpressionParserListener;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
@@ -232,8 +233,8 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public void validateExpiryPredicateOnMetadata(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, int position) throws SqlException {
-            delegate.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, position);
+        public ExpiryValidationResult validateExpiryPredicateOnMetadata(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, int position) throws SqlException {
+            return delegate.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, position);
         }
 
         @Override

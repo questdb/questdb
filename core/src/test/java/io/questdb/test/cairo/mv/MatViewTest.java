@@ -90,16 +90,6 @@ import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class MatViewTest extends AbstractCairoTest {
     private final int rowsPerQuery;
-
-    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). The passthrough queries here are deterministic, so drive the builder via
-    // returns() (NOT returnsOnce) to keep the second cursor pass, calculateSize() cross-check, and
-    // variable-column check; sizeMayVary().inferRandomAccess().inferTimestamp() accommodate the
-    // heterogeneous passthrough/ORDER-BY factory (matches the six row-expiry bridges).
-    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
-    }
-
     private final TestTimestampType timestampType;
 
     public MatViewTest() {
@@ -8036,7 +8026,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             sink.clear();
             printSql("select * from base_price where ts >= '2024-09-12T00:00:00.000000Z' order by ts, sym, price", sink);
-            assertSql(sink.toString(), "price_copy order by ts, sym, price");
+            assertQuery("price_copy order by ts, sym, price").timestamp("ts").expectSize().noLeakCheck().returns(sink.toString());
         });
     }
 
@@ -8066,7 +8056,7 @@ public class MatViewTest extends AbstractCairoTest {
             // active 09-14; 09-10..09-12 are evicted.
             sink.clear();
             printSql("select * from base_price where ts >= '2024-09-13T00:00:00.000000Z' order by ts, sym, price", sink);
-            assertSql(sink.toString(), "price_copy order by ts, sym, price");
+            assertQuery("price_copy order by ts, sym, price").timestamp("ts").expectSize().noLeakCheck().returns(sink.toString());
         });
     }
 
@@ -8110,7 +8100,7 @@ public class MatViewTest extends AbstractCairoTest {
             sink.clear();
             printSql("select ts, sym from base_price where sym = 'gbpusd' order by ts", sink);
             final String expected = sink.toString();
-            assertSql(expected, "sym_copy order by ts");
+            assertQuery("sym_copy order by ts").timestamp("ts").expectSize().noLeakCheck().returns(expected);
         });
     }
 
@@ -9144,7 +9134,7 @@ public class MatViewTest extends AbstractCairoTest {
         sink.clear();
         printSql("select * from base_price order by ts, sym, price", sink);
         final String expected = sink.toString();
-        assertSql(expected, "price_copy order by ts, sym, price");
+        assertQuery("price_copy order by ts, sym, price").timestamp("ts").expectSize().noLeakCheck().returns(expected);
     }
 
     private String copySql(int from, int count) {

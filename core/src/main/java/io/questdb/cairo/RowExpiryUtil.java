@@ -123,6 +123,19 @@ public final class RowExpiryUtil {
     }
 
     /**
+     * Appends the human-readable rendering of a stored policy used by catalogue functions.
+     */
+    public static void appendDisplayPredicate(CharSink<?> sink, CharSequence stored) {
+        if (isKeepLatest(stored) || isKeepBy(stored)) {
+            appendExpireClause(sink, stored);
+        } else if (isWindow(stored)) {
+            sink.put(windowBody(stored));
+        } else {
+            sink.put(stored);
+        }
+    }
+
+    /**
      * Human-readable rendering of a stored policy for catalogue functions ({@code tables()},
      * {@code materialized_views()}): the predicate for scalar/window, or the {@code KEEP ...} clause for the
      * relative modes. Returns null for no policy.
@@ -131,20 +144,13 @@ public final class RowExpiryUtil {
         if (stored == null) {
             return null;
         }
-        if (isKeepLatest(stored) || isKeepBy(stored)) {
-            final StringSink sink = new StringSink();
-            appendExpireClause(sink, stored);
-            // appendExpireClause emits the full "KEEP ..." clause body for these modes (no leading "WHEN").
-            return sink.toString();
-        }
-        if (isWindow(stored)) {
-            return windowBody(stored).toString();
-        }
-        return stored.toString();
+        final StringSink sink = new StringSink();
+        appendDisplayPredicate(sink, stored);
+        return sink.toString();
     }
 
-    public static String encodeKeepBy(int n, boolean highest, CharSequence col, CharSequence keysCsv) {
-        return KEEP_BY_PREFIX + n + POLICY_SENTINEL + (highest ? DIR_HIGHEST : DIR_LOWEST)
+    public static String encodeKeepBy(int n, boolean isHighest, CharSequence col, CharSequence keysCsv) {
+        return KEEP_BY_PREFIX + n + POLICY_SENTINEL + (isHighest ? DIR_HIGHEST : DIR_LOWEST)
                 + POLICY_SENTINEL + col + POLICY_SENTINEL + keysCsv;
     }
 
@@ -207,6 +213,22 @@ public final class RowExpiryUtil {
     }
 
     /**
+     * Quotes an identifier for executable SQL and doubles embedded quote characters.
+     */
+    public static String quoteIdentifier(CharSequence identifier) {
+        final StringSink sink = new StringSink();
+        sink.putAscii('"');
+        for (int i = 0, n = identifier.length(); i < n; i++) {
+            final char c = identifier.charAt(i);
+            if (c == '"') {
+                sink.putAscii('"');
+            }
+            sink.put(c);
+        }
+        return sink.putAscii('"').toString();
+    }
+
+    /**
      * The window-function WHEN predicate text of a window policy: the stored predicate for {@link #isWindow},
      * or the desugared keep-max/min/top-N predicate for {@link #isKeepBy} (the {@code designatedTs} is used
      * only for the top-N ordering tiebreak; pass null to omit it). Returns null when {@code stored} is not a
@@ -231,7 +253,7 @@ public final class RowExpiryUtil {
         if (k.n > 0) {
             sink.put(k.n).putAscii(' ');
         }
-        sink.putAscii(k.highest ? "HIGHEST " : "LOWEST ");
+        sink.putAscii(k.isHighest ? "HIGHEST " : "LOWEST ");
         appendMaybeQuotedName(sink, k.col);
         if (k.keys.length() > 0) {
             sink.putAscii(" PARTITION BY ").put(k.keys);
@@ -290,8 +312,8 @@ public final class RowExpiryUtil {
         final StringSink sink = new StringSink();
         if (k.n == 0) {
             // keep every row tied at the group max/min: a row expires when its value is strictly past it.
-            sink.put('"').put(k.col).put('"').putAscii(k.highest ? " < max(\"" : " > min(\"")
-                    .put(k.col).putAscii("\") OVER (");
+            sink.put(quoteIdentifier(k.col)).putAscii(k.isHighest ? " < max(" : " > min(")
+                    .put(quoteIdentifier(k.col)).putAscii(") OVER (");
             if (k.keys.length() > 0) {
                 sink.putAscii("PARTITION BY ").put(k.keys);
             }
@@ -307,9 +329,9 @@ public final class RowExpiryUtil {
             if (k.keys.length() > 0) {
                 sink.putAscii("PARTITION BY ").put(k.keys).putAscii(' ');
             }
-            sink.putAscii("ORDER BY \"").put(k.col).putAscii(k.highest ? "\" DESC" : "\" ASC");
+            sink.putAscii("ORDER BY ").put(quoteIdentifier(k.col)).putAscii(k.isHighest ? " DESC" : " ASC");
             if (designatedTs != null) {
-                sink.putAscii(", \"").put(designatedTs).putAscii("\" DESC");
+                sink.putAscii(", ").put(quoteIdentifier(designatedTs)).putAscii(" DESC");
             }
             sink.putAscii(") > ").put(k.n);
         }
@@ -338,7 +360,7 @@ public final class RowExpiryUtil {
      */
     private static final class KeepBy {
         final String col;
-        final boolean highest;
+        final boolean isHighest;
         final String keys;
         final int n;
 
@@ -348,7 +370,7 @@ public final class RowExpiryUtil {
             final int s2 = body.indexOf(POLICY_SENTINEL, s1 + 1);
             final int s3 = body.indexOf(POLICY_SENTINEL, s2 + 1);
             this.n = Integer.parseInt(body.substring(0, s1));
-            this.highest = body.charAt(s1 + 1) == DIR_HIGHEST;
+            this.isHighest = body.charAt(s1 + 1) == DIR_HIGHEST;
             this.col = body.substring(s2 + 1, s3);
             this.keys = body.substring(s3 + 1);
         }

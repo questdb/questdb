@@ -73,6 +73,7 @@ public class QueryModel implements IQueryModel {
     private final IntIntHashMap correlatedDepths = new IntIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
+    private final ObjList<ExpressionNode> expiryWindowPartitionBy = new ObjList<>();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -142,6 +143,7 @@ public class QueryModel implements IQueryModel {
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
     private boolean isCteModel;
+    private boolean isExpiryWindowBarrier;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -436,6 +438,7 @@ public class QueryModel implements IQueryModel {
         tableId = -1;
         metadataVersion = -1;
         wildcardColumnNames.clear();
+        expiryWindowPartitionBy.clear();
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
@@ -450,6 +453,7 @@ public class QueryModel implements IQueryModel {
         //  default is SELECT
         isUpdateModel = false;
         isCteModel = false;
+        isExpiryWindowBarrier = false;
         modelType = ExecutionModel.QUERY;
         lateralCountColumns.clear();
         updateSetColumns.clear();
@@ -740,6 +744,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public IntHashSet getDependencies() {
         return dependencies;
+    }
+
+    @Override
+    public ObjList<ExpressionNode> getExpiryWindowPartitionBy() {
+        return expiryWindowPartitionBy;
     }
 
     @Override
@@ -1304,6 +1313,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isExpiryWindowBarrier() {
+        return isExpiryWindowBarrier;
+    }
+
+    @Override
     public boolean isForceBackwardScan() {
         return forceBackwardScan;
     }
@@ -1662,6 +1676,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
         this.explicitTimestamp = explicitTimestamp;
+    }
+
+    @Override
+    public void setExpiryWindowBarrier(boolean isExpiryWindowBarrier) {
+        this.isExpiryWindowBarrier = isExpiryWindowBarrier;
     }
 
     @Override

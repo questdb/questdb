@@ -259,12 +259,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                         // The row-expiry policy lives in the view's table metadata (_meta), not the
                         // mat-view definition; read it from the in-memory metadata cache.
-                        String expirePredicate = null;
+                        CharSequence expirePredicate = null;
                         long expireCleanupMicros = 0;
                         try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                             final CairoTable viewTable = metadataRO.getTable(viewToken);
                             if (viewTable != null) {
-                                expirePredicate = RowExpiryUtil.displayPredicate(viewTable.getExpiryPredicate());
+                                expirePredicate = viewTable.getExpiryPredicate();
                                 expireCleanupMicros = viewTable.getExpiryCleanupIntervalMicros();
                             }
                         }
@@ -319,13 +319,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             }
 
             private static class MatViewsRecord implements Record {
+                private final StringSink expireCleanupEverySink = new StringSink();
+                private final StringSink expirePredicateSink = new StringSink();
                 private final StringSink invalidationReason = new StringSink();
                 private long avgCommitNanos;
                 private long avgScanRangeTsUnits;
                 private long avgScanSampleNanos;
                 private long commitGapThresholdTsUnits;
-                private long expireCleanupMicros;
-                private String expirePredicate;
+                private boolean hasExpireCleanupEvery;
+                private boolean hasExpirePredicate;
                 private boolean invalid;
                 private long lastAppliedBaseTxn;
                 private long lastPeriodHi;
@@ -396,8 +398,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TIMER_TIME_ZONE -> viewDefinition.getTimerTimeZone();
                         case COLUMN_PERIOD_LENGTH_UNIT -> getIntervalUnit(periodLengthUnit);
                         case COLUMN_PERIOD_DELAY_UNIT -> getIntervalUnit(periodDelayUnit);
-                        case COLUMN_EXPIRE_CLAUSE -> expirePredicate;
-                        case COLUMN_EXPIRE_CLEANUP_EVERY -> RowExpiryUtil.formatCleanupEvery(expireCleanupMicros);
+                        case COLUMN_EXPIRE_CLAUSE -> hasExpirePredicate ? expirePredicateSink : null;
+                        case COLUMN_EXPIRE_CLEANUP_EVERY -> hasExpireCleanupEvery ? expireCleanupEverySink : null;
                         default -> null;
                     };
                 }
@@ -434,7 +436,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgScanRangeTsUnits,
                         long commitGapThresholdTsUnits,
                         boolean retrying,
-                        String expirePredicate,
+                        CharSequence expirePredicate,
                         long expireCleanupMicros
                 ) {
                     this.viewDefinition = viewDefinition;
@@ -459,8 +461,16 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
                     this.retrying = retrying;
-                    this.expirePredicate = expirePredicate;
-                    this.expireCleanupMicros = expireCleanupMicros;
+                    expirePredicateSink.clear();
+                    hasExpirePredicate = expirePredicate != null;
+                    if (hasExpirePredicate) {
+                        RowExpiryUtil.appendDisplayPredicate(expirePredicateSink, expirePredicate);
+                    }
+                    expireCleanupEverySink.clear();
+                    hasExpireCleanupEvery = expireCleanupMicros > 0;
+                    if (hasExpireCleanupEvery) {
+                        RowExpiryUtil.appendCleanupEvery(expireCleanupEverySink, expireCleanupMicros);
+                    }
                 }
 
                 private CharSequence getViewStatus() {

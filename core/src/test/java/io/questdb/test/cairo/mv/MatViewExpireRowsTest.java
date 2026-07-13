@@ -57,18 +57,6 @@ import static org.junit.Assert.assertTrue;
  */
 public class MatViewExpireRowsTest extends AbstractCairoTest {
 
-    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
-    // calculate-size and variable-column cross-checks run against these deterministic projections. The suite
-    // asserts a heterogeneous mix of query shapes (count(), ORDER BY, LATEST ON, table_partitions(...), window
-    // reads over a factory-rewritten read path), so the per-query factory-property pins are inferred rather
-    // than fixed: sizeMayVary() keeps the size-vs-iteration cross-check while not pinning determinability, and
-    // inferRandomAccess()/inferTimestamp() adopt each factory's own capability. The calculate-size cross-check
-    // that returnsOnce skipped (the point of C1) still runs for every call.
-    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
-    }
-
     @Before
     public void setUp() {
         super.setUp();
@@ -93,9 +81,9 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             // NO cleanup: all 5 rows are physically present across 3 partitions. The read filter must still
             // show exactly the latest row per key, and count() must agree.
-            assertSql("k\tv\nA\t4.0\nB\t5.0\n", "select k, v from mv order by k");
-            assertSql("c\n2\n", "select count() c from mv");
-            assertSql("c\n2\n", "select count(distinct k) c from mv");
+            assertQuery("select k, v from mv order by k").expectSize().noLeakCheck().returns("k\tv\nA\t4.0\nB\t5.0\n");
+            assertQuery("select count() c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n2\n");
+            assertQuery("select count(distinct k) c from mv").noRandomAccess().expectSize().noLeakCheck().returns("c\n2\n");
         });
     }
 
@@ -113,7 +101,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
             drainWalAndMatViewQueues();
-            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
 
             final TableToken token = engine.verifyTableName("mv");
             final String predicate;
@@ -125,13 +113,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
             drainWalAndMatViewQueues();
 
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql(
-                    "sym\tv\n" +
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
                             "B\t5.0\n" +
-                            "D\t9.0\n",
-                    "select sym, v from mv order by sym"
-            );
+                            "D\t9.0\n");
         });
     }
 
@@ -150,7 +135,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
             drainWalAndMatViewQueues();
-            assertSql("p\tr\n3\t4\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n3\t4\n");
 
             final TableToken token = engine.verifyTableName("mv");
             final String predicate;
@@ -163,13 +148,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             // d1 partial (A expired, C null kept) -> 1 row; d2 fully expired -> wiped; active d3 kept.
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
-            assertSql(
-                    "sym\tv\n" +
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
                             "C\tnull\n" +
-                            "D\t9.0\n",
-                    "select sym, v from mv order by sym"
-            );
+                            "D\t9.0\n");
         });
     }
 
@@ -187,7 +169,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
             drainWalAndMatViewQueues();
 
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
             final TableToken token = engine.verifyTableName("mv");
             final String predicate;
@@ -201,13 +183,10 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             // 01-01 lies wholly below the threshold -> reclaimed; 01-02 (active-protected check aside) and
             // 01-03 retained. The read filter already hid A; now its storage is gone too.
-            assertSql("p\n2\n", "select count() p from table_partitions('mv')");
-            assertSql(
-                    "sym\tv\n" +
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
                             "B\t2.0\n" +
-                            "C\t3.0\n",
-                    "select sym, v from mv order by sym"
-            );
+                            "C\t3.0\n");
         });
     }
 
@@ -224,12 +203,9 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
             drainWalAndMatViewQueues();
-            assertSql(
-                    "sym\tv\n" +
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
                             "B\t5.0\n" +
-                            "C\tnull\n",
-                    "select sym, v from mv order by sym"
-            );
+                            "C\tnull\n");
         });
     }
 
@@ -259,7 +235,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
             drainWalAndMatViewQueues();
             assertTrue("first sweep should reclaim", first);
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
 
             // Second sweep: nothing expired remains -> no work, partitions unchanged.
             final boolean second;
@@ -268,7 +244,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
             drainWalAndMatViewQueues();
             assertFalse("second sweep must be a no-op", second);
-            assertSql("p\tr\n2\t2\n", "select count() p, sum(numRows) r from table_partitions('mv')");
+            assertQuery("select count() p, sum(numRows) r from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\tr\n2\t2\n");
         });
     }
 
@@ -285,7 +261,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when ts <= '2024-01-02T00:00:00.000000Z'");
             drainWalAndMatViewQueues();
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
             final TableToken token = engine.verifyTableName("mv");
             final String predicate;
@@ -299,8 +275,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
 
             // 01-01 (nextFloor <= T) wiped by bounds; 01-02 (ts == T, ts <= T) expired by the scan; 01-03 is
             // the active partition and is retained. Only C remains.
-            assertSql("p\n1\n", "select count() p from table_partitions('mv')");
-            assertSql("sym\tv\nC\t3.0\n", "select sym, v from mv order by sym");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n1\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\nC\t3.0\n");
         });
     }
 
@@ -319,11 +295,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // Set a policy: hide v < 2 -> only BBB visible.
             execute("alter materialized view mv set expire rows when v < 2.0");
             drainWalAndMatViewQueues();
-            assertSql(
-                    "sym\tv\n" +
-                            "BBB\t5.0\n",
-                    "select sym, v from mv order by sym"
-            );
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
+                            "BBB\t5.0\n");
 
             // Drop the policy: all rows visible again.
             execute("alter materialized view mv drop expire");
@@ -334,12 +307,9 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 assertNull(metadata.getExpiryPredicate());
                 assertEquals(0, metadata.getExpiryCleanupIntervalMicros());
             }
-            assertSql(
-                    "sym\tv\n" +
+            assertQuery("select sym, v from mv order by sym").expectSize().noLeakCheck().returns("sym\tv\n" +
                             "AAA\t1.0\n" +
-                            "BBB\t5.0\n",
-                    "select sym, v from mv order by sym"
-            );
+                            "BBB\t5.0\n");
         });
     }
 
@@ -382,11 +352,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
 
             // The read-time filter (reading the policy from the metadata cache) hides v<2 rows.
-            assertSql(
-                    "sym\tv\n" +
-                            "BBB\t2.5\n",
-                    "select sym, v from mv order by sym"
-            );
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
+                            "BBB\t2.5\n");
         });
     }
 
@@ -429,11 +396,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             }
 
             // Rows with v < 2 are hidden by the read-time filter.
-            assertSql(
-                    "sym\tv\n" +
-                            "BBB\t2.5\n",
-                    "select sym, v from mv2 order by sym"
-            );
+            assertQuery("select sym, v from mv2 order by sym").noLeakCheck().returns("sym\tv\n" +
+                            "BBB\t2.5\n");
         });
     }
 
@@ -511,7 +475,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             // A v < 2 row in the clone must remain visible -- the leaked read filter would have hidden it.
             execute("insert into cloned values ('AAA', 1.0, '2024-01-05T00:00:00.000000Z')");
             drainWalQueue();
-            assertSql("sym\tv\n" + "AAA\t1.0\n", "select sym, v from cloned");
+            assertQuery("select sym, v from cloned").expectSize().noLeakCheck().returns("sym\tv\n" + "AAA\t1.0\n");
         });
     }
 
@@ -564,11 +528,11 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             // At 2024-01-10 only the past row is visible.
-            assertSql("sym\n" + "PAST\n", "select sym from mv order by ts");
+            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\n" + "PAST\n");
 
             // Advance now() beyond the future row's ts: it reappears (it was only hidden, never deleted).
             setCurrentMicros(1_706_140_800_000_000L); // 2024-01-25T00:00:00Z
-            assertSql("sym\n" + "PAST\n" + "FUTURE\n", "select sym from mv order by ts");
+            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\n" + "PAST\n" + "FUTURE\n");
         });
     }
 
@@ -583,7 +547,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("insert into base values ('A', '2024-01-05T00:00:00.000000Z')");
             execute("insert into base values ('B', '2024-01-20T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
-            assertSql("sym\n" + "A\n" + "B\n", "select sym from mv order by ts");
+            assertQuery("select sym from mv order by ts").noLeakCheck().returns("sym\n" + "A\n" + "B\n");
         });
     }
 
@@ -658,11 +622,8 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("insert into dim values ('BBB', 'b')");
 
             // Only BBB survives in mv (v>=2), so the join yields only BBB even though dim has AAA.
-            assertSql(
-                    "sym\tv\tlabel\n" +
-                            "BBB\t5.0\tb\n",
-                    "select mv.sym, mv.v, dim.label from mv join dim on mv.sym = dim.sym order by mv.sym"
-            );
+            assertQuery("select mv.sym, mv.v, dim.label from mv join dim on mv.sym = dim.sym order by mv.sym").noLeakCheck().returns("sym\tv\tlabel\n" +
+                            "BBB\t5.0\tb\n");
         });
     }
 
@@ -895,20 +856,17 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
             drainWalAndMatViewQueues();
             // Read the view so it is hydrated into the metadata cache the discovery sweep scans.
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 assertTrue("discovery sweep should reclaim", job.run(Job.RUNNING_STATUS));
             }
             drainWalAndMatViewQueues();
 
-            assertSql("p\n2\n", "select count() p from table_partitions('mv')");
-            assertSql(
-                    "sym\tv\n" +
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\n" +
                             "B\t2.0\n" +
-                            "C\t3.0\n",
-                    "select sym, v from mv order by sym"
-            );
+                            "C\t3.0\n");
         });
     }
 

@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Chars;
@@ -124,18 +125,28 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     private final CairoEngine engine;
     private final CharSequenceLongHashMap lastRunByTable = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
     // Per-cleanup snapshot of one object's non-active LOGICAL partitions.
+    private final LongList partitionContentGenerations = new LongList();
     private final LongList partitionFloors = new LongList();
     private final LongList partitionNextFloors = new LongList();
     private final LongList partitionRowCounts = new LongList();
-    // Per-cleanup survivor counts per logical partition (parallel to partitionFloors), from the one-pass scan.
-    private final LongList partitionSurvivors = new LongList();
-    private long lastGlobalCheckMicros = NO_LAST_RUN;
+    private final CharSequenceLongHashMap scalarPartitionGenerations = new CharSequenceLongHashMap(16, 0.5, NO_LAST_RUN);
+    private final StringSink scalarPartitionKey = new StringSink();
+    private long lastExpiryPolicyVersion = -1;
+    private long nextDiscoveryDeadlineMicros = NO_LAST_RUN;
+    private long policyDiscoveryCount;
+    private long scalarPartitionScanCount;
+    private boolean isLastCleanupFailed;
     private SqlExecutionContextImpl sqlExecutionContext;
-    // Test-only barrier: when set, fired exactly once (one-shot) immediately before the bounds-DROP fast path
-    // evaluates its per-commit sequencer gate, with the writer caught up (racyOpsAllowed == true). Lets a test
-    // inject a mid-sweep policy change at that instant so the M1 gate — not the coarser racyOpsAllowed guard —
-    // is what defers the wipe; reverting the gate then makes the test fail. Null (never fired) in production.
-    private Runnable testBoundsDropCommitBarrier;
+    private long survivorStreamOpenCount;
+    public static boolean assignToPool(WorkerPool workerPool, CairoEngine engine) {
+        if (!engine.getConfiguration().isRowExpiryEnabled()) {
+            return false;
+        }
+        final RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine);
+        workerPool.assign(job);
+        workerPool.freeOnExit(job);
+        return true;
+    }
 
     public RowExpiryCleanupJob(CairoEngine engine) {
         this.engine = engine;
@@ -156,16 +167,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     }
 
     /**
-     * Test-only: installs a one-shot barrier fired immediately before the bounds-DROP fast path evaluates its
-     * per-commit sequencer gate (see {@code cleanupTable0}). A test uses it to advance the sequencer mid-sweep
-     * (a concurrent policy change) with the writer caught up, so the M1 gate is the thing that defers the wipe.
-     */
-    @TestOnly
-    public void setTestBoundsDropCommitBarrier(Runnable barrier) {
-        this.testBoundsDropCommitBarrier = barrier;
-    }
-
-    /**
      * Physically reclaims expired rows from a single policied object, in place (no copy, no populate).
      * Snapshots non-active LOGICAL partition totals from a reader, classifies each as DROP/REPLACE/SKIP
      * via the keep-filter, then compacts via REPLACE_RANGE and batch-drops fully expired partitions.
@@ -179,6 +180,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
      * ("Monotonicity = cleanup safety").
      */
     public boolean cleanupTable(TableToken tableToken, String predicate) {
+        isLastCleanupFailed = false;
         // Serialize with the materialized-view refresh job. Both this job and refresh write the view through
         // its WAL writer, and a refresh O3 back-fill into a non-active partition landing between our survivor
         // scan and our REPLACE_RANGE commit could otherwise be deleted. Refresh guards EVERY view write with
@@ -211,8 +213,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // KEEP LATEST (relative) policies reclaim via a different survivor query (the global latest-per-key
         // set, intersected with each partition) and have no "<ts> < T" bounds fast-path; a plain WHEN
         // predicate uses the CASE keep-filter plus the bounds fast-path.
-        final boolean keepLatest = RowExpiryUtil.isKeepLatest(predicate);
-        final boolean window = RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate);
+        final boolean isKeepLatest = RowExpiryUtil.isKeepLatest(predicate);
+        final boolean isWindow = RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate);
 
         // Freeze now() once per sweep for ALL modes, BEFORE any survivor query runs (the bounds threshold,
         // the one-pass scan, and the per-partition count/select). A window WHEN predicate may reference now();
@@ -220,6 +222,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // the authoritative read filter (which freezes now() per query), risking deletion of visible rows.
         initNow();
 
+        partitionContentGenerations.clear();
         partitionFloors.clear();
         partitionNextFloors.clear();
         partitionRowCounts.clear();
@@ -227,14 +230,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         final String timestampColumnName;
         // For a window/keep-by survivor query: the quoted base column list, so the synthetic keep column is
         // projected away (built from the reader metadata while it is open).
-        String windowColsCsv = null;
+        String windowColumnsCsv = null;
         // Fast-path threshold for a "<ts> < T"/"<ts> <= T" predicate: lets each partition be classified by
         // its [floor, nextFloor) bounds with no survivor scan (LONG_NULL = not applicable -> scan instead).
         long timestampThreshold = Numbers.LONG_NULL;
         // Whether this policy is monotonic, i.e. physically safe to reclaim (a row expired now stays expired).
         // A non-monotonic policy (e.g. "ts > now()") would have cleanup delete a row a later read must show;
         // for such a policy we skip reclamation entirely and let the read filter enforce retention.
-        boolean cleanupMonotonic = false;
+        boolean isCleanupMonotonic = false;
         // The applied sequencer txn this sweep's reader reflects; the destructive-commit gate is baselined on
         // it (not a fresh txnTracker.getSeqTxn() after the reader closes) so the predicate and the gate share
         // one snapshot -- see the authoritative-predicate re-read inside the reader block.
@@ -267,8 +270,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             }
             readerSeqTxn = reader.getSeqTxn();
 
-            if (window) {
-                windowColsCsv = buildQuotedColumnList(metadata);
+            if (isWindow) {
+                windowColumnsCsv = buildQuotedColumnList(metadata);
             }
 
             final int partitionCount = reader.getPartitionCount();
@@ -281,7 +284,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     reader.getPartitionTimestampByIndex(partitionCount - 1));
             long prevLogicalFloor = Numbers.LONG_NULL;
             for (int i = 0, n = partitionCount - 1; i < n; i++) {
-                final long logicalFloor = txReader.getLogicalPartitionTimestamp(reader.getPartitionTimestampByIndex(i));
+                final long physicalPartitionTimestamp = reader.getPartitionTimestampByIndex(i);
+                final long logicalFloor = txReader.getLogicalPartitionTimestamp(physicalPartitionTimestamp);
                 if (logicalFloor == activeLogicalFloor) {
                     continue; // an earlier split of the active logical day; leave the whole active day alone
                 }
@@ -294,10 +298,21 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     partitionFloors.add(logicalFloor);
                     partitionNextFloors.add(txReader.getNextLogicalPartitionTimestamp(logicalFloor));
                     partitionRowCounts.add(size);
+                    partitionContentGenerations.add(mixPartitionGeneration(
+                            physicalPartitionTimestamp,
+                            txReader.getPartitionNameTxn(i),
+                            size
+                    ));
                 } else {
-                    // another physical split of the current logical partition: accumulate its rows
+                    // Another physical split of the current logical partition: accumulate its rows and fold
+                    // its persisted name transaction into the logical partition's content generation.
                     final int last = partitionRowCounts.size() - 1;
                     partitionRowCounts.setQuick(last, partitionRowCounts.getQuick(last) + size);
+                    partitionContentGenerations.setQuick(last, mixPartitionGeneration(
+                            partitionContentGenerations.getQuick(last),
+                            txReader.getPartitionNameTxn(i),
+                            size
+                    ));
                 }
             }
 
@@ -306,11 +321,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             // reclamation is safe; only a scalar "<ts> < T" WHEN predicate additionally has a bounds threshold
             // (KEEP LATEST / window modes always fall to the survivor-count scan).
             if (partitionFloors.size() > 0) {
-                final String source = "\"" + tableName + "\"";
+                final String source = RowExpiryUtil.quoteIdentifier(tableName);
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    cleanupMonotonic = compiler.isExpiryCleanupMonotonic(
+                    isCleanupMonotonic = compiler.isExpiryCleanupMonotonic(
                             sqlExecutionContext, metadata, source, predicate, timestampColumnName);
-                    if (!keepLatest && !window) {
+                    if (!isKeepLatest && !isWindow) {
                         timestampThreshold = compiler.expiryTimestampThresholdMicros(
                                 sqlExecutionContext, metadata, predicate, timestampColumnName);
                     }
@@ -323,21 +338,33 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // show again as time advances. The read filter stays authoritative for correctness; here we simply
         // skip disk reclamation for this policy. (Monotonic policies — relative modes, clock-free predicates,
         // and "ts < now()"-style thresholds — proceed normally.)
-        if (!cleanupMonotonic) {
+        if (!isCleanupMonotonic) {
             return false;
         }
 
-        boolean workDone = false;
+        boolean isWorkDone = false;
+        final boolean isScalarGenerationCacheEnabled = !isKeepLatest
+                && !isWindow
+                && timestampThreshold == Numbers.LONG_NULL;
+        if (scalarPartitionGenerations.size() > 16_384) {
+            scalarPartitionGenerations.clear();
+        }
         // Concurrency model. A REPLACE or count-DROP must never physically delete a row a concurrent writer
         // back-filled into a non-active partition since the survivor scan. On a WAL table the scan reads only
         // APPLIED state, so a committed-but-unapplied back-fill is invisible to a recount; we instead gate on
         // the sequencer transaction: require the table FULLY APPLIED at the start (so the scan is complete)
         // and UNCHANGED-BY-OTHERS through each destructive commit (our own commits are tracked in
         // expectedSeqTxn). A non-WAL table writes synchronously, so the survivor recount is authoritative
-        // there. A bounds-based DROP needs no per-commit seqTxn re-check (every row below T is expired, so a
-        // concurrent back-fill into that range is expired too); it is still attempted only when racyOpsAllowed
-        // (writer caught up at sweep start), uniformly with the other reclamation paths.
+        // there. Every destructive path, including a bounds-based DROP, uses the same conditional sequencer
+        // allocation because a concurrent policy change can make rows below the old threshold visible again.
         final boolean isWal = tableToken.isWal();
+        if (isWal && !engine.getTableSequencerAPI().isTxnTrackerInitialised(tableToken)) {
+            engine.getTableSequencerAPI().initTxnTracker(
+                    tableToken,
+                    readerSeqTxn,
+                    engine.getTableSequencerAPI().lastTxn(tableToken)
+            );
+        }
         final SeqTxnTracker txnTracker = isWal ? engine.getTableSequencerAPI().getTxnTracker(tableToken) : null;
         // Baseline on the reader's own applied txn (readerSeqTxn), NOT a fresh txnTracker.getSeqTxn() here: the
         // survivor scan and the authoritative predicate both came from that reader snapshot, so any policy
@@ -358,52 +385,40 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // per partition; both compile lazily, so a pure bounds-wipe sweep compiles neither.
         final String countSql;
         final String selectSql;
-        // For keep-latest/window: a single survivor-timestamp scan over the WHOLE non-active range, used to
-        // classify every partition in ONE keep-query execution (instead of one count() per partition).
-        String tsScanSql = null;
-        if (keepLatest) {
+        if (isKeepLatest) {
             // Survivors = the global latest row per key (LATEST ON over the WHOLE view), intersected with the
             // partition range by the OUTER predicate (LATEST ON cannot share a level with WHERE). The cleanup
             // context disables the read filter, so the reference resolves to the raw view, not re-wrapped.
-            final String latestSource = "(SELECT * FROM \"" + tableName + "\" LATEST ON \"" + timestampColumnName
-                    + "\" PARTITION BY " + RowExpiryUtil.keepLatestKeys(predicate) + ")";
-            final String tail = " WHERE \"" + timestampColumnName + "\" >= $1 AND \"" + timestampColumnName + "\" < $2";
+            final String quotedTable = RowExpiryUtil.quoteIdentifier(tableName);
+            final String quotedTimestamp = RowExpiryUtil.quoteIdentifier(timestampColumnName);
+            final String latestSource = "(SELECT * FROM " + quotedTable + " LATEST ON " + quotedTimestamp
+                    + " PARTITION BY " + RowExpiryUtil.keepLatestKeys(predicate) + ")";
+            final String tail = " WHERE " + quotedTimestamp + " >= $1 AND " + quotedTimestamp + " < $2";
             countSql = "SELECT count() FROM " + latestSource + tail;
-            selectSql = "SELECT * FROM " + latestSource + tail;
-            tsScanSql = "SELECT \"" + timestampColumnName + "\" FROM " + latestSource + tail;
-        } else if (window) {
+            selectSql = "SELECT * FROM " + latestSource + tail + " ORDER BY " + quotedTimestamp;
+        } else if (isWindow) {
             // Window/keep-by: survivors are the NOT-expired rows per the window keep-filter, computed over the
             // WHOLE view (inner projection) and intersected with the partition range by the OUTER predicate.
             // Base columns are enumerated so the synthetic keep column is projected away for the REPLACE copier.
-            final String windowPred = RowExpiryUtil.windowPredicate(predicate, timestampColumnName);
-            final String source = "(SELECT *, CASE WHEN (" + windowPred + ") THEN false ELSE true END "
-                    + RowExpiryUtil.KEEP_COLUMN + " FROM \"" + tableName + "\")";
-            final String tail = " WHERE " + RowExpiryUtil.KEEP_COLUMN + " AND \"" + timestampColumnName
-                    + "\" >= $1 AND \"" + timestampColumnName + "\" < $2";
+            final String windowPredicate = RowExpiryUtil.windowPredicate(predicate, timestampColumnName);
+            final String quotedTable = RowExpiryUtil.quoteIdentifier(tableName);
+            final String quotedTimestamp = RowExpiryUtil.quoteIdentifier(timestampColumnName);
+            final String source = "(SELECT *, CASE WHEN (" + windowPredicate + ") THEN false ELSE true END "
+                    + RowExpiryUtil.KEEP_COLUMN + " FROM " + quotedTable + ")";
+            final String tail = " WHERE " + RowExpiryUtil.KEEP_COLUMN + " AND " + quotedTimestamp
+                    + " >= $1 AND " + quotedTimestamp + " < $2";
             countSql = "SELECT count() FROM " + source + tail;
-            selectSql = "SELECT " + windowColsCsv + " FROM " + source + tail;
-            tsScanSql = "SELECT \"" + timestampColumnName + "\" FROM " + source + tail;
+            selectSql = "SELECT " + windowColumnsCsv + " FROM " + source + tail + " ORDER BY " + quotedTimestamp;
         } else {
             final String keepFilter = RowExpiryUtil.buildRowExpiryKeepFilter(predicate);
-            final String tail = " WHERE (" + keepFilter + ") AND \"" + timestampColumnName
-                    + "\" >= $1 AND \"" + timestampColumnName + "\" < $2";
-            countSql = "SELECT count() FROM \"" + tableName + "\"" + tail;
-            selectSql = "SELECT * FROM \"" + tableName + "\"" + tail;
+            final String quotedTable = RowExpiryUtil.quoteIdentifier(tableName);
+            final String quotedTimestamp = RowExpiryUtil.quoteIdentifier(timestampColumnName);
+            final String tail = " WHERE (" + keepFilter + ") AND " + quotedTimestamp
+                    + " >= $1 AND " + quotedTimestamp + " < $2";
+            countSql = "SELECT count() FROM " + quotedTable + tail;
+            selectSql = "SELECT * FROM " + quotedTable + tail;
         }
 
-        // DEFERRED (review M4/M5, best-effort background-job cost only — reads stay correct regardless):
-        //   M4 - the keep-latest/window REPLACE recomputes the global LATEST ON / window over the whole view
-        //        per affected partition (the range predicate sits outside the global sub-query, so it cannot
-        //        be pushed down). The one-pass survivor bucketing below already amortises CLASSIFICATION to a
-        //        single scan; only the survivor-SELECT for the REPLACE itself is not yet bucketed.
-        //   M5 - a value-based scalar WHEN (e.g. "v < 2.0") has no bounds fast path and is not one-pass, so
-        //        every non-active partition is count()-scanned every sweep with no per-partition version/txn
-        //        change-detection to skip unchanged partitions.
-        // Both are pure throughput optimisations left for a follow-up; correctness is unaffected.
-        // One-pass classification (keep-latest/window): scan the keep-query's surviving timestamps over the
-        // whole non-active range exactly once and bucket them into partitions, so each partition's survivor
-        // count is known without a per-partition keep-query execution. Only when the table is caught up.
-        final boolean onePass = (keepLatest || window) && racyOpsAllowed && partitionFloors.size() > 0;
         SqlCompiler cleanupCompiler = null;
         RecordCursorFactory countFactory = null;
         RecordCursorFactory selectFactory = null;
@@ -426,15 +441,21 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         );
         sqlExecutionContext.setMemoryTracker(memoryTracker);
         try {
-            if (onePass) {
-                final long rangeLo = partitionFloors.getQuick(0);
-                final long rangeHi = partitionNextFloors.getQuick(partitionFloors.size() - 1);
+            if ((isKeepLatest || isWindow) && racyOpsAllowed && partitionFloors.size() > 0) {
                 try {
-                    computeSurvivorCountsOnePass(tsScanSql, rangeLo, rangeHi);
+                    return replaceWindowPartitionsOnePass(
+                            selectSql,
+                            timestampColumnName,
+                            tableToken,
+                            tableName,
+                            txnTracker,
+                            expectedSeqTxn
+                    );
                 } catch (Throwable th) {
-                    LOG.error().$("row-expiry survivor scan failed [table=").$safe(tableName)
+                    isLastCleanupFailed = true;
+                    LOG.error().$("row-expiry survivor stream failed [table=").$safe(tableName)
                             .$(", msg=").$safe(th.getMessage()).I$();
-                    return false; // cannot classify safely this sweep; try again next time
+                    return false;
                 }
             }
             for (int i = 0, n = partitionFloors.size(); i < n; i++) {
@@ -450,24 +471,14 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         // Bounds wipe: the whole logical partition is below the designated-ts threshold, so
                         // every row (incl. any concurrent back-fill) is expired. Reclaim with a no-scan empty
                         // REPLACE_RANGE (pure delete of the range).
-                        if (testBoundsDropCommitBarrier != null) {
-                            // One-shot: fired before the walWriter is acquired so an injected mid-sweep policy
-                            // change (which advances the sequencer) never contends with our writer lock.
-                            final Runnable barrier = testBoundsDropCommitBarrier;
-                            testBoundsDropCommitBarrier = null;
-                            barrier.run();
-                        }
                         if (walWriter == null) {
                             walWriter = engine.getWalWriter(tableToken);
                         }
-                        // Gate on the sequencer txn exactly like the scan-DROP path below: a concurrent write
-                        // OR a policy change (ALTER SET/DROP EXPIRE is not serialised against this sweep) advances
-                        // the seqTxn, so deferring here prevents wiping a range the CURRENT (possibly loosened)
-                        // policy would keep.
-                        if (txnTracker == null || txnTracker.getSeqTxn() == expectedSeqTxn) {
-                            walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
-                            expectedSeqTxn++; // our commit advanced the sequencer by exactly one txn
-                            workDone = true;
+                        // The sequencer atomically gates and allocates this transaction. A concurrent local or
+                        // replicated producer advances the authoritative order and makes the cleanup commit defer.
+                        if (commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
+                            expectedSeqTxn++; // our accepted commit advanced the sequencer by exactly one txn
+                            isWorkDone = true;
                             LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                     .$(", partitionTs=").$ts(floorTs).I$();
                         } else {
@@ -475,31 +486,28 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                     .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
                         }
                     } else if (racyOpsAllowed && boundsAction == ACTION_UNKNOWN) {
-                        final int action;
-                        if (onePass) {
-                            // Counts already computed by the single survivor-timestamp scan.
-                            final long survivors = partitionSurvivors.getQuick(i);
-                            action = survivors == 0 ? ACTION_DROP : (survivors < rowCount ? ACTION_REPLACE : ACTION_SKIP);
-                        } else {
-                            if (countFactory == null) {
-                                if (cleanupCompiler == null) {
-                                    cleanupCompiler = engine.getSqlCompiler();
-                                }
-                                bindPartitionRange(floorTs, nextFloorTs); // declare $1/$2 types before compiling
-                                countFactory = cleanupCompiler.compile(countSql, sqlExecutionContext).getRecordCursorFactory();
-                            }
-                            action = classifyPartition(countFactory, floorTs, nextFloorTs, rowCount);
+                        if (isScalarGenerationCacheEnabled
+                                && isScalarPartitionGenerationCurrent(tableToken, predicate, i)) {
+                            continue;
                         }
+                        final int action;
+                        if (countFactory == null) {
+                            if (cleanupCompiler == null) {
+                                cleanupCompiler = engine.getSqlCompiler();
+                            }
+                            bindPartitionRange(floorTs, nextFloorTs); // declare $1/$2 types before compiling
+                            countFactory = cleanupCompiler.compile(countSql, sqlExecutionContext).getRecordCursorFactory();
+                        }
+                        action = classifyPartition(countFactory, floorTs, nextFloorTs, rowCount);
                         if (action == ACTION_DROP) {
                             // Fully expired -> no-scan empty REPLACE_RANGE wipe, gated on the sequencer txn so a
                             // row a concurrent writer back-filled since the survivor scan is never deleted.
                             if (walWriter == null) {
                                 walWriter = engine.getWalWriter(tableToken);
                             }
-                            if (txnTracker == null || txnTracker.getSeqTxn() == expectedSeqTxn) {
-                                walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
-                                expectedSeqTxn++; // our commit advanced the sequencer by exactly one txn
-                                workDone = true;
+                            if (commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
+                                expectedSeqTxn++; // our accepted commit advanced the sequencer by exactly one txn
+                                isWorkDone = true;
                                 LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                         .$(", partitionTs=").$ts(floorTs).I$();
                             } else {
@@ -534,8 +542,10 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             if (replacePartition(selectFactory, survivorCopier, selectTsIndex, walWriter,
                                     tableName, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
                                 expectedSeqTxn++; // our REPLACE commit advanced the sequencer by exactly one txn
-                                workDone = true;
+                                isWorkDone = true;
                             }
+                        } else if (isScalarGenerationCacheEnabled) {
+                            rememberScalarPartitionGeneration(tableToken, predicate, i);
                         }
                     }
                     // ACTION_SKIP, or a WAL table not caught up -> defer this partition to a later sweep.
@@ -545,6 +555,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     // NEXT partition's REPLACE_RANGE (which would resurrect them outside the deleted
                     // range). A fresh writer is acquired on the next REPLACE.
                     walWriter = Misc.free(walWriter);
+                    isLastCleanupFailed = true;
                     LOG.error().$("row-expiry partition cleanup failed [table=").$safe(tableName)
                             .$(", partitionTs=").$ts(floorTs)
                             .$(", msg=").$safe(th.getMessage())
@@ -561,7 +572,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             sqlExecutionContext.setMemoryTracker(null);
             memoryTracker.close();
         }
-        return workDone;
+        return isWorkDone;
     }
 
     @Override
@@ -569,22 +580,29 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         sqlExecutionContext = Misc.free(sqlExecutionContext);
     }
 
+    @TestOnly
+    public boolean runNow() {
+        return runSerially();
+    }
+
     @Override
     protected boolean runSerially() {
         final long nowMicros = clock.getTicks();
-        // Global throttle: the worker pool ticks this job continuously, but discovery only needs an
-        // occasional sweep. Per-object cadence is then enforced by each policy's CLEANUP EVERY interval.
-        if (lastGlobalCheckMicros != NO_LAST_RUN && nowMicros - lastGlobalCheckMicros < GLOBAL_CHECK_INTERVAL_MICROS) {
+        final long expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+        if (expiryPolicyVersion == lastExpiryPolicyVersion
+                && nextDiscoveryDeadlineMicros != NO_LAST_RUN
+                && nowMicros < nextDiscoveryDeadlineMicros) {
             return false;
         }
-        lastGlobalCheckMicros = nowMicros;
+        lastExpiryPolicyVersion = expiryPolicyVersion;
 
-        // Skip the whole-database scan when no table carries an EXPIRE ROWS policy (and the metadata
+        // Skip discovery when no table carries an EXPIRE ROWS policy (and the metadata
         // cache has finished hydrating, so that signal is trustworthy).
         if (!engine.getMetadataCache().mayHaveExpiryPolicy()) {
             if (lastRunByTable.size() > 0) {
                 lastRunByTable.clear();
             }
+            nextDiscoveryDeadlineMicros = nowMicros + GLOBAL_CHECK_INTERVAL_MICROS;
             return false;
         }
 
@@ -598,14 +616,25 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // interval) — instead of snapshotting and re-looking-up the entire table registry every tick.
         // Snapshot under the read lock, then RELEASE it before ANY cleanup: cleanup borrows readers/writers
         // and compiles SQL, none of which may run while holding the cache lock.
+        policyDiscoveryCount++;
         try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
             metadataRO.collectPoliciedTables(discoveredTokens, discoveredPredicates, discoveredCleanupIntervals);
+        }
+        if (discoveredTokens.size() == 0 && engine.getMetadataCache().mayHaveExpiryPolicy()) {
+            // A metadata writer can publish a pending policy ID before the corresponding table has entered
+            // the startup cache. Resolve that one-time incomplete-cache state authoritatively; subsequent
+            // discovery uses the published active-table snapshot and remains O(number of policies).
+            engine.getMetadataCache().hydrateAllTables();
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                metadataRO.collectPoliciedTables(discoveredTokens, discoveredPredicates, discoveredCleanupIntervals);
+            }
         }
 
         if (discoveredTokens.size() == 0) {
             if (lastRunByTable.size() > 0) {
                 lastRunByTable.clear();
             }
+            nextDiscoveryDeadlineMicros = nowMicros + GLOBAL_CHECK_INTERVAL_MICROS;
             return false;
         }
 
@@ -617,7 +646,8 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             lastRunByTable.clear();
         }
 
-        boolean workDone = false;
+        boolean isWorkDone = false;
+        long nextDeadlineMicros = Long.MAX_VALUE;
         for (int i = 0, n = discoveredTokens.size(); i < n; i++) {
             final TableToken tableToken = discoveredTokens.getQuick(i);
             final String predicate = discoveredPredicates.getQuick(i);
@@ -631,6 +661,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
 
             final long lastRun = lastRunByTable.get(tableKey);
             if (lastRun != NO_LAST_RUN && nowMicros - lastRun < cleanupIntervalMicros) {
+                nextDeadlineMicros = Math.min(nextDeadlineMicros, lastRun + cleanupIntervalMicros);
                 continue;
             }
 
@@ -642,7 +673,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             }
             try {
                 if (cleanupTable(tableToken, predicate)) {
-                    workDone = true;
+                    isWorkDone = true;
                     // Advisory: reclaiming from an AGGREGATING (non-passthrough) view is best-effort - a later
                     // incremental/full refresh can regenerate reclaimed rows from base rows that still exist.
                     // Surface it so operators can align base-table retention with the EXPIRE ROWS horizon.
@@ -653,13 +684,22 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                     }
                 }
             } catch (Throwable th) {
+                isLastCleanupFailed = true;
                 LOG.error().$("row-expiry cleanup failed [table=").$safe(tableKey)
                         .$(", msg=").$safe(th.getMessage())
                         .I$();
             }
-            lastRunByTable.put(Chars.toString(tableKey), nowMicros);
+            if (isLastCleanupFailed) {
+                nextDeadlineMicros = Math.min(nextDeadlineMicros, nowMicros + GLOBAL_CHECK_INTERVAL_MICROS);
+            } else {
+                lastRunByTable.put(Chars.toString(tableKey), nowMicros);
+                nextDeadlineMicros = Math.min(nextDeadlineMicros, nowMicros + cleanupIntervalMicros);
+            }
         }
-        return workDone;
+        nextDiscoveryDeadlineMicros = nextDeadlineMicros == Long.MAX_VALUE
+                ? nowMicros + GLOBAL_CHECK_INTERVAL_MICROS
+                : nextDeadlineMicros;
+        return isWorkDone;
     }
 
     /**
@@ -687,6 +727,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     }
 
     private int classifyPartition(RecordCursorFactory countFactory, long floorTs, long nextFloorTs, long rowCount) throws SqlException {
+        scalarPartitionScanCount++;
         // Classify with a read-only count() scan, then copy only REPLACE partitions. This is deliberately
         // NOT folded into the copy: for an arbitrary predicate the class of a partition is unknown until it
         // is scanned, and the common case (a fully-live recent partition -> SKIP) is decided here with a cheap
@@ -704,52 +745,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         return survivors < rowCount ? ACTION_REPLACE : ACTION_SKIP;
     }
 
-    /**
-     * Single-pass survivor classification for keep-latest/window: scans the keep-query's surviving timestamps
-     * over the whole non-active range {@code [rangeLo, rangeHi)} ONCE and buckets each into its logical
-     * partition, filling {@link #partitionSurvivors}. Replaces one count() keep-query execution per partition
-     * with a single scan (keep-latest survivors ~= #keys; window survivors bounded by the result set).
-     */
-    private void computeSurvivorCountsOnePass(String tsScanSql, long rangeLo, long rangeHi) throws SqlException {
-        partitionSurvivors.clear();
-        for (int i = 0, n = partitionFloors.size(); i < n; i++) {
-            partitionSurvivors.add(0);
-        }
-        bindPartitionRange(rangeLo, rangeHi);
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            try (RecordCursorFactory factory = compiler.compile(tsScanSql, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        final int idx = partitionIndexFor(record.getTimestamp(0));
-                        if (idx >= 0) {
-                            partitionSurvivors.setQuick(idx, partitionSurvivors.getQuick(idx) + 1);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Index into {@link #partitionFloors} (ascending) of the logical partition containing {@code ts}, or -1.
-     */
-    private int partitionIndexFor(long ts) {
-        int lo = 0;
-        int hi = partitionFloors.size() - 1;
-        int ans = -1;
-        while (lo <= hi) {
-            final int mid = (lo + hi) >>> 1;
-            if (partitionFloors.getQuick(mid) <= ts) {
-                ans = mid;
-                lo = mid + 1;
-            } else {
-                hi = mid - 1;
-            }
-        }
-        return (ans >= 0 && ts < partitionNextFloors.getQuick(ans)) ? ans : -1;
-    }
-
     // Binds $1 = partition floor (inclusive), $2 = next floor (exclusive). The interval optimiser prunes to
     // exactly this logical partition (an interval forward scan), so the count/select factories are compiled
     // ONCE per sweep and merely rebound per partition rather than re-parsed + re-codegen'd from a literal.
@@ -757,6 +752,25 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         final BindVariableService bind = sqlExecutionContext.getBindVariableService();
         bind.setTimestamp(0, floorTs);
         bind.setTimestamp(1, nextFloorTs);
+    }
+
+    private boolean commitWithFence(
+            WalWriter walWriter,
+            long floorTs,
+            long nextFloorTs,
+            SeqTxnTracker txnTracker,
+            long expectedSeqTxn
+    ) {
+        if (txnTracker == null) {
+            walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
+            return true;
+        }
+        return walWriter.commitWithParamsIfSeqTxn(
+                expectedSeqTxn,
+                floorTs,
+                nextFloorTs,
+                WAL_DEDUP_MODE_REPLACE_RANGE
+        );
     }
 
     private long countSurvivors(RecordCursorFactory countFactory, long floorTs, long nextFloorTs) throws SqlException {
@@ -769,8 +783,45 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         return 0;
     }
 
+    @TestOnly
+    public long getPolicyDiscoveryCount() {
+        return policyDiscoveryCount;
+    }
+
+    @TestOnly
+    public long getScalarPartitionScanCount() {        return scalarPartitionScanCount;
+    }
+
+    @TestOnly
+    public long getSurvivorStreamOpenCount() {
+        return survivorStreamOpenCount;
+    }
+
     private void initNow() {
         sqlExecutionContext.initNow();
+    }
+
+    private boolean isScalarPartitionGenerationCurrent(TableToken tableToken, String predicate, int partitionIndex) {
+        scalarPartitionKey.clear();
+        scalarPartitionKey.put(tableToken.getDirName()).putAscii(':').put(predicate).putAscii(':')
+                .put(partitionFloors.getQuick(partitionIndex));
+        return scalarPartitionGenerations.get(scalarPartitionKey)
+                == partitionContentGenerations.getQuick(partitionIndex);
+    }
+
+    private static long mixPartitionGeneration(long seed, long nameTxn, long rowCount) {
+        long generation = seed * 31 + nameTxn;
+        return generation * 31 + rowCount;
+    }
+
+    private void rememberScalarPartitionGeneration(TableToken tableToken, String predicate, int partitionIndex) {
+        scalarPartitionKey.clear();
+        scalarPartitionKey.put(tableToken.getDirName()).putAscii(':').put(predicate).putAscii(':')
+                .put(partitionFloors.getQuick(partitionIndex));
+        scalarPartitionGenerations.put(
+                Chars.toString(scalarPartitionKey),
+                partitionContentGenerations.getQuick(partitionIndex)
+        );
     }
 
     /**
@@ -782,9 +833,96 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
             if (i > 0) {
                 sink.putAscii(',');
             }
-            sink.putAscii('"').put(metadata.getColumnName(i)).putAscii('"');
+            sink.put(RowExpiryUtil.quoteIdentifier(metadata.getColumnName(i)));
         }
         return sink.toString();
+    }
+
+    /**
+     * Executes one survivor query for the complete non-active range and streams its timestamp-ordered rows
+     * through one WAL-backed spool. The writer owns at most one logical partition's uncommitted survivors:
+     * an all-live partition rolls them back, while a partial partition commits them as its REPLACE_RANGE.
+     * Factory, cursor, compiler, writer, and uncommitted rows all have explicit ownership on success, fence
+     * rejection, cancellation, retry, and failure through the nested try/finally scopes.
+     */
+    private boolean replaceWindowPartitionsOnePass(
+            String selectSql,
+            String timestampColumnName,
+            TableToken tableToken,
+            String tableName,
+            SeqTxnTracker txnTracker,
+            long expectedSeqTxn
+    ) throws SqlException {
+        final long rangeLo = partitionFloors.getQuick(0);
+        final long rangeHi = partitionNextFloors.getQuick(partitionFloors.size() - 1);
+        bindPartitionRange(rangeLo, rangeHi);
+        boolean isWorkDone = false;
+        WalWriter walWriter = null;
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (RecordCursorFactory factory = compiler.compile(selectSql, sqlExecutionContext).getRecordCursorFactory()) {
+                final int timestampIndex = factory.getMetadata().getColumnIndex(timestampColumnName);
+                walWriter = engine.getWalWriter(tableToken);
+                columnFilter.of(factory.getMetadata().getColumnCount());
+                final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                        asm,
+                        factory.getMetadata(),
+                        walWriter.getMetadata(),
+                        columnFilter,
+                        engine.getConfiguration()
+                );
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    survivorStreamOpenCount++;
+                    final Record record = cursor.getRecord();
+                    boolean hasRow = cursor.hasNext();
+                    long previousTimestamp = Numbers.LONG_NULL;
+                    for (int i = 0, n = partitionFloors.size(); i < n; i++) {
+                        final long floorTs = partitionFloors.getQuick(i);
+                        final long nextFloorTs = partitionNextFloors.getQuick(i);
+                        final long rowCount = partitionRowCounts.getQuick(i);
+                        long survivorCount = 0;
+                        while (hasRow) {
+                            final long timestamp = record.getTimestamp(timestampIndex);
+                            if (previousTimestamp != Numbers.LONG_NULL && timestamp < previousTimestamp) {
+                                throw CairoException.nonCritical().put("expiry survivor stream is not timestamp ordered");
+                            }
+                            if (timestamp >= nextFloorTs) {
+                                break;
+                            }
+                            previousTimestamp = timestamp;
+                            if (timestamp >= floorTs) {
+                                final TableWriter.Row row = walWriter.newRow(timestamp);
+                                copier.copy(sqlExecutionContext, record, row);
+                                row.append();
+                                survivorCount++;
+                            }
+                            hasRow = cursor.hasNext();
+                        }
+
+                        if (survivorCount >= rowCount) {
+                            // Nothing expired. Discard this partition's WAL-backed spool before moving on.
+                            walWriter.rollback();
+                            continue;
+                        }
+                        if (!commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
+                            return isWorkDone;
+                        }
+                        expectedSeqTxn++;
+                        isWorkDone = true;
+                        if (survivorCount == 0) {
+                            LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
+                                    .$(", partitionTs=").$ts(floorTs).I$();
+                        } else {
+                            LOG.info().$("compacted partially-expired partition [table=").$safe(tableName)
+                                    .$(", partitionTs=").$ts(floorTs)
+                                    .$(", survivors=").$(survivorCount).I$();
+                        }
+                    }
+                }
+            }
+        } finally {
+            Misc.free(walWriter);
+        }
+        return isWorkDone;
     }
 
     private boolean replacePartition(
@@ -814,30 +952,15 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 appended++;
             }
         }
-        // Concurrency gate: commit the REPLACE only if NO external transaction was sequenced since the
-        // survivor scan's baseline (our own prior commits are accounted for in expectedSeqTxn). Unlike a
-        // reader-based recount, the sequencer txn reflects committed-but-not-yet-applied writes too, so a
-        // concurrent back-fill into this partition cannot slip through unseen.
-        // RESIDUAL RACE (known, best-effort): this check and the sequencer-txn allocation inside
-        // commitWithParams() are not atomic. The window spans commitWithParams()'s segment finalisation
-        // (which may fsync) before it calls the sequencer, so a writer that sequences a txn in that window
-        // takes a LOWER seqTxn than this REPLACE; on apply its rows land in [floorTs, nextFloorTs) just before
-        // this REPLACE_RANGE deletes the range, dropping rows the survivor scan did not see. This needs an O3
-        // back-fill into the exact non-active partition being swept, in that narrow window. The read filter
-        // stays authoritative for query VISIBILITY regardless, and a full refresh re-derives any such row from
-        // the base; a fully atomic gate would require a sequencer-level conditional commit (out of scope here).
-        // An empty survivor set is a legitimate fully-expired partition: the gate proves nothing was
-        // back-filled into the range, so it is committed as a pure-delete REPLACE_RANGE (DROP PARTITION via
-        // SQL is rejected for materialized views).
-        if (txnTracker != null && txnTracker.getSeqTxn() != expectedSeqTxn) {
-            walWriter.rollback();
+        // The sequencer atomically validates that no external transaction followed the survivor-scan baseline
+        // and allocates this REPLACE transaction in the same ordering decision. WalWriter prepares and syncs
+        // the event first, then rolls the unsequenced event and appended survivors back when the fence rejects.
+        // An empty survivor set is a legitimate fully-expired partition and commits as a pure-delete range.
+        if (!commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
             LOG.info().$("deferred expired-rows compaction; table changed concurrently [table=").$safe(tableName)
                     .$(", partitionTs=").$ts(floorTs).I$();
             return false;
         }
-        // Atomically replace [floorTs, nextFloorTs) with exactly the surviving rows appended above (none ->
-        // the whole range is deleted).
-        walWriter.commitWithParams(floorTs, nextFloorTs, WAL_DEDUP_MODE_REPLACE_RANGE);
         LOG.info().$(appended == 0 ? "reclaimed fully-expired partition [table=" : "compacted expired-rows partition [table=")
                 .$safe(tableName).$(", partitionTs=").$ts(floorTs).I$();
         return true;

@@ -759,11 +759,7 @@ public class ServerMain implements Closeable {
     }
 
     protected void setupRowExpiryCleanupJob(WorkerPool sharedPoolWrite, CairoEngine engine) {
-        if (engine.getConfiguration().isRowExpiryEnabled()) {
-            final RowExpiryCleanupJob rowExpiryCleanupJob = new RowExpiryCleanupJob(engine);
-            sharedPoolWrite.assign(rowExpiryCleanupJob);
-            sharedPoolWrite.freeOnExit(rowExpiryCleanupJob);
-        }
+        RowExpiryCleanupJob.assignToPool(sharedPoolWrite, engine);
     }
 
     protected void setupMatViewJobs(WorkerPool mvWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {

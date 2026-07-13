@@ -26,9 +26,15 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.RowExpiryCleanupJob;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.griffin.ExpiryValidationResult;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -60,6 +66,59 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClockAndRandomThresholdCleanupSkipped() throws Exception {
+        assertMemoryLeak(() -> {
+            // A pre-epoch clock makes `now() - now()*2` a positive post-epoch threshold. Before the fix,
+            // cleanup classified it monotonic and physically dropped the first two partitions.
+            setCurrentMicros(-864_000_000_000L); // 1969-12-22, threshold of decreasing transform = 1970-01-11
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES " +
+                    "(1.0, '1970-01-02T00:00:00.000000Z'), " +
+                    "(2.0, '1970-01-05T00:00:00.000000Z'), " +
+                    "(3.0, '1970-02-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+
+            assertMixedClockCleanupSkipped("mv_direct", "ts < now() + rnd_long()");
+            assertMixedClockCleanupSkipped("mv_nested", "ts < dateadd('u', rnd_int(), now())");
+            assertMixedClockCleanupSkipped("mv_decreasing", "ts < now() - (now()::long * 2)");
+            assertMixedClockCleanupSkipped("mv_nested_decreasing", "ts < (now() - (now()::long * 2)) - 1_000_000L");
+        });
+    }
+
+    @Test
+    public void testCleanupUsesPolicyDeadlinesAndAuthoritativeSnapshot() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES (1.0, '2024-01-01T00:00:00.000000Z'), " +
+                    "(2.0, '2024-01-02T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            engine.getMetadataCache().hydrateAllTables();
+
+            final TableToken token = engine.verifyTableName("mv");
+            Assert.assertTrue(engine.getMetadataCache().mayTableHaveExpiryPolicy(token));
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals(1, job.getPolicyDiscoveryCount());
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals("unchanged policy version and future deadline avoid discovery",
+                        1, job.getPolicyDiscoveryCount());
+
+                execute("ALTER MATERIALIZED VIEW mv DROP EXPIRE");
+                drainWalAndMatViewQueues();
+                Assert.assertFalse(engine.getMetadataCache().mayTableHaveExpiryPolicy(token));
+                Assert.assertFalse(engine.getMetadataCache().mayHaveExpiryPolicy());
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals("policy publication invalidates the deadline immediately",
+                        1, job.getPolicyDiscoveryCount());
+            }
+        });
+    }
+
+    @Test
     public void testClockFreeValuePredicateReclaims() throws Exception {
         // Positive control for the monotonicity gate: a CLOCK-FREE value predicate is monotonic (mat-view
         // rows are immutable, so the predicate's per-row value never changes), so cleanup reclaims a
@@ -73,15 +132,94 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v > 100");
             drainWalAndMatViewQueues();
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
             final boolean worked = runCleanup("mv");
             drainWalAndMatViewQueues();
 
             Assert.assertTrue("clock-free monotonic policy must reclaim", worked);
             // 01-02 wholly expired -> reclaimed; 01-01 (kept v=1) and 01-03 (active) remain.
-            assertSql("p\n2\n", "select count() p from table_partitions('mv')");
-            assertSql("sym\tv\nA\t1.0\nC\t3.0\n", "select sym, v from mv order by sym");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            assertQuery("select sym, v from mv order by sym").noLeakCheck().returns("sym\tv\nA\t1.0\nC\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testExpiryFilterAcrossCteNestedAndUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES " +
+                    "('A', 1.0, '2024-01-01T00:00:00.000000Z'), " +
+                    "('B', 2.0, '2024-01-02T00:00:00.000000Z'), " +
+                    "('C', null, '2024-01-03T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2");
+            drainWalAndMatViewQueues();
+
+            assertQuery("WITH x AS (SELECT sym FROM mv) SELECT * FROM x UNION ALL SELECT * FROM x ORDER BY sym")
+                    .noLeakCheck().returns("sym\nB\nB\nC\nC\n");
+            assertQuery("SELECT sym FROM (SELECT * FROM mv) WHERE sym IN " +
+                    "(SELECT sym FROM mv WHERE v IS NULL) ORDER BY sym")
+                    .noLeakCheck().returns("sym\nC\n");
+            assertQuery("SELECT sym FROM mv WHERE v = 2 UNION ALL SELECT sym FROM mv WHERE v IS NULL ORDER BY sym")
+                    .noLeakCheck().returns("sym\nB\nC\n");
+
+        });
+    }
+
+    @Test
+    public void testExpiryValidationReturnsReusableClassification() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final TableToken token = engine.verifyTableName("x");
+            try (
+                    TableMetadata metadata = engine.getTableMetadata(token);
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                final ExpiryValidationResult clockFree = compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "v < 0", 0);
+                Assert.assertFalse(clockFree.hasClock());
+                Assert.assertTrue(clockFree.isDeterministic());
+                Assert.assertTrue(clockFree.isMonotonic());
+                Assert.assertEquals(1, clockFree.getReferencedColumnIndexes().size());
+                Assert.assertEquals(metadata.getColumnIndexQuiet("v"), clockFree.getReferencedColumnIndexes().getQuick(0));
+
+                final ExpiryValidationResult advancingThreshold = compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < now()", 0);
+                Assert.assertTrue(advancingThreshold.hasClock());
+                Assert.assertFalse(advancingThreshold.isDeterministic());
+                Assert.assertTrue(advancingThreshold.isMonotonic());
+                Assert.assertEquals(metadata.getTimestampIndex(), advancingThreshold.getReferencedColumnIndexes().getQuick(0));
+
+                final ExpiryValidationResult reversingThreshold = compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts > now()", 0);
+                Assert.assertTrue(reversingThreshold.hasClock());
+                Assert.assertFalse(reversingThreshold.isMonotonic());
+
+                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < now() + rnd_long()", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < dateadd('u', rnd_int(), now())", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < now() - (now()::long * 2)", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < (now() - (now()::long * 2)) - 1_000_000L", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < dateadd('u', 1, now())", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "ts < now() - 1_000_000L", 0).isMonotonic());
+            }
+
+            execute("CREATE TABLE xns (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            try (
+                    TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("xns"));
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "now() > ts", 0).isMonotonic());
+                Assert.assertTrue(compiler.isExpiryCleanupMonotonic(
+                        sqlExecutionContext, metadata, "xns", "now() > ts", "ts"));
+            }
         });
     }
 
@@ -110,6 +248,39 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryLimitFailureDefersWithoutWalMutation() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base SELECT 'A', x, dateadd('d', x::int, '2024-01-01'::timestamp) FROM long_sequence(4)");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS KEEP HIGHEST v PARTITION BY k CLEANUP EVERY 1s");
+            drainWalAndMatViewQueues();
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate = RowExpiryUtil.encodeKeepBy(1, true, "v", "k");
+
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 1L);
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+            }
+            assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck().returns("p\tr\n4\t4\n");
+
+            // A second breach exercises pooled tracker reuse; it must defer again rather than inherit
+            // unbalanced accounting or mutate WAL state.
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+            }
+            assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('mv')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck().returns("p\tr\n4\t4\n");
+        });
+    }
+
+    @Test
     public void testNonMonotonicFuturePredicateCleanupSkippedAndRowsSurvive() throws Exception {
         // A non-monotonic policy "ts > now()" expires FUTURE rows; as now() advances past them they un-expire.
         // Cleanup must NOT physically delete them (the gate skips reclamation), so when now() advances they
@@ -126,20 +297,20 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             // Three logical partitions; read filter shows only the non-expired past row.
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
-            assertSql("sym\nA\n", "select sym from mv order by sym");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nA\n");
 
             // Cleanup must be a NO-OP: the policy is non-monotonic, so reclamation is skipped.
             final boolean worked = runCleanup("mv");
             drainWalAndMatViewQueues();
             Assert.assertFalse("non-monotonic policy must skip physical cleanup", worked);
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
-            assertSql("sym\nA\n", "select sym from mv order by sym");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nA\n");
 
             // Advance the clock past all rows: every row now satisfies ts <= now() -> all kept and VISIBLE.
             // This only holds because cleanup did not delete the future rows while they were expired.
             setCurrentMicros(JAN_25);
-            assertSql("sym\nA\nB\nC\n", "select sym from mv order by sym");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nA\nB\nC\n");
         });
     }
 
@@ -184,6 +355,57 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailedCleanupRetriesOnNextGlobalTick() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(JAN_10);
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES (1.0, '2024-01-01T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS WHEN v < 0 CLEANUP EVERY 1h");
+            drainWalAndMatViewQueues();
+            engine.getMetadataCache().hydrateAllTables();
+
+            final int[] attempts = {0};
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine) {
+                @Override
+                public boolean cleanupTable(TableToken tableToken, String predicate) {
+                    if (attempts[0]++ == 0) {
+                        throw new RuntimeException("injected cleanup failure");
+                    }
+                    return false;
+                }
+            }) {
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals(1, attempts[0]);
+                setCurrentMicros(JAN_10 + 999_999L);
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals(1, attempts[0]);
+                setCurrentMicros(JAN_10 + 1_000_000L);
+                Assert.assertFalse(job.runNow());
+                Assert.assertEquals(2, attempts[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testOperationalKillSwitchControlsPoolOwnership() throws Exception {
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 1)) {
+                setProperty(PropertyKey.CAIRO_ROW_EXPIRY_ENABLED, "false");
+                Assert.assertFalse(RowExpiryCleanupJob.assignToPool(pool, engine));
+                Assert.assertEquals(0, pool.getAssignedJobCount());
+                Assert.assertEquals(0, pool.getFreeOnExitJobCount());
+
+                setProperty(PropertyKey.CAIRO_ROW_EXPIRY_ENABLED, "true");
+                Assert.assertTrue(RowExpiryCleanupJob.assignToPool(pool, engine));
+                Assert.assertEquals(1, pool.getAssignedJobCount());
+                Assert.assertEquals(1, pool.getFreeOnExitJobCount());
+            }
+        });
+    }
+
+    @Test
     public void testReadVsCleanupBoundaryAgreementForTsNowPredicate() throws Exception {
         // The read filter flips "ts < now()" to "ts >= now()" for pruning while cleanup classifies via the
         // bounds threshold (now() frozen per sweep). Both must agree at the boundary: a row at EXACTLY now()
@@ -201,8 +423,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             final String visibleBefore = "sym\nEDGE\nNEW\n";
-            assertSql(visibleBefore, "select sym from mv order by sym");
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns(visibleBefore);
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
             final boolean worked = runCleanup("mv");
             drainWalAndMatViewQueues();
@@ -210,8 +432,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
             // The expired OLD partition is reclaimed; the EDGE row exactly at now() and NEW row survive — the
             // post-cleanup visible set equals the pre-cleanup read-filtered set (no boundary divergence).
-            assertSql("p\n2\n", "select count() p from table_partitions('mv')");
-            assertSql(visibleBefore, "select sym from mv order by sym");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns(visibleBefore);
         });
     }
 
@@ -230,7 +452,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when ts < '2024-01-02T00:00:00.000000Z'");
             drainWalAndMatViewQueues();
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
             final TableToken token = engine.verifyTableName("mv");
             final io.questdb.cairo.mv.MatViewState state = engine.getMatViewStateStore().getViewState(token);
@@ -244,12 +466,12 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 state.unlock();
             }
             // Nothing reclaimed while deferred.
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
             // Lock released: the next sweep reclaims the wholly-expired old partition.
             Assert.assertTrue("cleanup must reclaim once the lock is free", runCleanup("mv"));
             drainWalAndMatViewQueues();
-            assertSql("p\n2\n", "select count() p from table_partitions('mv')");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
         });
     }
 
@@ -293,7 +515,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             // Under the strict policy both old partitions are expired; only NEW is visible.
-            assertSql("sym\nNEW\n", "select sym from mv order by sym");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\n");
 
             final TableToken token = engine.verifyTableName("mv");
             final String stalePredicate;
@@ -305,28 +527,82 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             Assert.assertEquals("precondition: view fully applied (writer caught up)",
                     tracker.getSeqTxn(), tracker.getWriterTxn());
 
+            // Fire after cleanup has appended and synced its WAL event but before the conditional sequencer
+            // allocation. The competing ALTER must take the next txn, reject cleanup's stale fence, and leave
+            // no sequenced cleanup event behind.
+            engine.getTableSequencerAPI().setTestNextTxnIfLastTxnBarrier(() -> {
+                try {
+                    execute("alter materialized view mv set expire rows when ts < '2024-01-01T00:00:00.000000Z'");
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
             final boolean reclaimed;
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
-                // Inject the loosening policy change at the first bounds-DROP commit point (before the walWriter
-                // is acquired, so no writer-lock contention). It advances the sequencer past expectedSeqTxn while
-                // the writer was caught up, so ONLY the M1 per-commit gate can defer -- racyOpsAllowed does not.
-                job.setTestBoundsDropCommitBarrier(() -> {
-                    try {
-                        execute("alter materialized view mv set expire rows when ts < '2024-01-01T00:00:00.000000Z'");
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                });
                 reclaimed = job.cleanupTable(token, stalePredicate);
             }
-            Assert.assertFalse("M1 gate must defer the bounds-DROP wipe when a policy change lands mid-sweep", reclaimed);
+            Assert.assertFalse("conditional allocation must defer the bounds-DROP wipe", reclaimed);
 
             // Apply the loosened policy. Nothing was reclaimed; every row it keeps (all three -- ts < 2024-01-01 is
             // false for all) must survive. OLD1/OLD2 would be physically gone had the bounds-DROP committed.
             drainWalAndMatViewQueues();
             Assert.assertEquals("ts < '2024-01-01T00:00:00.000000Z'", expiryPredicate("mv"));
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
-            assertSql("sym\nNEW\nOLD1\nOLD2\n", "select sym from mv order by sym");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\nOLD1\nOLD2\n");
+        });
+    }
+
+    @Test
+    public void testConditionalFenceDefersScanDropOnSetExpire() throws Exception {
+        assertConditionalFenceDefersPolicyChange(
+                false,
+                "alter materialized view mv set expire rows when v < 0",
+                "v < 0"
+        );
+    }
+
+    @Test
+    public void testConditionalFenceDefersSurvivorReplaceOnDropExpire() throws Exception {
+        assertConditionalFenceDefersPolicyChange(true, "alter materialized view mv drop expire", null);
+    }
+
+    @Test
+    public void testConditionalFenceRetriesAfterCompetingDataTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values " +
+                    "('OLD', 1.0, '2024-01-05T00:00:00.000000Z')," +
+                    "('NEW', 3.0, '2024-01-20T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate = expiryPredicate("mv");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long seqTxnBefore = tracker.getSeqTxn();
+            engine.getTableSequencerAPI().setTestNextTxnIfLastTxnBarrier(() -> {
+                try (WalWriter competingWriter = engine.getWalWriter(token)) {
+                    final TableWriter.Row row = competingWriter.newRow(1_704_412_800_000_000L);
+                    row.putSym(0, "KEEP");
+                    row.putDouble(1, 3.0);
+                    row.append();
+                    competingWriter.commit();
+                }
+            });
+
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse("competing data txn must reject the cleanup fence", job.cleanupTable(token, predicate));
+            }
+            Assert.assertEquals("rejected cleanup must not consume a sequencer txn", seqTxnBefore + 1, tracker.getSeqTxn());
+
+            drainWalAndMatViewQueues();
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertTrue("next sweep must retry successfully", job.cleanupTable(token, predicate));
+            }
+            drainWalAndMatViewQueues();
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nKEEP\nNEW\n");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
         });
     }
 
@@ -351,6 +627,39 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         assertCleanupWithStaleDiscoveryPredicateKeepsRows("alter materialized view mv drop expire", null);
     }
 
+    @Test
+    public void testScalarCleanupSkipsUnchangedPartitionGenerations() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 2.0, '2024-01-02T00:00:00.000000Z'),
+                        ('C', 3.0, '2024-01-03T00:00:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String predicate = expiryPredicate("mv");
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals(2, job.getScalarPartitionScanCount());
+
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals("unchanged persisted partition generations skip rescans",
+                        2, job.getScalarPartitionScanCount());
+
+                execute("INSERT INTO base VALUES ('D', 4.0, '2024-01-01T12:00:00.000000Z')");
+                drainWalAndMatViewQueues();
+                Assert.assertFalse(job.cleanupTable(token, predicate));
+                Assert.assertEquals("historical WAL-range replacement invalidates only the changed partition",
+                        3, job.getScalarPartitionScanCount());
+            }
+        });
+    }
+
     private void assertCleanupWithStaleDiscoveryPredicateKeepsRows(String policyChangeSql, String newPredicateOrNullForDrop) throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(JAN_10);
@@ -363,7 +672,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             execute("create materialized view mv as (select * from base) expire rows when ts < now()");
             drainWalAndMatViewQueues();
 
-            assertSql("sym\nNEW\n", "select sym from mv order by sym");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\n");
 
             // The stale discovery predicate: the strict policy in force at (simulated) discovery time.
             final TableToken token = engine.verifyTableName("mv");
@@ -392,8 +701,59 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             } else {
                 Assert.assertEquals(newPredicateOrNullForDrop, expiryPredicate("mv"));
             }
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
-            assertSql("sym\nNEW\nOLD1\nOLD2\n", "select sym from mv order by sym");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+            if (newPredicateOrNullForDrop == null) {
+                assertQuery("select sym from mv order by sym").expectSize().noLeakCheck().returns("sym\nNEW\nOLD1\nOLD2\n");
+            } else {
+                assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\nOLD1\nOLD2\n");
+            }
+        });
+    }
+
+    private void assertConditionalFenceDefersPolicyChange(
+            boolean isReplace,
+            String policyChangeSql,
+            String expectedPredicate
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute(isReplace
+                    ? "insert into base values " +
+                    "('OLD', 1.0, '2024-01-05T00:00:00.000000Z')," +
+                    "('KEEP', 3.0, '2024-01-05T01:00:00.000000Z')," +
+                    "('NEW', 4.0, '2024-01-20T00:00:00.000000Z')"
+                    : "insert into base values " +
+                    "('OLD', 1.0, '2024-01-05T00:00:00.000000Z')," +
+                    "('NEW', 4.0, '2024-01-20T00:00:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("create materialized view mv as (select * from base) expire rows when v < 2");
+            drainWalAndMatViewQueues();
+
+            final TableToken token = engine.verifyTableName("mv");
+            final String stalePredicate = expiryPredicate("mv");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final long seqTxnBefore = tracker.getSeqTxn();
+            engine.getTableSequencerAPI().setTestNextTxnIfLastTxnBarrier(() -> {
+                try {
+                    execute(policyChangeSql);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+                Assert.assertFalse("policy change must reject the cleanup fence", job.cleanupTable(token, stalePredicate));
+            }
+            Assert.assertEquals("rejected cleanup must not consume a sequencer txn", seqTxnBefore + 1, tracker.getSeqTxn());
+
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(expectedPredicate, expiryPredicate("mv"));
+            if (expectedPredicate == null) {
+                assertQuery("select sym from mv order by sym").expectSize().noLeakCheck().returns("sym\nKEEP\nNEW\nOLD\n");
+            } else {
+                assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\nOLD\n");
+            }
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n2\n");
         });
     }
 
@@ -423,8 +783,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
 
             // Under the strict policy the two old partitions are expired; only NEW is visible.
-            assertSql("sym\nNEW\n", "select sym from mv order by sym");
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
+            assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\n");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
 
             final TableToken token = engine.verifyTableName("mv");
             final String stalePredicate;
@@ -457,18 +817,29 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             } else {
                 Assert.assertEquals(loosenedPredicateOrNullForDrop, expiryPredicate("mv"));
             }
-            assertSql("p\n3\n", "select count() p from table_partitions('mv')");
-            assertSql("sym\nNEW\nOLD1\nOLD2\n", "select sym from mv order by sym");
+            assertQuery("select count() p from table_partitions('mv')").noRandomAccess().expectSize().noLeakCheck().returns("p\n3\n");
+            if (loosenedPredicateOrNullForDrop == null) {
+                assertQuery("select sym from mv order by sym").expectSize().noLeakCheck().returns("sym\nNEW\nOLD1\nOLD2\n");
+            } else {
+                assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\nOLD1\nOLD2\n");
+            }
         });
     }
 
-    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion builder
-    // (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
-    // calculate-size and variable-column cross-checks run against these deterministic projections.
-    // sizeMayVary() keeps the size-vs-iteration cross-check without pinning determinability, and
-    // inferRandomAccess()/inferTimestamp() adopt each heterogeneous factory's own capability.
-    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
+    private void assertMixedClockCleanupSkipped(String viewName, String predicate) throws Exception {
+        execute("CREATE MATERIALIZED VIEW " + viewName + " AS (SELECT * FROM base) EXPIRE ROWS WHEN " + predicate);
+        drainWalAndMatViewQueues();
+        final TableToken token = engine.verifyTableName(viewName);
+        final String storedPredicate = expiryPredicate(viewName);
+        try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
+            Assert.assertFalse("mixed clock/random threshold must skip physical cleanup", job.cleanupTable(token, storedPredicate));
+        }
+        drainWalAndMatViewQueues();
+        assertQuery("SELECT count() p, sum(numRows) r FROM table_partitions('" + viewName + "')")
+                .noRandomAccess()
+                .expectSize()
+                .noLeakCheck()
+                .returns("p\tr\n3\t3\n");
     }
 
     private String expiryPredicate(String name) {

@@ -333,6 +333,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ObjList<ExpressionNode> getExpiryWindowPartitionBy() {
+        return delegate.getExpiryWindowPartitionBy();
+    }
+
+    @Override
     public ObjList<ExpressionNode> getExpressionModels() {
         return delegate.getExpressionModels();
     }
@@ -838,6 +843,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isExpiryWindowBarrier() {
+        return delegate.isExpiryWindowBarrier();
+    }
+
+    @Override
     public boolean isForceBackwardScan() {
         return delegate.isForceBackwardScan();
     }
@@ -1049,6 +1059,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setExplicitTimestamp(boolean explicitTimestamp) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setExpiryWindowBarrier(boolean isExpiryWindowBarrier) {
         throw new UnsupportedOperationException();
     }
 

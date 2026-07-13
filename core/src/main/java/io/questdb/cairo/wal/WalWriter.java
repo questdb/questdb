@@ -106,6 +106,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.seq.TableSequencer.FENCE_REJECTED;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
 public class WalWriter extends WalWriterBase implements TableWriterAPI {
@@ -356,6 +357,27 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 replaceRangeLowTs,
                 replaceRangeHiTs,
                 dedupMode
+        );
+    }
+
+    /**
+     * Commits a cleanup range replacement only when {@code expectedSeqTxn} is still the table's latest
+     * sequencer transaction. The WAL event and row data are prepared and synced before the sequencer makes
+     * the atomic check-and-allocation decision, so the sequencer lock never covers filesystem I/O. A rejected
+     * event remains unsequenced and this writer discards it before moving to a fresh WAL segment.
+     *
+     * @return true when the sequencer accepted the transaction, false when the fence rejected it
+     */
+    public boolean commitWithParamsIfSeqTxn(long expectedSeqTxn, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+        return commit0(
+                WalTxnType.DATA,
+                WAL_DEFAULT_BASE_TABLE_TXN,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                replaceRangeLowTs,
+                replaceRangeHiTs,
+                dedupMode,
+                expectedSeqTxn
         );
     }
 
@@ -944,6 +966,28 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
+        commit0(
+                txnType,
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                lastPeriodHi,
+                replaceRangeLowTs,
+                replaceRangeHiTs,
+                dedupMode,
+                Long.MAX_VALUE
+        );
+    }
+
+    private boolean commit0(
+            byte txnType,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode,
+            long expectedSeqTxn
+    ) {
         checkDistressed();
         throwIfInColumnarWrite("commit");
         try {
@@ -981,9 +1025,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         replaceRangeHiTs,
                         dedupMode
                 );
-                // flush disk before getting next txn
+                // Flush disk before asking the sequencer. Conditional cleanup commits deliberately avoid
+                // holding the sequencer lock across append/fsync; rejection rolls this unsequenced event back.
                 syncIfRequired();
-                final long seqTxn = getSequencerTxn();
+                final long seqTxn = expectedSeqTxn == Long.MAX_VALUE
+                        ? getSequencerTxn()
+                        : getSequencerTxn(expectedSeqTxn);
+                if (seqTxn == FENCE_REJECTED) {
+                    events.rollback();
+                    lastSegmentTxn--;
+                    rollback0();
+                    openNewSegment();
+                    return false;
+                }
                 if (walTelemetryEnabled) {
                     final long minTs = txnRowCount > 0 ? txnMinTimestamp : Numbers.LONG_NULL;
                     final long maxTs = txnRowCount > 0 ? txnMaxTimestamp : Numbers.LONG_NULL;
@@ -1028,6 +1082,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     );
                 }
             }
+            return true;
         } catch (CairoException | TableReferenceOutOfDateException ex) {
             distressed = true;
             throw ex;
@@ -1343,6 +1398,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             }
         } while (seqTxn == NO_TXN);
         return lastSeqTxn = seqTxn;
+    }
+
+    private long getSequencerTxn(long expectedSeqTxn) {
+        long seqTxn;
+        do {
+            seqTxn = sequencer.nextTxnIfLastTxn(tableToken, expectedSeqTxn, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+            if (seqTxn == NO_TXN) {
+                applyMetadataChangeLog(Long.MAX_VALUE);
+            }
+        } while (seqTxn == NO_TXN);
+        return seqTxn == FENCE_REJECTED ? seqTxn : (lastSeqTxn = seqTxn);
     }
 
     private boolean hasDirtyColumns(long currentTxnStartRowNum) {

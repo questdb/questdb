@@ -74,15 +74,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
 
-    // Bridge: AbstractCairoTest.assertSql(expected, sql) was removed in favor of the QueryAssertion
-    // builder (OSS #7195). Drive the builder via returns() (NOT returnsOnce) so both cursor passes plus the
-    // calculate-size and variable-column cross-checks run against the quiesced (deterministic) oracle data.
-    // sizeMayVary() keeps the size-vs-iteration cross-check without pinning determinability, and
-    // inferRandomAccess()/inferTimestamp() adopt each heterogeneous factory's own capability.
-    private void assertSql(CharSequence expected, CharSequence sql) throws Exception {
-        assertQuery(sql).noLeakCheck().sizeMayVary().inferRandomAccess().inferTimestamp().returns(expected);
-    }
-
     @Test
     public void testConcurrentCleanup() throws Exception {
         assertMemoryLeak(() -> {
@@ -138,7 +129,7 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
             // Sanity: fully applied, and the keep-set (latest per key) is visible.
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
             Assert.assertEquals("precondition: view fully applied", tracker.getSeqTxn(), tracker.getWriterTxn());
-            assertSql("c2\tc3\nA\t3.0\nB\t2.0\n", "select c2, c3 from " + view + " order by c2");
+            assertQuery("select c2, c3 from " + view + " order by c2").expectSize().noLeakCheck().returns("c2\tc3\nA\t3.0\nB\t2.0\n");
 
             // Back-fill a row that becomes a KEPT (latest) row for a NEW key C in a NON-ACTIVE partition
             // (01-02), then commit it to the VIEW's WAL via refresh but DO NOT apply -> writerTxn < seqTxn.
@@ -163,20 +154,14 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
             // Now apply the view fully and assert the back-filled KEPT row SURVIVED (it was never reclaimed).
             drainWalAndMatViewQueues();
             Assert.assertEquals("view now fully applied", tracker.getSeqTxn(), tracker.getWriterTxn());
-            assertSql(
-                    "c2\tc3\nA\t3.0\nB\t2.0\nC\t9.0\n",
-                    "select c2, c3 from " + view + " order by c2"
-            );
+            assertQuery("select c2, c3 from " + view + " order by c2").expectSize().noLeakCheck().returns("c2\tc3\nA\t3.0\nB\t2.0\nC\t9.0\n");
 
             // A subsequent caught-up sweep may now reclaim the genuinely superseded A@01-01 -- but C must remain.
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
                 job.cleanupTable(viewToken, predicate);
             }
             drainWalAndMatViewQueues();
-            assertSql(
-                    "c2\tc3\nA\t3.0\nB\t2.0\nC\t9.0\n",
-                    "select c2, c3 from " + view + " order by c2"
-            );
+            assertQuery("select c2, c3 from " + view + " order by c2").expectSize().noLeakCheck().returns("c2\tc3\nA\t3.0\nB\t2.0\nC\t9.0\n");
         });
     }
 
@@ -283,12 +268,31 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         engine.releaseInactive();
         final ObjList<ObjList<FuzzTransaction>> all = new ObjList<>();
         all.add(transactions);
-        fuzzer.applyManyWalParallel(all, rnd, getTestName(), true, true);
-
-        stop.set(true);
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            final Thread th = jobs.getQuick(i);
-            TestUtils.unchecked(() -> th.join());
+        Throwable primaryFailure = null;
+        try {
+            fuzzer.applyManyWalParallel(all, rnd, getTestName(), true, true);
+        } catch (Throwable th) {
+            primaryFailure = th;
+        } finally {
+            stop.set(true);
+            for (int i = 0, n = jobs.size(); i < n; i++) {
+                final Thread th = jobs.getQuick(i);
+                try {
+                    th.join();
+                } catch (Throwable joinFailure) {
+                    errors.add(joinFailure);
+                }
+            }
+        }
+        if (primaryFailure != null) {
+            Throwable workerFailure;
+            while ((workerFailure = errors.poll()) != null) {
+                primaryFailure.addSuppressed(workerFailure);
+            }
+            if (primaryFailure instanceof Exception exception) {
+                throw exception;
+            }
+            throw (Error) primaryFailure;
         }
         rethrow(errors);
 
@@ -306,10 +310,7 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         if (concurrentCleanup) {
             // Fast targeted read-filter probe before the exact comparison below: keep-latest must show ONLY
             // the latest (max-ts) row per key — no visible row is older than its key's max. Null-key safe.
-            assertSql(
-                    "stale\n0\n",
-                    "select count() stale from (select ts, max(ts) over (partition by c2) mx from " + view + ") where ts < mx"
-            );
+            assertQuery("select count() stale from (select ts, max(ts) over (partition by c2) mx from " + view + ") where ts < mx").noRandomAccess().expectSize().noLeakCheck().returns("stale\n0\n");
         }
         // Full correctness for BOTH paths: the read-filtered view == the keep-set (latest per c2) of the final
         // base, and the view answers a battery of query shapes identically. The CONCURRENT path holds to the

@@ -130,7 +130,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * any table. Used by CREATE TABLE / CREATE MATERIALIZED VIEW to reject a bad predicate before the
      * object is created. Any parse/bind error is rewritten as a clear SqlException at {@code position}.
      */
-    void validateExpiryPredicateOnMetadata(
+    ExpiryValidationResult validateExpiryPredicateOnMetadata(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             CharSequence predicate,

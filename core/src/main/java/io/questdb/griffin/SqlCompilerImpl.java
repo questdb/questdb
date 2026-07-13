@@ -5458,13 +5458,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put("': it is the base of ").put(dependents.size())
                     .put(" materialized view(s), which would copy expired rows on refresh");
         }
+        final ExpiryValidationResult validationResult;
         if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
-            validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
+            validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
         } else {
-            validateExpiryPredicate(executionContext, tableToken, clause.predicate, clause.predicatePos);
+            validationResult = validateExpiryPredicate(executionContext, tableMetadata, clause.predicate, clause.predicatePos);
         }
-        warnIfNonMonotonicExpiry(executionContext, tableMetadata, "\"" + tableToken.getTableName() + "\"",
-                clause.predicate, tsName(tableMetadata), tableToken.getTableName());
+        warnIfNonMonotonicExpiry(validationResult, tableToken.getTableName());
         final AlterOperationBuilder setExpire = alterOperationBuilder.ofSetExpire(
                 tableNamePosition,
                 tableToken,
@@ -5476,27 +5476,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Validates that an EXPIRE ROWS predicate is compilable against the given (existing) table by
-     * compiling and generating a probe {@code SELECT 1 FROM "<table>" WHERE NOT (<pred>) LIMIT 0}.
-     * Any SQL/Cairo error (unknown column, bad type, syntax error) is surfaced as a clear SqlException
-     * positioned at the predicate. The probe goes through a fresh compiler; the LIMIT 0 keeps it cheap.
+     * Parses, binds, and classifies an EXPIRE ROWS predicate against existing table metadata. A successful
+     * bind returns the reusable determinism/clock/monotonicity result; any SQL/Cairo error surfaces as a clear
+     * SqlException positioned at the predicate.
      */
-    private void validateExpiryPredicate(
+    private ExpiryValidationResult validateExpiryPredicate(
             SqlExecutionContext executionContext,
-            TableToken tableToken,
+            RecordMetadata metadata,
             String predicate,
             int predicatePos
     ) throws SqlException {
-        final String probeSql = "SELECT 1 FROM \"" + tableToken.getTableName() + "\" WHERE NOT (" + predicate + ") LIMIT 0";
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            try (RecordCursorFactory factory = compiler.compile(probeSql, executionContext).getRecordCursorFactory()) {
-                // Open the cursor so column references and types are fully resolved/validated.
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                    cursor.hasNext();
-                }
-            }
-        } catch (SqlException | CairoException e) {
-            throw SqlException.$(predicatePos, "invalid EXPIRE ROWS predicate: ").put(e.getFlyweightMessage());
+            return compiler.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, predicatePos);
         }
     }
 
@@ -5510,14 +5501,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * CREATE TABLE / CTAS / LIKE at parse time), so {@code selectMetadata} is always the view's defining-
      * SELECT output metadata.
      */
-    private void validateCreateExpiryPredicate(
+    private ExpiryValidationResult validateCreateExpiryPredicate(
             SqlExecutionContext executionContext,
             CreateTableOperation createTableOp,
             RecordMetadata selectMetadata
     ) throws SqlException {
         final String predicate = createTableOp.getExpiryPredicate();
         if (predicate == null) {
-            return;
+            return ExpiryValidationResult.MONOTONIC;
         }
         // Only reachable for a CREATE MATERIALIZED VIEW scalar WHEN policy (EXPIRE ROWS is rejected on plain
         // CREATE TABLE / CTAS / LIKE), so selectMetadata is always the view's defining-SELECT metadata.
@@ -5525,7 +5516,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // The error caret points at the table name rather than the predicate: the predicate's source
         // position is not threaded through CreateTableOperation, and the message already names the cause.
         try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
-            validationCompiler.validateExpiryPredicateOnMetadata(
+            return validationCompiler.validateExpiryPredicateOnMetadata(
                     executionContext, selectMetadata, predicate, createTableOp.getTableNamePosition());
         }
     }
@@ -5559,43 +5550,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             LOG.advisory().$("EXPIRE ROWS on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
                     .$safe(createTableOp.getTableName()).I$();
         }
+        final ExpiryValidationResult validationResult;
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             validateKeepLatestColumns(selectMetadata, predicate, pos);
-            return;
-        }
-        if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
+            validationResult = ExpiryValidationResult.MONOTONIC;
+        } else if (RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate)) {
             rejectKeepColumnCollision(selectMetadata, pos);
             // Validate by compiling the projection-CASE keep query against the view's defining SELECT (the
             // view does not exist yet); this validates the window predicate, its columns and types.
             validateWindowPolicy(executionContext, "(" + createTableOp.getSelectText() + ")", tsName(selectMetadata), predicate, pos);
-            warnIfNonMonotonicExpiry(executionContext, selectMetadata, "(" + createTableOp.getSelectText() + ")", predicate, tsName(selectMetadata), createTableOp.getTableName());
-            return;
+            validationResult = RowExpiryUtil.isKeepBy(predicate)
+                    ? ExpiryValidationResult.MONOTONIC
+                    : ExpiryValidationResult.NON_MONOTONIC;
+        } else {
+            validationResult = validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
         }
-        validateCreateExpiryPredicate(executionContext, createTableOp, selectMetadata);
-        warnIfNonMonotonicExpiry(executionContext, selectMetadata, "(" + createTableOp.getSelectText() + ")", predicate, tsName(selectMetadata), createTableOp.getTableName());
+        warnIfNonMonotonicExpiry(validationResult, createTableOp.getTableName());
     }
 
     /**
      * Logs an advisory when an EXPIRE ROWS policy is non-monotonic — query-correct (the read filter is
      * authoritative) but its disk will NOT be reclaimed by the background cleanup job (cleanup is skipped to
-     * avoid deleting a row a later read would show; see {@link #isExpiryCleanupMonotonic}). Runs on a
-     * separately-borrowed compiler so it cannot disturb the in-flight CREATE/ALTER lexer/parser state.
+     * avoid deleting a row a later read would show; see {@link #isExpiryCleanupMonotonic}). The caller reuses
+     * the classification returned by validation, so this advisory does not compile the expression again.
      */
     private void warnIfNonMonotonicExpiry(
-            SqlExecutionContext executionContext,
-            RecordMetadata metadata,
-            CharSequence source,
-            CharSequence predicate,
-            CharSequence timestampColumn,
+            ExpiryValidationResult validationResult,
             CharSequence objectName
     ) {
-        final boolean monotonic;
-        try (SqlCompiler vc = engine.getSqlCompiler()) {
-            monotonic = vc.isExpiryCleanupMonotonic(executionContext, metadata, source, predicate, timestampColumn);
-        } catch (Throwable th) {
-            return; // advisory only; never fail the DDL because the monotonicity probe could not run
-        }
-        if (!monotonic) {
+        if (!validationResult.isMonotonic()) {
             LOG.advisory().$("EXPIRE ROWS policy is non-monotonic; reads stay correct but physical cleanup is skipped (disk is not reclaimed) [view=")
                     .$safe(objectName).I$();
         }
@@ -5608,7 +5591,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * resolve against its columns. (ALTER ... SET EXPIRE on a base table is rejected earlier in the grammar,
      * so this only runs for materialized-view targets.)
      */
-    private void validateAlterRelativePolicy(
+    private ExpiryValidationResult validateAlterRelativePolicy(
             SqlExecutionContext executionContext,
             TableToken tableToken,
             TableRecordMetadata tableMetadata,
@@ -5619,10 +5602,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // caller (alterTableSetExpire); this only resolves the relative policy's columns.
         if (RowExpiryUtil.isKeepLatest(predicate)) {
             validateKeepLatestColumns(tableMetadata, predicate, position);
-        } else {
-            rejectKeepColumnCollision(tableMetadata, position);
-            validateWindowPolicy(executionContext, "\"" + tableToken.getTableName() + "\"", tsName(tableMetadata), predicate, position);
+            return ExpiryValidationResult.MONOTONIC;
         }
+        rejectKeepColumnCollision(tableMetadata, position);
+        validateWindowPolicy(executionContext, "\"" + tableToken.getTableName() + "\"", tsName(tableMetadata), predicate, position);
+        return RowExpiryUtil.isKeepBy(predicate)
+                ? ExpiryValidationResult.MONOTONIC
+                : ExpiryValidationResult.NON_MONOTONIC;
     }
 
     /**
@@ -5729,7 +5715,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * at {@code position}. Runs on a freshly-borrowed compiler (its own lexer/parser/functionParser).
      */
     @Override
-    public void validateExpiryPredicateOnMetadata(
+    public ExpiryValidationResult validateExpiryPredicateOnMetadata(
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             CharSequence predicate,
@@ -5737,16 +5723,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         Function f = null;
         try {
+            final ExpressionNode node;
             try {
                 clear();
                 lexer.of(predicate);
-                f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
+                node = parser.expr(lexer, (QueryModel) null, this);
+                f = functionParser.parseFunction(node, metadata, executionContext);
             } catch (SqlException | CairoException e) {
                 throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(e.getFlyweightMessage());
             }
             if (f == null || !ColumnType.isBoolean(f.getType())) {
                 throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
             }
+            final IntList referencedColumnIndexes = new IntList();
+            collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
+            final boolean hasClock = expiryExpressionHasClock(node);
+            final boolean isDeterministic = !f.isNonDeterministic() && !hasClock;
+            final int timestampIndex = metadata.getTimestampIndex();
+            final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
+            final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
+            final boolean isMonotonic = isDeterministic
+                    || isProvenAdvancingClockExpression(thresholdNode);
+            return new ExpiryValidationResult(hasClock, isDeterministic, isMonotonic, referencedColumnIndexes);
         } finally {
             Misc.free(f);
         }
@@ -5821,6 +5819,48 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private static void collectExpiryReferencedColumns(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            IntList referencedColumnIndexes
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            final int columnIndex = resolvePredicateColumnIndex(metadata, node.token);
+            if (columnIndex >= 0 && referencedColumnIndexes.indexOf(columnIndex, 0, referencedColumnIndexes.size()) < 0) {
+                referencedColumnIndexes.add(columnIndex);
+            }
+        }
+        collectExpiryReferencedColumns(node.lhs, metadata, referencedColumnIndexes);
+        collectExpiryReferencedColumns(node.rhs, metadata, referencedColumnIndexes);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            collectExpiryReferencedColumns(node.args.getQuick(i), metadata, referencedColumnIndexes);
+        }
+    }
+
+    private static boolean expiryExpressionHasClock(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && (SqlKeywords.isNowKeyword(node.token)
+                || SqlKeywords.isSysdateKeyword(node.token)
+                || SqlKeywords.isSystimestampKeyword(node.token))) {
+            return true;
+        }
+        if (expiryExpressionHasClock(node.lhs) || expiryExpressionHasClock(node.rhs)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (expiryExpressionHasClock(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // True if the sub-tree references any column (LITERAL) or bind variable, i.e. it cannot be evaluated to
     // a single constant threshold independent of the row.
     private static boolean exprReferencesColumn(ExpressionNode node) {
@@ -5841,6 +5881,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return false;
     }
 
+    private static ExpressionNode expiryTimestampThresholdNode(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            CharSequence timestampColumn
+    ) {
+        if (node == null || timestampColumn == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
+                || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        final int timestampIndex = metadata.getColumnIndexQuiet(timestampColumn);
+        final boolean isTimestampOnLeft = node.lhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.lhs.token) == timestampIndex;
+        final boolean isTimestampOnRight = node.rhs.type == ExpressionNode.LITERAL
+                && resolvePredicateColumnIndex(metadata, node.rhs.token) == timestampIndex;
+        if (isTimestampOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
+            return exprReferencesColumn(node.rhs) ? null : node.rhs;
+        }
+        if (isTimestampOnRight && (Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
+            return exprReferencesColumn(node.lhs) ? null : node.lhs;
+        }
+        return null;
+    }
+
+    private static boolean isProvenAdvancingClockExpression(ExpressionNode node) {
+        // Admit only bare wall-time clocks. Every cast, offset, arithmetic operation, clock-clock expression,
+        // and nested function remains conservative false until its exact overflow and order semantics have a
+        // dedicated structural proof. Skipping reclamation is safe; accepting one decreasing transform is not.
+        return node != null
+                && node.type == ExpressionNode.FUNCTION
+                && node.paramCount == 0
+                && (SqlKeywords.isNowKeyword(node.token)
+                || SqlKeywords.isSysdateKeyword(node.token)
+                || SqlKeywords.isSystimestampKeyword(node.token));
+    }
+
     @Override
     public boolean isExpiryCleanupMonotonic(
             SqlExecutionContext executionContext,
@@ -5858,52 +5933,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (RowExpiryUtil.isKeepLatest(predicate) || RowExpiryUtil.isKeepBy(predicate)) {
             return true;
         }
-        final boolean windowMode = RowExpiryUtil.isWindow(predicate);
-        if (!windowMode) {
-            // A recognised "<ts> < T" / "<ts> <= T" threshold (T column-free, possibly now()-based) is
-            // monotonic: T is non-decreasing as now() advances, so the expired set only grows.
-            if (expiryTimestampThresholdMicros(executionContext, metadata, predicate, timestampColumn) != Numbers.LONG_NULL) {
-                return true;
-            }
-        }
-        // Otherwise safe iff the effective predicate is CLOCK-FREE (deterministic). Mat-view rows are
-        // immutable, so a deterministic predicate's value for a given row never changes -> a row classified
-        // expired stays expired. We prove "clock-free" by binding with non-deterministic functions DISABLED:
-        // a reference to now()/systimestamp()/etc. (or any non-deterministic function) makes the bind throw,
-        // which we treat as non-monotonic. Any other failure also returns false (conservative -> skip cleanup).
-        final CharSequence effective = windowMode ? RowExpiryUtil.windowPredicate(predicate, timestampColumn) : predicate;
-        if (effective == null) {
+        // An arbitrary window predicate is not necessarily monotonic even when it is clock-free: adding a row
+        // can change another row's rank, aggregate, or frame result and make a previously expired row visible
+        // again. The generated KEEP modes above have separate structural proofs; skip physical cleanup for raw
+        // windows unless a future implementation can prove the specific window expression monotonic.
+        if (RowExpiryUtil.isWindow(predicate)) {
             return false;
         }
-        final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
-        executionContext.setAllowNonDeterministicFunction(false);
+        // Bind and classify the scalar expression once. Structural threshold recognition is unit-independent,
+        // so TIMESTAMP_NS designated columns and symmetric `T > ts` forms receive the same monotonicity proof
+        // as microsecond `ts < T`; the numeric micros threshold remains a separate partition-bounds fast path.
         try {
-            if (windowMode) {
-                // A window predicate must be compiled as a SELECT (window functions need a query context).
-                final String sql = "SELECT * FROM (SELECT *, CASE WHEN (" + effective + ") THEN false ELSE true END "
-                        + RowExpiryUtil.KEEP_COLUMN + " FROM " + source + ") WHERE " + RowExpiryUtil.KEEP_COLUMN + " LIMIT 0";
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try (RecordCursorFactory factory = compiler.compile(sql, executionContext).getRecordCursorFactory()) {
-                        try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                            cursor.hasNext();
-                        }
-                    }
-                }
-            } else {
-                Function f = null;
-                try {
-                    clear();
-                    lexer.of(effective);
-                    f = functionParser.parseFunction(parser.expr(lexer, (QueryModel) null, this), metadata, executionContext);
-                } finally {
-                    Misc.free(f);
-                }
-            }
-            return true;
-        } catch (Exception e) {
+            return validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, 0).isMonotonic();
+        } catch (SqlException e) {
             return false;
-        } finally {
-            executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
         }
     }
 
