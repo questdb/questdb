@@ -1491,8 +1491,6 @@ public class DeleteTest extends AbstractCairoTest {
             Assert.assertFalse(
                     "table must not be suspended by the windowed replace",
                     engine.getTableSequencerAPI().isSuspended(tt));
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
             assertQuery("select count(*) from t").noRandomAccess().expectSize()
                     .returns("count\n" + (240 - 240 / 7) + "\n");
             assertSqlCursors(

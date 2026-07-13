@@ -59,8 +59,8 @@ import org.junit.Test;
  * {@code execute("delete ...")} through {@code drainWalQueue()} under a tiny
  * {@code cairo.wal.delete.rows.per.step} (Task 5's windowed {@code OperationExecutor.replaceWithSurvivors}
  * loop) to force many windows, and checks the result against an exact pre-delete {@code ref} snapshot table
- * (never a second, independently-reseeded {@code rnd_*} statement) plus a {@code wal_tables()} not-suspended
- * check.
+ * (never a second, independently-reseeded {@code rnd_*} statement) plus a direct
+ * {@code TableSequencerAPI.isSuspended} not-suspended check.
  */
 public class DeleteWindowedApplyTest extends AbstractCairoTest {
 
@@ -188,7 +188,7 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
     // Task 7: end-to-end windowed DELETE integration tests. All force MANY windows via
     // cairo.wal.delete.rows.per.step, drive the delete through a real execute()+drainWalQueue(), and compare
     // against an EXACT oracle: a `ref` table snapshotted from `t` BEFORE the delete runs (never a re-evaluated
-    // rnd_* expression), plus a wal_tables() not-suspended check.
+    // rnd_* expression), plus a direct TableSequencerAPI.isSuspended not-suspended check.
     // ------------------------------------------------------------------------------------------------------
 
     /**
@@ -206,8 +206,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x % 2 = 0");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select * from ref", "select * from t");
         });
     }
@@ -228,16 +228,16 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x % 2 = 0");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select * from ref", "select * from t");
 
             // Simulate a restart (drop every cached reader/writer) and re-drain with nothing new queued.
             engine.releaseInactive();
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select * from ref", "select * from t");
         });
     }
@@ -257,8 +257,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x < 0");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertQuery("select count(*) from t").noRandomAccess().expectSize().returns("count\n96\n");
             assertSqlCursors("select * from ref", "select * from t");
         });
@@ -284,8 +284,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x >= 25 and x <= 48");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select * from ref", "select * from t");
         });
     }
@@ -317,8 +317,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x % 3 = 0");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select * from ref", "select * from t");
         });
     }
@@ -342,8 +342,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x % 2 = 0");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select ts, x from ref order by ts", "select ts, x from t order by ts");
         });
     }
@@ -452,8 +452,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             // is claimed about).
             execute("delete from t where x % 2 = 0");
             drainWalQueue();
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select ts, x from ref order by ts", "select ts, x from t order by ts");
         });
     }
@@ -486,8 +486,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x >= 73");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             // The partition itself must be physically removed, not just empty of matching rows.
             assertQuery("select count(*) from table_partitions('t') where name = '1970-01-04'")
                     .noRandomAccess().expectSize().returns("count\n0\n");
@@ -533,8 +533,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x <= 120");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             assertSqlCursors("select * from ref", "select * from t");
             // Exactly one LIVE partition (day 6).
             assertQuery("select count(*) from table_partitions('t')")
@@ -593,8 +593,8 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
             execute("delete from t where x % 2 = 0");
             drainWalQueue();
 
-            assertQuery("select suspended from wal_tables() where name = 't'")
-                    .noRandomAccess().returns("suspended\nfalse\n");
+            Assert.assertFalse("table must not be suspended after the DELETE",
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
             // Content AND order (both tables are designated-timestamp ordered): every surviving var-size value,
             // incl. the NULLs, must round-trip through the forced-O3 survivor copier byte-for-byte.
             assertSqlCursors("select * from t_ref where not (x % 2 = 0)", "select * from t");
