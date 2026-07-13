@@ -166,6 +166,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private Map currentJoinKeyMap;
         private boolean danglingSlaveRecord = false;
         private boolean isOpen;
@@ -222,6 +223,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
@@ -350,6 +352,7 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
                     joinKeyMapB.reopen();
                 }
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             currentJoinKeyMap = joinKeyMapA;
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

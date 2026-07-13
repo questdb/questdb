@@ -133,6 +133,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SUSPEND, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.TABLE_REBASE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
@@ -495,7 +496,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                     // covers CREATE/DROP operation subtypes.
                     cc.closeAllButSelect();
                     Misc.free(cc.getOperation());
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 }
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
                 // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
@@ -657,7 +658,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     ) throws SqlException {
         if (engine.isReadOnlyMode()
                 && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         final Lock lock = engine.getRoleSwitchReadLock();
         lock.lock();
@@ -667,7 +668,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // cannot interleave (its write acquire waits), while other commits share the read side.
             if (engine.isReadOnlyMode()
                     && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             try (OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)) {
                 return fut.await(awaitTimeout);

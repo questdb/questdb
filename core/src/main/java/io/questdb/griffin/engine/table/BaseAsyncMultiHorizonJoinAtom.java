@@ -307,9 +307,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
                 }
             }
 
-            // Allocators (shared across slaves). Lazy variant (openOnInit=false): the chunk
-            // index is allocated by the first reopen() under the bound per-query tracker,
-            // keeping malloc/free symmetric on the per-query counter from the first cursor.
+            // Allocators (shared across slaves). Lazy variant (openOnInit=false): the chunk index
+            // is global-counter bookkeeping; only the data chunks are charged to the per-query tracker.
             this.ownerAllocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(ownerGroupByFunctions, ownerAllocator);
             if (perWorkerGroupByFunctions != null) {
@@ -389,11 +388,9 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
 
     @Override
     public void close() {
-        // The allocators' chunk index is retained across queries (restoreInitialCapacity()
-        // in clear()); its final free happens here, after the last query's tracker was
-        // released to the pool. Null the tracker so this free charges the global counter
-        // only and does not underflow the released per-query block. The ASOF maps are freed
-        // per query in clear() under the still-bound tracker, so they are left alone here.
+        // clear() already freed the data chunks and ASOF maps under the bound tracker (the index
+        // is on the global counter), so close() has nothing tracked to free. Nulling is defensive:
+        // any stray free hits the global counter and cannot underflow an already-recycled block.
         if (ownerAllocator != null) {
             ownerAllocator.setMemoryTracker(null);
         }

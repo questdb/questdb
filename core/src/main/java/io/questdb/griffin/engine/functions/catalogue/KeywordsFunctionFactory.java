@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -82,7 +83,7 @@ public class KeywordsFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.toTop();
+            cursor.of(executionContext.getCircuitBreaker());
             return cursor;
         }
 
@@ -98,7 +99,13 @@ public class KeywordsFunctionFactory implements FunctionFactory {
 
         private static class KeywordsRecordCursor implements NoRandomAccessRecordCursor {
             private final KeywordRecord record = new KeywordRecord();
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int index = -1;
+
+            public void of(SqlExecutionCircuitBreaker circuitBreaker) {
+                this.circuitBreaker = circuitBreaker;
+                toTop();
+            }
 
             @Override
             public void close() {
@@ -112,6 +119,7 @@ public class KeywordsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 return ++index < Constants.KEYWORDS.length;
             }
 

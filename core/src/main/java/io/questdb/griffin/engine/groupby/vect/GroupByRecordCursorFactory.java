@@ -524,6 +524,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void buildRosti() {
+            // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
+            // Time-throttled so it checks cancellation/timeout unconditionally while bounding the
+            // connection probe to once per window.
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             final int vafCount = vafList.size();
             final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
             final MPSequence pubSeq = bus.getVectorAggregatePubSeq();
@@ -554,6 +558,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 while ((frame = frameCursor.next()) != null) {
                     frameAddressCache.add(frameCount++, frame);
                 }
+
+                // Covered frames decode their columns on the vector-aggregate
+                // workers (PageFrameMemoryPool.navigateTo) over the shared
+                // per-partition posting readers; freeze each reader so its mmaps
+                // stay stable for the concurrent detached cursors. The add() loop
+                // above already positioned + warmed them via the eager production
+                // decode. unfreezeCoveredReaders() runs in the finally below, after
+                // runWhatsLeft has drained the done-latch (so no worker is reading).
+                frameAddressCache.freezeCoveredReaders();
 
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
                     final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
@@ -643,7 +656,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
-                // Release page frame memory now, when no worker is using it.
+                // runWhatsLeft has drained the done-latch, so every vector-aggregate
+                // worker has finished iterating its detached covered cursors. Unfreeze
+                // the covered posting readers (no-op when none) so later queries can
+                // reload them, and release page frame memory -- both safe now that no
+                // worker is using it.
+                frameAddressCache.unfreezeCoveredReaders();
                 Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
 

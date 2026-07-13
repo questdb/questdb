@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -543,6 +544,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshBusyRetryLimit() {
+        return getDelegate().getMatViewRefreshBusyRetryLimit();
+    }
+
+    @Override
+    public long getMatViewRefreshBusyRetryTimeout() {
+        return getDelegate().getMatViewRefreshBusyRetryTimeout();
+    }
+
+    @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
     }
@@ -555,11 +566,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getMatViewRefreshMemoryLimitBytes() {
         return getDelegate().getMatViewRefreshMemoryLimitBytes();
-    }
-
-    @Override
-    public long getMatViewRefreshOomRetryTimeout() {
-        return getDelegate().getMatViewRefreshOomRetryTimeout();
     }
 
     @Override
@@ -1438,6 +1444,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public ObjHashSet<String> getWalApplySuspendedTables() {
+        return getDelegate().getWalApplySuspendedTables();
+    }
+
+    @Override
+    public boolean isWalApplySuspendedWriteDenied() {
+        return getDelegate().isWalApplySuspendedWriteDenied();
+    }
+
+    @Override
     public long getWalApplyTableTimeQuota() {
         return getDelegate().getWalApplyTableTimeQuota();
     }
@@ -1625,6 +1641,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isMatViewParallelSqlEnabled() {
         return getDelegate().isMatViewParallelSqlEnabled();
+    }
+
+    @Override
+    public boolean isMatViewRefreshBlocked(CharSequence viewName) {
+        return getDelegate().isMatViewRefreshBlocked(viewName);
     }
 
     @Override

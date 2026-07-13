@@ -63,6 +63,7 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, viewToken, tokenPosition);
     }
 
@@ -196,7 +197,7 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
                     .put(viewToken.getTableName())
                     .putAscii("' AS ( ")
                     .putAscii('\n');
-            sink.put(viewDefinition.getViewSql());
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getViewSql());
             sink.putAscii('\n');
             sink.putAscii(')');
             putAdditional();

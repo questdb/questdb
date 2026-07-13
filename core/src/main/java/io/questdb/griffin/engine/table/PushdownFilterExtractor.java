@@ -314,7 +314,7 @@ public class PushdownFilterExtractor implements Mutable {
         ExpressionNode hiNode = node.args.getQuick(0);
 
         int columnType = metadata.getColumnType(columnIndex);
-        PushdownFilterCondition cond = new PushdownFilterCondition(colNode.token, columnType, OP_BETWEEN);
+        PushdownFilterCondition cond = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_BETWEEN);
         cond.addValue(loNode);
         cond.addValue(hiNode);
         conditions.add(cond);
@@ -345,7 +345,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, columnType, effectiveOp);
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, effectiveOp);
         condition.addValue(valueNode);
         conditions.add(condition);
     }
@@ -375,11 +375,11 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
 
         if (isNullConstant(valueNode)) {
-            conditions.add(new PushdownFilterCondition(colNode.token, columnType, OP_IS_NULL));
+            conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NULL));
             return;
         }
 
-        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, columnType);
+        PushdownFilterCondition condition = new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType);
         condition.addValue(valueNode);
         conditions.add(condition);
     }
@@ -408,6 +408,7 @@ public class PushdownFilterExtractor implements Mutable {
         int columnType = metadata.getColumnType(columnIndex);
         PushdownFilterCondition condition = new PushdownFilterCondition(
                 colNode.token,
+                metadata.getWriterIndex(columnIndex),
                 columnType
         );
 
@@ -448,7 +449,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         int columnType = metadata.getColumnType(columnIndex);
-        conditions.add(new PushdownFilterCondition(colNode.token, columnType, OP_IS_NOT_NULL));
+        conditions.add(new PushdownFilterCondition(colNode.token, metadata.getWriterIndex(columnIndex), columnType, OP_IS_NOT_NULL));
     }
 
     private void tryExtractOrEqualities(ArrayDeque<ExpressionNode> orStack, ExpressionNode node, RecordMetadata metadata) {
@@ -505,7 +506,7 @@ public class PushdownFilterExtractor implements Mutable {
         }
 
         if (orValues.size() > 0) {
-            PushdownFilterCondition condition = new PushdownFilterCondition(columnName, columnType);
+            PushdownFilterCondition condition = new PushdownFilterCondition(columnName, metadata.getWriterIndex(resolvedColumnIndex), columnType);
             condition.addValues(orValues);
             conditions.add(condition);
         }
@@ -515,16 +516,22 @@ public class PushdownFilterExtractor implements Mutable {
     public static class PushdownFilterCondition implements QuietCloseable {
         private final CharSequence columnName;
         private final int columnType;
+        // Stable writer index (column id) of the filtered column. The Parquet file stores
+        // this id per column, so native-table row-group pruning resolves the Parquet column
+        // by id rather than by name -- a rename leaves the frozen Parquet name stale, which
+        // would otherwise resolve to the wrong column (or a name collision) and skip rows.
+        private final int columnWriterIndex;
         private final int operationType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
         private final ObjList<ExpressionNode> values = new ObjList<>();
 
-        public PushdownFilterCondition(CharSequence columnName, int columnType) {
-            this(columnName, columnType, OP_EQ);
+        public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType) {
+            this(columnName, columnWriterIndex, columnType, OP_EQ);
         }
 
-        public PushdownFilterCondition(CharSequence columnName, int columnType, int operationType) {
+        public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType, int operationType) {
             this.columnName = Chars.toString(columnName);
+            this.columnWriterIndex = columnWriterIndex;
             this.columnType = columnType;
             this.operationType = operationType;
         }
@@ -552,6 +559,10 @@ public class PushdownFilterExtractor implements Mutable {
 
         public int getColumnType() {
             return columnType;
+        }
+
+        public int getColumnWriterIndex() {
+            return columnWriterIndex;
         }
 
         public int getOperationType() {

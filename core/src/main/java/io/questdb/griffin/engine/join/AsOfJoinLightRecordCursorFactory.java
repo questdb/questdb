@@ -165,6 +165,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
         private final long slaveTimestampScale;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;
         private long lastSlaveRowID = Long.MIN_VALUE;
         private Record masterRecord;
@@ -215,6 +216,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
         @Override
         public boolean hasNext() {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             if (masterCursor.hasNext()) {
                 final long masterTimestamp = scaleTimestamp(masterRecord.getTimestamp(masterTimestampIndex), masterTimestampScale);
                 final long minSlaveTimestamp = toleranceInterval == Numbers.LONG_NULL ? Long.MIN_VALUE : masterTimestamp - toleranceInterval;
@@ -316,6 +318,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 joinKeyToRowId.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyToRowId.reopen();
             }
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             if (symbolJoinKeyMapping != null) {
                 symbolJoinKeyMapping.of(slaveCursor);
             }

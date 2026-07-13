@@ -83,8 +83,9 @@ public class FastGroupByAllocator implements GroupByAllocator {
     @Override
     public void clear() {
         _close();
-        // Skip restoring a closed index: re-mallocing it under an already-exhausted tracker would
-        // breach again mid-cleanup (reopen() reallocates it before the next use).
+        // The chunk index stays on the global counter, never the per-query tracker, so
+        // retaining it across cursors leaves the per-query counter clean at recycle.
+        // A never-reopened lazy index has nothing to retain.
         if (chunks.isOpen()) {
             chunks.restoreInitialCapacity();
         }
@@ -189,8 +190,10 @@ public class FastGroupByAllocator implements GroupByAllocator {
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // Only the data chunks (query-proportional) are charged to the per-query tracker;
+        // the chunk index stays on the global counter, so it is never bound here and can be
+        // retained across cursors without dirtying the per-query counter.
         this.memoryTracker = tracker;
-        chunks.setMemoryTracker(tracker);
     }
 
     private void _close() {

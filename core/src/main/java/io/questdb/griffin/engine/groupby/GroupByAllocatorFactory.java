@@ -38,9 +38,9 @@ public class GroupByAllocatorFactory {
     /**
      * Creates a GROUP BY allocator. When {@code openOnInit} is {@code false},
      * the allocator's chunk-index backing is not allocated at construction
-     * time; the first {@link GroupByAllocator#reopen()} allocates it under the
-     * bound {@link io.questdb.std.MemoryTracker}, keeping per-query alloc/free
-     * accounting symmetric from the very first cursor.
+     * time; the first {@link GroupByAllocator#reopen()} allocates it on the
+     * global counter (the index is never charged to the per-query tracker), so
+     * the per-query counter stays clean across cursors.
      */
     public static GroupByAllocator createAllocator(CairoConfiguration configuration, boolean openOnInit) {
         return new FastGroupByAllocator(

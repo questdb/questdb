@@ -1643,6 +1643,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
             if (!executionContext.isValidationOnly()) {
+                // Clear the runtime hard-suspend entry before resuming so the resume re-notification
+                // is not swallowed. A config-listed table stays suspended until removed from config.
+                engine.removeWalApplySuspended(tableToken);
                 engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             }
@@ -1772,7 +1775,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // the auth call. The eager check alone does not close the demote window though -- a
             // demote landing between here and the marker write would still strand the marker on a
             // demoting node; the role-switch read-lock hold around the write below is what closes it.
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
         try {
@@ -1805,7 +1808,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 lock.lock();
                 try {
                     if (engine.isReadOnlyMode()) {
-                        throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                        throw CairoException.readOnlyAccess();
                     }
                     engine.fireRoleSwitchMintObserver();
                     path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
@@ -1825,6 +1828,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
         try {
             if (!executionContext.isValidationOnly()) {
+                engine.addWalApplySuspended(tableToken);
                 engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             }
@@ -1996,7 +2000,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         try (TableRecordMetadata tableMetadata = engine.getTableMetadata(matViewToken)) {
             tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
+            if (tok == null || (!isAlterKeyword(tok) && !isResumeKeyword(tok) && !isRebaseKeyword(tok) && !isSuspendKeyword(tok) && !isSetKeyword(tok))) {
                 compileAlterMatViewExt(executionContext, tok, matViewToken, matViewNamePosition);
                 return;
             }
@@ -2311,6 +2315,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(matViewToken, matViewNamePosition, executionContext);
+            } else if (isRebaseKeyword(tok)) {
+                parseRebaseWal(matViewToken, matViewNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(matViewToken, matViewNamePosition, executionContext);
             }
@@ -2638,6 +2644,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             } else if (isResumeKeyword(tok)) {
                 parseResumeWal(tableToken, tableNamePosition, executionContext);
+            } else if (isRebaseKeyword(tok)) {
+                parseRebaseWal(tableToken, tableNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
                 parseSuspendWal(tableToken, tableNamePosition, executionContext);
             } else if (isSquashKeyword(tok)) {
@@ -3167,7 +3175,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // table registry, so the caller sees "replica access is read-only" rather than
         // "table does not exist" when the table has not yet been replicated to this node.
         if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
         InsertOperationImpl insertOperation = null;
@@ -3297,7 +3305,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // table registry, so the caller sees "replica access is read-only" rather than
         // "table does not exist" when the table has not yet been replicated to this node.
         if (engine.isReadOnlyMode()) {
-            throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+            throw CairoException.readOnlyAccess();
         }
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
@@ -3578,7 +3586,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Refuse the instant the node goes read-only, mirroring the per-statement write gates
                 // on the pg-wire and HTTP /exec paths -- otherwise this enqueues an async refresh that
                 // writes to a node that is already demoting and loses the write once it settles.
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
             if (isStatsReset) {
@@ -3833,13 +3841,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             // this runs fully as PRIMARY while the flip's write acquire waits. The fence
                             // is a no-op for pure-OSS deployments (uncontended read lock, static flag).
                             if (engine.isReadOnlyMode()) {
-                                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                throw CairoException.readOnlyAccess();
                             }
                             final Lock lock = engine.getRoleSwitchReadLock();
                             lock.lock();
                             try {
                                 if (engine.isReadOnlyMode()) {
-                                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                                    throw CairoException.readOnlyAccess();
                                 }
                                 engine.fireRoleSwitchMintObserver();
                                 writer.truncateSoft();
@@ -5143,6 +5151,49 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterOperationBuilder.setParquetConversionOptions(bloomFilterColumns, fpp);
     }
 
+    private void parseRebaseWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'wal'");
+        if (!isWalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+        }
+        tok = SqlUtil.fetchNext(lexer);
+        String targetDir = null;
+        if (tok != null && !Chars.equals(tok, ';')) {
+            // ALTER TABLE <t> REBASE WAL INTO '<dirName>': the replica-side variant. Instead of minting a
+            // fresh dir, it reconstructs the table into the primary's already-chosen rebased dir so the
+            // replica follows the primary's rebase past a poison-pill WAL transaction.
+            if (!isIntoKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
+            }
+            tok = expectToken(lexer, "target directory name");
+            targetDir = unquote(tok).toString();
+            try {
+                TableUtils.getTableIdFromTableDir(targetDir);
+            } catch (NumericException e) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            if (Chars.indexOf(targetDir, '/') != -1 || Chars.indexOf(targetDir, '\\') != -1 || Chars.contains(targetDir, "..")) {
+                throw SqlException.$(lexer.lastTokenPosition(), "invalid rebase target directory [dir=").put(targetDir).put(']');
+            }
+            tok = SqlUtil.fetchNext(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+            }
+        }
+        executionContext.getSecurityContext().authorizeRebaseWal(tableToken);
+        if (!executionContext.isValidationOnly()) {
+            if (targetDir == null) {
+                engine.rebaseWalTable(tableToken);
+            } else {
+                engine.rebaseWalTableInto(tableToken, targetDir);
+            }
+        }
+        compiledQuery.ofRebaseWal();
+    }
+
     private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok = expectToken(lexer, "'wal'");
         if (!isWalKeyword(tok)) {
@@ -5182,9 +5233,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!engine.isWalTable(tableToken)) {
             throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
         }
-        if (!configuration.isDevModeEnabled()) {
-            throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
-        }
 
         ErrorTag errorTag = ErrorTag.NONE;
         String errorMessage = "";
@@ -5218,6 +5266,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
             }
         }
+        executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 
@@ -5588,12 +5637,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             for (short j = ColumnType.DECIMAL8; j <= ColumnType.DECIMAL256; j++) {
                 addSupportedConversion(i, j);
             }
-            // We only allow types that are accurately representable to be converted directly, others should use explicit
-            // casting.
-            addSupportedConversion(ColumnType.BYTE, i);
-            addSupportedConversion(ColumnType.SHORT, i);
-            addSupportedConversion(ColumnType.INT, i);
-            addSupportedConversion(ColumnType.LONG, i);
+            // Integer -> DECIMAL is supported on both the native and parquet paths; the reverse
+            // direction (DECIMAL -> {BYTE, SHORT, INT, LONG}) is not implemented in either the
+            // C++ converter kernel or the Rust parquet decoder, so register it one-way only.
+            columnConversionSupport[ColumnType.BYTE][i] = true;
+            columnConversionSupport[ColumnType.SHORT][i] = true;
+            columnConversionSupport[ColumnType.INT][i] = true;
+            columnConversionSupport[ColumnType.LONG][i] = true;
             addSupportedConversion(i, ColumnType.STRING, ColumnType.VARCHAR);
             addSupportedConversion(ColumnType.STRING, i);
             addSupportedConversion(ColumnType.VARCHAR, i);

@@ -148,6 +148,8 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildChain() {
+        // Consult the breaker before consuming the base, so an empty base scan still observes cancellation.
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final Record placeHolderRecord = baseCursor.getRecordB();
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();

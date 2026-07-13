@@ -113,8 +113,8 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedWindowJoinOpenFailureReleasesAllocations() throws Exception {
-        // A tiny limit breaches the cursor's of() at atom.reopen() before any row; reusing the factory
-        // catches a failed open that leaves isOpen set (the next open would skip reopen() and not breach).
+        // A tiny limit breaches during the reduce on the first drain (the chunk index is off the
+        // per-query tracker, so nothing per-query-tracked allocates at open); the loop verifies reuse.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -289,7 +289,12 @@ public class ParallelWindowJoinMemoryTrackerTest extends AbstractCairoTest {
     private static void assertOpenFailureReleasesAllocations(RecordCursorFactory factory, SqlExecutionContext ctx) throws SqlException {
         for (int i = 0; i < 5; i++) {
             try (RecordCursor cursor = factory.getCursor(ctx)) {
-                Assert.fail("expected a per-query memory breach during cursor open at iteration " + i);
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                    // lazy-map path: the chunk index is no longer per-query-tracked, so the
+                    // breach lands during the reduce on the first drain, not at cursor open.
+                }
+                Assert.fail("expected a per-query memory breach at iteration " + i);
             } catch (CairoException e) {
                 Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
                 TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");

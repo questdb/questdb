@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
@@ -127,6 +128,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             engine = executionContext.getCairoEngine();
+            cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.init();
             return cursor;
         }
@@ -150,6 +152,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private final TxReader txReader = new TxReader(ff);
+            private SqlExecutionCircuitBreaker circuitBreaker;
             private int tableIndex = -1;
 
             @Override
@@ -165,6 +168,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 tableIndex++;
                 final int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {

@@ -67,6 +67,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
         return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
@@ -246,9 +247,9 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 }
                 sink.putAscii(')');
             }
-            sink.putAscii(" AS (\n")
-                    .put(viewDefinition.getMatViewSql())
-                    .putAscii('\n');
+            sink.putAscii(" AS (\n");
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getMatViewSql());
+            sink.putAscii('\n');
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(sink);
             inVolumeToSink(configuration, table, sink);

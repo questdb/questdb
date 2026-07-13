@@ -117,6 +117,375 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalBaseTableInvalidatesDependentMatView() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainWalAndMatViewQueues();
+            assertQuery("select price from price_1h").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("price\n1.323\n");
+
+            final TableToken oldBase = engine.verifyTableName("base_price");
+            final int oldId = oldBase.getTableId();
+
+            // Rebase the BASE table (not the view).
+            execute("alter table base_price suspend wal");
+            execute("alter table base_price rebase wal");
+            drainWalAndMatViewQueues();
+
+            final TableToken newBase = engine.verifyTableName("base_price");
+            Assert.assertNotEquals(oldBase.getDirName(), newBase.getDirName());
+            Assert.assertNotEquals(oldId, newBase.getTableId());
+            assertQuery("select count() from base_price").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+
+            // The base rebase invalidated the dependent mat view (its watermark no longer maps onto the
+            // reset base sequencer). It does NOT silently serve a stale incremental refresh.
+            assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\ninvalid\n");
+
+            // A full refresh recovers it against the rebased base.
+            execute("refresh materialized view price_1h full;");
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+
+            // And it tracks new base data again afterwards.
+            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T13:01')");
+            drainWalAndMatViewQueues();
+            assertQuery("price_1h").noLeakCheck().expectSize().timestamp("ts").returns("sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.5\t2024-09-10T13:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalBaseTableInvalidatingSuspendedDependentDoesNotEscapeRefreshWorker() throws Exception {
+        // C2 fix. testRebaseWalBaseTableInvalidatesDependentMatView with the dependent view ALSO hard-suspended
+        // before the base is rebased. The rebase enqueues an INVALIDATE of the suspended dependent;
+        // invalidateView must NOT acquire its WAL writer -- under cairo.wal.apply.suspended.write.denied=true
+        // that throws CairoException.tableSuspended, which handleErrorRetryRefresh does not recognize, so
+        // before the fix it rethrew out of MatViewRefreshJob.run() (the drain, which runs the refresh job on
+        // this thread, would throw) and the invalidation was silently dropped. The fix adds the
+        // isViewWriteSuspended up-front gate plus an isTableSuspendedError backstop (mirroring the five refresh
+        // paths): the worker survives, the view is left valid while suspended (its data is unchanged), and the
+        // operator recovers it with a full refresh after RESUME WAL -- a rebased base is not picked up by a
+        // plain incremental refresh.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainQueues();
+            // The view is valid and previously refreshed (lastRefreshBaseTxn != -1), so the cascade reaches
+            // the getWalWriter acquire rather than short-circuiting.
+            assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
+
+            // Hard-suspend the DEPENDENT view itself, so invalidating it would need its WAL writer.
+            execute("alter materialized view price_1h suspend wal");
+
+            // Rebase the base table: enqueues an INVALIDATE of the now-suspended dependent price_1h.
+            execute("alter table base_price suspend wal");
+            execute("alter table base_price rebase wal");
+
+            // The refresh job skips the suspended view's invalidation instead of escaping run(): the drain
+            // completes without throwing. The view is left valid (its data is unchanged while suspended).
+            drainQueues();
+            assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
+            assertQuery("select suspended from wal_tables() where name = 'price_1h'").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("suspended\ntrue\n");
+
+            // Resume and recover with a full refresh against the rebased base; the worker stays healthy.
+            execute("alter materialized view price_1h resume wal");
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+            assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalMaterializedView() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainWalAndMatViewQueues();
+            assertQuery("select price from price_1h").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("price\n1.323\n");
+
+            final TableToken oldView = engine.verifyTableName("price_1h");
+            final int oldId = oldView.getTableId();
+            Assert.assertTrue(oldView.isMatView());
+
+            // Rebase the materialized view itself.
+            execute("alter materialized view price_1h suspend wal");
+            execute("alter materialized view price_1h rebase wal");
+            drainWalQueue();
+
+            final TableToken newView = engine.verifyTableName("price_1h");
+            // New identity, still a registered mat view, data preserved via hard links.
+            Assert.assertTrue(newView.isMatView());
+            Assert.assertNotEquals(oldView.getDirName(), newView.getDirName());
+            Assert.assertNotEquals(oldId, newView.getTableId());
+            Assert.assertNotNull(engine.getMatViewGraph().getViewDefinition(newView));
+            assertQuery("select price from price_1h").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("price\n1.323\n");
+
+            // The rebased view still refreshes from the base (a full refresh, watermark not preserved).
+            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.500, '2024-09-10T13:01')");
+            drainWalAndMatViewQueues();
+            assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalMaterializedViewInvalidatesDependentMatViews() throws Exception {
+        // REBASE WAL requires suspension to block writes.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // A chain rooted at the mat view that gets rebased:
+            //   base_price -> price_1h -> price_1d -> price_1w
+            //                          \-> price_1d_2
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "create materialized view price_1d as " +
+                            "select sym, last(price) as price, ts from price_1h sample by 1d"
+            );
+            execute(
+                    "create materialized view price_1d_2 as " +
+                            "select sym, last(price) as price, ts from price_1h sample by 1d"
+            );
+            execute(
+                    "create materialized view price_1w as " +
+                            "select sym, last(price) as price, ts from price_1d sample by 7d"
+            );
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainQueues();
+
+            // The whole chain refreshes clean before the rebase.
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1d\tprice_1h\tvalid\t
+                            price_1d_2\tprice_1h\tvalid\t
+                            price_1h\tbase_price\tvalid\t
+                            price_1w\tprice_1d\tvalid\t
+                            """);
+
+            final TableToken oldView = engine.verifyTableName("price_1h");
+            final int oldId = oldView.getTableId();
+            Assert.assertTrue(oldView.isMatView());
+
+            // Rebase the MIDDLE mat view (price_1h), which is itself the base of price_1d / price_1d_2.
+            execute("alter materialized view price_1h suspend wal");
+            execute("alter materialized view price_1h rebase wal");
+            drainQueues();
+
+            // New identity for the rebased view, still a registered mat view.
+            final TableToken newView = engine.verifyTableName("price_1h");
+            Assert.assertTrue(newView.isMatView());
+            Assert.assertNotEquals(oldView.getDirName(), newView.getDirName());
+            Assert.assertNotEquals(oldId, newView.getTableId());
+
+            // The rebase replaced price_1h's target token (old dir dropped, new dir created) and reset its
+            // sequencer, so its dependents' watermarks no longer map onto it: both direct dependents are
+            // invalidated, and the cascade carries the invalidation down to the grandchild (price_1w). The
+            // reason the direct dependents see is "base table is dropped or renamed" (the only source of that
+            // string is MatViewRefreshJob.checkIfBaseTableDropped, which fires when the base token fails
+            // verification during the rebase teardown) rather than the "base table rebase" reason CairoEngine
+            // enqueues -- accurate either way, since a rebase drops and recreates the target token. The
+            // rebased price_1h itself comes back valid (fresh default state, data preserved via hard links).
+            assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status\tinvalidation_reason
+                            price_1d\tprice_1h\tinvalid\tbase table is dropped or renamed
+                            price_1d_2\tprice_1h\tinvalid\tbase table is dropped or renamed
+                            price_1h\tbase_price\tvalid\t
+                            price_1w\tprice_1d\tinvalid\tbase materialized view is invalidated
+                            """);
+
+            // A full refresh of the dependents recovers them against the rebased price_1h.
+            execute("refresh materialized view price_1d full");
+            execute("refresh materialized view price_1d_2 full");
+            execute("refresh materialized view price_1w full");
+            drainQueues();
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1d\tvalid\t
+                            price_1d_2\tvalid\t
+                            price_1h\tvalid\t
+                            price_1w\tvalid\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testSuspendedMatViewFullRefreshNotInvalidatedWhenWriteDenied() throws Exception {
+        // With cairo.wal.apply.suspended.write.denied=true, CairoEngine.getWalWriter refuses a hard-suspended
+        // view with CairoException.tableSuspended. REFRESH ... FULL on such a view must skip, not invalidate.
+        // Without the fix the refusal marks the view invalid in memory (the persisted state file, hence
+        // view_status, is untouched -- silent), which then blocks the post-resume incremental refresh.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainQueues();
+            assertQuery("price_1h")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\ngbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n");
+
+            // Suspend, then ask for a full refresh. The job picks up the FULL_REFRESH task and must skip it
+            // (the getWalWriter refusal under write-denied) instead of failing into invalidation.
+            execute("alter materialized view price_1h suspend wal");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Resume and drive a normal incremental refresh with a new base row. This only catches up if the
+            // suspended full refresh left the view valid in memory; otherwise the in-memory invalidation
+            // blocks it and the 13:00 bucket never appears.
+            execute("alter materialized view price_1h resume wal");
+            execute("insert into base_price values('gbpusd', 1.500, '2024-09-10T13:01')");
+            drainQueues();
+
+            assertQuery("select view_status from materialized_views")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_1h order by ts")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.5\t2024-09-10T13:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testSuspendedMatViewNotInvalidatedOnBaseCommitWhenWriteDenied() throws Exception {
+        // M1 regression: with cairo.wal.apply.suspended.write.denied=true, CairoEngine.getWalWriter refuses a
+        // hard-suspended view with CairoException.tableSuspended. A base-table commit enqueues an incremental
+        // refresh of the suspended view; the refresh job must skip it rather than route the refusal through
+        // refreshFailState, which would mark the view sticky-invalid (recoverable only by REFRESH ... FULL)
+        // and cascade-invalidate its dependents.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+            drainQueues();
+            assertQuery("select view_status from materialized_views")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_1h")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\ngbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n");
+
+            // Suspend the view, then write to the base table. The base commit enqueues an incremental refresh
+            // of the now-suspended view -- the exact path that used to invalidate it.
+            execute("alter materialized view price_1h suspend wal");
+            execute("insert into base_price values('gbpusd', 1.500, '2024-09-10T13:01')");
+            drainQueues();
+
+            // While suspended, monitoring still reads view_status=valid: it comes from the persisted state
+            // file, which the refused invalid-state mint never rewrites -- the "silent" half of M1. The data
+            // is unchanged too (write-denied suspension buffers nothing). The fix is proven by the correct,
+            // complete catch-up after resume below; without it, the failed refresh corrupts the view (a
+            // duplicated bucket) instead of cleanly skipping.
+            assertQuery("select view_status from materialized_views")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("view_status\nvalid\n");
+            assertQuery("select suspended from wal_tables() where name = 'price_1h'")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("suspended\ntrue\n");
+            assertQuery("price_1h")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\ngbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n");
+
+            // Resume the view. The next base-table commit re-triggers the refresh, which catches up across the
+            // row written while suspended (13:01) and the new one (14:01): WAL purge retained the base WAL the
+            // skipped view still needed (it clamps retention to the view's own lastRefreshBaseTxn), so no data
+            // is lost.
+            execute("alter materialized view price_1h resume wal");
+            execute("insert into base_price values('gbpusd', 1.700, '2024-09-10T14:01')");
+            drainQueues();
+
+            assertQuery("select view_status from materialized_views")
+                    .noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary()
+                    .returns("view_status\nvalid\n");
+            assertQuery("price_1h order by ts")
+                    .noLeakCheck().expectSize().timestamp("ts")
+                    .returns("sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.5\t2024-09-10T13:00:00.000000Z\n" +
+                            "gbpusd\t1.7\t2024-09-10T14:00:00.000000Z\n");
+        });
+    }
+
+    @Test
     public void testAlterAddIndexInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -3014,6 +3383,90 @@ public class MatViewTest extends AbstractCairoTest {
                             UnixEpoch\tTime\tDeviceId\tRegister\tValue
                             1970-01-01T00:00:00.000000Z\t2025-08-08T12:57:07.388314Z\t1\thello\t123.0
                             """);
+        });
+    }
+
+    @Test
+    public void testHydrateTruncateScanThrowStillSchedulesRefresh() throws Exception {
+        // Verify that a missing/purged WAL file encountered during the hydrate-path truncate scan
+        // does not prevent the mat-view from being scheduled for incremental refresh. The scan
+        // helper lets a CairoException escape, which the outer loadMatViewIntoStore catch swallows,
+        // skipping enqueueIncrementalRefresh and leaving the view silently unscheduled.
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv", "select ts, count() cnt from base sample by 1h");
+            // Insert enough rows to fill segment 0 and drain so the view refreshes at least once
+            // (lastRefreshBaseTxn > -1, state valid).
+            execute(
+                    "insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:01')," +
+                            " ('a', 3.0, '2024-09-10T12:02'), ('a', 4.0, '2024-09-10T12:03')," +
+                            " ('a', 5.0, '2024-09-10T12:04')"
+            );
+            drainQueues();
+
+            // Advance the base beyond the view's lastRefreshBaseTxn WITHOUT running mat-view refresh,
+            // so a gap exists that the truncate scan must read. Ten 5-row batches with rollover at 10
+            // rows creates segments 1-5 inside the gap (matching the segment numbering the scan visits).
+            for (int i = 0; i < 10; i++) {
+                execute(
+                        "insert into base values ('a', " + (100 + i) + ".0, '2024-09-10T13:0" + i + ":00')," +
+                                " ('a', " + (200 + i) + ".0, '2024-09-10T13:0" + i + ":30')," +
+                                " ('a', " + (300 + i) + ".0, '2024-09-10T14:0" + i + ":00')," +
+                                " ('a', " + (400 + i) + ".0, '2024-09-10T14:0" + i + ":30')," +
+                                " ('a', " + (500 + i) + ".0, '2024-09-10T15:0" + i + ":00')"
+                );
+            }
+            drainWalQueue();
+
+            // Delete segment 5's event file so loader.load() throws a CairoException when
+            // hasBaseTableTruncateInWalGap tries to open it during the next hydrateMatViewStateStore call.
+            final TableToken baseTableToken = engine.getTableTokenIfExists("base");
+            Assert.assertNotNull(baseTableToken);
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(baseTableToken)
+                        .concat(WAL_NAME_BASE).put(1).slash().put(5).concat(EVENT_FILE_NAME);
+                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+            }
+
+            // Drain any pre-existing queued mat-view tasks (the base-commit notification may have
+            // already enqueued one) so the queue is empty before the hydrate call.
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(task)) {
+                // drain
+            }
+
+            // Positive witness: the deletion above must make a WAL-gap scan over the affected range
+            // actually throw, so the hydrate path's catch is genuinely exercised (not silently bypassed
+            // via a clean no-truncate read on a platform where the deletion did not take effect).
+            final MatViewState mvState = store.getViewState(engine.verifyTableName("mv"));
+            Assert.assertNotNull(mvState);
+            final long baseLastTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
+            try (
+                    WalTxnRangeLoader probe = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path probePath = new Path()
+            ) {
+                final LongList probeIntervals = new LongList();
+                probe.load(engine, probePath, baseTableToken, probeIntervals, mvState.getLastRefreshBaseTxn(), baseLastTxn);
+                Assert.fail("expected the missing WAL segment to make the gap scan throw");
+            } catch (CairoException expected) {
+                // expected: the deleted event file makes the loader fail to read the gap
+            }
+
+            // Simulate the role-promote hydrate path. The truncate scan's load() will throw because
+            // the WAL segment file is missing. The fix catches the exception inside
+            // hasBaseTableTruncateInWalGap and returns false, allowing enqueueIncrementalRefresh to
+            // run. Without the fix the view is silently left unscheduled.
+            engine.hydrateMatViewStateStore();
+
+            boolean scheduled = false;
+            while (store.tryDequeueRefreshTask(task)) {
+                if (task.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
+                    scheduled = true;
+                }
+            }
+            Assert.assertTrue("a missing-WAL truncate scan on hydrate must not skip refresh scheduling", scheduled);
         });
     }
 
@@ -7952,6 +8405,280 @@ public class MatViewTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertEquals(11, e.getPosition());
                 Assert.assertTrue(e.getMessage().contains("table name expected, got view or materialized view name"));
+            }
+        });
+    }
+
+    @Test
+    public void testTruncateBarrierDoesNotAdvanceRefreshBaseTxnPastTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv", "select ts, count() cnt from base sample by 1h");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainQueues(); // applies base WAL and converges the view
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            final long baseTxnBeforeTruncate = state.getLastRefreshBaseTxn();
+            Assert.assertTrue(baseTxnBeforeTruncate > -1);
+
+            // Truncate (the barrier) then add a later bucket. Apply only the base WAL so the truncate sits
+            // in the gap the next incremental refresh scans, WITHOUT processing mat-view tasks yet.
+            execute("truncate table base");
+            execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
+            drainWalQueue();
+
+            // Drain any queued mat-view task (including the apply-time INVALIDATE) before the lone
+            // refresh run, so the refresh run itself -- not a separately-queued INVALIDATE -- is what
+            // must avoid advancing the watermark past the truncate.
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+
+            // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
+            // no-rows commit advance the persisted base txn past the truncate. The same drain that runs the
+            // refresh also dequeues the barrier's INVALIDATE and finalizes it, so the view ends invalid.
+            store.enqueueIncrementalRefresh(viewToken);
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                job.run();
+            }
+
+            Assert.assertEquals(
+                    "a truncate-barrier refresh must not advance the persisted base txn past the truncate",
+                    baseTxnBeforeTruncate,
+                    state.getLastRefreshBaseTxn()
+            );
+            // The user-visible half of the barrier: the durable INVALIDATE the refresh enqueued must take
+            // effect, leaving the view actually invalid with the truncate reason -- not silently valid.
+            Assert.assertTrue("the truncate barrier must invalidate the view", state.isInvalid());
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsAdvanceOnlyAfterFirstDataRefresh() throws Exception {
+        // Pins the bootstrap invariant behind the truncate-barrier's never-refreshed guard in
+        // updateRefreshIntervals0: refreshIntervalsBaseTxn advances (the setRefreshIntervalsBaseTxn call)
+        // only inside if (lastRefreshTxn > -1), where lastRefreshTxn = max(lastRefreshBaseTxn,
+        // refreshIntervalsBaseTxn). With both at the -1 default that block is skipped, so the first advance
+        // requires lastRefreshBaseTxn already > -1 -- a never-data-refreshed view can never reach
+        // refreshIntervalsBaseTxn > -1. That makes the never-refreshed side of the truncate barrier
+        // (lastRefreshBaseTxn == -1) unreachable: an external review argued it stalls a view forever, but
+        // the precondition cannot form.
+        //
+        // A built-in positive control keeps the no-advance assertion honest: the SAME
+        // UPDATE_REFRESH_INTERVALS pass DOES advance refreshIntervalsBaseTxn once the view has refreshed, so
+        // the no-advance below is the bootstrap invariant, not an inert job.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create materialized view mv refresh manual as select ts, count() cnt from base sample by 1h");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainWalQueue(); // apply the base WAL only; the manual view is not refreshed yet
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertEquals("precondition: the view has never refreshed data", -1, state.getLastRefreshBaseTxn());
+            Assert.assertEquals("precondition: no intervals tracked yet", -1, state.getRefreshIntervalsBaseTxn());
+
+            // Drop the queued initial-population refresh so the view stays never-refreshed
+            // (lastRefreshBaseTxn == -1) and ONLY the interval pass below runs -- draining it instead would
+            // run the first refresh and set lastRefreshBaseTxn, defeating the invariant check.
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+
+            // Invariant: a standalone UPDATE_REFRESH_INTERVALS pass on a never-data-refreshed view must NOT
+            // bootstrap refreshIntervalsBaseTxn (updateRefreshIntervals0 short-circuits at lastRefreshTxn > -1).
+            store.enqueueUpdateRefreshIntervals(viewToken);
+            drainMatViewQueue(engine);
+            Assert.assertEquals(
+                    "an UPDATE_REFRESH_INTERVALS pass must not advance refreshIntervalsBaseTxn before the first data refresh",
+                    -1,
+                    state.getRefreshIntervalsBaseTxn()
+            );
+            Assert.assertEquals("the interval pass must not have refreshed data", -1, state.getLastRefreshBaseTxn());
+
+            // Positive control, step 1: the first data refresh sets lastRefreshBaseTxn > -1.
+            store.enqueueIncrementalRefresh(viewToken);
+            drainMatViewQueue(engine);
+            Assert.assertTrue("control: a data refresh must set lastRefreshBaseTxn", state.getLastRefreshBaseTxn() > -1);
+
+            // Positive control, step 2: with the view now refreshed, the SAME interval pass over a fresh gap
+            // DOES advance refreshIntervalsBaseTxn -- proving the no-advance above was the bootstrap
+            // invariant, not an inert job.
+            execute("insert into base values ('a', 3.0, '2024-09-10T13:00')");
+            drainWalQueue();
+            store.enqueueUpdateRefreshIntervals(viewToken);
+            drainMatViewQueue(engine);
+            Assert.assertTrue(
+                    "control: once refreshed, an UPDATE_REFRESH_INTERVALS pass advances refreshIntervalsBaseTxn",
+                    state.getRefreshIntervalsBaseTxn() > -1
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateBarrierInvalidatesChainedMatView() throws Exception {
+        // A truncate barrier that invalidates a mat-view must cascade to mat-views chained on top of it.
+        // The refresh-path barrier invalidates view A inline; A's dependent view B (built on A) is then
+        // stale and must be invalidated too -- the same cascade invalidateView performs on a successful
+        // invalidation. Without the cascade, B is silently left valid with stale pre-truncate rows.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
+            // View B is chained on top of A (a mat-view on a mat-view).
+            createMatView("mv_b", "select ts, sum(cnt) cnt from mv_a sample by 1d");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            drainQueues();
+
+            final TableToken viewA = engine.verifyTableName("mv_a");
+            final TableToken viewB = engine.verifyTableName("mv_b");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState stateA = store.getViewState(viewA);
+            final MatViewState stateB = store.getViewState(viewB);
+            Assert.assertNotNull(stateA);
+            Assert.assertNotNull(stateB);
+            Assert.assertFalse("precondition: view A converged and valid", stateA.isInvalid());
+            Assert.assertFalse("precondition: view B converged and valid", stateB.isInvalid());
+            Assert.assertTrue("precondition: view A refreshed", stateA.getLastRefreshBaseTxn() > -1);
+
+            // Truncate the base then add a later bucket. Apply only the base WAL so the truncate sits in the
+            // gap A's next incremental refresh scans.
+            execute("truncate table base");
+            execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
+            drainWalQueue();
+
+            // Drop any queued mat-view task (including the apply-time INVALIDATE that already cascades) so
+            // the refresh-path barrier on A -- not a separately-queued INVALIDATE -- is the sole trigger.
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+            Assert.assertFalse("view B must still look valid before the barrier refresh", stateB.isInvalid());
+
+            // Drive A's incremental refresh: it hits the truncate barrier and invalidates A inline, which
+            // must cascade an INVALIDATE to B. Drain so B's INVALIDATE is processed.
+            store.enqueueIncrementalRefresh(viewA);
+            drainWalAndMatViewQueues();
+
+            Assert.assertTrue("view A must be invalidated by the truncate barrier", stateA.isInvalid());
+            Assert.assertTrue(
+                    "a chained mat-view must be invalidated when its base mat-view is invalidated by a truncate barrier",
+                    stateB.isInvalid()
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateBarrierHoldsWatermarkForPeriodMatView() throws Exception {
+        // The truncate barrier must hold the refresh watermark for PERIOD mat-views too, not only plain
+        // ones. A period view's incremental refresh synthesizes a fresh range from the period bounds, so
+        // even when the barrier clears the incremental intervals the refresh would otherwise build a
+        // non-empty range, commit, and advance lastRefreshBaseTxn past the truncate -- blinding the
+        // load-time backstop if the queued invalidation is later lost across a role switch.
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z");
+            execute("create materialized view mv refresh immediate period (length 1d) as " +
+                    "(select ts, count() cnt from base sample by 1h) partition by DAY");
+
+            // First complete period: insert rows in the 2024-09-10 day and let "now" pass its end so the
+            // period completes and the view refreshes over it.
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-11T00:00:00.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final TableToken viewToken = engine.verifyTableName("mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(viewToken);
+            Assert.assertNotNull(state);
+            final long baseTxnBeforeTruncate = state.getLastRefreshBaseTxn();
+            Assert.assertTrue("precondition: the period view refreshed at least once", baseTxnBeforeTruncate > -1);
+
+            // Truncate (the barrier) then add a later bucket in a NEW complete period. Apply only the base
+            // WAL so the truncate sits in the gap the next incremental refresh scans, and advance "now"
+            // past the new period's end so the period branch synthesizes a non-empty range for it.
+            execute("truncate table base");
+            execute("insert into base values ('a', 9.0, '2024-09-11T20:00')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z");
+            drainWalQueue();
+
+            // Drop any queued mat-view task (including the apply-time INVALIDATE) so the lone refresh run is
+            // what must avoid advancing the watermark past the truncate.
+            final MatViewRefreshTask discard = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(discard)) {
+                // drop
+            }
+
+            // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
+            // period branch's synthesized range commit a watermark advance past the truncate.
+            store.enqueueIncrementalRefresh(viewToken);
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                job.run();
+            }
+
+            Assert.assertEquals(
+                    "a truncate-barrier refresh of a period view must not advance the persisted base txn past the truncate",
+                    baseTxnBeforeTruncate,
+                    state.getLastRefreshBaseTxn()
+            );
+            Assert.assertTrue("the truncate barrier must invalidate the period view", state.isInvalid());
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
+        });
+    }
+
+    @Test
+    public void testWalTxnRangeLoaderDetectsTruncate() throws Exception {
+        // Direct unit coverage for the detection primitive the whole truncate barrier rests on:
+        // a range with a TRUNCATE reports hasTruncate()==true; a data-only range reports false; and a
+        // second clean load resets the flag back to false (no stale carry-over on a reused loader).
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            final TableToken baseToken = engine.verifyTableName("base");
+            final long txnAfterFirstInsert = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+
+            execute("truncate table base");
+            execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
+            drainWalQueue();
+            final long txnAfterTruncate = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+
+                // Data-only range (the very first insert): no truncate.
+                loader.load(engine, path, baseToken, intervals, 0, txnAfterFirstInsert);
+                Assert.assertFalse("a data-only range must not report a truncate", loader.hasTruncate());
+
+                // Range that spans the truncate: detected.
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, txnAfterFirstInsert, txnAfterTruncate);
+                Assert.assertTrue("a range containing a TRUNCATE must report a truncate", loader.hasTruncate());
+
+                // A second clean (data-only) load must reset the flag, proving no stale carry-over.
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, 0, txnAfterFirstInsert);
+                Assert.assertFalse("a clean reload must reset the truncate flag to false", loader.hasTruncate());
             }
         });
     }

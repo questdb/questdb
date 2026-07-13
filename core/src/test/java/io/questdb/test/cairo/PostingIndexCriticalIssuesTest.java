@@ -760,6 +760,173 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testO3SealRestoreSkipsRowlessPostingColumnWithoutKeyFile() throws Exception {
+        // A POSTING-indexed column with no rows in a partition (columnTop >= partition
+        // size) has no .pk key file there: the O3 seal sweep skips row-less columns
+        // (sealPostingIndexForPartition), so it never builds one. The seal-sweep tail
+        // restorePostingIndexersToLastPartition used to open that column's index anyway
+        // and threw "index does not exist", which suspends a WAL table mid-apply (here,
+        // BYPASS WAL, it surfaces as the INSERT throwing).
+        //
+        // A last-partition split shrinks 2024-01-01 while `extra` stays row-less there
+        // (columnTop above the shrunk row count). The FilesFacade reports `extra`'s key
+        // file as absent on the day partition the seal-sweep restores to -- the exact
+        // production state -- but only once ADD COLUMN has built it (so the legitimate
+        // openNewColumnFiles path during ADD COLUMN is unaffected), and only for the
+        // day partition (not the split tail, whose dir carries a "...T..." suffix).
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+        final AtomicBoolean keyFileHidden = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (keyFileHidden.get()
+                        && Utf8s.containsAscii(path, "extra.pk")
+                        && !Utf8s.containsAscii(path, "2024-01-01T")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_rowless (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_rowless(ts, sym, v) SELECT ('2024-01-01T00:00:00.000000Z'::timestamp + x * 3_600_000_000L)::timestamp, 'a', x FROM long_sequence(20)");
+            // extra has no rows on 2024-01-01 (columnTop == partition size).
+            execute("ALTER TABLE t_rowless ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
+
+            keyFileHidden.set(true);
+            // O3 insert forces a last-partition split; the seal sweep then restores the
+            // posting indexers to the shrunk 2024-01-01, where `extra` is row-less.
+            execute("INSERT INTO t_rowless(ts, sym, v) VALUES ('2024-01-01T18:30:00.000000Z', 'a', 999)");
+            keyFileHidden.set(false);
+
+            // The table survived: all rows present, and the `sym` posting index serves reads.
+            assertQuery("SELECT count() FROM t_rowless")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+            assertQuery("SELECT count() FROM t_rowless WHERE sym = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+
+            // The row-less `extra` posting column stays queryable post-restore: an
+            // equality lookup matches nothing (extra is absent on every row).
+            assertQuery("SELECT count() FROM t_rowless WHERE extra = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            assertQuery("SELECT count() FROM t_rowless WHERE extra IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+        });
+    }
+
+    @Test
+    public void testO3SealRestoreSkipStrandsRowlessIndexerWithKeyFile() throws Exception {
+        // Counterpart to testO3SealRestoreSkipsRowlessPostingColumnWithoutKeyFile.
+        // There the row-less last-partition column has NO .pk (split tail) so the
+        // restore skip is correct. Here the row-less column DOES have a .pk: c is
+        // POSTING-indexed, added by ALTER while day2 (L) is the last partition, so
+        // ADD COLUMN created an empty .pk for c on day2 and c is row-less there
+        // (columnTop == day2 size), absent on day1 (P).
+        //
+        // An O3 back-fill of c into day1 seals day1 and points c's posting writer at
+        // day1. A blanket row-less skip in restorePostingIndexersToLastPartition()
+        // would skip c (columnTop >= partitionSize on L) and leave its writer on day1;
+        // the next in-order append into day2 would then index day2 rows into day1's
+        // .pk/.pv, making the appended row invisible to "WHERE c = ..." while the base
+        // data stays intact. The existence-based skip re-points c to day2 instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_probe (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // day1 rows start at 12:00 so the O3 back-fill at 00:00 lands at rowid 0
+            // (columnTop for c on day1 becomes 0).
+            execute("INSERT INTO t_probe(ts, sym, v) SELECT " +
+                    "('2024-01-01T12:00:00.000000Z'::timestamp + (x-1) * 3_600_000_000L)::timestamp, 'a', x " +
+                    "FROM long_sequence(5)");
+            // day2 (L): 3 rows.
+            execute("INSERT INTO t_probe(ts, sym, v) SELECT " +
+                    "('2024-01-02T00:00:00.000000Z'::timestamp + (x-1) * 3_600_000_000L)::timestamp, 'a', 100+x " +
+                    "FROM long_sequence(3)");
+            // c row-less on day2 (columnTop == 3), absent on day1.
+            execute("ALTER TABLE t_probe ADD COLUMN c SYMBOL INDEX TYPE POSTING");
+
+            // O3 back-fill of c into day1 -> seals day1, points c at day1, restore skips c.
+            execute("INSERT INTO t_probe(ts, sym, c, v) VALUES ('2024-01-01T00:00:00.000000Z', 'a', 'X', 999)");
+
+            // In-order append into day2 with a c value: indexes through c's stranded writer.
+            execute("INSERT INTO t_probe(ts, sym, c, v) VALUES ('2024-01-02T03:00:00.000000Z', 'a', 'Y', 555)");
+
+            // Base table integrity (no index involved).
+            assertQuery("SELECT count() FROM t_probe")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
+            // Control: sym is NOT row-less in day2, restore re-points it -> index correct.
+            assertQuery("SELECT count() FROM t_probe WHERE sym = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n10\n");
+
+            // The day2 'Y' row must be found exactly once via c's index, with its real value.
+            assertQuery("SELECT count() FROM t_probe WHERE c = 'Y'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+            assertQuery("SELECT v FROM t_probe WHERE c = 'Y'")
+                    .noLeakCheck().returns("v\n555\n");
+            assertQuery("SELECT v FROM t_probe WHERE c = 'X'")
+                    .noLeakCheck().returns("v\n999\n");
+        });
+    }
+
+    @Test
+    public void testO3SealRestoreRowlessNoKeyFileDoesNotSuspendWalTable() throws Exception {
+        // WAL counterpart to testO3SealRestoreSkipsRowlessPostingColumnWithoutKeyFile.
+        // The headline symptom of the no-.pk bug is a WAL table suspending mid-apply:
+        // restorePostingIndexersToLastPartition throws "index does not exist",
+        // ApplyWal2TableJob catches it and suspends the table -- the commit lands but
+        // apply halts and the table needs a manual RESUME WAL. With the fix the seal
+        // restore skips the row-less keyless column, apply completes, the table stays live.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+        final AtomicBoolean keyFileHidden = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (keyFileHidden.get()
+                        && Utf8s.containsAscii(path, "extra.pk")
+                        && !Utf8s.containsAscii(path, "2024-01-01T")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_rowless_wal (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_rowless_wal(ts, sym, v) SELECT ('2024-01-01T00:00:00.000000Z'::timestamp + x * 3_600_000_000L)::timestamp, 'a', x FROM long_sequence(20)");
+            // extra has no rows on 2024-01-01 (columnTop == partition size).
+            execute("ALTER TABLE t_rowless_wal ADD COLUMN extra SYMBOL INDEX TYPE POSTING");
+            // Apply everything while the .pk is visible, so ADD COLUMN builds extra's
+            // .pk on the active partition exactly as in production.
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("t_rowless_wal");
+            Assert.assertFalse("table must apply cleanly before the O3 split", engine.getTableSequencerAPI().isSuspended(token));
+
+            // O3 insert forces a last-partition split; the seal sweep then restores the
+            // posting indexers to the shrunk 2024-01-01, where extra is row-less and
+            // reports no .pk. On master the apply throws and suspends the table here.
+            execute("INSERT INTO t_rowless_wal(ts, sym, v) VALUES ('2024-01-01T18:30:00.000000Z', 'a', 999)");
+            keyFileHidden.set(true);
+            drainWalQueue();
+            keyFileHidden.set(false);
+
+            // The table kept applying: not suspended, all rows present, sym index serves reads.
+            Assert.assertFalse(
+                    "WAL apply must not suspend the table on a row-less keyless posting column",
+                    engine.getTableSequencerAPI().isSuspended(token)
+            );
+            assertQuery("SELECT count() FROM t_rowless_wal")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+            assertQuery("SELECT count() FROM t_rowless_wal WHERE sym = 'a'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+            assertQuery("SELECT count() FROM t_rowless_wal WHERE extra IS NULL")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("count\n21\n");
+        });
+    }
+
     /**
      * Rollback reencode publishes a bumped sealTxn for the compacted
      * {@code .pv.N}; it must also stage a sealed {@code .pc0.N} sidecar so a
@@ -1620,6 +1787,177 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\tsum\n" + total + "\t" + (double) total + "\n");
+        });
+    }
+
+    /**
+     * Multi-key sibling of {@link #testCoveringRecordCursorSingleKeyClosedOffOperatingThread}:
+     * {@code sym IN (...)} drives the multi-key covering record cursor, which
+     * retains one posting cursor per IN-list key. The off-thread close must
+     * release every retained cursor's buffers; a pre-gate build threw the
+     * owning-thread AssertionError on the first of them and stranded the rest.
+     */
+    @Test
+    public void testCoveringRecordCursorMultiKeyClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_covering_multi (
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, ts),
+                        price DOUBLE,
+                        qty LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            // (x * x) % 3 emits keys k0/k1 with non-constant per-key row-id
+            // deltas, so the posting cursors allocate decode block buffers --
+            // the native memory the off-thread close must free.
+            execute("""
+                    INSERT INTO t_covering_multi
+                    SELECT 'k' || ((x * x) % 3), x::DOUBLE, x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(30_000)""");
+
+            final String scanSql = "SELECT sym, price FROM t_covering_multi WHERE sym IN ('k0', 'k1')";
+            final String aggSql = "SELECT count() c, min(price) mn, max(price) mx FROM t_covering_multi WHERE sym IN ('k0', 'k1')";
+            assertQuery(scanSql).noLeakCheck().assertsPlanContaining("CoveringIndex on: sym");
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("CoveringIndex on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            30000\t1.0\t30000.0
+                            """);
+
+            // Peel the QueryProgress wrapper off the compiled factory: its cursor
+            // close() catches Throwable, logs "could not close record cursor" and
+            // recovers the leaked reader, masking the failure this test pins. The
+            // production teardown paths this test models (HttpConnectionContext.
+            // reset() -> closeMergeCursors(), pgwire covering cursor close) close
+            // the covering cursors without that guard.
+            try (RecordCursorFactory factory = select(scanSql)) {
+                RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext);
+                boolean isClosed = false;
+                try {
+                    var record = cursor.getRecord();
+                    for (int i = 0; i < 128 && cursor.hasNext(); i++) {
+                        record.getDouble(1);
+                    }
+                    closeCursorOffOperatingThread(cursor);
+                    isClosed = true;
+                } finally {
+                    if (!isClosed) {
+                        cursor.close();
+                    }
+                }
+            }
+
+            // The orderly close chain must complete and return the TableReader to
+            // the pool. A pre-gate build aborts it mid-way: the posting cursor's
+            // owning-thread assert throws, QueryProgress swallows the error after
+            // logging "could not close record cursor", and the frame cursor -- and
+            // its TableReader -- never get freed.
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+
+            // The reader survived the off-thread close: same plan, same rows.
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("CoveringIndex on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            30000\t1.0\t30000.0
+                            """);
+        });
+    }
+
+    /**
+     * A suspendable query's connection -- and the open {@link RecordCursor} it
+     * holds -- can migrate to another worker between fragments, so the cursor's
+     * close() legitimately runs on a thread other than the one that checked
+     * posting cursors out via getCursor(). The single-key covering record
+     * cursor (CoveringIndexRecordCursorFactory.CoveringCursor) retains
+     * currentRowCursor across hasNext() calls, so a cross-thread close reaches
+     * PostingIndexFwdReader.Cursor.close() off the reader's operating thread.
+     * That close used to assert the checkout thread under -ea ("posting index
+     * cursor closed off the reader's owning thread"), aborting the close and
+     * stranding the cursor's native buffers; it now routes through
+     * AbstractCoveringCursor.canRepool(), which skips the pool and releases the
+     * buffers directly. The test asserts plan and result, partially drains the
+     * cursor, closes it on a second thread, then asserts plan and result again
+     * on the survived reader; assertMemoryLeak proves the off-thread release
+     * freed every buffer.
+     */
+    @Test
+    public void testCoveringRecordCursorSingleKeyClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_covering_single (
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, ts),
+                        price DOUBLE,
+                        qty LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            // See testCoveringRecordCursorMultiKeyClosedOffOperatingThread for
+            // why the key expression is (x * x) % 3.
+            execute("""
+                    INSERT INTO t_covering_single
+                    SELECT 'k' || ((x * x) % 3), x::DOUBLE, x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(30_000)""");
+
+            final String scanSql = "SELECT sym, price FROM t_covering_single WHERE sym = 'k1'";
+            final String aggSql = "SELECT count() c, min(price) mn, max(price) mx FROM t_covering_single WHERE sym = 'k1'";
+            assertQuery(scanSql).noLeakCheck().assertsPlanContaining("CoveringIndex on: sym");
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("CoveringIndex on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            20000\t1.0\t29999.0
+                            """);
+
+            // Peel the QueryProgress wrapper off the compiled factory: its cursor
+            // close() catches Throwable, logs "could not close record cursor" and
+            // recovers the leaked reader, masking the failure this test pins. The
+            // production teardown paths this test models (HttpConnectionContext.
+            // reset() -> closeMergeCursors(), pgwire covering cursor close) close
+            // the covering cursors without that guard.
+            try (RecordCursorFactory factory = select(scanSql)) {
+                RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext);
+                boolean isClosed = false;
+                try {
+                    var record = cursor.getRecord();
+                    for (int i = 0; i < 128 && cursor.hasNext(); i++) {
+                        record.getDouble(1);
+                    }
+                    closeCursorOffOperatingThread(cursor);
+                    isClosed = true;
+                } finally {
+                    if (!isClosed) {
+                        cursor.close();
+                    }
+                }
+            }
+
+            // The orderly close chain must complete and return the TableReader to
+            // the pool. A pre-gate build aborts it mid-way: the posting cursor's
+            // owning-thread assert throws, QueryProgress swallows the error after
+            // logging "could not close record cursor", and the frame cursor -- and
+            // its TableReader -- never get freed.
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+
+            // The reader survived the off-thread close: same plan, same rows.
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("CoveringIndex on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            20000\t1.0\t29999.0
+                            """);
         });
     }
 
@@ -2690,6 +3028,310 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             rawFf.exists(pvRotated));
                 }
             }
+        });
+    }
+
+    /**
+     * Non-covering sibling of
+     * {@link #testCoveringRecordCursorSingleKeyClosedOffOperatingThread}: when
+     * the query selects a column outside the INCLUDE set, the planner falls
+     * back to the plain index scan and PageFrameRecordCursorImpl retains the
+     * posting row cursor (from DeferredSymbolIndexRowCursorFactory) across
+     * hasNext() calls. Its close() frees that cursor on the teardown thread,
+     * so the off-thread close reaches the posting cursor without any covering
+     * machinery involved -- the gate must hold on this path too.
+     */
+    @Test
+    public void testPostingIndexRowCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_plain_scan (
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price, ts),
+                        price DOUBLE,
+                        qty LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            // See testCoveringRecordCursorMultiKeyClosedOffOperatingThread for
+            // why the key expression is (x * x) % 3.
+            execute("""
+                    INSERT INTO t_plain_scan
+                    SELECT 'k' || ((x * x) % 3), x::DOUBLE, x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(30_000)""");
+
+            // qty is not in the INCLUDE set, so the covering factory cannot
+            // serve this projection and the plain index scan takes over.
+            final String scanSql = "SELECT sym, qty FROM t_plain_scan WHERE sym = 'k1'";
+            final String aggSql = "SELECT count() c, min(qty) mn, max(qty) mx FROM t_plain_scan WHERE sym = 'k1'";
+            assertQuery(scanSql).noLeakCheck().assertsPlanContaining("Index forward scan on: sym");
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            20000\t1\t29999
+                            """);
+
+            // Peel the QueryProgress wrapper off the compiled factory: its cursor
+            // close() catches Throwable, logs "could not close record cursor" and
+            // recovers the leaked reader, masking the failure this test pins. The
+            // production teardown paths this test models (HttpConnectionContext.
+            // reset() -> closeMergeCursors(), pgwire covering cursor close) close
+            // the covering cursors without that guard.
+            try (RecordCursorFactory factory = select(scanSql)) {
+                RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext);
+                boolean isClosed = false;
+                try {
+                    var record = cursor.getRecord();
+                    for (int i = 0; i < 128 && cursor.hasNext(); i++) {
+                        record.getLong(1);
+                    }
+                    closeCursorOffOperatingThread(cursor);
+                    isClosed = true;
+                } finally {
+                    if (!isClosed) {
+                        cursor.close();
+                    }
+                }
+            }
+
+            // The orderly close chain must complete and return the TableReader to
+            // the pool. A pre-gate build aborts it mid-way: the posting cursor's
+            // owning-thread assert throws, QueryProgress swallows the error after
+            // logging "could not close record cursor", and the frame cursor -- and
+            // its TableReader -- never get freed.
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+
+            // The reader survived the off-thread close: same plan, same rows.
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            20000\t1\t29999
+                            """);
+        });
+    }
+
+    /**
+     * Off-operating-thread sibling of
+     * {@link #testBwdNullCursorClosedAfterReaderDoesNotLeakBlockBuffer}. Closes a
+     * still-checked-out backward NullCursor on ANOTHER thread while the reader
+     * stays open -- the connection-migration analogue the canRepool() gate
+     * handles. Pre-gate, PostingIndexBwdReader.NullCursor.close() asserted the
+     * owning thread and threw "posting index null cursor closed off the reader's
+     * owning thread" here under -ea; the gate now routes it to a local release.
+     * key == 0 && columnTop > 0 && minValue < columnTop makes getCursor() vend the
+     * NullCursor.
+     */
+    @Test
+    public void testPostingIndexBwdNullCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_bwd_null_cursor_off_thread";
+            final long columnTop = 256;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Real key-0 entries at/after columnTop with irregular gaps so
+                    // the NullCursor's super.hasNext() decode allocates the block
+                    // buffer; rows below columnTop surface as implicit nulls.
+                    long rowId = columnTop;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, columnTop,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0)) {
+                    final long expected = drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE));
+
+                    // Park a partially-drained NullCursor and close it off-thread.
+                    final RowCursor parked = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                    for (int i = 0; i < 128 && parked.hasNext(); i++) {
+                        parked.next();
+                    }
+                    closeCursorOffOperatingThread(parked);
+
+                    // The reader survived: same row count after the off-thread close.
+                    Assert.assertEquals(expected, drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE)));
+                }
+            }
+        });
+    }
+
+    /**
+     * Off-operating-thread sibling of
+     * {@link #testRowCursorClosedAfterReaderDoesNotLeakBlockBuffer}. That test
+     * closes on the owning thread after the reader is closed (the isOpen() leak
+     * guard); this one closes a still-checked-out backward cursor on ANOTHER
+     * thread while the reader stays open. Pre-gate, PostingIndexBwdReader.Cursor
+     * .close() threw "posting index cursor closed off the reader's owning thread"
+     * here under -ea; the gate now routes the off-thread close to a local release.
+     * Uses the raw reader so it drives {@link PostingIndexBwdReader.Cursor}
+     * directly and deterministically, like the leak-guard siblings in this file.
+     */
+    @Test
+    public void testPostingIndexBwdRowCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_bwd_cursor_off_thread";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    // Irregular gaps -> non-zero bit-width blocks -> the decode path
+                    // allocates blockBufferAddr (NATIVE_INDEX_READER), the native
+                    // buffer the off-thread release must free.
+                    long rowId = 0;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0,
+                        /* metadata */ null, /* columnVersionReader */ null,
+                        /* partitionTimestamp */ 0)) {
+                    final long expected = drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE));
+
+                    // Partially drive a cursor so it allocates the decode block
+                    // buffer, then park it and close it on a second thread.
+                    final RowCursor parked = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                    for (int i = 0; i < 128 && parked.hasNext(); i++) {
+                        parked.next();
+                    }
+                    closeCursorOffOperatingThread(parked);
+
+                    Assert.assertEquals(expected, drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE)));
+                }
+            }
+        });
+    }
+
+    /**
+     * Off-operating-thread sibling for {@link PostingIndexFwdReader.NullCursor}
+     * (the forward reader's implicit-null cursor). Closes a still-checked-out
+     * forward NullCursor on ANOTHER thread while the reader stays open. Pre-gate
+     * this threw "posting index null cursor closed off the reader's owning thread"
+     * under -ea. key == 0 && columnTop > 0 && minValue < columnTop makes
+     * getCursor() vend the NullCursor.
+     */
+    @Test
+    public void testPostingIndexFwdNullCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_fwd_null_cursor_off_thread";
+            final long columnTop = 256;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    long rowId = columnTop;
+                    for (int i = 0; i < 4096; i++) {
+                        writer.add(0, rowId);
+                        rowId += 1 + (i % 7);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, columnTop)) {
+                    final long expected = drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE));
+
+                    final RowCursor parked = reader.getCursor(0, 0L, Long.MAX_VALUE);
+                    for (int i = 0; i < 128 && parked.hasNext(); i++) {
+                        parked.next();
+                    }
+                    closeCursorOffOperatingThread(parked);
+
+                    Assert.assertEquals(expected, drainRowCursor(reader.getCursor(0, 0L, Long.MAX_VALUE)));
+                }
+            }
+        });
+    }
+
+    /**
+     * Bitmap sibling documenting the M1 fold-in: the same off-thread close on a
+     * plain SYMBOL INDEX (default BITMAP) reader. Unlike the posting variants this
+     * is green with OR without the operating-thread gate -- bitmap cursors hold no
+     * native memory and never had the -ea assert, so the off-thread close never
+     * threw and the gate's only effect (skip pooling) is not black-box observable.
+     * The gate's mechanism is red-tested by the posting variants (identical code);
+     * this test locks in that the sanctioned migration path stays clean for the
+     * default index type.
+     */
+    @Test
+    public void testBitmapIndexRowCursorClosedOffOperatingThread() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bitmap (
+                        sym SYMBOL INDEX,
+                        qty LONG,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO t_bitmap
+                    SELECT 'k' || ((x * x) % 3), x, timestamp_sequence('2024-01-01', 60_000_000)
+                    FROM long_sequence(30_000)""");
+
+            final String scanSql = "SELECT sym, qty FROM t_bitmap WHERE sym = 'k1'";
+            final String aggSql = "SELECT count() c, min(qty) mn, max(qty) mx FROM t_bitmap WHERE sym = 'k1'";
+            assertQuery(scanSql).noLeakCheck().assertsPlanContaining("Index forward scan on: sym");
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            20000\t1\t29999
+                            """);
+
+            // Peel the QueryProgress wrapper (its close0() swallows close errors)
+            // and close the base record cursor off the thread that checked it out.
+            try (RecordCursorFactory factory = select(scanSql)) {
+                RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext);
+                boolean isClosed = false;
+                try {
+                    var record = cursor.getRecord();
+                    for (int i = 0; i < 128 && cursor.hasNext(); i++) {
+                        record.getLong(1);
+                    }
+                    closeCursorOffOperatingThread(cursor);
+                    isClosed = true;
+                } finally {
+                    if (!isClosed) {
+                        cursor.close();
+                    }
+                }
+            }
+
+            // The orderly close completed and returned the TableReader to the pool.
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+
+            assertQuery(aggSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .withPlanContaining("Index forward scan on: sym")
+                    .returns("""
+                            c\tmn\tmx
+                            20000\t1\t29999
+                            """);
         });
     }
 
@@ -9682,6 +10324,56 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    // Closes the cursor on a freshly spawned thread and rethrows anything the
+    // close raised. This is the connection-migration analogue: a suspendable
+    // query (HTTP export, pgwire fragment stream) can migrate to another worker
+    // between fragments, so teardown closes the record cursor -- and the posting
+    // cursors it retains -- off the thread that checked them out via getCursor().
+    // Before the canRepool() gate, PostingIndex*Reader cursor close() asserted
+    // the checkout thread and threw "posting index cursor closed off the
+    // reader's owning thread" here under -ea.
+    private static void closeCursorOffOperatingThread(RecordCursor cursor) throws InterruptedException {
+        final AtomicReference<Throwable> closeError = new AtomicReference<>();
+        Thread closer = new Thread(() -> {
+            try {
+                cursor.close();
+            } catch (Throwable th) {
+                closeError.set(th);
+            }
+        });
+        closer.start();
+        closer.join();
+        if (closeError.get() != null) {
+            throw new AssertionError("record cursor close failed off the operating thread", closeError.get());
+        }
+    }
+
+    private static void closeCursorOffOperatingThread(RowCursor cursor) throws InterruptedException {
+        final AtomicReference<Throwable> closeError = new AtomicReference<>();
+        Thread closer = new Thread(() -> {
+            try {
+                cursor.close();
+            } catch (Throwable th) {
+                closeError.set(th);
+            }
+        });
+        closer.start();
+        closer.join();
+        if (closeError.get() != null) {
+            throw new AssertionError("row cursor close failed off the operating thread", closeError.get());
+        }
+    }
+
+    private static long drainRowCursor(RowCursor cursor) {
+        long count = 0;
+        while (cursor.hasNext()) {
+            cursor.next();
+            count++;
+        }
+        cursor.close();
+        return count;
     }
 
     private static String insertPostingRowsSql(int lo, int hi) {

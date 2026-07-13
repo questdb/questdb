@@ -348,6 +348,82 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachParquetPartitionDerivesMetadataTokenFromDataFile() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel src = new TableModel(configuration, "srcParquetAttach", PartitionBy.DAY);
+            TableModel dst = new TableModel(configuration, "dstParquetAttach", PartitionBy.DAY);
+
+            TableToken srcTableToken = createPopulateTable(
+                    1,
+                    src.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2020-01-01",
+                    1);
+            execute("INSERT INTO " + src.getName() + " VALUES ('2020-01-02T00:00:00.000Z', 11, 11)", sqlExecutionContext);
+            execute("ALTER TABLE " + src.getName() + " CONVERT PARTITION TO PARQUET LIST '2020-01-01'", sqlExecutionContext);
+
+            AbstractCairoTest.create(dst.timestamp("ts", timestampType.getTimestampType())
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
+            TableToken dstTableToken = engine.verifyTableName(dst.getName());
+            copyPartitionToAttachable(srcTableToken, getPartitionDirName(src.getName(), "2020-01-01"), dstTableToken.getDirName(), "2020-01-01");
+
+            engine.clear();
+            try (TableWriter writer = getWriter(dst.getName())) {
+                Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestampType.getDriver().parseFloorLiteral("2020-01-01T00:00:00.000Z"), 10));
+                writer.commit();
+            }
+
+            assertQuery("SELECT count() FROM " + dst.getName())
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            10
+                            """);
+        });
+    }
+
+    @Test
+    public void testAttachParquetPartitionFailsWhenMetadataDataFileIsMissing() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel src = new TableModel(configuration, "srcParquetMissingData", PartitionBy.DAY);
+            TableModel dst = new TableModel(configuration, "dstParquetMissingData", PartitionBy.DAY);
+
+            TableToken srcTableToken = createPopulateTable(
+                    1,
+                    src.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2020-01-01",
+                    1);
+            execute("INSERT INTO " + src.getName() + " VALUES ('2020-01-02T00:00:00.000Z', 11, 11)", sqlExecutionContext);
+            execute("ALTER TABLE " + src.getName() + " CONVERT PARTITION TO PARQUET LIST '2020-01-01'", sqlExecutionContext);
+
+            AbstractCairoTest.create(dst.timestamp("ts", timestampType.getTimestampType())
+                    .col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG));
+            TableToken dstTableToken = engine.verifyTableName(dst.getName());
+            copyPartitionToAttachable(srcTableToken, getPartitionDirName(src.getName(), "2020-01-01"), dstTableToken.getDirName(), "2020-01-01");
+
+            path.of(configuration.getDbRoot()).concat(dstTableToken).concat("2020-01-01" + configuration.getAttachPartitionSuffix()).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            Assert.assertTrue(Files.remove(path.$()));
+
+            try {
+                engine.clear();
+                execute("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'", sqlExecutionContext);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not access parquet data file for _pm metadata");
+                TestUtils.assertContains(e.getFlyweightMessage(), TableUtils.PARQUET_METADATA_FILE_NAME);
+            }
+        });
+    }
+
+    @Test
     public void testAttachPartitionInWrongDirectoryName() throws Exception {
         assertMemoryLeak(() -> {
                     TableModel src = new TableModel(configuration, "src11", PartitionBy.DAY);
@@ -1382,6 +1458,14 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                 dstPartitionName,
                 configuration.getAttachPartitionSuffix()
         );
+    }
+
+    private String getPartitionDirName(String tableName, String partitionName) throws NumericException {
+        long partitionTimestamp = timestampType.getDriver().parseFloorLiteral(partitionName + "T00:00:00.000Z");
+        try (TableReader reader = getReader(tableName)) {
+            long partitionNameTxn = reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+            return partitionNameTxn > -1 ? partitionName + "." + partitionNameTxn : partitionName;
+        }
     }
 
     private int readAllRows(String tableName) {

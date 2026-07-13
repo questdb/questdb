@@ -36,7 +36,9 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -50,6 +52,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 public class ColumnTypeConverter {
@@ -57,6 +60,12 @@ public class ColumnTypeConverter {
     private static final Fixed2VarConverter converterFromBoolean2String = ColumnTypeConverter::stringFromBoolean;
     private static final Fixed2VarConverter converterFromByte2String = ColumnTypeConverter::stringFromByte;
     private static final Fixed2VarConverter converterFromChar2String = ColumnTypeConverter::stringFromChar;
+    private static final Fixed2VarConverter converterFromDecimal1282String = ColumnTypeConverter::stringFromDecimal128;
+    private static final Fixed2VarConverter converterFromDecimal162String = ColumnTypeConverter::stringFromDecimal16;
+    private static final Fixed2VarConverter converterFromDecimal2562String = ColumnTypeConverter::stringFromDecimal256;
+    private static final Fixed2VarConverter converterFromDecimal322String = ColumnTypeConverter::stringFromDecimal32;
+    private static final Fixed2VarConverter converterFromDecimal642String = ColumnTypeConverter::stringFromDecimal64;
+    private static final Fixed2VarConverter converterFromDecimal82String = ColumnTypeConverter::stringFromDecimal8;
     private static final Fixed2VarConverter converterFromDouble2String = ColumnTypeConverter::stringFromDouble;
     private static final Fixed2VarConverter converterFromFloat2String = ColumnTypeConverter::stringFromFloat;
     private static final Fixed2VarConverter converterFromIPv42String = ColumnTypeConverter::stringFromIPv4;
@@ -257,7 +266,7 @@ public class ColumnTypeConverter {
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink)) {
+            if (converterInt2String.convert(addr, sink, 0, 0)) {
                 StringTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 sink.clear();
             } else {
@@ -315,7 +324,7 @@ public class ColumnTypeConverter {
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink)) {
+            if (converterInt2String.convert(addr, sink, 0, 0)) {
                 int value = symbolMapWriter.resolveSymbol(sink);
                 dstFixMem.putInt(value);
                 sink.clear();
@@ -379,7 +388,7 @@ public class ColumnTypeConverter {
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink)) {
+            if (converterInt2String.convert(addr, sink, 0, 0)) {
                 VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 sink.clear();
             } else {
@@ -554,6 +563,7 @@ public class ColumnTypeConverter {
             Var2FixedConverter<CharSequence> converter
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
+        StringSink sink = sinkUtf16TL.get();
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
 
         try {
@@ -561,7 +571,12 @@ public class ColumnTypeConverter {
             dstFixMem.jumpTo(0);
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
-                converter.convert(utf8 != null ? utf8.asAsciiCharSequence() : null, dstFixMem);
+                // utf8ToUtf16OrView gives a zero-alloc view on the ASCII fast path and
+                // falls back to decoding into sink for non-ASCII values. The previous
+                // unconditional asAsciiCharSequence() exposed raw bytes as chars,
+                // corrupting non-ASCII (UTF-8 'e-acute' 0xC3 0xA9 became two Latin-1
+                // chars instead of U+00E9).
+                converter.convert(utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, sink) : null, dstFixMem);
             }
             assert dstFixMem.getAppendOffset() == (rowHi - rowLo) * dstTypeSize;
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
@@ -898,7 +913,25 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
+    /**
+     * Returns a per-source-type {@link Fixed2VarConverter} that reads a single fixed-size
+     * value from a raw native address and appends its text representation to the given
+     * sink, returning {@code true} when a value was written and {@code false} for a null
+     * sentinel.
+     * <p>
+     * Callers should resolve the converter once per column and reuse it in a tight
+     * per-row loop so that the type dispatch is paid once rather than once per row.
+     * <p>
+     * For DECIMAL source types the caller must pass {@code arg1 = precision},
+     * {@code arg2 = scale} (extracted once per column from the column type via
+     * {@link ColumnType#getDecimalPrecision} / {@link ColumnType#getDecimalScale}).
+     * Non-decimal converters ignore the trailing arguments; callers can pass {@code 0, 0}.
+     *
+     * @param srcColumnType source ColumnType (any fixed-size type including DECIMAL widths)
+     * @param dstColumnType destination ColumnType (STRING, VARCHAR, or SYMBOL); used only
+     *                      for diagnostics when the source type is unsupported
+     */
+    public static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
         return switch (ColumnType.tagOf(srcColumnType)) {
             case ColumnType.INT -> converterFromInt2String;
             case ColumnType.UUID -> converterFromUuid2String;
@@ -912,6 +945,12 @@ public class ColumnTypeConverter {
             case ColumnType.DATE -> MillisTimestampDriver.INSTANCE.getConverterTimestamp2Str();
             case ColumnType.TIMESTAMP -> ColumnType.getTimestampDriver(srcColumnType).getConverterTimestamp2Str();
             case ColumnType.BOOLEAN -> converterFromBoolean2String;
+            case ColumnType.DECIMAL8 -> converterFromDecimal82String;
+            case ColumnType.DECIMAL16 -> converterFromDecimal162String;
+            case ColumnType.DECIMAL32 -> converterFromDecimal322String;
+            case ColumnType.DECIMAL64 -> converterFromDecimal642String;
+            case ColumnType.DECIMAL128 -> converterFromDecimal1282String;
+            case ColumnType.DECIMAL256 -> converterFromDecimal2562String;
             default -> throw unsupportedConversion(srcColumnType, dstColumnType);
         };
     }
@@ -1014,19 +1053,19 @@ public class ColumnTypeConverter {
         mem.putLong(Numbers.LONG_NULL);
     }
 
-    private static boolean stringFromBoolean(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromBoolean(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         byte value = Unsafe.getByte(srcAddr);
         sink.put(value != 0);
         return true;
     }
 
-    private static boolean stringFromByte(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromByte(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         byte value = Unsafe.getByte(srcAddr);
         sink.put(value);
         return true;
     }
 
-    private static boolean stringFromChar(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromChar(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         char value = Unsafe.getChar(srcAddr);
         if (value != 0) {
             sink.put(value);
@@ -1035,7 +1074,65 @@ public class ColumnTypeConverter {
         return false;
     }
 
-    private static boolean stringFromDouble(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromDecimal128(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        long hi = Unsafe.getLong(srcAddr);
+        long lo = Unsafe.getLong(srcAddr + Long.BYTES);
+        if (Decimal128.isNull(hi, lo)) {
+            return false;
+        }
+        Decimals.appendNonNull(hi, lo, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal16(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        short value = Unsafe.getShort(srcAddr);
+        if (value == Decimals.DECIMAL16_NULL) {
+            return false;
+        }
+        Decimals.appendNonNull(value, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal256(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        long hh = Unsafe.getLong(srcAddr);
+        long hl = Unsafe.getLong(srcAddr + 8L);
+        long lh = Unsafe.getLong(srcAddr + 16L);
+        long ll = Unsafe.getLong(srcAddr + 24L);
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            return false;
+        }
+        Decimals.appendNonNull(hh, hl, lh, ll, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal32(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        int value = Unsafe.getInt(srcAddr);
+        if (value == Decimals.DECIMAL32_NULL) {
+            return false;
+        }
+        Decimals.appendNonNull(value, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal64(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        long value = Unsafe.getLong(srcAddr);
+        if (value == Decimals.DECIMAL64_NULL) {
+            return false;
+        }
+        Decimals.appendNonNull(value, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal8(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        byte value = Unsafe.getByte(srcAddr);
+        if (value == Decimals.DECIMAL8_NULL) {
+            return false;
+        }
+        Decimals.appendNonNull(value, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDouble(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         double value = Unsafe.getDouble(srcAddr);
         if (!Numbers.isNull(value)) {
             sink.put(value);
@@ -1044,7 +1141,7 @@ public class ColumnTypeConverter {
         return false;
     }
 
-    private static boolean stringFromFloat(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromFloat(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         float value = Unsafe.getFloat(srcAddr);
         if (!Numbers.isNull(value)) {
             sink.put(value);
@@ -1053,7 +1150,7 @@ public class ColumnTypeConverter {
         return false;
     }
 
-    private static boolean stringFromIPv4(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromIPv4(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         int value = Unsafe.getInt(srcAddr);
         if (value != Numbers.IPv4_NULL) {
             Numbers.intToIPv4Sink(sink, value);
@@ -1062,7 +1159,7 @@ public class ColumnTypeConverter {
         return false;
     }
 
-    private static boolean stringFromInt(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromInt(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         int value = Unsafe.getInt(srcAddr);
         if (value != Numbers.INT_NULL) {
             sink.put(value);
@@ -1071,7 +1168,7 @@ public class ColumnTypeConverter {
         return false;
     }
 
-    private static boolean stringFromLong(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromLong(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         long value = Unsafe.getLong(srcAddr);
         if (value != Numbers.LONG_NULL) {
             sink.put(value);
@@ -1080,13 +1177,13 @@ public class ColumnTypeConverter {
         return false;
     }
 
-    private static boolean stringFromShort(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromShort(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         short value = Unsafe.getShort(srcAddr);
         sink.put(value);
         return true;
     }
 
-    private static boolean stringFromUuid(long srcAddr, CharSink<?> sink) {
+    private static boolean stringFromUuid(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         long lo = Unsafe.getLong(srcAddr);
         long hi = Unsafe.getLong(srcAddr + 8L);
         if (lo != Numbers.LONG_NULL || hi != Numbers.LONG_NULL) {
@@ -1253,6 +1350,7 @@ public class ColumnTypeConverter {
             ColumnConversionOffsetSink columnSizesSink
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
+        StringSink sink = sinkUtf16TL.get();
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
         int scale = ColumnType.getDecimalScale(dstColumnType);
         int precision = ColumnType.getDecimalPrecision(dstColumnType);
@@ -1264,7 +1362,11 @@ public class ColumnTypeConverter {
 
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
-                CharSequence str = utf8 != null ? utf8.asAsciiCharSequence() : null;
+                // utf8ToUtf16OrView gives a zero-alloc view on the ASCII fast path and
+                // decodes into sink for non-ASCII. Matches the sibling
+                // convertFromVarcharToFixed path; asAsciiCharSequence would corrupt
+                // non-ASCII digits like Arabic-Indic numerals.
+                CharSequence str = utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, sink) : null;
                 strToDecimal(str, decimal, precision, scale, dstFixMem, dstColumnType);
             }
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
@@ -1294,9 +1396,20 @@ public class ColumnTypeConverter {
                 .put(" to ").put(ColumnType.nameOf(dstColumnType));
     }
 
+    /**
+     * Reads a single fixed-size value from {@code fixedAddr} and appends its text representation
+     * to {@code sink}. Returns {@code true} when a value was written, {@code false} for a null
+     * sentinel.
+     * <p>
+     * The two trailing int arguments are converter-specific. Decimal converters consume them as
+     * {@code arg1 = precision}, {@code arg2 = scale}; non-decimal converters ignore them and
+     * callers should pass {@code 0, 0}. Keeping the converter stateless (rather than baking
+     * precision/scale into a per-column instance) preserves the global static-singleton design:
+     * one shared instance per source type, no per-column allocation.
+     */
     @FunctionalInterface
     public interface Fixed2VarConverter {
-        boolean convert(long fixedAddr, CharSink<?> stringSink);
+        boolean convert(long fixedAddr, CharSink<?> sink, int arg1, int arg2);
     }
 
     @FunctionalInterface

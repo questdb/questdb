@@ -38,6 +38,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Manages a group-by map that can optionally be split into shards
@@ -54,9 +55,9 @@ public class GroupByMapFragment implements QuietCloseable {
     private final CairoConfiguration configuration;
     private final GroupByFunctionsUpdater groupByFunctionsUpdater;
     private final ColumnTypes keyTypes;
-    // Per-query native memory tracker bound by the owning atom before any map is
-    // (re)opened. Null when no per-query limit applies (e.g. the shared horizon-join
-    // path that never binds a tracker), in which case allocations stay global-only.
+    // Per-query native memory tracker bound by the owning atom (AsyncGroupByAtom or a
+    // horizon-join atom) before any map is (re)opened. Null when the query has no
+    // per-query memory limit, in which case allocations stay global-only.
     @Nullable
     private MemoryTracker memoryTracker;
     private final GroupByMapStats ownerStats;
@@ -91,6 +92,24 @@ public class GroupByMapFragment implements QuietCloseable {
         // are charged symmetrically on the per-query counter. reopenMap() runs
         // setBatchEmptyValue() once the map is open.
         this.map = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
+    }
+
+    /**
+     * Test-only constructor for exercising {@link #shard()} and {@link #close()} in
+     * isolation, including a repeated {@link #shard()} that reopens existing shards via the
+     * reuse branch of reopenShards(). Supplies a default per-shard stats list so the reuse
+     * branch has stats to read, but no owner stats or function updater. Do not call
+     * {@link #reopenMap()} on the result.
+     */
+    @TestOnly
+    public GroupByMapFragment(
+            CairoConfiguration configuration,
+            ColumnTypes keyTypes,
+            ColumnTypes valueTypes,
+            int workerCount,
+            int slotId
+    ) {
+        this(configuration, keyTypes, valueTypes, null, newShardStats(), null, workerCount, slotId);
     }
 
     @Override
@@ -174,13 +193,17 @@ public class GroupByMapFragment implements QuietCloseable {
     private void reopenShards() {
         int size = shards.size();
         if (size == 0) {
-            // Lazy variant: shards start closed so their backing allocates under the
-            // bound tracker on the reopen() below, matching the free at fragment close().
+            // Phase 1: create + register + bind tracker. No native allocation here, so the
+            // per-query limit cannot trip; every shard is in the list before any open.
             for (int i = 0; i < NUM_SHARDS; i++) {
                 final Map shard = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
-                shard.setMemoryTracker(memoryTracker);
-                shard.reopen();
                 shards.add(shard);
+                shard.setMemoryTracker(memoryTracker);
+            }
+            // Phase 2: open. The only place a per-query OOM can fire; on a breach the list is
+            // already full (size == NUM_SHARDS), so reuse never indexes past the end.
+            for (int i = 0; i < NUM_SHARDS; i++) {
+                shards.getQuick(i).reopen();
             }
         } else {
             for (int i = 0; i < NUM_SHARDS; i++) {
@@ -238,5 +261,14 @@ public class GroupByMapFragment implements QuietCloseable {
             keyCapacity = Math.max((int) statKeyCapacity, keyCapacity);
         }
         return keyCapacity;
+    }
+
+    @TestOnly
+    private static ObjList<GroupByMapStats> newShardStats() {
+        final ObjList<GroupByMapStats> shardStats = new ObjList<>(NUM_SHARDS);
+        for (int i = 0; i < NUM_SHARDS; i++) {
+            shardStats.extendAndSet(i, new GroupByMapStats());
+        }
+        return shardStats;
     }
 }

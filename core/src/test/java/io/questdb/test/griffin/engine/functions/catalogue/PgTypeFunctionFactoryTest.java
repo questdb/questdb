@@ -35,6 +35,7 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
                 .ddl("create table x(a int)")
                 .noRandomAccess()
                 .expectSize()
+                .noCircuitBreakerCheck() // immutable constant pg_type list; no per-row checks required
                 .returns("""
                         oid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttypcategory\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\ttypowner\ttyplen\ttypbyval\ttypispreferred\ttypisdefined\ttypalign\ttypstorage\ttypndims\ttypcollation\ttypdefault
                         1043\tvarchar\t0\t1015\t11\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t
@@ -63,6 +64,7 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
                 .ddl("create table x(a int)")
                 .noRandomAccess()
                 .expectSize()
+                .noCircuitBreakerCheck() // immutable constant pg_type list; no per-row checks required
                 .returns("""
                         oid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttypcategory\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\ttypowner\ttyplen\ttypbyval\ttypispreferred\ttypisdefined\ttypalign\ttypstorage\ttypndims\ttypcollation\ttypdefault
                         1043\tvarchar\t0\t1015\t11\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t
@@ -98,6 +100,7 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
                 "    typcategory in ('U', 'E') ")
                 .noLeakCheck()
                 .noRandomAccess()
+                .noCircuitBreakerCheck() // immutable constant pg_type list; no per-row checks required
                 .returns("""
                         oid\tswitch
                         17\tbinary
