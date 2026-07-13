@@ -26,11 +26,16 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -38,8 +43,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -1514,6 +1522,155 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProduceParquetFromNativeResolvesColumnTopByWriterIndex() throws Exception {
+        // A column added after a partition existed has a non-zero column top. Dropping an earlier
+        // column shifts this column's dense index below its writer index in a reader's compacted
+        // metadata, so produceParquetFromNative must read the column top by writer index; the dense
+        // index resolves an earlier column's top and mis-aligns the data. (A re-key alone keeps a
+        // column's display position, so a DROP is what drives the dense/writer split here; the same
+        // reader-metadata path is why no OSS SQL statement reaches this -- see the re-key test.)
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE t (ts TIMESTAMP, a INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN c INT");
+            drainWalQueue();
+            // c gets data in day1 with column top 2 -- rows 0 and 1 predate it.
+            execute("INSERT INTO t VALUES ('2024-01-01T02:00:00', 30, 100), ('2024-01-01T03:00:00', 40, 200)");
+            drainWalQueue();
+            // day2 seals day1 as a non-active native partition.
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 50, 300)");
+            drainWalQueue();
+            // Drop a: c's dense index now drops below its writer index in the reader metadata.
+            execute("ALTER TABLE t DROP COLUMN a");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            final String parquetFile;
+            try (TableReader reader = engine.getReader(tt)) {
+                final ColumnVersionReader cvr = reader.getColumnVersionReader();
+                final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                final int cDense = reader.getMetadata().getColumnIndex("c");
+                final int cWriter = reader.getMetadata().getColumnMetadata(cDense).getWriterIndex();
+                // Precondition: the dense and writer indices resolve different column tops.
+                Assert.assertNotEquals(cDense, cWriter);
+                Assert.assertNotEquals(cvr.getColumnTop(partitionTs, cDense), cvr.getColumnTop(partitionTs, cWriter));
+                parquetFile = produceParquetForPartition(reader, 0);
+            }
+            // Column top honoured: c is null for the two rows that predate it.
+            assertQuery("SELECT c FROM read_parquet('" + parquetFile + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("c\nnull\nnull\n100\n200\n");
+        });
+    }
+
+    @Test
+    public void testProduceParquetFromNativeResolvesReKeyedColumnByWriterIndex() throws Exception {
+        // ALTER COLUMN TYPE re-keys the column: in a TableReader's compacted metadata its dense
+        // index no longer equals its writer index. produceParquetFromNative must resolve the column
+        // name txn by writer index (as TableReader does), else it opens 'x.d' instead of the real
+        // 'x.d.<txn>' and fails. No OSS SQL path hits this -- SQL CONVERT PARTITION TO PARQUET runs
+        // through the writer, whose metadata keeps deleted-column tombstones so dense == writer; the
+        // storage-policy TO PARQUET conversion calls this with a reader's metadata, exercised here.
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+            drainWalQueue();
+            // day2 seals day1 as a non-active native partition.
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 30)");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN x TYPE DOUBLE");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            final String parquetFile;
+            try (TableReader reader = engine.getReader(tt)) {
+                // Precondition: x really is re-keyed (dense index != writer index) in the reader.
+                final int xDense = reader.getMetadata().getColumnIndex("x");
+                Assert.assertNotEquals(xDense, reader.getMetadata().getColumnMetadata(xDense).getWriterIndex());
+                parquetFile = produceParquetForPartition(reader, 0);
+            }
+            assertQuery("SELECT x FROM read_parquet('" + parquetFile + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("x\n10.0\n20.0\n");
+        });
+    }
+
+    @Test
+    public void testProduceParquetFromNativeResolvesSymbolFilesByWriterIndex() throws Exception {
+        // Re-keying a column to SYMBOL leaves its dense index below its writer index in the reader
+        // metadata, and its offset/char files carry a symbol-table name txn. produceParquetFromNative
+        // must resolve that txn by writer index; the dense index opens different (missing) .o/.c files.
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 1), ('2024-01-01T01:00:00', 2)");
+            drainWalQueue();
+            // day2 seals day1 as a non-active native partition.
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 3)");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN k TYPE SYMBOL");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            final String parquetFile;
+            try (TableReader reader = engine.getReader(tt)) {
+                final ColumnVersionReader cvr = reader.getColumnVersionReader();
+                final int kDense = reader.getMetadata().getColumnIndex("k");
+                final int kWriter = reader.getMetadata().getColumnMetadata(kDense).getWriterIndex();
+                // Precondition: the symbol-table name txn differs by index, and only the writer
+                // index yields the real (suffixed) offset/char files.
+                Assert.assertNotEquals(kDense, kWriter);
+                Assert.assertTrue(cvr.getSymbolTableNameTxn(kWriter) > TableUtils.COLUMN_NAME_TXN_NONE);
+                Assert.assertNotEquals(cvr.getSymbolTableNameTxn(kDense), cvr.getSymbolTableNameTxn(kWriter));
+                parquetFile = produceParquetForPartition(reader, 0);
+            }
+            assertQuery("SELECT k FROM read_parquet('" + parquetFile + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("k\n1\n2\n");
+        });
+    }
+
+    @Test
+    public void testReconcileColumnTopsResolvesByWriterIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN c INT");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-01T02:00:00', 30, 100), ('2024-01-01T03:00:00', 40, 200)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00', 50, 300)");
+            drainWalQueue();
+            execute("ALTER TABLE t DROP COLUMN a");
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tt)) {
+                reader.openPartition(0);
+
+                final long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                final int cDense = reader.getMetadata().getColumnIndex("c");
+                final int cWriter = reader.getMetadata().getColumnMetadata(cDense).getWriterIndex();
+                final ColumnVersionReader cvr = reader.getColumnVersionReader();
+
+                Assert.assertNotEquals(cDense, cWriter);
+                Assert.assertNotEquals(cvr.getColumnTop(partitionTs, cDense), cvr.getColumnTop(partitionTs, cWriter));
+
+                final LongList partitionTimestamps = new LongList();
+                partitionTimestamps.add(partitionTs);
+                Assert.assertTrue(DebugUtils.reconcileColumnTops(1, partitionTimestamps, cvr, reader));
+            }
+        });
+    }
+
+    @Test
     public void testShouldTruncateConvertedColumns() throws Exception {
         assertMemoryLeak(() -> {
             // Create table with many partitions
@@ -1640,6 +1797,59 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testWalWriterConvertsRowOnUncommittedDataVarcharToSymbol() throws Exception {
         assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.VARCHAR, " rnd_varchar(5,1024,2) c,", "symbol"));
+    }
+
+    // Encodes the given native partition to parquet through TableUtils.produceParquetFromNative
+    // with the reader's compacted metadata -- the shape the storage-policy TO PARQUET conversion
+    // uses -- and returns the absolute path to the produced data.parquet.
+    private static String produceParquetForPartition(TableReader reader, int partitionIndex) {
+        final DirectIntList bloomIndexes = new DirectIntList(0, MemoryTag.NATIVE_DEFAULT);
+        final TableUtils.SymbolTableProviderFromReader symbolProvider = new TableUtils.SymbolTableProviderFromReader();
+        symbolProvider.of(reader);
+        try (
+                Path path = new Path();
+                Path other = new Path();
+                Path parquetPath = new Path()
+        ) {
+            final TxReader tx = reader.getTxFile();
+            final long partitionTs = tx.getPartitionTimestampByIndex(partitionIndex);
+            final long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+            final long rowCount = tx.getPartitionSize(partitionIndex);
+
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            other.of(configuration.getDbRoot()).concat(reader.getTableToken());
+
+            final long parquetLen = TableUtils.produceParquetFromNative(
+                    path,
+                    other,
+                    path.size(),
+                    partitionTs,
+                    partitionNameTxn,
+                    partitionNameTxn,
+                    reader.getTableToken().getTableName(),
+                    rowCount,
+                    reader.getMetadata(),
+                    reader.getColumnVersionReader(),
+                    symbolProvider,
+                    configuration,
+                    null,
+                    Double.NaN,
+                    bloomIndexes,
+                    -1L
+            );
+            Assert.assertTrue("produceParquetFromNative must encode the partition", parquetLen > 0);
+
+            TableUtils.setPathForParquetPartition(
+                    parquetPath.of(configuration.getDbRoot()).concat(reader.getTableToken()),
+                    reader.getMetadata().getTimestampType(),
+                    reader.getMetadata().getPartitionBy(),
+                    partitionTs,
+                    partitionNameTxn
+            );
+            return parquetPath.toString();
+        } finally {
+            bloomIndexes.close();
+        }
     }
 
     private static void testConvertFixedToVar(String varTypeName) throws SqlException {
