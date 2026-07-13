@@ -142,3 +142,32 @@ Two-branch change like the rest of adaptive: OSS core carries the interface + en
 - **Reliance on replication's own applied-position durability (§3).** The design assumes the `WalDownloader` target position is tracked durably, independent of `_txn.epoch`. This is inherent to how replicas already recover; the headline restart test (§6) validates it end-to-end. If that assumption were false, replicas would already be unsafe today — S5 does not introduce the dependency, it relies on it.
 - **Transitional window during failover.** The policy is a volatile read per batch, so an in-flight role switch is observed on the next batch. Fail-safe polarity means the worst transient case is a replica doing one extra always-on epoch (harmless) — never a replica skipping when it should not, nor a primary skipping.
 - **Seam vs. boolean.** Chosen a functional interface (Approach A) over a raw engine boolean for symmetry with `DurableAckRegistry` and clean test doubles. The two named constants keep it as light as a boolean while reading as a policy at the install sites.
+
+## 10. Post-review extension (S5.1) — materialized-view durability + lifecycle hardening
+
+The whole-branch review found the apply-side durable epoch is **not the only** ADAPTIVE durability force, and a boot-time lifecycle gap. This section extends S5 to close both (user-approved after review). The core S5 epoch-skip (§1–§9) is unchanged; this adds two complementary surfaces.
+
+### 10.1 Materialized-view / view-definition durability (was "the only place" — corrected)
+
+Materialized-view refresh-state and view/mat-view-definition writes go through `BlockFileWriter`, whose `commitMode` is fixed at construction from the **raw global** `configuration.getCommitMode()` and which treats any mode ≠ `NOSYNC` as sync-now — bypassing `LocalDurabilityPolicy`. So a replica under `commit_mode=adaptive` still fsyncs these. They are the same rebuildable-cache class as the epoch (reconstructed by re-download + re-apply from object-store truth), so a replica should skip them too.
+
+- **Mechanism:** a shared helper `LocalDurabilityPolicy.resolveCommitMode(int commitMode, LocalDurabilityPolicy policy)` → returns `NOSYNC` iff `commitMode == ADAPTIVE && !policy.isLocalDurabilityEnabled()`, else `commitMode` unchanged. Gating on `ADAPTIVE` specifically preserves an operator's explicit `SYNC`/`ASYNC` choice — mirroring the epoch gate's own `getEffectiveCommitMode() != ADAPTIVE` precondition. `BlockFileWriter.commitMode` becomes non-`final` with a `setCommitMode(int)` (the field is already read fresh in `commit()`; the writer is single-thread-owned, so no concurrency concern).
+- **In-scope sites (apply-path, high-value, OSS-testable):**
+  - `ApplyWal2TableJob.updateMatViewRefreshState` (`_mv.s`) — per mat-view refresh apply (frequent). Covers `MAT_VIEW_DATA` + `MAT_VIEW_INVALIDATE`. Has `engine` + `config`.
+  - `ApplyWal2TableJob` `VIEW_DEFINITION` apply (`_view`).
+  - `TableWriter.updateMatViewDefinition` (`_mv`) — `ALTER MATERIALIZED VIEW … SET REFRESH …` via WAL apply. Has `engine` + `configuration`.
+- **Correctness:** each writes state derived purely from the already-durable WAL txn/event being applied, so a lost non-synced write is re-derived by re-apply. The `DatabaseCheckpointAgent` `BlockFileWriter` (`CHECKPOINT CREATE`) is **explicitly excluded** — a checkpoint is an operator-requested backup artifact, not a rebuildable cache; its durability must never be role-downgraded. `SettingsStore` / `SqlCompilerImpl` sites are not replica-reachable and are left alone.
+- **Deferred (documented follow-up, not in S5.1):** the `SequencerMetadata.create` sites (`VIEW_DEFINITION` / `MAT_VIEW_DEFINITION` at create/rebase) are replica-reachable **only** via `rebaseWalTableInto` (`REBASE WAL INTO`), which OSS's `CairoEngine.assertRebaseRole` rejects for `replicaVariant` — permitted only by the Enterprise engine subclass. That path is rare (one-time-per-table), threads a new parameter through 4 methods (`SequencerMetadata.create` → `TableSequencerImpl.createSequencerFiles` ×2 → `WalUtils.cloneTableDirForRebase` → `CairoEngine.rebaseWalTable0`), and **cannot be exercised end-to-end from an OSS test**. Deferred as an Enterprise-suite follow-up to keep S5.1 to the value-dense, verifiable apply-path sites the review's option named.
+
+### 10.2 Boot-time role-state cleanup (lifecycle hardening)
+
+S5 made `ReplicaRoleState`'s ctor install `REPLICA_SKIP` — engine wiring reset only by `close()`. `EntServerMain.switchRole` already guards this (try/catch → `close()` → null → rethrow, `:1555-1570`; its comment already names the "ctor-installed wiring reset only by close()" reason). But the two **other** `openLoops()` sites do not: `ReplicationEnvelope.start()`'s catch-up branch (`:1316-1325`) and `onDependencyState()` (`:1274-1280`). A failure there could leave `REPLICA_SKIP` on a node that is not a live replica. (The common synchronous boot path is already safe — the orchestrator aborts boot and the engine never serves — but the async post-start path is not provably safe.)
+
+- **Fix:** wrap `startBound()`/`openLoops()` at both sites in the same `try { … } catch (Throwable t) { close(); currentState = null; throw t; }` shape `switchRole` uses (with `addSuppressed` on a close-time throw). Fail-safe: on any replica-start failure the node is left `ALWAYS_ON`, never silently under-durable.
+- **Test:** model on `RoleStateOpenLoopsFaultInjectionTest` (it already injects `openLoops` faults); assert that after an injected `openLoops` failure on a replica the engine policy is `ALWAYS_ON` (not leaked `REPLICA_SKIP`).
+
+### 10.3 Task breakdown (S5.1)
+
+- **Task 4** (OSS): `resolveCommitMode` helper + `BlockFileWriter.setCommitMode` + `BlockFileWriter` mechanism unit test.
+- **Task 5** (OSS): wire the three apply-path sites through the helper + msync-interception tests (`_mv.s`/`_mv`/`_view`, skip-vs-sync) modeled on `AdaptiveWalDurabilityTest`'s facade + `AdaptiveReplicaEpochSkipTest` recipe.
+- **Task 6** (Ent): harden the two `openLoops()` sites + fault-injection test. Submodule bump to the Task-5 OSS head.
