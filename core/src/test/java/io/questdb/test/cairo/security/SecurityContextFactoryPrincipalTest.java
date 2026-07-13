@@ -43,8 +43,11 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class SecurityContextFactoryPrincipalTest {
 
@@ -478,6 +481,54 @@ public class SecurityContextFactoryPrincipalTest {
         StringSink probe = new StringSink();
         probe.put("foo");
         Assert.assertSame(context, root.forPrincipal(probe));
+    }
+
+    @Test
+    public void testForPrincipalOverCapDoesNotTakeTheInstanceMonitor() throws Exception {
+        // Once the cache is saturated the derived context is not cached, so there is nothing to publish and
+        // no reason to take the instance monitor. Taking it would be a scalability cliff rather than the
+        // graceful degradation it looks like: the monitor belongs to a process-wide static singleton shared
+        // by every protocol and every IO worker, so a saturated cache would serialize EVERY subsequent
+        // uncached principal on it.
+        //
+        // Prove the saturated path stays off the monitor by holding the monitor from another thread: an
+        // over-cap derivation must still complete rather than block behind it.
+        final TestAllowAllSecurityContext root = freshAllowAll();
+        for (int i = 0; i < CACHE_CAP; i++) {
+            root.forPrincipal("p" + i);
+        }
+
+        final CountDownLatch monitorHeld = new CountDownLatch(1);
+        final CountDownLatch releaseMonitor = new CountDownLatch(1);
+        final Thread holder = new Thread(() -> {
+            synchronized (root) {
+                monitorHeld.countDown();
+                try {
+                    releaseMonitor.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
+        holder.start();
+        try {
+            Assert.assertTrue("the holder thread must acquire the monitor", monitorHeld.await(10, TimeUnit.SECONDS));
+
+            final AtomicReference<SecurityContext> derived = new AtomicReference<>();
+            final CountDownLatch done = new CountDownLatch(1);
+            final Thread deriver = new Thread(() -> {
+                derived.set(root.forPrincipal("overflow"));
+                done.countDown();
+            });
+            deriver.start();
+            Assert.assertTrue("an over-cap derivation must not block on the instance monitor",
+                    done.await(5, TimeUnit.SECONDS));
+            deriver.join();
+            TestUtils.assertEquals("overflow", derived.get().getPrincipal());
+        } finally {
+            releaseMonitor.countDown();
+            holder.join();
+        }
     }
 
     @Test

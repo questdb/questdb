@@ -98,6 +98,17 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
             if (hit != null) {
                 return hit;
             }
+            if (cache.size() >= MAX_CACHED_PRINCIPALS) {
+                // Saturated: this principal will not be cached, so there is nothing to publish and no reason
+                // to take the instance monitor. Deriving under the lock would turn a full cache into a
+                // process-wide bottleneck -- the monitor belongs to a static singleton shared by every
+                // protocol and every IO worker, so once saturated EVERY uncached principal would serialize
+                // on it. addPrincipalContext re-checks the cap under the lock, which settles the boundary
+                // race; this check only keeps the saturated steady state off the monitor entirely.
+                // size() is capacity - free on a map that is never mutated after publication, so it is safe
+                // to read here.
+                return newCheckedPrincipalContext(Chars.toString(principal));
+            }
         }
         return addPrincipalContext(principal);
     }
@@ -125,7 +136,9 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
             }
             if (cache.size() >= MAX_CACHED_PRINCIPALS) {
                 // pathological principal cardinality: stop growing and fall back to allocate-per-call
-                // (the pre-cache behavior) instead of retaining contexts without bound
+                // instead of retaining contexts without bound. forPrincipal already takes this branch
+                // lock-free once the cache is saturated; this re-check only settles the boundary race
+                // between two threads that both saw room for one more entry.
                 return newCheckedPrincipalContext(Chars.toString(principal));
             }
         }
