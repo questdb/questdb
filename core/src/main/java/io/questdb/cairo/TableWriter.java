@@ -59,6 +59,7 @@ import io.questdb.cairo.vm.api.MemoryMAT;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.NullMemory;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
@@ -14692,6 +14693,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (blockFileWriter == null) {
             blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
         }
+        blockFileWriter.setCommitMode(LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), engine.getLocalDurabilityPolicy()));
         try (BlockFileWriter definitionWriter = blockFileWriter) {
             definitionWriter.of(path.concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
             MatViewDefinition.append(newDefinition, definitionWriter);

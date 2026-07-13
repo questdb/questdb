@@ -587,8 +587,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // Adaptive durable epoch (Plan 3B): right after the batch commits, while we still
                     // hold the writer (single-threaded per table -> a consistent cut, no quiesce
                     // needed), fire a durable epoch at most once per the configured cadence. This is
-                    // the only place the materialized state is forced durable under ADAPTIVE; without
+                    // the only place the table's COLUMN state is forced durable under ADAPTIVE; without
                     // it the lazily-applied columns are non-durable until the next epoch / shutdown.
+                    // Materialized-view / view block-file state (_mv.s / _mv / _view) is a separate
+                    // concern, independently policy-gated at each write site via
+                    // LocalDurabilityPolicy.resolveCommitMode (S5.1 Task 5).
                     if (totalTransactionCount > 0) {
                         maybeAdvanceDurableEpoch(tableToken, writer);
                     }
@@ -983,6 +986,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
                     final WalEventCursor.ViewDefinitionInfo info = walEventCursor.getViewDefinitionInfo();
+                    // Same resolveCommitMode pattern proven by updateMatViewRefreshState / TableWriter's
+                    // _mv definition write below; this call site only runs when a REPLICA is replaying a
+                    // WAL VIEW_DEFINITION event a primary already wrote (the primary itself writes _view
+                    // synchronously via SqlCompilerImpl, not through this apply path), so end-to-end
+                    // _view coverage is left to the view-replication suite.
+                    blockFileWriter.setCommitMode(LocalDurabilityPolicy.resolveCommitMode(config.getCommitMode(), engine.getLocalDurabilityPolicy()));
                     engine.updateViewDefinition(viewToken, info.getViewSql(), info.getViewDependencies(), seqTxn, blockFileWriter, path);
                 } catch (CairoException e) {
                     LOG.error().$("could not update view definition [view=").$(viewToken)
@@ -1111,6 +1120,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     ) {
         try (BlockFileWriter stateWriter = blockFileWriter) {
             stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+            stateWriter.setCommitMode(LocalDurabilityPolicy.resolveCommitMode(config.getCommitMode(), engine.getLocalDurabilityPolicy()));
             MatViewState.append(
                     lastRefreshTimestamp,
                     lastRefreshBaseTxn,
