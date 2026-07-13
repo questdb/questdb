@@ -3112,6 +3112,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // is apply-only); generateDelete reads the result. Advisory only - never affects
                     // correctness, only whether executeDelete can skip staging survivors.
                     classifyDeleteTimeRange(deleteQueryModel, deleteTableToken, executionContext);
+                    // DELETE does not support a subquery in its WHERE predicate. At apply time the survivor
+                    // set (WHERE NOT(pred)) is recomputed window by window; the opt-in disk-bounded route
+                    // (cairo.wal.delete.disk.bounded) commits each window before the next is scanned, so a
+                    // subquery over the base table would evaluate against partially-deleted state and delete
+                    // the wrong rows - silent data loss. Rather than let correctness depend on a config flag,
+                    // reject a subquery predicate outright. Checked here on the raw (un-negated, pre-optimise)
+                    // predicate so it does not depend on how the optimiser later restructures a subquery; runs
+                    // on the query-thread compile, so a rejected DELETE never reaches the WAL.
+                    rejectSubQueryDeletePredicate(deleteQueryModel);
                     // At WAL apply time OperationExecutor.executeDelete needs the SURVIVOR rows
                     // (WHERE NOT(pred)) to feed TableWriter.replaceRange, not the matching rows. Negate the
                     // predicate on the freshly parsed model BEFORE optimisation so the optimiser processes
@@ -5031,6 +5040,47 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // The NOT node is built exactly as the optimiser builds a logical negation (SqlOptimiser: type=OPERATION,
     // token "not", paramCount 1, rhs = operand). WHERE is mandatory for DELETE (parser-enforced), so the
     // inner where clause is always non-null here.
+    // Rejects a DELETE whose WHERE predicate contains a subquery (see the call site in
+    // compileExecutionModel0 for the data-loss rationale). Called on the freshly-parsed, un-negated model,
+    // so the predicate sits at nestedModel.nestedModel.whereClause (mirrors negateDeleteWhereClause).
+    private void rejectSubQueryDeletePredicate(IQueryModel deleteQueryModel) throws SqlException {
+        final IQueryModel nested = deleteQueryModel.getNestedModel();
+        final IQueryModel innerModel = nested != null ? nested.getNestedModel() : null;
+        final ExpressionNode subQuery = innerModel != null ? findSubQueryNode(innerModel.getWhereClause()) : null;
+        if (subQuery != null) {
+            throw SqlException.$(subQuery.position, "subquery is not supported in DELETE");
+        }
+    }
+
+    // Returns the first subquery operand (a node carrying a nested query model) anywhere in the expression
+    // tree, or null. Walks lhs, rhs and the args list, so it finds a subquery at any depth and in any operand
+    // position (e.g. "ts < (select ...)", "x = 1 and y > (select ...)"). ExpressionNode stores <=2-ary
+    // operands in lhs/rhs and >2-ary operands in args (the unused side is null/empty per node), so visiting
+    // all three covers every arity.
+    private static ExpressionNode findSubQueryNode(ExpressionNode node) {
+        if (node == null) {
+            return null;
+        }
+        if (node.queryModel != null) {
+            return node;
+        }
+        ExpressionNode found = findSubQueryNode(node.lhs);
+        if (found != null) {
+            return found;
+        }
+        found = findSubQueryNode(node.rhs);
+        if (found != null) {
+            return found;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            found = findSubQueryNode(node.args.getQuick(i));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
     private void negateDeleteWhereClause(IQueryModel deleteQueryModel) {
         final IQueryModel innerModel = deleteQueryModel.getNestedModel().getNestedModel();
         final ExpressionNode pred = innerModel.getWhereClause();

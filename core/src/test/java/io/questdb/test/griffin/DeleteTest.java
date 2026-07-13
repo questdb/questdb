@@ -123,6 +123,34 @@ public class DeleteTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A subquery in a DELETE predicate is rejected at compile time. At apply time the survivor set
+     * (WHERE NOT(pred)) is recomputed window by window, and the opt-in disk-bounded route commits each
+     * window before the next is scanned - so a subquery over the base table would evaluate against
+     * partially-deleted state and delete the wrong rows (silent data loss). Rejecting outright keeps
+     * correctness from depending on {@code cairo.wal.delete.disk.bounded}. Covers a scalar-comparison
+     * subquery on a non-timestamp column and the timestamp-bound form that previously fell back to the
+     * survivor-replace path (see {@link #testRuntimeBoundDeleteNotClassifiedAsPureInterval}).
+     */
+    @Test
+    public void testDeleteRejectsSubQueryPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by DAY WAL");
+            try {
+                execute("DELETE FROM t WHERE x < (SELECT max(x) FROM t)");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "subquery is not supported in DELETE");
+            }
+            try {
+                execute("DELETE FROM t WHERE ts < (SELECT max(ts) FROM t WHERE x = 1)");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "subquery is not supported in DELETE");
+            }
+        });
+    }
+
     // ---- end-to-end execution tests (Task 1.10) ----
 
     @Test
@@ -637,24 +665,18 @@ public class DeleteTest extends AbstractCairoTest {
      * Defense-in-depth: pins the fallback for the DYNAMIC-bound cases {@code classifyDeleteTimeRange}'s own
      * comment calls out by name but that were not previously asserted by a test - {@code SqlCompilerImpl}:
      * "Compile-time-constant intervals only ... Runtime intervals (now(), bind vars) ... fall back - correct,
-     * just unoptimized" - plus a subquery-typed timestamp bound, which hits the same
-     * {@code RuntimeIntervalModel.isStatic()} guard via a different {@code WhereClauseParser} path
-     * ({@code compareWithNode.type == ExpressionNode.QUERY} in {@code analyzeTimestampLess}). A future edit
-     * to that gate that mistakenly treated a dynamic bound as static would silently route these onto the
-     * pure-interval empty-replace path and delete the wrong rows depending on when/what the bound evaluates
-     * to - the same false-positive hazard as {@link #testMixedOrArbitraryDeleteNotClassifiedAsPureInterval},
-     * just for a DYNAMIC rather than a MIXED-filter predicate. Same white-box mechanism
-     * ({@link #assertNotPureTimeRange}).
+     * just unoptimized". A future edit to that gate that mistakenly treated a dynamic bound as static would
+     * silently route these onto the pure-interval empty-replace path and delete the wrong rows depending on
+     * when/what the bound evaluates to - the same false-positive hazard as
+     * {@link #testMixedOrArbitraryDeleteNotClassifiedAsPureInterval}, just for a DYNAMIC rather than a
+     * MIXED-filter predicate. Same white-box mechanism ({@link #assertNotPureTimeRange}).
      * <p>
-     * {@code ts IN (SELECT ts FROM t WHERE x = 1)} is deliberately NOT included: IN-with-subquery is only
-     * wired for SYMBOL columns ({@code InSymbolCursorFunctionFactory}, signature {@code in(KC)}) - there is
-     * no {@code in(TIMESTAMP, CURSOR)} overload, so that form does not compile as a DELETE at all. The
-     * scalar comparison below ({@code ts < (subquery)}, signature {@code <(NC)} via
-     * {@code LtTimestampCursorFunctionFactory}) is the closest ts-subquery predicate that both compiles and
-     * demonstrably falls back.
+     * A subquery-typed bound ({@code ts < (SELECT ...)}) is NOT exercised here: a subquery in a DELETE
+     * predicate is rejected at compile time (see {@link #testDeleteRejectsSubQueryPredicate}), so it never
+     * reaches the classifier.
      */
     @Test
-    public void testRuntimeOrSubqueryBoundDeleteNotClassifiedAsPureInterval() throws Exception {
+    public void testRuntimeBoundDeleteNotClassifiedAsPureInterval() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (ts timestamp, x int, s symbol) timestamp(ts) partition by DAY WAL");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -668,11 +690,6 @@ public class DeleteTest extends AbstractCairoTest {
                 // exact same dynamic-bound path as now() above.
                 sqlExecutionContext.getBindVariableService().setTimestamp(0, 172800000000L);
                 assertNotPureTimeRange(compiler, "DELETE FROM t WHERE ts < $1");
-
-                // Subquery bound: ts compared against a scalar (single-row, single-TIMESTAMP-column)
-                // subquery hits WhereClauseParser's dedicated ExpressionNode.QUERY case, which is also
-                // folded into the interval as a dynamic Function bound.
-                assertNotPureTimeRange(compiler, "DELETE FROM t WHERE ts < (SELECT max(ts) FROM t WHERE x = 1)");
             }
         });
     }
@@ -787,7 +804,7 @@ public class DeleteTest extends AbstractCairoTest {
     }
 
     /**
-     * Functional companion to {@link #testRuntimeOrSubqueryBoundDeleteNotClassifiedAsPureInterval}: proves
+     * Functional companion to {@link #testRuntimeBoundDeleteNotClassifiedAsPureInterval}: proves
      * the fallback (whole-range survivor-replace) triggered by a runtime-bound predicate still produces the
      * CORRECT result, not just the correct routing decision. One row is far in the past and one is far in
      * the future relative to the real wall-clock {@code now()}, so this is a non-trivial split (not a
