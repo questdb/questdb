@@ -39,7 +39,10 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.DeleteOperation;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -490,6 +493,97 @@ public class DeleteWindowedApplyTest extends AbstractCairoTest {
                     .noRandomAccess().expectSize().returns("count\n0\n");
             assertSqlCursors("select * from ref", "select * from t");
         });
+    }
+
+    /**
+     * D3 (whole-PR level-3, on-disk orphan-directory oracle): the ATOMIC multi-window replace must reclaim
+     * EVERY window's superseded partition directory, not just the final window's.
+     * {@code TableWriter.processO3Block} clears {@code partitionRemoveCandidates} at the start of each window's
+     * apply, and the single drain ({@code finishReplaceRange} -> {@code housekeep} ->
+     * {@code processPartitionRemoveCandidates}) runs once after the whole bracket. So before the fix, each new
+     * window wiped the previous window's candidates and only the FINAL window's superseded dirs reached the
+     * drain - every earlier window's fully-dropped partition directory leaked on disk (detached from the table,
+     * invisible to {@code table_partitions()}), reclaimed only by the next writer open/rollback. The fix
+     * accumulates each window's candidates into {@code replaceRangeRemoveCandidates} and drains them once after
+     * {@code commit00}.
+     * <p>
+     * Oracle: a tiny {@code rows.per.step} tiles a {@code DELETE FROM t WHERE x <= 120} (arbitrary residual
+     * predicate -> windowed survivor-replace) into many windows over a 6-partition (BY DAY) table, fully dropping
+     * days 1..5 (each in an early window) and keeping day 6. Read the on-disk state RIGHT AFTER apply, WITHOUT
+     * reopening the writer or running the async purge (either would independently re-scan and reclaim the leak,
+     * masking it). The fix reclaims each window's transient superseded partition-version dir synchronously in
+     * {@code finishReplaceRange}'s {@code housekeep}, so on disk NO calendar-day partition has a duplicate
+     * physical version dir. The bug leaves each partition's superseded version behind - a SECOND physical dir for
+     * the same calendar day (12 dirs vs the fix's 6, one per day).
+     */
+    @Test
+    public void testMultiWindowReplaceReclaimsEveryWindowsSupersededPartitionDirs() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_DELETE_ROWS_PER_STEP, "1"); // ~1 row/window -> days 1..5 each drop in early windows
+        assertMemoryLeak(() -> {
+            // 144 hourly rows over 6 daily partitions: day1 x=1..24, day2 x=25..48, ..., day6 x=121..144.
+            execute("create table t (ts timestamp, x long) timestamp(ts) partition by DAY WAL");
+            execute("insert into t select timestamp_sequence('1970-01-01T00:00:00.000000Z', 60*60*1000000L), x from long_sequence(144)");
+            drainWalQueue();
+            // Independent oracle snapshot of the survivors (day 6 only), never touched by the DELETE.
+            execute("create table ref as (select * from t where not (x <= 120))");
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            // Arbitrary predicate (residual on x, NOT a pure time range) forces the windowed survivor-replace:
+            // empties days 1..5 (x=1..120), keeps day 6 (x=121..144).
+            execute("delete from t where x <= 120");
+            drainWalQueue();
+
+            assertQuery("select suspended from wal_tables() where name = 't'")
+                    .noRandomAccess().returns("suspended\nfalse\n");
+            assertSqlCursors("select * from ref", "select * from t");
+            // Exactly one LIVE partition (day 6).
+            assertQuery("select count(*) from table_partitions('t')")
+                    .noRandomAccess().expectSize().returns("count\n1\n");
+
+            // ON-DISK oracle, read RIGHT AFTER apply with no writer reopen / async purge (either would
+            // independently reclaim the leak and mask it): the fix reclaims every window's transient superseded
+            // partition-version dir synchronously in finishReplaceRange's housekeep, so NO calendar-day partition
+            // has a duplicate physical version dir on disk. The bug leaves each dropped/rewritten partition's
+            // superseded version behind, i.e. a SECOND physical dir for the same calendar day.
+            final int duplicatePartitionDirs = countDuplicatePartitionVersionDirs(tableToken);
+            Assert.assertEquals(
+                    "no calendar-day partition may have a duplicate (superseded) physical version dir after the " +
+                            "multi-window replace; leftover duplicates are the earlier-window candidate leak",
+                    0,
+                    duplicatePartitionDirs
+            );
+        });
+    }
+
+    // Counts SUPERSEDED partition-version directories physically present under the table dir: for each calendar-day
+    // partition (dir named yyyy-MM-dd, optionally with a .<nameTxn> version suffix), every physical version dir
+    // beyond the first for that day is a duplicate = a superseded version not yet reclaimed. A correct multi-window
+    // replace leaves exactly one physical dir per calendar day, so this returns 0; the D3 leak leaves a second dir
+    // per partition. The table's non-partition subdirs (wal*, txn_seq, seq) start with a letter, so a leading ASCII
+    // digit identifies a partition-version dir. Mirrors TableWriterTest's iterateDir + isDirOrSoftLinkDirNoDots idiom.
+    private int countDuplicatePartitionVersionDirs(TableToken tableToken) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final java.util.HashSet<String> seenDays = new java.util.HashSet<>();
+        final int[] duplicates = {0};
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken);
+            final int plen = path.size();
+            ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                if (ff.isDirOrSoftLinkDirNoDots(path, plen, pUtf8NameZ, type)) {
+                    final byte first = Unsafe.getByte(pUtf8NameZ);
+                    if (first >= '0' && first <= '9') {
+                        final String name = path.toString().substring(plen + 1);
+                        final int dot = name.indexOf('.');
+                        final String day = dot < 0 ? name : name.substring(0, dot);
+                        if (!seenDays.add(day)) {
+                            duplicates[0]++;
+                        }
+                    }
+                    path.trimTo(plen);
+                }
+            });
+        }
+        return duplicates[0];
     }
 
     // Collects the survivor cursor's x column (index 1 of SELECT *) in cursor order as a comma-separated string.

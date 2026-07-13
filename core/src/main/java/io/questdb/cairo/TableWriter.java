@@ -366,6 +366,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
     // set to a "shifted" state and the state has to be cleaned.
     private boolean memColumnShifted;
+    // Superseded partition-version removal candidates accumulated across ALL windows of a windowed replace,
+    // drained once by finishReplaceRange after its single commit00. Each window's processO3Block clears the
+    // live partitionRemoveCandidates at its start, so without this per-window accumulation only the final
+    // window's candidates would survive to housekeep - every earlier window's dropped/trimmed partition
+    // directory would leak on disk. Only meaningful between a begin/finish (or begin/abort) pair.
+    private final LongList replaceRangeRemoveCandidates = new LongList();
     // Row count captured by beginReplaceRange, read by finishReplaceRange to report rows removed across all
     // windows of a windowed replace. Only meaningful between a begin/finish pair.
     private long replaceRangeRowsBefore;
@@ -3169,6 +3175,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         dedupRowsRemovedSinceLastCommit.reset();
         txWriter.beginPartitionSizeUpdate();
         replaceRangeRowsBefore = txWriter.getRowCount();
+        // Start the cross-window removal-candidate accumulator empty (see the field comment and
+        // applyReplaceRangeWindow / finishReplaceRange).
+        replaceRangeRemoveCandidates.clear();
         dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
     }
 
@@ -3306,6 +3315,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (memColumnShifted) {
                 clearMemColumnShifts();
             }
+            // Preserve this window's superseded-partition removal candidates for the single post-commit drain
+            // in finishReplaceRange, then clear the live list. The NEXT window's processO3Block clears
+            // partitionRemoveCandidates at its start, so without this only the final window's candidates would
+            // reach housekeep, leaking every earlier window's dropped/trimmed partition directory until the
+            // next writer open. The list stores flattened (timestamp, nameTxn) longs; the bulk LongList.add
+            // append preserves that layout. Not drained here: unlinking a superseded dir before
+            // finishReplaceRange's commit00 persists the txn would delete data the not-yet-durable txn still
+            // references (corrupts crash recovery).
+            replaceRangeRemoveCandidates.add(partitionRemoveCandidates);
+            partitionRemoveCandidates.clear();
         }
     }
 
@@ -3326,6 +3345,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Persist and make the change visible; housekeep reclaims fully-dropped partition directories via
         // processPartitionRemoveCandidates (mirrors the WAL replace apply's post-commit sequence).
         commit00();
+        // Reclaim partition directories superseded across ALL windows in one drain, AFTER the single commit00
+        // - draining earlier would unlink dirs the not-yet-durable txn still references. Per-window candidates
+        // were accumulated in replaceRangeRemoveCandidates because processO3Block clears partitionRemoveCandidates
+        // per window. Append (do not clear the live list first) so any candidate commit00 itself queued still
+        // drains, then clear the accumulator for the next bracket on this writer.
+        partitionRemoveCandidates.add(replaceRangeRemoveCandidates);
+        replaceRangeRemoveCandidates.clear();
         housekeep(configuration.getMicrosecondClock().getTicks());
         shrinkO3Mem();
 
@@ -3342,6 +3368,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (memColumnShifted) {
             clearMemColumnShifts();
         }
+        // Drop this failed bracket's accumulated removal candidates so they cannot leak into a later bracket on
+        // the same writer. The caller rolls back the uncommitted surgery, so nothing must be unlinked here.
+        replaceRangeRemoveCandidates.clear();
     }
 
     @Override
