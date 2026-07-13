@@ -48,10 +48,10 @@ import static io.questdb.cairo.file.BlockFileUtils.*;
 
 public class BlockFileWriter implements Closeable {
     private final BlockMemoryHandleImpl blockMemoryHandle = new BlockMemoryHandleImpl();
-    private final int commitMode;
     private final FilesFacade ff;
     private int blockCount;
     private long blockOffset;
+    private int commitMode;
     private MemoryCMARW file;
     private boolean isCommitted;
     private MemoryCARW memory;
@@ -152,6 +152,14 @@ public class BlockFileWriter implements Closeable {
 
     public WritableBlock reserve(int bytes) {
         return blockMemoryHandle.reset(bytes);
+    }
+
+    public void setCommitMode(int commitMode) {
+        assert commitMode == CommitMode.ASYNC
+                || commitMode == CommitMode.NOSYNC
+                || commitMode == CommitMode.SYNC
+                || commitMode == CommitMode.ADAPTIVE;
+        this.commitMode = commitMode;
     }
 
     private void reset() {

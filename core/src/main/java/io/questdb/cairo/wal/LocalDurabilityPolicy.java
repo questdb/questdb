@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CommitMode;
+
 /**
  * Governs whether this node forces materialized WAL-apply state locally durable under
  * {@link io.questdb.cairo.CommitMode#ADAPTIVE}. Installed on {@link io.questdb.cairo.CairoEngine}
@@ -55,4 +57,18 @@ public interface LocalDurabilityPolicy {
      * @return true iff this node should fire the adaptive apply-side durable epoch.
      */
     boolean isLocalDurabilityEnabled();
+
+    /**
+     * Resolve the effective commit mode for a durability decision under {@code policy}. Under
+     * {@link CommitMode#ADAPTIVE}, when local durability is disabled (a replica), downgrade to
+     * {@link CommitMode#NOSYNC} — the written state is a rebuildable cache of object-store truth, so
+     * the sync is redundant. An explicitly-declared {@code SYNC}/{@code ASYNC} mode is preserved
+     * unchanged (only {@code ADAPTIVE} is policy-sensitive), mirroring the epoch gate's
+     * {@code getEffectiveCommitMode() != ADAPTIVE} precondition.
+     */
+    static int resolveCommitMode(int commitMode, LocalDurabilityPolicy policy) {
+        return commitMode == CommitMode.ADAPTIVE && !policy.isLocalDurabilityEnabled()
+                ? CommitMode.NOSYNC
+                : commitMode;
+    }
 }

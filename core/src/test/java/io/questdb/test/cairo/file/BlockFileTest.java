@@ -36,6 +36,7 @@ import io.questdb.cairo.file.WritableBlock;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
@@ -48,6 +49,7 @@ import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -490,6 +492,49 @@ public class BlockFileTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testResolveCommitMode() {
+        // ADAPTIVE downgrades to NOSYNC only when local durability is disabled (a replica):
+        Assert.assertEquals(CommitMode.NOSYNC,
+                LocalDurabilityPolicy.resolveCommitMode(CommitMode.ADAPTIVE, LocalDurabilityPolicy.REPLICA_SKIP));
+        Assert.assertEquals(CommitMode.ADAPTIVE,
+                LocalDurabilityPolicy.resolveCommitMode(CommitMode.ADAPTIVE, LocalDurabilityPolicy.ALWAYS_ON));
+        // explicit SYNC/ASYNC are preserved regardless of policy (only ADAPTIVE is policy-sensitive):
+        Assert.assertEquals(CommitMode.SYNC,
+                LocalDurabilityPolicy.resolveCommitMode(CommitMode.SYNC, LocalDurabilityPolicy.REPLICA_SKIP));
+        Assert.assertEquals(CommitMode.ASYNC,
+                LocalDurabilityPolicy.resolveCommitMode(CommitMode.ASYNC, LocalDurabilityPolicy.REPLICA_SKIP));
+        // NOSYNC stays NOSYNC:
+        Assert.assertEquals(CommitMode.NOSYNC,
+                LocalDurabilityPolicy.resolveCommitMode(CommitMode.NOSYNC, LocalDurabilityPolicy.REPLICA_SKIP));
+    }
+
+    @Test
+    public void testSetCommitModeGovernsSync() throws Exception {
+        final SyncCountingFilesFacade trackFf = new SyncCountingFilesFacade();
+        assertMemoryLeak(trackFf, () -> {
+            try (Path path = getDefinitionFilePath()) {
+                FilesFacade ff = configuration.getFilesFacade();
+                Assert.assertTrue(ff.touch(path.$()));
+
+                try (BlockFileWriter writer = new BlockFileWriter(ff, CommitMode.NOSYNC)) {
+                    writer.of(path.$());
+                    commitMsgA1(writer.append(), 1);
+                    writer.commit();
+                    Assert.assertEquals("NOSYNC must not sync the block file", 0, trackFf.getSyncCount());
+
+                    writer.setCommitMode(CommitMode.SYNC);
+                    commitMsgA1(writer.append(), 2);
+                    writer.commit();
+                    Assert.assertTrue(
+                            "setCommitMode(SYNC) must make commit() sync the block file",
+                            trackFf.getSyncCount() > 0
+                    );
+                }
+            }
+        });
+    }
+
     private static void assertRegionOffset(BlockFileWriter writer, long expectedVersion, int expectedRegionLength, long expectedRegionOffset) {
         final long version = writer.getVersionVolatile();
         Assert.assertEquals(expectedVersion, version);
@@ -795,6 +840,32 @@ public class BlockFileTest extends AbstractCairoTest {
             str = memory.getStr(offset);
             Assert.assertEquals("World", str.toString());
             offset += Vm.getStorageLength(str);
+        }
+    }
+
+    /**
+     * A FilesFacade that counts every {@code msync}/{@code fdatasync} call, used to prove that
+     * {@link BlockFileWriter#setCommitMode(int)} governs {@code commit()}'s observable sync
+     * behavior (rather than per-file path resolution — the writer under test only ever touches
+     * a single block file, so a total count is sufficient).
+     */
+    private static class SyncCountingFilesFacade extends TestFilesFacadeImpl {
+        private int syncCount;
+
+        int getSyncCount() {
+            return syncCount;
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            super.fdatasync(fd);
+            syncCount++;
+        }
+
+        @Override
+        public void msync(long addr, long len, boolean async) {
+            super.msync(addr, len, async);
+            syncCount++;
         }
     }
 }
