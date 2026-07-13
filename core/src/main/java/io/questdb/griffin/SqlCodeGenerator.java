@@ -11488,11 +11488,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // costing, then both the record and page-frame scan routes reuse the resulting key set.
             final IntList effectiveKeys = new IntList();
             patternFilter = new AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter(
-                            providerFunction,
-                            residualFilter,
-                            isNegated,
-                            keyColumnIndex
-                    );
+                    providerFunction,
+                    residualFilter,
+                    isNegated,
+                    keyColumnIndex
+            );
             providerFunction = null;
             residualFilter = null;
 

@@ -63,7 +63,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Runtime owner for symbol-pattern access paths. It refreshes the provider once per
  * cursor open, estimates posting-row selectivity with bounded metadata probes, and
  * then opens exactly one of its covering, bitmap-index, or scan delegates.
- *
+ * <p>
  * The conservative policy chooses an index delegate only after an exact bounded
  * estimate proves that matching postings cover at most 25% of the selected rows.
  * Any mixed posting generation, non-posting partition, unknown row count, or probe

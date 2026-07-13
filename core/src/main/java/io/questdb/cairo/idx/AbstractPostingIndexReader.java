@@ -540,9 +540,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return;
         }
         final FrozenBaseOrdinalObserver observer = TEST_FROZEN_BASE_ORDINAL_OBSERVER.get();
-        if (observer != null) {
-            sidecarPrefixSum.setFrozenBaseOrdinalObserver(observer);
-        }
+        // Capture the compiling/producer thread's test observer into the reader instance shared with frozen
+        // workers. Assign null too, so a reused reader cannot retain an observer after the test seam clears.
+        sidecarPrefixSum.setFrozenBaseOrdinalObserver(observer);
         cacheBuilderEntries.clear();
         for (int g = 0; g < genCount; g++) {
             if (genLookup.getGenKeyCount(g) >= 0) {
@@ -3206,9 +3206,14 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 boolean isFrozen
         ) {
             if (isFrozen && frozenBaseOrdinalObserver != null) {
-                final FrozenBaseOrdinalObserver observer = frozenBaseOrdinalObserver;
-                frozenBaseOrdinalObserver = null;
-                observer.onFrozenBaseOrdinal();
+                final FrozenBaseOrdinalObserver observer;
+                synchronized (this) {
+                    observer = frozenBaseOrdinalObserver;
+                    frozenBaseOrdinalObserver = null;
+                }
+                if (observer != null) {
+                    observer.onFrozenBaseOrdinal();
+                }
             }
             if (slot == 0) {
                 return 0;
@@ -3254,6 +3259,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         void clear() {
+            frozenBaseOrdinalObserver = null;
             if (perGen != null) {
                 Arrays.fill(perGen, null);
                 Arrays.fill(isFullPrefix, false);
