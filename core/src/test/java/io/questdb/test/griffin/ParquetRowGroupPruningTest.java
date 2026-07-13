@@ -4665,7 +4665,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // (double) 10000000000000001 is exactly 1e16, so "c6 <= 1e16" and "c6 = 1e16" both keep that
         // row, while the pushed bound (long) 1e16 == 10000000000000000 excludes the group.
         assertMemoryLeak(() -> {
-            createBoundarySaturatedPartialParquetTyped("LONG", "10000000000000001", "0");
+            createBoundarySaturatedPartialParquetTyped("LONG", "10_000_000_000_000_001", "0");
 
             assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n10000000000000001\n0\n");
             assertNativeMatchesPartialParquet("c6 = 1e16", "c6\n10000000000000001\n");
@@ -4684,7 +4684,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // the (int) getDouble() twin of the LONG-bound saturation. "c6 < 5e9" saturates to
         // "c6 < INT_MAX" and false-prunes an all-INT_MAX group whose rows satisfy the filter.
         assertMemoryLeak(() -> {
-            createBoundarySaturatedPartialParquet(2147483647, 0);
+            createBoundarySaturatedPartialParquet(2_147_483_647, 0);
 
             assertNativeMatchesPartialParquet("c6 < 5000000000.0", "c6\n2147483647\n0\n");
 
@@ -4701,7 +4701,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // now take the same double guard as the LONG arm: an exact in-range bound prunes, and a bound
         // the column cannot round-trip through DOUBLE declines instead of false-pruning.
         assertMemoryLeak(() -> {
-            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "1704067200000000", "0");
+            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "1_704_067_200_000_000", "0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertNativeMatchesPartialParquet("c6 < 1.7e15", "c6\n1970-01-01T00:00:00.000000Z\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
@@ -4714,20 +4714,125 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
             // Above 2^53 the row-level filter compares at double width and keeps the row, so the
             // pushdown must decline rather than prune the group at long width.
-            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "10000000000000001", "0");
+            createBoundarySaturatedPartialParquetTyped("TIMESTAMP", "10_000_000_000_000_001", "0");
             assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n2286-11-20T17:46:40.000001Z\n1970-01-01T00:00:00.000000Z\n");
             execute("DROP TABLE tn");
             execute("DROP TABLE tp");
 
-            createBoundarySaturatedPartialParquetTyped("DATE", "1704067200000", "0");
+            createBoundarySaturatedPartialParquetTyped("DATE", "1_704_067_200_000", "0");
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertNativeMatchesPartialParquet("c6 < 1.7e12", "c6\n1970-01-01T00:00:00.000Z\n");
             Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
             execute("DROP TABLE tn");
             execute("DROP TABLE tp");
 
-            createBoundarySaturatedPartialParquetTyped("DATE", "10000000000000001", "0");
+            createBoundarySaturatedPartialParquetTyped("DATE", "10_000_000_000_000_001", "0");
             assertNativeMatchesPartialParquet("c6 <= 1e16", "c6\n318857-05-20T17:46:40.001Z\n1970-01-01T00:00:00.000Z\n");
+        });
+    }
+
+    @Test
+    public void testFloatColumnPushdownNotFalsePruned() throws Exception {
+        // A FLOAT column's stats slot is 32-bit, but there is no (FLOAT, DOUBLE) comparison: the
+        // row-level filter widens the column to DOUBLE and compares at double width (the only
+        // comparison factories are the double ones, e.g. LtDoubleVVFunctionFactory "<(DD)"). The
+        // FLOAT arm narrowed the bound with (float) getDouble(), which rounds to NEAREST - and
+        // nearest is not pruning-safe in either direction:
+        //   "<"  needs the SMALLEST float >= the bound, but nearest can round DOWN, moving the
+        //        bound onto a group's boundary float and pruning rows the filter keeps;
+        //   ">"  needs the LARGEST float <= the bound, but nearest can round UP, likewise.
+        // ("<=" and ">=" happen to survive nearest: rounding the wrong way only makes them prune
+        // less.) Pruning runs before the row filter, so a false-prune drops the parquet rows
+        // outright and the partial-parquet table returns fewer rows than its all-native sibling.
+        assertMemoryLeak(() -> {
+            // The parquet group holds the single float 1.0; the native sibling row holds 100.0.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "100.0");
+
+            // (float) 1.00000003 rounds DOWN to 1.0f (the next float up is 1.00000011920928955),
+            // so "< 1.00000003" pushed as "< 1.0f" prunes the group whose min stat is 1.0f - yet
+            // (double) 1.0f = 1.0 < 1.00000003 keeps the row.
+            assertNativeMatchesPartialParquet("c6 < 1.00000003", "c6\n1.0\n");
+            // The mirror image: (float) 0.99999998 rounds UP to 1.0f (the next float down is
+            // 0.99999994039535522), so "> 0.99999998" pushed as "> 1.0f" prunes a group whose max
+            // stat is 1.0f - yet (double) 1.0f = 1.0 > 0.99999998 keeps the row.
+            assertNativeMatchesPartialParquet("c6 > 0.99999998", "c6\n1.0\n100.0\n");
+
+            // The two ops nearest already served: they must keep selecting the same rows.
+            assertNativeMatchesPartialParquet("c6 <= 1.00000003", "c6\n1.0\n");
+            assertNativeMatchesPartialParquet("c6 >= 0.99999998", "c6\n1.0\n100.0\n");
+
+            // An exactly-representable bound loses nothing and must still prune: 1.0 is a float,
+            // so "< 1.0" excludes the group at 1.0 outright.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 < 1.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 > 100.0", "c6\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // An integer bound has no exact float above 2^24 either: 16777217 sits halfway between
+            // 16777216f and 16777218f and rounds to even, i.e. DOWN to 16777216f. "< 16777217"
+            // then prunes the group whose min stat is 16777216f, though that row satisfies it.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "16777216.0", "0.0");
+            assertNativeMatchesPartialParquet("c6 < 16_777_217", "c6\n1.6777216E7\n0.0\n");
+            assertNativeMatchesPartialParquet("c6 >= 16_777_217", "c6\n");
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // The bound must also carry the comparison TOLERANCE. QuestDB compares floating point
+            // with Numbers.DOUBLE_TOLERANCE (1e-10), so "c6 >= d" keeps a row that is merely
+            // tolerance-equal to d - a row strictly BELOW it. Rounding to the nearest float ignores
+            // that, and so does rounding by an ulp: one float ulp near 1.0 is 1.2e-7, over a
+            // thousand times the tolerance, so such a bound steps clean over the band and prunes the
+            // group holding the row. Every bound below sits inside the tolerance band around 1.0.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "1.0", "100.0");
+            assertNativeMatchesPartialParquet("c6 >= 1.00000000005", "c6\n1.0\n100.0\n");
+            assertNativeMatchesPartialParquet("c6 <= 0.99999999995", "c6\n1.0\n");
+            assertNativeMatchesPartialParquet("c6 > 0.99999999995", "c6\n100.0\n");
+            assertNativeMatchesPartialParquet("c6 < 1.00000000005", "c6\n");
+            assertNativeMatchesPartialParquet("c6 = 1.00000000005", "c6\n1.0\n");
+
+            // A bound ONE TOLERANCE away from the group's float is the hard case for the strict ops.
+            // The row is 1.0000000827e-10 from the bound - just OUTSIDE the tolerance, so the filter
+            // keeps it - but "d - tolerance" rounds back onto 1.0 exactly (the residual is far below
+            // half a double ulp), so a bound narrowed from that pivot lands on 1.0f, and the native
+            // predicate ("<" prunes on min >= bound) drops the group holding it.
+            assertNativeMatchesPartialParquet("c6 < 1.0000000001", "c6\n1.0\n");
+            assertNativeMatchesPartialParquet("c6 > 0.9999999999", "c6\n1.0\n100.0\n");
+            assertNativeMatchesPartialParquet("c6 < 100.0000000001", "c6\n1.0\n100.0\n");
+            assertNativeMatchesPartialParquet("c6 > 99.9999999999", "c6\n100.0\n");
+            // The non-strict ops prune on min > bound / max < bound, so the bound itself is already
+            // excluded from the pruned side, and they must not step the same way.
+            assertNativeMatchesPartialParquet("c6 <= 0.9999999999", "c6\n");
+            assertNativeMatchesPartialParquet("c6 >= 1.0000000001", "c6\n100.0\n");
+
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+
+            // Near zero the tolerance band spans many floats, so the bound has to be walked out of
+            // it - or abandoned. A row of 0.0f is tolerance-equal to a bound of -5e-11, so the
+            // filter keeps it for "<=" and the pruner must not skip the group.
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "0.0", "5.0");
+            assertNativeMatchesPartialParquet("c6 <= -5e-11", "c6\n0.0\n");
+            assertNativeMatchesPartialParquet("c6 >= 5e-11", "c6\n0.0\n5.0\n");
+
+            // EQ has no direction to round in: it prunes when the pushed float falls outside
+            // [min, max]. Below ~8e-4 the tolerance band holds several floats, so the group can hold
+            // a matching row that is not the nearest one - 4.9999997E-4 is tolerance-equal to 0.0005
+            // (8.2e-11 away) though 5.0E-4 is what a bound of 0.0005 narrows to. Pushing the nearest
+            // float would prune this group; the bound declines instead.
+            execute("DROP TABLE tn");
+            execute("DROP TABLE tp");
+            createBoundarySaturatedPartialParquetTyped("FLOAT", "4.9999997E-4", "5.0");
+            assertNativeMatchesPartialParquet("c6 = 0.0005", "c6\n4.9999997E-4\n");
+            // ... and a bound whose band holds exactly one float still pushes, and still prunes.
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            assertNativeMatchesPartialParquet("c6 = 5.0", "c6\n5.0\n");
+            Assert.assertTrue(ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
         });
     }
 
@@ -4789,7 +4894,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // LONG bound saturates in the INT stats slot; c > -5e9 matches every row, so
         // the group must NOT prune -- a false-prune would drop the parquet row.
         assertMemoryLeak(() -> {
-            createBoundarySaturatedPartialParquet(-2147483647, 0);
+            createBoundarySaturatedPartialParquet(-2_147_483_647, 0);
 
             assertNativeMatchesPartialParquet("c6 > -5_000_000_000", "c6\n-2147483647\n0\n");
             assertNativeMatchesPartialParquet("c6 >= -5_000_000_000", "c6\n-2147483647\n0\n");
@@ -4813,7 +4918,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // bound saturates in the INT stats slot; c < 5e9 matches every row, so the
         // group must NOT prune -- a false-prune would drop the parquet row.
         assertMemoryLeak(() -> {
-            createBoundarySaturatedPartialParquet(2147483647, 0);
+            createBoundarySaturatedPartialParquet(2_147_483_647, 0);
 
             assertNativeMatchesPartialParquet("c6 < 5_000_000_000", "c6\n2147483647\n0\n");
             assertNativeMatchesPartialParquet("c6 <= 5_000_000_000", "c6\n2147483647\n0\n");

@@ -31,6 +31,21 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class InLongFunctionFactoryTest extends AbstractCairoTest {
+    // The rows whose INT-arithmetic key lands on LONG_NULL at long width: row 3's product
+    // overflows exactly onto it (its value is 0), row 5 is genuinely null. See
+    // testNarrowSplitKeyNullElementMatchesEqNull.
+    private static final String LONG_NULL_KEY_ROWS = """
+            rn
+            3
+            5
+            """;
+    // The rows whose INT-arithmetic key is NULL, i.e. whose getInt() carries INT_NULL.
+    private static final String NULL_KEY_ROWS = """
+            rn
+            1
+            2
+            5
+            """;
 
     @Test
     public void testBindVariables() throws Exception {
@@ -278,6 +293,90 @@ public class InLongFunctionFactoryTest extends AbstractCairoTest {
                             -2147483647
                             1
                             2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNarrowSplitKeyNullElementMatchesEqNull() throws Exception {
+        // An untyped NULL element reads a narrow-int key at the width '=' reads it: INT.
+        // A split key - INT arithmetic, whose getInt() wraps mod 2^32 while getLong() widens -
+        // is NULL exactly when its getInt() carries INT_NULL, which is what '=', IS NULL and the
+        // projection all report. Reading the key at long width against the NULL element instead
+        // made IN (null) disagree with all three, in both directions:
+        //   - row 1 (65536*32768) and row 2 (-2^30 * 2) wrap onto INT_NULL, so they ARE null;
+        //     IN (null) missed them because their long-width products (+/-2^31) are not LONG_NULL.
+        //   - row 3 (2^30 * 8 * 2^30) has value 0, but its long-width product overflows exactly
+        //     onto LONG_NULL, so IN (null) matched a row whose value is not null.
+        // A LONG-typed null element (null::long) keeps long width: it matches '= null::long',
+        // which reads the key with getLong().
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (SELECT
+                      cast(CASE WHEN x = 1 THEN 65_536 WHEN x = 2 THEN -1_073_741_824 WHEN x = 3 THEN 1_073_741_824 WHEN x = 4 THEN 3 ELSE null END AS INT) a,
+                      cast(CASE WHEN x = 1 THEN 32_768 WHEN x = 2 THEN 2 WHEN x = 3 THEN 8 ELSE 3 END AS INT) b,
+                      cast(CASE WHEN x = 3 THEN 1_073_741_824 ELSE 1 END AS INT) c,
+                      cast(x AS INT) rn
+                    FROM long_sequence(5))""");
+
+            // The oracle: the value of the key expression, as the projection reports it.
+            assertQuery("SELECT rn, a*b prod, a*b*c prod3 FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            rn\tprod\tprod3
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            3\t0\t0
+                            4\t9\t9
+                            5\tnull\tnull
+                            """);
+
+            // '=' and IS NULL agree with the projection: rows 1, 2 and 5 are the null ones.
+            assertQuery("SELECT rn FROM x WHERE (a*b) = null").noLeakCheck().returns(NULL_KEY_ROWS);
+            assertQuery("SELECT rn FROM x WHERE (a*b) IS NULL").noLeakCheck().returns(NULL_KEY_ROWS);
+
+            // IN (null) must select exactly the same rows, in every InLong form.
+            assertQuery("SELECT rn FROM x WHERE (a*b) IN (null)")                  // single const
+                    .noLeakCheck().returns(NULL_KEY_ROWS);
+            assertQuery("SELECT rn FROM x WHERE (a*b) IN (null, 999)")             // two const
+                    .noLeakCheck().returns(NULL_KEY_ROWS);
+            assertQuery("SELECT rn FROM x WHERE (a*b) IN (null, 999, 7)")          // const set
+                    .noLeakCheck().returns(NULL_KEY_ROWS);
+            assertQuery("SELECT rn FROM x WHERE (a*b) IN (null, c - 1)")           // var: c-1 is 0 on rows 1,2,4,5
+                    .noLeakCheck().returns("""
+                            rn
+                            1
+                            2
+                            5
+                            """);
+
+            // NOT IN inverts it: the non-null keys, and nothing else.
+            assertQuery("SELECT rn FROM x WHERE (a*b) NOT IN (null)")
+                    .noLeakCheck().returns("""
+                            rn
+                            3
+                            4
+                            """);
+
+            // The deeper key: row 3's long-width product lands exactly on LONG_NULL while its
+            // value is 0, so a long-width probe matched it. It is not null and must not match.
+            assertQuery("SELECT rn FROM x WHERE (a*b*c) = null").noLeakCheck().returns(NULL_KEY_ROWS);
+            assertQuery("SELECT rn FROM x WHERE (a*b*c) IN (null)").noLeakCheck().returns(NULL_KEY_ROWS);
+
+            // Control: a LONG-typed null element keeps long width on both sides, so IN (null::long)
+            // and '= null::long' agree with each other - and select row 3, unlike the untyped null.
+            assertQuery("SELECT rn FROM x WHERE (a*b*c) = null::long")
+                    .noLeakCheck().returns(LONG_NULL_KEY_ROWS);
+            assertQuery("SELECT rn FROM x WHERE (a*b*c) IN (null::long)")
+                    .noLeakCheck().returns(LONG_NULL_KEY_ROWS);
+
+            // Control: a plain INT column key is not split - getInt() and getLong() carry the same
+            // number - so only the genuinely-null row matches, at either width.
+            assertQuery("SELECT rn FROM x WHERE a IN (null)")
+                    .noLeakCheck().returns("""
+                            rn
+                            5
                             """);
         });
     }

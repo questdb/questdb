@@ -74,11 +74,12 @@ public class InLongFunctionFactory implements FunctionFactory {
         final int argCount = args.size() - 1;
         // When the key column (arg 0) is a narrow integer (INT/SHORT/BYTE) the IN
         // list is compared per element at the width of '=': an INT-typed element
-        // (including an overflowing INT arithmetic fold), or a numeric STRING whose
-        // value fits INT, is read at INT width so both key and element wrap mod 2^32,
-        // exactly as EqInt and the JIT do, while a LONG/TIMESTAMP element or a wider
-        // numeric string is read at long width so the key widens (getLong) to its full
-        // value. For a LONG/TIMESTAMP key every element widens to long anyway.
+        // (including an overflowing INT arithmetic fold), an untyped null, or a numeric
+        // STRING whose value fits INT, is read at INT width so both key and element wrap
+        // mod 2^32, exactly as EqInt and the JIT do, while a LONG/TIMESTAMP element (a
+        // LONG-typed null among them) or a wider numeric string is read at long width so
+        // the key widens (getLong) to its full value. For a LONG/TIMESTAMP key every
+        // element widens to long anyway.
         final boolean isNarrowIntKey = isNarrowInt(ColumnType.tagOf(args.getQuick(0).getType()));
         // The two key widths only differ for the handful of INT functions that override
         // getLong() to compute at long width (the arithmetic and bitwise operators, and a
@@ -196,11 +197,11 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     /**
      * Reports whether any IN-list element (args past index 0) is LONG-width
-     * typed, i.e. not an INT/SHORT/BYTE literal, so a long-width set is needed.
+     * typed, i.e. not an INT-width one, so a long-width set is needed.
      */
     private static boolean hasLongWidthElement(ObjList<Function> args) {
         for (int i = 1, n = args.size(); i < n; i++) {
-            if (!isNarrowInt(ColumnType.tagOf(args.getQuick(i).getType()))) {
+            if (!isIntWidthTag(ColumnType.tagOf(args.getQuick(i).getType()))) {
                 return true;
             }
         }
@@ -209,16 +210,16 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     /**
      * Reports whether any IN-list element (args past index 0) may feed the
-     * INT-width set for a narrow-integer key: an INT/SHORT/BYTE-typed element
-     * always does, and a numeric STRING/VARCHAR/SYMBOL element does when its
-     * value fits INT (decided per value at parse time). A string-like element is
-     * counted here even if it later widens, so the INT-width set is allocated and
-     * the key probed at INT width whenever one is present.
+     * INT-width set for a narrow-integer key: an INT-width element (INT/SHORT/BYTE,
+     * or an untyped NULL) always does, and a numeric STRING/VARCHAR/SYMBOL element
+     * does when its value fits INT (decided per value at parse time). A string-like
+     * element is counted here even if it later widens, so the INT-width set is
+     * allocated and the key probed at INT width whenever one is present.
      */
     private static boolean hasNarrowIntElement(ObjList<Function> args) {
         for (int i = 1, n = args.size(); i < n; i++) {
             final int tag = ColumnType.tagOf(args.getQuick(i).getType());
-            if (isNarrowInt(tag) || isNumericStringLike(tag)) {
+            if (isIntWidthTag(tag) || isNumericStringLike(tag)) {
                 return true;
             }
         }
@@ -238,27 +239,49 @@ public class InLongFunctionFactory implements FunctionFactory {
      * Reports whether the key must be read at INT width (wrapped) to compare against
      * {@code func}, an IN-list element with parsed value {@code parsedVal}: true when the key is
      * a split one - a narrow-integer key whose getInt() and getLong() can disagree - and the
-     * element is either INT/SHORT/BYTE-typed or a numeric STRING/VARCHAR/SYMBOL whose value fits
-     * INT. Both key and element then wrap mod 2^32, matching EqInt, IN of a numeric literal, and
-     * the JIT.
+     * element is INT-width (see {@link #isIntWidthTag}) or a numeric STRING/VARCHAR/SYMBOL whose
+     * value fits INT. Both key and element then wrap mod 2^32, matching EqInt, IN of a numeric
+     * literal, and the JIT.
      * <p>
      * False otherwise, and the key is read once at long width: either the element compares at
-     * long width (a LONG/TIMESTAMP/NULL element widens the key via getLong()), or the key is not
-     * a split one and its two reads carry the same value anyway. The element itself is still read
-     * at the width {@link #parseValue} picked for it, so an INT element keeps wrapping.
+     * long width (a LONG/TIMESTAMP element, or a LONG-typed null, widens the key via getLong()),
+     * or the key is not a split one and its two reads carry the same value anyway. The element
+     * itself is still read at the width {@link #parseValue} picked for it, so an INT element
+     * keeps wrapping.
      */
     private static boolean isIntWidthElement(Function func, long parsedVal, boolean isSplitKey) {
         if (!isSplitKey) {
             return false;
         }
         final int tag = ColumnType.tagOf(func.getType());
-        if (isNarrowInt(tag)) {
+        if (isIntWidthTag(tag)) {
             return true;
         }
         // A numeric string has no declared integer width, so compare it at the width
         // its value would carry as a literal: an INT-range value wraps (matching
         // IN (intLiteral) and '='), a wider value or NULL widens (matching IN (longLiteral)).
         return isNumericStringLike(tag) && isIntRangeValue(parsedVal);
+    }
+
+    /**
+     * Reports whether an element of this type compares against a split narrow-integer key at INT
+     * width. A BYTE/SHORT/INT element does, and so does an untyped {@code null}: '=' resolves it
+     * to EqInt on a narrow key, so the key is NULL there exactly when its getInt() carries
+     * INT_NULL - which is also when the projection of the key prints null. Probing the key at long
+     * width instead would disagree with both, in both directions, for the one key whose two widths
+     * can disagree about the sentinel (INT arithmetic): it would miss a key that wraps onto
+     * INT_NULL (long width: +/-2^31, not LONG_NULL), and match a key whose long-width product
+     * overflows exactly onto LONG_NULL while its value is not null. Since
+     * {@code Numbers.intToLong(INT_NULL) == LONG_NULL}, the element's parsed LONG_NULL matches the
+     * INT-width key read as-is, and a genuinely-null key still matches at either width.
+     * <p>
+     * A LONG-typed null ({@code null::long}, or a null LONG element) is NOT int-width: '=' resolves
+     * it to EqLong, which reads the key with getLong(), so it keeps long width and both agree.
+     * UNDEFINED covers an element whose type is not resolved; it carries no numeric value, so it
+     * follows the untyped null.
+     */
+    private static boolean isIntWidthTag(int typeTag) {
+        return isNarrowInt(typeTag) || typeTag == ColumnType.NULL || typeTag == ColumnType.UNDEFINED;
     }
 
     private static boolean isNarrowInt(int typeTag) {
@@ -673,8 +696,8 @@ public class InLongFunctionFactory implements FunctionFactory {
                         break;
                     default:
                         // The remaining tags newInstance lets through (NULL, UNDEFINED) carry no
-                        // per-row numeric value. The per-row loop read them as LONG_NULL before, so
-                        // keep that: they match only a null key, and only at long width.
+                        // per-row numeric value: they match a null key only. A constant null takes
+                        // the KIND_CONST_* branch above, so this arm is for a non-constant one.
                         elementKinds.add(KIND_NONE);
                         break;
                 }
@@ -736,8 +759,11 @@ public class InLongFunctionFactory implements FunctionFactory {
                         }
                         break;
                     default:
-                        // KIND_NONE: no numeric value to compare, so only a null key matches.
+                        // KIND_NONE: no numeric value to compare, so only a null key matches. Read
+                        // the key at INT width, as '=' does against an untyped null (isIntWidthTag);
+                        // keyInt is keyLong when the key is not a split one.
                         inVal = Numbers.LONG_NULL;
+                        keyVal = keyInt;
                         break;
                 }
                 if (inVal == keyVal) {

@@ -7515,11 +7515,6 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     /**
-     * Drains the query and asserts how many times the keyed WINDOW JOIN rebuilt its slave index.
-     * The index amortization is invisible in the result set - a rebuild re-derives the same index
-     * from the same rows - so this counter is the only thing that can pin it.
-     */
-    /**
      * Rejects a vacuous differential comparison. A LEFT JOIN oracle emits one row per master row
      * whether or not the window matched anything, so "the oracle has rows" is not enough on its own:
      * if the data ever drifted such that no window held a slave row, every aggregate would be null on
@@ -7556,6 +7551,11 @@ public class WindowJoinTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Drains the query and asserts how many times the keyed WINDOW JOIN rebuilt its slave index.
+     * The index amortization is invisible in the result set - a rebuild re-derives the same index
+     * from the same rows - so this counter is the only thing that can pin it.
+     */
     private void assertIndexRebuildCount(String select, long expectedRebuilds) throws SqlException {
         try (RecordCursorFactory factory = select(select)) {
             RecordCursorFactory base = factory instanceof QueryProgress ? ((QueryProgress) factory).getBaseFactory() : factory;

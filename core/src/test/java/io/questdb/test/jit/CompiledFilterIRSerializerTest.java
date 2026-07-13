@@ -405,6 +405,49 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testFloatCmpConstWithNoExactFloat() throws Exception {
+        // A FLOAT column always compares at DOUBLE width in the Java filter, so a constant with no
+        // exact float must not be emitted as a 32-bit float - the nearest one selects different
+        // rows. It goes to the compiled filter as a full double instead, which forces the scalar
+        // backend, whose convert() promotes the float column to double: both filters then run the
+        // same tolerance-aware double comparison. (A float bound rounded in the direction the
+        // operator preserves would reproduce EXACT IEEE ordering, but QuestDB compares with a 1e-10
+        // tolerance and a float ulp near 1.0 is 1.2e-7 - the rounded bound steps over the band and
+        // flips rows inside it. See markFloatCmpConst.)
+        int options = serialize("afloat < 1.00000003", false, false, false);
+        assertIR("(f64 1.00000003D)(f32 afloat)(<)(ret)");
+        assertOptionsHint("afloat < 1.00000003", options, OptionsHint.SCALAR);
+        serialize("afloat <= 1.00000003");
+        assertIR("(f64 1.00000003D)(f32 afloat)(<=)(ret)");
+        serialize("afloat > 0.99999998");
+        assertIR("(f64 0.99999998D)(f32 afloat)(>)(ret)");
+        serialize("afloat >= 0.99999998");
+        assertIR("(f64 0.99999998D)(f32 afloat)(>=)(ret)");
+        serialize("afloat = 1.00000003");
+        assertIR("(f64 1.00000003D)(f32 afloat)(=)(ret)");
+        serialize("afloat <> 1.00000003");
+        assertIR("(f64 1.00000003D)(f32 afloat)(<>)(ret)");
+        // The constant on the LEFT takes the same route (the operands serialize the other way
+        // round here, the column first).
+        serialize("1.00000003 > afloat");
+        assertIR("(f32 afloat)(f64 1.00000003D)(>)(ret)");
+
+        // An integer literal has no exact float above 2^24 either: (float) 16777217 is 16777216.
+        // The 64-bit arm emits it exactly, as an I8 rather than a double.
+        serialize("afloat < 16_777_217");
+        assertIR("(i64 16777217L)(f32 afloat)(<)(ret)");
+
+        // A constant WITH an exact float is left alone: it compares the same at either width, so it
+        // keeps its F4 immediate and the vectorized path - the fix costs nothing there.
+        options = serialize("afloat < 1.5", false, false, false);
+        assertIR("(f32 1.5D)(f32 afloat)(<)(ret)");
+        assertOptionsHint("afloat < 1.5", options, OptionsHint.SINGLE_SIZE);
+        options = serialize("afloat = 5.0", false, false, false);
+        assertIR("(f32 5.0D)(f32 afloat)(=)(ret)");
+        assertOptionsHint("afloat = 5.0", options, OptionsHint.SINGLE_SIZE);
+    }
+
+    @Test
     public void testFloatSuppressedI64WideningNestedIntUnderLong() throws Exception {
         // A float suppresses the global narrow-i64 widening, but the inner
         // INT*INT product (anint * 100000) feeds a LONG-width multiply, so the
@@ -555,11 +598,20 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 5000000000L)(i32 anint)(sx_i64)(=)(i32 1L)(i32 anint)(=)(||)(ret)");
         assertOptionsHint("anint IN (1, 5_000_000_000)", options, OptionsHint.SCALAR);
 
-        // An arithmetic key can wrap onto -2^31 without being null, so its two widths are not
-        // interchangeable and it keeps widening against a NULL element (the Java filter reads it
-        // with getLong() there, matching what sx_i64 emits). The INT element next to it still wraps.
-        serialize("anint * 2 IN (1, null)");
-        assertIR("(i32 -2147483648L)(i64 2L)(i32 anint)(sx_i64)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
+        // An arithmetic key wraps against the NULL element too: '=' resolves an untyped null to
+        // EqInt, which reads the key with getInt(), so the key is null exactly when its getInt()
+        // carries INT_NULL - the same rows a projection of the key prints null for. It therefore
+        // takes I4 as well, and the whole filter stays vectorized (no sx_i64 anywhere).
+        int arithOptions = serialize("anint * 2 IN (1, null)", false, false, false);
+        assertIR("(i32 -2147483648L)(i32 2L)(i32 anint)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
+        assertOptionsHint("anint * 2 IN (1, null)", arithOptions, OptionsHint.SINGLE_SIZE);
+
+        // A genuinely wide element still widens the arithmetic key, and any sx_i64 emission forces
+        // the scalar backend - AVX2 has no sx_i64 opcode (see
+        // CompiledFilterRegressionTest#testInOperatorOverflowLongElementForcesScalar).
+        arithOptions = serialize("anint * 2 IN (1, 5_000_000_000)", false, false, false);
+        assertIR("(i64 5000000000L)(i64 2L)(i32 anint)(sx_i64)(*)(=)(i32 1L)(i32 2L)(i32 anint)(*)(=)(||)(ret)");
+        assertOptionsHint("anint * 2 IN (1, 5_000_000_000)", arithOptions, OptionsHint.SCALAR);
     }
 
     @Test

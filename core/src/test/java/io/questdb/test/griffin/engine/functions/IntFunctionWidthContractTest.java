@@ -27,10 +27,14 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -49,14 +53,34 @@ import java.util.stream.Stream;
  * element - the exact divergence the per-element width was added to close.
  * <p>
  * Rather than trust a hand-kept list, this walks the compiled classes: every {@link IntFunction}
- * subclass that declares {@code getLong(Record)} must also declare {@code isIntWidthStable()}.
- * Classes load without initialization, so no static initializer runs.
+ * subclass that declares {@code getLong(Record)} must also declare {@code isIntWidthStable()} AND
+ * report {@code false} from it. Checking only the declaration would miss the other half of the
+ * hazard - a class that overrides {@code getLong()} and then writes {@code isIntWidthStable()}
+ * returning {@code true}, which reads exactly as broken as inheriting the default. The few classes
+ * that override {@code getLong()} and are genuinely width-stable are listed, with their argument, in
+ * {@link #WIDTH_STABLE_BY_DESIGN}. Classes load without initialization, so no static initializer runs.
  */
 public class IntFunctionWidthContractTest {
+    // The IntFunctions that override getLong(Record) and are nevertheless width-stable. Each one is
+    // reviewed: its getLong() carries exactly what Numbers.intToLong(getInt()) would, so the flag is
+    // honestly true. A new class only lands here after someone proves the same, which is the point -
+    // reporting true is the dangerous answer (it is also the interface default), so it must be
+    // argued for rather than inherited by accident.
+    private static final List<String> WIDTH_STABLE_BY_DESIGN = List.of(
+            // Folds a symbol switch to a constant int: getLong() widens that same constant.
+            "io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory$SymbolSwitchConstIntFunction",
+            // Caches whatever the wrapped arg reports at each width, so it is width-stable exactly
+            // when the arg is - it answers from the arg, and cannot be evaluated without one.
+            "io.questdb.griffin.engine.functions.RuntimeConstFunction$IntRuntimeConstFunction"
+    );
+    // The scan must keep finding the width-unstable functions (the arithmetic and bitwise INT
+    // operators); if it stops, every assertion here passes vacuously.
+    private static final int MIN_EXPECTED_GETLONG_OVERRIDES = 11;
 
     @Test
-    public void testEveryIntFunctionOverridingGetLongDeclaresIsIntWidthStable() throws Exception {
-        final List<String> offenders = new ArrayList<>();
+    public void testEveryIntFunctionOverridingGetLongReportsWidthUnstable() throws Exception {
+        final List<String> undeclared = new ArrayList<>();
+        final List<String> misreported = new ArrayList<>();
         final List<String> covered = new ArrayList<>();
         for (Class<?> clazz : loadQuestdbClasses()) {
             if (!IntFunction.class.isAssignableFrom(clazz) || clazz == IntFunction.class) {
@@ -65,22 +89,41 @@ public class IntFunctionWidthContractTest {
             if (!declaresMethod(clazz, "getLong", Record.class)) {
                 continue;
             }
-            if (declaresMethod(clazz, "isIntWidthStable")) {
-                covered.add(clazz.getName());
-            } else {
-                offenders.add(clazz.getName());
+            if (!declaresMethod(clazz, "isIntWidthStable")) {
+                undeclared.add(clazz.getName());
+                continue;
             }
+            covered.add(clazz.getName());
+            // Declaring the override is not enough: a class that declares it and returns true is
+            // just as broken as one that inherits the default true, and reads the IN key at the
+            // wrong width. Ask the class what it actually reports.
+            if (!isWidthStable(clazz) || WIDTH_STABLE_BY_DESIGN.contains(clazz.getName())) {
+                continue;
+            }
+            misreported.add(clazz.getName());
         }
 
-        Collections.sort(offenders);
+        Collections.sort(undeclared);
+        Collections.sort(misreported);
         Assert.assertEquals(
                 "an IntFunction that overrides getLong() computes at a width getInt() does not carry, "
-                        + "so it must also override isIntWidthStable() to return false: " + offenders,
+                        + "so it must also override isIntWidthStable() to return false: " + undeclared,
                 Collections.emptyList(),
-                offenders
+                undeclared
         );
-        // Guards the scan itself: if it stops finding classes, the assertion above passes vacuously.
-        Assert.assertTrue("the class scan found no IntFunction with a getLong() override", covered.size() >= 11);
+        Assert.assertEquals(
+                "an IntFunction that overrides getLong() reports isIntWidthStable() == true. InLongFunctionFactory "
+                        + "then reads the IN key once per row instead of once per element width, so an overflowing "
+                        + "key compares at the wrong width. Return false, or add it to WIDTH_STABLE_BY_DESIGN with "
+                        + "the argument for why getLong() carries what getInt() does: " + misreported,
+                Collections.emptyList(),
+                misreported
+        );
+        Assert.assertTrue(
+                "the class scan found only " + covered.size() + " IntFunctions with a getLong() override; it is "
+                        + "no longer reaching the arithmetic operators, so this test guards nothing",
+                covered.size() >= MIN_EXPECTED_GETLONG_OVERRIDES
+        );
     }
 
     private static boolean declaresMethod(Class<?> clazz, String name, Class<?>... params) {
@@ -89,6 +132,28 @@ public class IntFunctionWidthContractTest {
             return true;
         } catch (NoSuchMethodException e) {
             return false;
+        }
+    }
+
+    /**
+     * What {@code clazz} actually reports from {@code isIntWidthStable()}. The instance comes from
+     * {@code allocateInstance}, not a constructor: these functions are built by their factories from
+     * parsed arguments, and the flag is a per-class constant that reads no state. A class whose
+     * answer does depend on state (it delegates to an arg) throws on the null field and is reported
+     * as width-stable, i.e. it has to be argued for in {@link #WIDTH_STABLE_BY_DESIGN} - the
+     * conservative direction, since that is the list a human reviews.
+     */
+    private static boolean isWidthStable(Class<?> clazz) throws Exception {
+        if (Modifier.isAbstract(clazz.getModifiers())) {
+            return true;
+        }
+        final Method method = clazz.getMethod("isIntWidthStable");
+        method.setAccessible(true);
+        final Object instance = Unsafe.getUnsafe().allocateInstance(clazz);
+        try {
+            return (boolean) method.invoke(instance);
+        } catch (InvocationTargetException stateDependent) {
+            return true;
         }
     }
 

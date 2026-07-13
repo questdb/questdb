@@ -185,9 +185,13 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // an all-miss run to drop below 1e-3. See the guard in runFuzz.
     private static final int MIN_FAULT_QUERIES_PER_TYPE_FOR_FIRE_FLOOR = 20;
     // Differential queries a shape needs before runFuzz holds it to MIN_ACCEPTED_PCT_PER_SHAPE.
-    // Below this count the accepted rate is too noisy to assert on. The narrow bands (LATEST ON
-    // draws 7 in 100 queries, the joins 5) stay under it on a default 100-query run and come under
-    // the floor on a longer soak.
+    // Below this count the accepted rate is too noisy to assert on. FuzzConfig's default budget is
+    // sized so every shape clears this on the run CI executes - at the old 100-query default only
+    // SAMPLE_BY did, leaving the guard dormant for the other eight shapes (POSTING did not even
+    // generate). runFuzz logs any shape that still falls short, so a generator that goes rare
+    // cannot silently stop being guarded; it is logged rather than asserted because the rarest
+    // shape draws ~3.4% of a run, which at the default budget dips under the floor often enough
+    // by chance alone to make an assertion flaky.
     private static final int MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR = 25;
     // Per-query chance, in percent, of generating a bind-variable variant.
     private static final int QUERY_BIND_PROBABILITY_PCT = 20;
@@ -832,6 +836,13 @@ public class QueryFuzzTest extends AbstractCairoTest {
         for (QueryShape shape : QueryShape.values()) {
             final int generated = generatedByShape[shape.ordinal()];
             if (generated < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
+                // Not enough queries to hold this shape to the floor. Say so out loud: a shape that
+                // quietly stops generating (or goes rare) is otherwise indistinguishable from one
+                // that passed, and the guard for it is off for this run.
+                LOG.info().$("fuzz shape below the accept-floor sample size, NOT guarded this run: ")
+                        .$(shape.name()).$(' ').$(generated).$('/').$(MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR)
+                        .$(" queries; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
+                        .$();
                 continue;
             }
             final int accepted = generated - skippedByShape[shape.ordinal()];

@@ -132,15 +132,15 @@ public class ConstantReassociationTest extends AbstractCairoTest {
         // not - it evaluates at double width. The literal form folds the inner
         // INT arithmetic and wraps, so reassociating only the column form makes
         // the two disagree. These shapes must therefore stay un-regrouped.
-        assertReassociation("d + 3 + 0.0", "d + 3 + 0.0");
-        assertReassociation("d + 3 + 0.0f", "d + 3 + 0.0f");
-        assertReassociation("d * 3 * 2.0", "d * 3 * 2.0");
+        assertReassociationNoOp("d + 3 + 0.0");
+        assertReassociationNoOp("d + 3 + 0.0f");
+        assertReassociationNoOp("d * 3 * 2.0");
         // Pattern B (commutative): (C1 op col) op floatConst
-        assertReassociation("(3 + d) + 0.0", "3 + d + 0.0");
+        assertReassociationNoOp("(3 + d) + 0.0");
         // Mirror A (commutative): floatConst op (col op C1)
-        assertReassociation("0.0 + (d + 3)", "0.0 + (d + 3)");
+        assertReassociationNoOp("0.0 + (d + 3)");
         // Mirror B (associative): floatConst op (C1 op col)
-        assertReassociation("0.0 + (3 + d)", "0.0 + (3 + d)");
+        assertReassociationNoOp("0.0 + (3 + d)");
 
         // A same-category integer pair still regroups: integer addition is associative modulo
         // 2^32 in the absence of the INT_NULL sentinel. (Not fully safe - an intermediate

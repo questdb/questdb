@@ -62,6 +62,11 @@ public final class ParquetRowGroupFilter {
     // cannot; at or above it a 64-bit column no longer round-trips through the double width the
     // row-level filter compares at.
     private static final double MAX_EXACT_INTEGRAL_DOUBLE = 9007199254740992d;
+    // How far tryPutFloatFromDouble may walk a FLOAT bound outward before it gives up and declines
+    // the pushdown. Two steps cover every bound whose magnitude puts the float spacing above the
+    // comparison tolerance; below that (|bound| under roughly 1e-10) every neighbouring float is
+    // tolerance-equal to the bound and no reachable bound is safe, so declining is the answer.
+    private static final int MAX_FLOAT_BOUND_STEPS = 4;
     private static final AtomicInteger rowGroupsSkipped = new AtomicInteger();
 
     /**
@@ -396,7 +401,10 @@ public final class ParquetRowGroupFilter {
                         break;
                     case ColumnType.FLOAT:
                         for (int j = 0; j < valueCount; j++) {
-                            filterValues.putFloat(valueFunctions.getQuick(j).getFloat(null));
+                            if (!tryPutFloatFromDouble(filterValues, valueFunctions.getQuick(j).getDouble(null), opType)) {
+                                supported = false;
+                                break;
+                            }
                         }
                         break;
                     case ColumnType.DOUBLE:
@@ -560,6 +568,22 @@ public final class ParquetRowGroupFilter {
         return (columnIndex & 0xFFFFFFFFL) | ((long) (count & 0x00FFFFFF) << 32) | ((long) (op & 0xFF) << 56);
     }
 
+    // The float a row group would have to hold for the native predicate to prune it wrongly: the
+    // first one on the side the predicate drops. LT prunes on "min >= bound" and GT on
+    // "max <= bound", so the bound itself is the first dropped row; LE prunes on "min > bound" and
+    // GE on "max < bound", which already exclude it, so its neighbour is.
+    private static float firstPrunedFloat(float bound, int opType) {
+        switch (opType) {
+            case PushdownFilterExtractor.OP_LT:
+            case PushdownFilterExtractor.OP_GT:
+                return bound;
+            case PushdownFilterExtractor.OP_LE:
+                return Math.nextUp(bound);
+            default: // OP_GE
+                return Math.nextDown(bound);
+        }
+    }
+
     /**
      * Rounds a FLOAT/DOUBLE bound to the integral bound that selects exactly the same integer
      * rows, so a fractional bound still prunes instead of declining pushdown. For an integer
@@ -581,6 +605,134 @@ public final class ParquetRowGroupFilter {
             case PushdownFilterExtractor.OP_LE, PushdownFilterExtractor.OP_GT -> Math.floor(d);
             default -> d == Math.floor(d) ? d : Double.NaN;
         };
+    }
+
+    // Whether ANY row-level filter keeps this FLOAT row, at the width and with the tolerance it
+    // compares at: the column widens to double, and the two are called equal when they lie within
+    // DOUBLE_TOLERANCE (LtDoubleVVFunctionFactory is "!equals(l, r) && l < r", its negation
+    // "equals(l, r) || l > r", and so on for the rest).
+    // <p>
+    // The engine has TWO of these filters and their tolerance test differs at the boundary:
+    // Numbers.equals() is inclusive (|l - d| <= tolerance) while the compiled filter's
+    // double_cmp_epsilon (jit/impl/x86.h) is strict (|l - d| < tolerance), so at |l - d| ==
+    // tolerance exactly they disagree - "<" drops the row on the Java filter and keeps it on the
+    // compiled one. A parquet frame is evaluated by the Java filter today, but pruning is an
+    // unconditional drop that no later filter can undo, so certify against BOTH rather than depend
+    // on which one runs: count the row as kept when EITHER keeps it. The strict test decides the ops
+    // that exclude equality, the inclusive one the ops that include it. It costs nothing - the bound
+    // this yields is identical for every constant outside the tolerance band of a float.
+    private static boolean isRowKept(float c, double d, int opType) {
+        final double l = c;
+        final boolean isEq = Numbers.equals(l, d);
+        final boolean isEqStrict = isEq && Math.abs(l - d) < Numbers.DOUBLE_TOLERANCE;
+        switch (opType) {
+            case PushdownFilterExtractor.OP_LT:
+                return !isEqStrict && l < d;
+            case PushdownFilterExtractor.OP_LE:
+                return isEq || l < d;
+            case PushdownFilterExtractor.OP_GT:
+                return !isEqStrict && l > d;
+            default: // OP_GE
+                return isEq || l > d;
+        }
+    }
+
+    // Appends a bound into a FLOAT stats slot, or reports that it cannot be pushed down. The stats
+    // are 32-bit floats, but the row-level filter compares a FLOAT column at DOUBLE width (there is
+    // no (FLOAT, FLOAT) comparison factory - only the double ones, e.g. LtDoubleVVFunctionFactory
+    // "<(DD)" - so both operands promote), and getFloat() narrowed the bound with round-to-NEAREST.
+    // Nearest is not pruning-safe: it can move the bound ACROSS the double one, past a group's
+    // boundary float, and prune a group whose rows the filter keeps. Pruning runs before the row
+    // filter, so those rows are lost outright.
+    //
+    // Two things separate the pushed float bound from the double comparison, and the bound has to
+    // absorb both:
+    //  1. The TOLERANCE. QuestDB compares floating point with Numbers.DOUBLE_TOLERANCE (1e-10):
+    //     "c < d" is !Numbers.equals(c, d) && c < d, so it really keeps c < d - 1e-10, and
+    //     "c >= d" keeps c >= d - 1e-10. Pivot on d - tol for "<" / ">=" and on d + tol for
+    //     "<=" / ">". Ignoring the tolerance prunes a group holding a row that is merely
+    //     tolerance-EQUAL to the bound.
+    //  2. The NARROWING. Round what is left to a float in the direction the op preserves, as
+    //     integralBound does for the integer slots: "<" / ">=" need the SMALLEST float >= the
+    //     pivot, "<=" / ">" the LARGEST float <= it.
+    //
+    // Rounding is not enough on its own, because the two corrections are computed in double and can
+    // land the bound back ON a row the filter keeps: "d - tolerance" collapses onto a float whenever
+    // d sits about one tolerance away from one (the residual is far below half a double ulp), and
+    // near zero the tolerance band spans a great many floats, so no single rounding step reaches the
+    // end of it. Rather than reason about those cases, ask the filter: step the bound outward until
+    // the first row the pruner would DROP is a row the filter drops too. That is the whole safety
+    // property, checked directly - a bound is pushed only once isRowKept has certified it - and it
+    // takes one step or two for every bound a query realistically carries. Give up after
+    // MAX_FLOAT_BOUND_STEPS (only the near-zero band needs more, where every float is
+    // tolerance-equal to the bound) and decline the pushdown; a superset scan is always safe.
+    //
+    // EQ (and the IN list sharing its op code) has no direction to round in - it pushes the nearest
+    // float and prunes a group only when that value falls outside [min, max]. That is right exactly
+    // while the nearest float is the ONLY one within the tolerance of the bound, which is the case
+    // once the float spacing exceeds the tolerance (|bound| above roughly 8e-4). Below that the band
+    // holds several floats, the group may hold one that is not the nearest, and pruning drops rows
+    // the filter keeps: for "c6 = 0.0005", the floats 4.9999997E-4, 5.0E-4 and 5.000001E-4 are all
+    // tolerance-equal to the bound, yet only 5.0E-4 is pushed. So certify EQ too - decline unless
+    // the neighbouring floats are outside the band. (The hole predates this change: master pushes
+    // the identical (float) d. The DOUBLE arm carries the same tolerance blindness at every
+    // magnitude and is left alone here - see the PR notes.)
+    //
+    // BETWEEN carries two bounds with no single direction and never reaches a FLOAT column today
+    // (QuestDB accepts it over TIMESTAMP only); decline it. A NULL (NaN) bound compares false
+    // against everything, so nothing is kept and the bound certifies at once; the native side
+    // rejects a NaN bound anyway.
+    private static boolean tryPutFloatFromDouble(MemoryCARWImpl filterValues, double d, int opType) {
+        final boolean isRoundUp;  // "<" / ">=" pivot on d - tolerance, "<=" / ">" on d + tolerance
+        final boolean isStepUp;   // the direction that makes the bound SAFER, not tighter
+        switch (opType) {
+            case PushdownFilterExtractor.OP_LT:
+                isRoundUp = true;
+                isStepUp = true;
+                break;
+            case PushdownFilterExtractor.OP_GE:
+                isRoundUp = true;
+                isStepUp = false;
+                break;
+            case PushdownFilterExtractor.OP_LE:
+                isRoundUp = false;
+                isStepUp = true;
+                break;
+            case PushdownFilterExtractor.OP_GT:
+                isRoundUp = false;
+                isStepUp = false;
+                break;
+            case PushdownFilterExtractor.OP_EQ: {
+                final float nearest = (float) d;
+                if (Numbers.equals((double) Math.nextUp(nearest), d)
+                        || Numbers.equals((double) Math.nextDown(nearest), d)) {
+                    // More than one float is tolerance-equal to the bound, so the group may hold a
+                    // matching row this one does not reach. Decline; a superset scan is always safe.
+                    return false;
+                }
+                filterValues.putFloat(nearest);
+                return true;
+            }
+            default:
+                return false;
+        }
+        final double pivot = isRoundUp ? d - Numbers.DOUBLE_TOLERANCE : d + Numbers.DOUBLE_TOLERANCE;
+        float bound = (float) pivot;
+        if (isRoundUp) {
+            if ((double) bound < pivot) {
+                bound = Math.nextUp(bound);
+            }
+        } else if ((double) bound > pivot) {
+            bound = Math.nextDown(bound);
+        }
+        for (int i = 0; i <= MAX_FLOAT_BOUND_STEPS; i++) {
+            if (!isRowKept(firstPrunedFloat(bound, opType), d, opType)) {
+                filterValues.putFloat(bound);
+                return true;
+            }
+            bound = isStepUp ? Math.nextUp(bound) : Math.nextDown(bound);
+        }
+        return false;
     }
 
     // Appends a FLOAT/DOUBLE bound into an INT stats slot (BYTE/SHORT/INT columns), or reports

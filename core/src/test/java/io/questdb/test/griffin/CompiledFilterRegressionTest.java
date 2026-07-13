@@ -1368,6 +1368,79 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInOperatorNullElementMatchesEqNullOnNarrowArithKey() throws Exception {
+        // An untyped NULL IN element reads a narrow-int key at the width '=' reads it: INT. Both
+        // paths used to widen the key (getLong / sx_i64) against a NULL element, which disagrees
+        // with '=', IS NULL and the projection for an INT-arithmetic key - the one key whose two
+        // widths can disagree about the sentinel. The JIT now keeps the key at i32 for the NULL
+        // pairing, mirroring the Java InLong path, and the filter stays vectorized (no sx_i64).
+        //
+        // Row 1: a*b = 65536*32768 wraps onto INT_NULL, so the row IS null; at long width the
+        //        product is +2^31, which is not LONG_NULL - the old code missed the row.
+        // Row 2: a*b = -2^30 * 2 wraps onto INT_NULL the same way (long width: -2^31).
+        // Row 3: a*b*c = 2^30 * 8 * 2^30 has value 0, but its long-width product overflows exactly
+        //        onto LONG_NULL - the old code matched a row that is not null.
+        // Row 4: a genuinely NULL key. Rows 5+ compute 3*3 = 9.
+        // The table has >= 64 rows so the vectorized (AVX2) loop is genuinely exercised.
+        assertMemoryLeak(() -> {
+            execute("create table y as (select" +
+                    " cast(case when x = 1 then 65_536 when x = 2 then -1_073_741_824 when x = 3 then 1_073_741_824 when x = 4 then null else 3 end as int) a," +
+                    " cast(case when x = 1 then 32_768 when x = 2 then 2 when x = 3 then 8 else 3 end as int) b," +
+                    " cast(case when x = 3 then 1_073_741_824 else 1 end as int) c," +
+                    " cast(x as int) rn," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            // RED on HEAD: IN (null) selected no row at all (it probed the widened key against
+            // LONG_NULL), while '= null' and IS NULL select rows 1, 2 and 4.
+            final String nullKeyRows = "rn\n1\n2\n4\n";
+            assertJitMatchesJava("select rn from y where (a*b) = null", true, nullKeyRows);
+            assertJitMatchesJava("select rn from y where (a*b) is null", true, nullKeyRows);
+            assertJitMatchesJava("select rn from y where (a*b) in (null)", true, nullKeyRows);
+            assertJitMatchesJava("select rn from y where (a*b) in (null, 999)", true, nullKeyRows);
+            assertJitMatchesJava("select rn from y where (a*b) in (null, 999, 7)", true, nullKeyRows);
+
+            // RED on HEAD: row 3's value is 0, but its long-width product is exactly LONG_NULL,
+            // so IN (null) matched it while '= null' did not.
+            assertJitMatchesJava("select rn from y where (a*b*c) = null", true, nullKeyRows);
+            assertJitMatchesJava("select rn from y where (a*b*c) in (null)", true, nullKeyRows);
+
+            // The NOT IN inversion: every row that is not null, and row 3 among them.
+            Assert.assertEquals(61, runQuery("select rn from y where (a*b) not in (null)"));
+            assertJitMatchesJava("select rn from y where (a*b*c) not in (null) and rn <= 4", true, "rn\n3\n");
+
+            // A NULL element next to a genuine LONG element: each pairing keeps its own width, so
+            // the LONG element still widens the key (and matches row 1's +2^31 product) while the
+            // NULL element wraps it.
+            assertJitMatchesJava("select rn from y where (a*b) in (null, 2_147_483_648L)", true, "rn\n1\n2\n4\n");
+
+            // The widened key was also compared against a MIS-SIZED NULL immediate. serializeNull
+            // emits the NULL at the observer's width (I4 here), and the backend maps INT_NULL onto
+            // LONG_NULL only when the immediate reaches the compare in a register: preload_constants
+            // (jit/common.h) hoists the first MAX_CONSTANTS = 8 integer constants, and past that cap
+            // imm2reg materializes a bare Imm with a movabs at the KEY's width - a raw -2^31. So the
+            // i64 key was tested against -2^31 instead of LONG_NULL: it matched row 2, whose
+            // long-width product is exactly -2^31 but which Java does not match, and MISSED row 4,
+            // the genuinely-null key. RED on HEAD (JIT returned row 2 alone; Java returned row 4).
+            //
+            // The divergence needs the NULL to land past the 8th constant in IR order, and IN
+            // elements serialize in reverse - so the NULL goes FIRST in the SQL list, behind exactly
+            // the 8 constants that fill the cache. One element more and serializeIn declines the
+            // filter outright (sqlJitMaxInListSizeThreshold counts the key, so 9 elements is the
+            // ceiling), falling back to Java and hiding the bug: this list is the whole window.
+            // Keeping the key at i32 removes the mixed-width compare entirely.
+            assertJitMatchesJava("select rn from y where (a*b) in (null,11,12,13,14,15,16,17,18)", true, nullKeyRows);
+            assertJitMatchesJava("select rn from y where (a*b) not in (null,11,12,13,14,15,16,17,18) and rn <= 4", true, "rn\n3\n");
+            // Control: the same list with the NULL in a cached slot (last in the SQL list) always
+            // agreed, which is why a short list never exposed this.
+            assertJitMatchesJava("select rn from y where (a*b) in (11,12,13,14,15,16,17,18,null)", true, nullKeyRows);
+
+            // Control: a plain INT column key is not width-split, so both widths already agreed.
+            assertJitMatchesJava("select rn from y where a in (null)", true, "rn\n4\n");
+        });
+    }
+
+    @Test
     public void testInOperatorOverflowFoldMatchesJavaOnConstantKey() throws Exception {
         // C1 regression: an overflowing INT arithmetic CONSTANT key on the left of a multi-value
         // IN() list. `k IN (e0, e1, ...)` is `k = e0 OR k = e1 OR ...`, and the Java filter reads
@@ -1558,13 +1631,20 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInOperatorOverflowNullElementForcesScalar() throws Exception {
-        // C3: a value-correct SX_I64 escaping to the vectorized (AVX2) path. A NULL (or overflow-INT
-        // constant) IN element widens a narrow-int arithmetic key via inKeyWidthOverride == I8, which
-        // emits SX_I64 - but NULL does not flip needsNarrowI64Widening, so the predicate-exit
-        // forceScalarMode stayed false and the filter ran AVX2, which has no SX_I64 opcode (it bails
-        // with a bare return), leaving a partial value stack and wrong rows. forceScalarMode is now a
-        // hard consequence of any SX_I64 emission, so such a filter always runs the scalar backend.
+    public void testInOperatorOverflowLongElementForcesScalar() throws Exception {
+        // C3: a value-correct SX_I64 must not escape to the vectorized (AVX2) path. An IN element
+        // that widens a narrow-int arithmetic key via inKeyWidthOverride == I8 emits SX_I64, an
+        // opcode AVX2 does not implement (it bails with a bare return, leaving a partial value
+        // stack and wrong rows). forceScalarMode is a hard consequence of any SX_I64 emission, so
+        // such a filter always runs the scalar backend.
+        //
+        // A genuine LONG element is the only widening pairing left: an untyped NULL element and an
+        // overflowing constant fold both take the I4 override (they wrap the key, matching '=' and
+        // the Java folder), so they emit no SX_I64 and keep the filter vectorized. A LONG element
+        // also flips needsNarrowI64Widening, which forces scalar on its own, so the emission-site
+        // tie is now defensive - it is what keeps the invariant from depending on that coincidence.
+        // See CompiledFilterIRSerializerTest#testInNullElementKeepsNarrowKeyVectorized for the
+        // exec-hint pins (NULL -> SINGLE_SIZE, LONG -> SCALAR).
         //
         // The table has >= 64 rows so the vectorized loop is genuinely exercised (a 1-row table runs
         // entirely in the scalar tail and hides the bug). Row 1 overflows: a*b = 1000000*1000000
@@ -1576,16 +1656,23 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000) k" +
                     " from long_sequence(64)) timestamp(k)");
 
-            // NULL element paired with an INT constant: the key widens against NULL (matches nothing)
-            // and wraps against -727379968 (matches row 1). RED on HEAD - AVX2 dropped the SX_I64.
-            assertJitMatchesJava("select a from y where (a*b) in (null, -727379968)", true);
-            assertJitMatchesJava("select a from y where (a*b) in (-727379968, null)", true);
-            assertJitMatchesJava("select a from y where (a*b) not in (null, -727379968)", true);
-            Assert.assertEquals(1, runQuery("select a from y where (a*b) in (null, -727379968)"));
-            Assert.assertEquals(63, runQuery("select a from y where (a*b) not in (null, -727379968)"));
+            // LONG element paired with an INT constant: the key widens against 10^12 (matches row 1
+            // at long width) and wraps against -727379968 (matches row 1 at INT width).
+            assertJitMatchesJava("select a from y where (a*b) in (1_000_000_000_000, -727_379_968)", true);
+            assertJitMatchesJava("select a from y where (a*b) in (-727_379_968, 1_000_000_000_000)", true);
+            assertJitMatchesJava("select a from y where (a*b) not in (1_000_000_000_000, -727_379_968)", true);
+            Assert.assertEquals(1, runQuery("select a from y where (a*b) in (1_000_000_000_000, -727_379_968)"));
+            Assert.assertEquals(63, runQuery("select a from y where (a*b) not in (1_000_000_000_000, -727_379_968)"));
+            // The widened pairing alone: only the long-width product matches.
+            assertJitMatchesJava("select a from y where (a*b) in (1_000_000_000_000)", true);
+            Assert.assertEquals(1, runQuery("select a from y where (a*b) in (1_000_000_000_000)"));
 
-            // control: an all-narrow list without a NULL/widening element stays correct.
+            // control: an all-narrow list emits no SX_I64 and stays vectorized.
             assertJitMatchesJava("select a from y where (a*b) in (5, -727379968)", true);
+            // control: a NULL element wraps the key, so it stays vectorized and matches no row here
+            // (no product wraps onto INT_NULL in this table).
+            assertJitMatchesJava("select a from y where (a*b) in (null, -727379968)", true);
+            Assert.assertEquals(1, runQuery("select a from y where (a*b) in (null, -727379968)"));
         });
     }
 
@@ -1674,11 +1761,12 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             Assert.assertEquals(1, runQuery("select a from y where ((a*b) not in (-727379968)) = (nl > 0)"));
             Assert.assertEquals(1, runQuery("select a from y where ((a*b) in (-727379968)) <> (nl > 0)"));
 
-            // The override also closes the degenerate single-element NULL list: the key now widens
-            // against the NULL element on both paths, so the row-2 key wrapping onto INT_MIN no
-            // longer spuriously equals the I4 NULL sentinel on the JIT.
+            // The override also drives the degenerate single-element NULL list: the key wraps
+            // (INT width) against the NULL element on both paths, so row 2 - whose product wraps
+            // onto INT_MIN, i.e. IS null - matches, exactly as '= null' does.
             assertJitMatchesJava("select a from y where (a*b) in (null)", true);
-            Assert.assertEquals(0, runQuery("select a from y where (a*b) in (null)"));
+            Assert.assertEquals(1, runQuery("select a from y where (a*b) in (null)"));
+            Assert.assertEquals(1, runQuery("select a from y where (a*b) = null"));
 
             // controls that already agreed: a LONG element widens the key on both paths; the
             // multi-value list drives the override per element (Bugfix 38); a constant-fold key
@@ -1830,15 +1918,14 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     public void testInOperatorOverflowWidenElementPerPairing() throws Exception {
         // C1/C2: an overflowing INT-arithmetic IN key against a list that mixes a genuine-LONG
         // element with an overflowing INT-arith element (C1) or a NULL element (C2). The Java
-        // InLong path reads the key per element: wrapped (getInt) against the INT-arith element,
-        // widened (getLong) against the LONG/NULL element. The JIT set the key width per element
+        // InLong path reads the key per element: wrapped (getInt) against the INT-arith and NULL
+        // elements, widened (getLong) against the LONG one. The JIT set the key width per element
         // but left the element on the predicate-global widen flag, so a coexisting LONG element
-        // over-widened the INT-arith element (C1), and a wrapped key hitting INT_MIN spuriously
-        // equalled the NULL sentinel against a NULL element (C2). serializeIn now reads both the
-        // element and the key at the pairing width.
+        // over-widened the INT-arith element (C1) and, with the NULL element, the key too (C2).
+        // serializeIn now reads both the element and the key at the pairing width.
         //
         // row1: a*b and c*d both wrap to -727379968 (widen to 10^12); el=999 matches neither.
-        // row2: a*b = 2^31 wraps to INT_MIN (== INT_NULL); c*d = 1; el=999.
+        // row2: a*b = 2^31 wraps to INT_MIN (== INT_NULL), so the key IS null; c*d = 1; el=999.
         assertMemoryLeak(() -> {
             execute("create table y (a int, b int, c int, d int, el long, k timestamp) timestamp(k)");
             execute("insert into y values (1000000, 1000000, 1000000, 1000000, 999, 1)," +
@@ -1852,12 +1939,15 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("select a from y where (a*b) not in (c*d, el)", true);
             Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a*b) in (c*d, el)"));
 
-            // C2: the key must widen against a NULL element, not wrap into INT_MIN and match the
-            // NULL sentinel. RED on HEAD - row2's wrapped key (INT_MIN == INT_NULL) matched null.
+            // C2: the NULL element wraps the key (INT width), so row2 - whose product wraps onto
+            // INT_MIN, i.e. IS null, as '= null' and the projection both report - matches it. The
+            // coexisting LONG element must not widen the key for the NULL pairing.
             assertJitMatchesJava("select a from y where (a*b) in (null, el)", true);
             assertJitMatchesJava("select a from y where (a*b) in (el, null)", true);
             assertJitMatchesJava("select a from y where (a*b) not in (null, el)", true);
-            Assert.assertEquals("a\n", runJavaToString("select a from y where (a*b) in (null, el)"));
+            Assert.assertEquals("a\n2\n", runJavaToString("select a from y where (a*b) in (null, el)"));
+            Assert.assertEquals("a\n2\n", runJavaToString("select a from y where (a*b) = null"));
+            Assert.assertEquals("a\n1000000\n", runJavaToString("select a from y where (a*b) not in (null, el)"));
 
             // control: an all-narrow list wraps both key and element (no width to mix).
             assertJitMatchesJava("select a from y where (a*b) in (c*d, 5)", true);
@@ -2276,6 +2366,117 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withComparisonOperator()
                 .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64");
         assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testFloatColumnVsConstantWithNoExactFloat() throws Exception {
+        // A FLOAT column always compares at DOUBLE width in the Java filter: there is no
+        // (FLOAT, FLOAT) comparison factory, only the double ones ("<(DD)"), so both operands
+        // promote. The JIT typed the constant down to F4 (the observer sees one 4-byte column, so
+        // no mixed size) and serializeNumber rounded it to the NEAREST float, comparing at float
+        // width - which selects different rows in either direction:
+        //   RED on HEAD: (a) "< 1.00000003" rounds the bound DOWN to 1.0f and drops the row
+        //   holding 1.0f that Java keeps; (b) "> 0.99999998" rounds it UP to 1.0f and drops the
+        //   same row; (c) "= 1.00000003" rounds it to 1.0f and MATCHES that row - returning a row
+        //   whose value is provably not the one asked for. markNarrowConstCmpWidenPair now sends any
+        //   constant with no exact float to the filter as a full double, so it compares at double
+        //   width exactly as the Java filter does (tolerance and all). Those predicates run scalar;
+        //   a constant WITH an exact float is untouched and keeps the vectorized path.
+        //
+        // The table has >= 64 rows so the vectorized loop is exercised on the shapes that keep it.
+        assertMemoryLeak(() -> {
+            execute("create table y as (select" +
+                    " cast(case when x = 1 then 1.0 when x = 2 then 16777216.0 else 5.0 end as float) f," +
+                    " cast(x as int) rn," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            // (a) the bound rounds DOWN to 1.0f: row 1 satisfies 1.0 < 1.00000003 at double width.
+            assertJitMatchesJava("select rn from y where f < 1.00000003", true, "rn\n1\n");
+            // (b) the bound rounds UP to 1.0f: row 1 satisfies 1.0 > 0.99999998 at double width.
+            //     Rows 3+ hold 5.0 and row 2 holds 2^24, so every row matches.
+            Assert.assertEquals(64, runQuery("select rn from y where f > 0.99999998"));
+            assertJitMatchesJava("select rn from y where f > 0.99999998 and rn <= 2", true, "rn\n1\n2\n");
+            // (c) the false positive: no float equals 1.00000003, so nothing may match.
+            assertJitMatchesJava("select rn from y where f = 1.00000003", true, "rn\n");
+            assertJitMatchesJava("select rn from y where f <> 1.00000003 and rn <= 2", true, "rn\n1\n2\n");
+
+            // An integer literal is no safer above 2^24: (float) 16777217 is 16777216, so the
+            // bound lands exactly on row 2's value.
+            assertJitMatchesJava("select rn from y where f < 16_777_217 and rn <= 2", true, "rn\n1\n2\n");
+            assertJitMatchesJava("select rn from y where f >= 16_777_217", true, "rn\n");
+            assertJitMatchesJava("select rn from y where f = 16_777_217", true, "rn\n");
+
+            // A negated constant takes the same route (the literal sits under a unary minus).
+            assertJitMatchesJava("select rn from y where f > -1.00000003 and rn <= 2", true, "rn\n1\n2\n");
+
+            // IN over a FLOAT key is an OR of equalities, so it takes the equality route: no float
+            // reproduces the bound, and the nearest one matched the row that rounds to it.
+            assertJitMatchesJava("select rn from y where f in (1.00000003, 2.5)", true, "rn\n");
+            assertJitMatchesJava("select rn from y where f not in (1.00000003, 2.5) and rn <= 2", true, "rn\n1\n2\n");
+            assertJitMatchesJava("select rn from y where f in (1.00000003)", true, "rn\n");
+            // ... and an exactly-representable element still matches, and still vectorizes.
+            assertJitMatchesJava("select rn from y where f in (5.0, 2.5) and rn <= 4", true, "rn\n3\n4\n");
+
+            // An ARITHMETIC float leaf reads the bound the same way a bare column does. These ops
+            // are value-preserving, so the key is still row 1's 1.0f either way.
+            assertJitMatchesJava("select rn from y where f + 0 < 1.00000003", true, "rn\n1\n");
+            assertJitMatchesJava("select rn from y where f * 1 < 1.00000003", true, "rn\n1\n");
+            assertJitMatchesJava("select rn from y where -f > -1.00000003", true, "rn\n1\n");
+            assertJitMatchesJava("select rn from y where f + 0 = 1.00000003", true, "rn\n");
+
+            // Controls: a bound WITH an exact float compares the same at either width, so it must
+            // keep the vectorized path and the same rows.
+            assertJitMatchesJava("select rn from y where f < 1.5 and rn <= 2", true, "rn\n1\n");
+            assertJitMatchesJava("select rn from y where f = 5.0 and rn <= 4", true, "rn\n3\n4\n");
+            assertJitMatchesJava("select rn from y where f > 4 and rn <= 4", true, "rn\n2\n3\n4\n");
+            // An explicit widening to DOUBLE selects the same rows (the JIT declines a cast and
+            // falls back to Java, so this pins the double-width answer the fix now agrees with).
+            assertJitMatchesJava("select rn from y where f::double < 1.00000003", false, "rn\n1\n");
+
+            // The comparison carries a TOLERANCE: QuestDB reads "f < d" as
+            // "!Numbers.equals(f, d) && f < d" with DOUBLE_TOLERANCE = 1e-10, so a row within 1e-10
+            // of the bound is EQUAL to it and "<" excludes it while ">=" keeps it. Only the double
+            // comparison reproduces that. Emitting a float bound instead - even one rounded in the
+            // direction the operator preserves - cannot: one float ulp near 1.0 is 1.2e-7, over a
+            // thousand times the tolerance, so the bound steps clean over the band and flips these
+            // rows in both directions. Every bound here sits inside the tolerance band around 1.0.
+            assertJitMatchesJava("select rn from y where f < 1.00000000005", true, "rn\n");
+            assertJitMatchesJava("select rn from y where f >= 1.00000000005 and rn <= 2", true, "rn\n1\n2\n");
+            assertJitMatchesJava("select rn from y where f <= 0.99999999995", true, "rn\n1\n");
+            assertJitMatchesJava("select rn from y where f > 0.99999999995 and rn <= 2", true, "rn\n2\n");
+            assertJitMatchesJava("select rn from y where f = 1.00000000005", true, "rn\n1\n");
+        });
+    }
+
+    @Test
+    public void testFloatWithLongOperandVsConstantWithNoExactFloat() throws Exception {
+        // A FLOAT leaf whose arithmetic has a LONG operand: QuestDB resolves "f + l" to
+        // AddDoubleFunctionFactory (LONG has no FLOAT overload), so the Java filter computes the sum
+        // at DOUBLE width, and so does the JIT - convert() promotes both operands to f64.
+        //
+        // This shape is NOT red without the production fix, and is not meant to be: a predicate over
+        // a FLOAT (4-byte) and a LONG (8-byte) column has mixed sizes, so the observer already types
+        // the constant F8 and serializeConstant already emits it exactly. It is here because
+        // isFloatLeaf now accepts an arithmetic subtree, which brings this shape into the marking
+        // path for the first time - the pin says the marking changes nothing for it.
+        //
+        // Row 1: f = 5e-8, l = 1, so (double) f + l = 1.0000000500000006, which is NOT < 1.00000003.
+        // Row 2: f = 5.0, l = 1 -> 6.0. The bound sits between the two, and only the double-width
+        // comparison places row 1 on the right side of it.
+        assertMemoryLeak(() -> {
+            execute("create table y as (select" +
+                    " cast(case when x = 1 then 5e-8 else 5.0 end as float) f," +
+                    " cast(case when x = 1 then 1 else 1 end as long) l," +
+                    " cast(x as int) rn," +
+                    " timestamp_sequence(0, 1000000) k" +
+                    " from long_sequence(64)) timestamp(k)");
+
+            assertJitMatchesJava("select rn from y where f + l < 1.00000003", true, "rn\n");
+            assertJitMatchesJava("select rn from y where f + l > 1.00000003 and rn <= 2", true, "rn\n1\n2\n");
+            assertJitMatchesJava("select rn from y where f + l <= 1.00000003", true, "rn\n");
+            assertJitMatchesJava("select rn from y where f + l = 1.00000003", true, "rn\n");
+        });
     }
 
     @Test

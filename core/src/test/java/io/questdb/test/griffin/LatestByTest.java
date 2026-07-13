@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
@@ -847,6 +849,28 @@ public class LatestByTest extends AbstractCairoTest {
                                 "INSERT INTO x SELECT (x * 1_000_000L)::timestamp, x, x::decimal(18,1) FROM long_sequence(1_000)",
                                 sqlExecutionContext
                         );
+                        // The leak is only observable while the sub-query's filter compiles to an
+                        // ASYNC filter: its PageFrameSequence allocates the circuit breaker at
+                        // compile time, and that is the native memory the rejected codegen used to
+                        // strand. Pin that routing here - if parallel-filter routing ever changes,
+                        // the base factory holds no native memory and the assertion below would
+                        // pass green with the leak reintroduced. Same table, same WHERE, same
+                        // worker pool; only the LATEST ON is dropped.
+                        try (RecordCursorFactory base = engine.select(
+                                "WITH cte0 AS (SELECT * FROM x) SELECT * FROM cte0 WHERE v > 0",
+                                sqlExecutionContext
+                        )) {
+                            // engine.select() hands back a QueryProgress wrapper; the filter sits under it.
+                            // Either async variant will do - both own the PageFrameSequence that
+                            // allocates the circuit breaker; which one compiles depends on the JIT.
+                            final RecordCursorFactory filter = base.getBaseFactory();
+                            Assert.assertTrue(
+                                    "the sub-query filter must compile to an async filter for this test to observe the "
+                                            + "leak, but got " + filter.getClass().getSimpleName(),
+                                    filter instanceof AsyncFilteredRecordCursorFactory
+                                            || filter instanceof AsyncJitFilteredRecordCursorFactory
+                            );
+                        }
                         try (RecordCursorFactory ignore = engine.select(
                                 "WITH cte0 AS (SELECT * FROM x) SELECT * FROM cte0 WHERE v > 0 LATEST ON ts PARTITION BY d",
                                 sqlExecutionContext

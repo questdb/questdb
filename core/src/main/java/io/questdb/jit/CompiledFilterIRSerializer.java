@@ -953,6 +953,41 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     /**
+     * The exact value of a numeric constant - bare, or under a unary minus - as the double the Java
+     * filter compares against a FLOAT leaf, or {@link Double#NaN} when {@code node} is not one.
+     * parseLong runs first: it accepts the underscore thousands separator (1_000_000) and
+     * parseDouble does not, so a separated integer literal would otherwise read as non-numeric.
+     */
+    private double floatCmpConstValue(ExpressionNode node) {
+        final ExpressionNode constNode;
+        final boolean isNegated;
+        if (node.type == ExpressionNode.CONSTANT) {
+            constNode = node;
+            isNegated = false;
+        } else if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            constNode = node.rhs != null ? node.rhs : node.lhs;
+            isNegated = true;
+        } else {
+            return Double.NaN;
+        }
+        if (constNode == null || constNode.type != ExpressionNode.CONSTANT
+                || constNode.token == null || isReservedConstantKeyword(constNode.token)) {
+            return Double.NaN;
+        }
+        double d;
+        try {
+            d = Numbers.parseLong(constNode.token);
+        } catch (NumericException notLong) {
+            try {
+                d = Numbers.parseDouble(constNode.token);
+            } catch (NumericException notNumeric) {
+                return Double.NaN;
+            }
+        }
+        return isNegated ? -d : d;
+    }
+
+    /**
      * Folds one operand's {@link #genuineArithType} into a running
      * comparison-width accumulator. Unlike {@link #promoteArithType}, a
      * non-numeric ({@link #UNDEFINED_CODE}) operand is treated as identity
@@ -1116,22 +1151,44 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     /**
      * Per-element IN width mirroring the Java InLongFunctionFactory
      * isIntWidthElement rule: a narrow-int (BYTE/SHORT/INT) key wraps (I4)
-     * against a narrow-int element, widens (I8) against anything else (LONG,
-     * TIMESTAMP, NULL). serializeIn reads both the element and the key at this
-     * width, so an overflowing INT-arith element wraps with the key while a
-     * coexisting LONG element widens only its own key=element pairing.
+     * against an INT-width element - a narrow-int one or an untyped NULL - and
+     * widens (I8) against anything else (LONG, TIMESTAMP). serializeIn reads both
+     * the element and the key at this width, so an overflowing INT-arith element
+     * wraps with the key while a coexisting LONG element widens only its own
+     * key=element pairing.
      * <p>
-     * A NULL element against a key that is not an arithmetic subtree is the one
-     * case where both widths select the same rows, so it takes the cheaper I4:
-     * the key's getInt() carries INT_NULL exactly when the row is NULL (only INT
-     * arithmetic can wrap onto -2^31 without being null), and serializeNull emits
-     * the INT_NULL immediate, so the I4 compare matches the same rows the I8 one
-     * does - without the SX_I64 on the key that would force the whole filter out
-     * of the vectorized path (see maybeEmitI64Widening). {@code i32 IN (1, 2, NULL)}
-     * therefore keeps AVX2.
+     * An untyped NULL element takes I4 for the same reason '=' does: it resolves to
+     * EqInt on a narrow key, which reads the key with getInt(), so the key is NULL
+     * exactly when its getInt() carries INT_NULL - also when a projection of the key
+     * prints null. That holds for an arithmetic key too, the only one whose two
+     * widths can disagree about the sentinel: widening it here would drop a key that
+     * wraps onto INT_NULL and match one whose long-width product overflows onto
+     * LONG_NULL while its value is not null (see InLongFunctionFactory#isIntWidthTag).
+     * Keeping the key at I4 also spares it the SX_I64 that would force the whole
+     * filter out of the vectorized path (see maybeEmitI64Widening), so
+     * {@code i32 IN (1, 2, NULL)} and {@code i32 * 2 IN (1, NULL)} both keep AVX2.
+     * <p>
+     * Keeping the key at I4 also removes the mixed-width compare that made the widened
+     * key wrong in the first place. serializeNull emits the NULL at the observer's
+     * width, so a widened (I8) key was compared against an I4 INT_NULL immediate, and
+     * the backend only maps INT_NULL onto LONG_NULL when the immediate reaches it in a
+     * register (int32_to_int64, jit/impl/x86.h): preload_constants hoists the first
+     * MAX_CONSTANTS (8) integer constants into registers, and past that cap read_imm
+     * hands the compare a bare Imm, which load_registers/imm2reg materialize with a
+     * movabs at the KEY's width - a raw -2^31, not LONG_NULL. An IN list with 9 or more
+     * constants (the JIT declines above 10) therefore matched any row whose long-width
+     * key happened to equal -2^31 and missed the genuinely-null ones. The key is a
+     * column read, never an Imm, so at I4 the only conversion left is the null-aware
+     * one on the key itself. That conversion is scalar-only - avx2.h#convert has no
+     * i32-to-i64 case at all - but an I8 NULL immediate can only appear next to an I8
+     * element, whose own pairing emits SX_I64 and forces scalar mode, so the vectorized
+     * backend never sees a mixed-width compare.
+     * <p>
+     * The caller applies this only to a width-sensitive key (see
+     * {@link #isWidthSensitiveInKey}), so the pairing width follows from the element alone.
      */
-    private int inKeyElementWidth(ExpressionNode inKey, ExpressionNode element) {
-        if (inKey.type != ExpressionNode.OPERATION && isNullConstant(element)) {
+    private int inKeyElementWidth(ExpressionNode element) {
+        if (isNullConstant(element)) {
             return I4_TYPE;
         }
         final int elementType = genuineArithType(element);
@@ -1151,17 +1208,57 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return columnTypeTag == ColumnType.BOOLEAN;
     }
 
-    // A FLOAT column or bind-variable leaf. An out-of-INT-range integer constant compared
-    // directly against one types down to F4 (INT and FLOAT are both 4 bytes, so the observer
-    // sees no mixed size), and serializeNumber would then emit the constant as a lossy 32-bit
-    // float. The Java filter promotes both operands to double and compares exactly, so widen
-    // the constant to i64: scalar mode is forced and its convert() promotes the float column
-    // to double too. DOUBLE (F8) already compares exactly, so it is intentionally excluded.
+    /**
+     * Reports whether {@code node} is a numeric constant - bare, or under a unary minus - whose
+     * value no 32-bit float carries exactly, i.e. one that {@link #serializeNumber}'s F4 arm
+     * would round. A FLOAT column is always compared at DOUBLE width by the Java filter (there
+     * is no (FLOAT, FLOAT) comparison factory - only the double ones, so both operands promote),
+     * so such a constant has to reach the compiled filter as a double or the two paths diverge.
+     * <p>
+     * Round-to-nearest is wrong in both directions, which is why every op is affected rather
+     * than just some: {@code f < 1.00000003} rounds the bound DOWN to 1.0f and drops a row
+     * holding 1.0f that the Java filter keeps, {@code f > 0.99999998} rounds it UP to 1.0f and
+     * drops the same row, and {@code f = 1.00000003} rounds it to 1.0f and MATCHES that row -
+     * a row whose value is not the one asked for. An integer literal is no safer above 2^24
+     * ({@code (float) 16777217} is 16777216).
+     */
+    private boolean isFloatInexactConst(ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        final double d = floatCmpConstValue(node);
+        if (Numbers.isNull(d)) {
+            return false; // not a numeric constant
+        }
+        return (double) (float) d != d;
+    }
+
+    // A FLOAT-typed operand: a column, a bind variable, or an arithmetic subtree over them. A
+    // constant compared directly against one types down to F4 (INT and FLOAT are both 4 bytes, so
+    // the observer sees no mixed size), and serializeNumber would then emit it as a lossy 32-bit
+    // float, while the Java filter compares both operands at double width - there is no
+    // (FLOAT, FLOAT) comparison factory. markFloatCmpConst puts that right. An arithmetic subtree
+    // counts: "f + 0 < 1.00000003" reads the bound the same way a bare column does. A CONSTANT is
+    // excluded - a constant-vs-constant comparison has no column side to bound. (A negated constant
+    // is an OPERATION and still slips through, but such a predicate has no column at all, so
+    // serializeConstant rejects it and the JIT declines the filter.) DOUBLE (F8) already compares
+    // exactly, so it is intentionally excluded too.
     private boolean isFloatLeaf(ExpressionNode node) {
-        if (node == null || (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.BIND_VARIABLE)) {
+        if (node == null || node.type == ExpressionNode.CONSTANT) {
             return false;
         }
         return arithExprType(node) == F4_TYPE;
+    }
+
+    /**
+     * Reports whether a constant compared against a FLOAT leaf needs the double-width treatment,
+     * i.e. whether the 32-bit float {@link #serializeNumber} would emit for it differs from the
+     * value the Java filter compares at double width. Two spellings reach this: an out-of-INT-range
+     * integer literal (the original rule - {@code (float) 5000000001} is 5000000000), and any other
+     * literal with no exact float, fractional or not (see {@link #isFloatInexactConst}).
+     */
+    private boolean isFloatWideningConst(ExpressionNode node) {
+        return (isIntegerConst(node) && arithExprType(node) == I8_TYPE) || isFloatInexactConst(node);
     }
 
     /**
@@ -1346,6 +1443,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } catch (NumericException ignore) {
         }
         return null;
+    }
+
+    /**
+     * Routes a constant with no exact 32-bit float that a comparison puts against a FLOAT leaf (see
+     * {@link #isFloatInexactConst}) onto the double-width path: {@link #serializeConstant} emits it
+     * through the 64-bit arm and the marker forces scalar mode, whose convert() promotes the float
+     * leaf to double. Both filters then run the SAME comparison - QuestDB compares floating point
+     * with a tolerance ({@code Numbers.DOUBLE_TOLERANCE}, 1e-10: {@code LtDoubleVVFunctionFactory}
+     * is {@code !Numbers.equals(l, r) && l < r}, and the backend's cmp_lt / cmp_eq apply
+     * DOUBLE_EPSILON the same way) - so this is exact agreement rather than an approximation of it.
+     * <p>
+     * Emitting a float bound instead, rounded in the direction the operator preserves, looks like it
+     * should work and does not: it reproduces the comparison only under EXACT IEEE ordering. The
+     * tolerance is 1e-10 while one float ulp near 1.0 is 1.2e-7, so shifting the bound by an ulp
+     * steps clean over the band. A constant within the tolerance of a float then flips rows in both
+     * directions - {@code f < 1.00000000005} against a row holding 1.0f is a match for the rounded
+     * bound but a tolerance-EQUAL (so excluded) for the Java filter. The bound has to carry the
+     * tolerance to be rounded safely, and at that point the double comparison is what is wanted
+     * anyway. (The parquet pruner cannot widen its stats slot, so it folds the tolerance into the
+     * bound instead - see ParquetRowGroupFilter#tryPutFloatFromDouble.)
+     */
+    private void markFloatCmpConst(ExpressionNode constNode) {
+        addI64WidenLeaf(constNode);
     }
 
     /**
@@ -1704,15 +1824,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             }
                         }
                     }
+                } else if (isFloatLeaf(key)) {
+                    // IN over a FLOAT key is an OR of equalities, and equality against a constant
+                    // with no exact float has no float bound that reproduces it: any float emitted
+                    // would match the rows that round to it, so the JIT returned rows whose value is
+                    // not the one asked for (and NOT IN dropped them). Widen every such element to
+                    // double - the scalar convert() promotes the float key alongside it. The
+                    // single-value form keeps key / element in lhs / rhs and takes the pair path
+                    // below, which routes to the same rule via markFloatCmpConst.
+                    for (int i = 0, n = node.args.size() - 1; i < n; i++) {
+                        final ExpressionNode element = node.args.getQuick(i);
+                        if (isFloatWideningConst(element)) {
+                            addI64WidenLeaf(element);
+                        }
+                    }
                 }
             } else {
-                markNarrowConstCmpWidenPair(node.lhs, node.rhs);
+                markNarrowConstCmpWidenPair(node);
             }
             return;
         }
         if (node.type == ExpressionNode.OPERATION) {
             if (node.paramCount == 2 && isComparisonToken(node.token)) {
-                markNarrowConstCmpWidenPair(node.lhs, node.rhs);
+                markNarrowConstCmpWidenPair(node);
             }
             markNarrowConstCmpWidenLeaves(node.lhs);
             markNarrowConstCmpWidenLeaves(node.rhs);
@@ -1723,9 +1857,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     // Widens a narrow-int leaf and the out-of-INT-range integer constant it is
-    // paired with (either operand order). A FLOAT leaf paired with such a constant
-    // widens only the constant - see isFloatLeaf and markNarrowConstCmpWidenLeaves.
-    private void markNarrowConstCmpWidenPair(ExpressionNode a, ExpressionNode b) {
+    // paired with (either operand order). A FLOAT leaf paired with a constant that has no exact
+    // float widens the constant alone - see markFloatCmpConst.
+    private void markNarrowConstCmpWidenPair(ExpressionNode cmp) {
+        final ExpressionNode a = cmp.lhs;
+        final ExpressionNode b = cmp.rhs;
         final ExpressionNode narrowLeaf;
         final ExpressionNode constNode;
         if (isNarrowIntLeaf(a) && isIntegerConst(b)) {
@@ -1734,29 +1870,23 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         } else if (isNarrowIntLeaf(b) && isIntegerConst(a)) {
             narrowLeaf = b;
             constNode = a;
-        } else if (isFloatLeaf(a) && b != null && b.type == ExpressionNode.CONSTANT && isIntegerConst(b)) {
-            // The constant only widens - the FLOAT column is promoted to double by
-            // the scalar convert(), not sign-extended. A folded / negated overflow
-            // constant is an OPERATION handled by the fold-root path (descend +
-            // markI64WidenFoldRoots), so restrict this to a bare CONSTANT.
-            narrowLeaf = null;
-            constNode = b;
-        } else if (isFloatLeaf(b) && a != null && a.type == ExpressionNode.CONSTANT && isIntegerConst(a)) {
-            narrowLeaf = null;
-            constNode = a;
+        } else if (isFloatLeaf(a) && isFloatWideningConst(b)) {
+            markFloatCmpConst(b);
+            return;
+        } else if (isFloatLeaf(b) && isFloatWideningConst(a)) {
+            markFloatCmpConst(a);
+            return;
         } else {
             return;
         }
-        // Only an out-of-INT-range constant diverges; an in-range one already compares
-        // at int width on both paths, and widening it would needlessly force scalar mode.
+        // Only an out-of-INT-range constant diverges against a narrow-int leaf; an in-range one
+        // already compares at int width on both paths, and widening it would needlessly force
+        // scalar mode.
         if (arithExprType(constNode) != I8_TYPE) {
             return;
         }
-        // A narrow-int leaf sign-extends alongside the constant (value-preserving); a
-        // FLOAT leaf is left untouched and promoted to double by the scalar convert().
-        if (narrowLeaf != null) {
-            addI64WidenLeaf(narrowLeaf);
-        }
+        // The narrow-int leaf sign-extends alongside the constant (value-preserving).
+        addI64WidenLeaf(narrowLeaf);
         addI64WidenLeaf(constNode);
     }
 
@@ -1789,11 +1919,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (isWidened) {
             putOperator(SX_I64);
             // SX_I64 has no AVX2 implementation (avx2.h dispatches it to a bare return), so any
-            // filter that emits it must run scalar. The predicate-exit forceScalarMode computation
-            // (see serialize) catches the needsNarrowI64Widening/i64WidenLeaves triggers, but the
-            // per-element IN-key override (inKeyWidthOverride == I8, e.g. a NULL or overflow element)
-            // emits SX_I64 without flipping either flag. Tie forceScalarMode to the emission itself so
-            // a value-correct SX_I64 can never escape to the vectorized path.
+            // filter that emits it must run scalar. Every trigger that reaches here today also
+            // flips a flag the predicate-exit forceScalarMode computation (see serialize) already
+            // catches: the only IN-key override that widens is a genuine LONG/TIMESTAMP element,
+            // and that flips needsNarrowI64Widening too (an untyped NULL and an overflowing
+            // constant fold both take the I4 override, see inKeyElementWidth). Tying
+            // forceScalarMode to the emission itself keeps that a hard invariant rather than a
+            // coincidence of the current width rules, so a future override path cannot let a
+            // value-correct SX_I64 escape to the vectorized path.
             forceScalarMode = true;
         }
     }
@@ -2083,6 +2216,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // I8 IMM instead. Flagging forces scalar mode, where the scalar convert()
                 // widens the narrow operand to i64 and int32*int64 stays exact.
                 numberTypeCode = I8_TYPE;
+            } else if (isWidenedToI64 && !isNarrowKept && numberTypeCode == F4_TYPE) {
+                // A constant with no exact 32-bit float that a comparison puts against a FLOAT leaf
+                // (markFloatCmpConst marks every operator, ordering and equality alike). The F4 arm
+                // below would round it to the nearest float - which the Java filter never does,
+                // since a FLOAT column always compares at double width - so the two paths would
+                // select different rows, and '=' would even match a row holding a different value.
+                // Route it through the 64-bit arm, which emits an exact I8 IMM for an integer
+                // literal (above 2^24 a float cannot hold one) and a full F8 double otherwise.
+                // Either way the marker forces scalar mode, whose convert() promotes the float leaf
+                // to double - (f32, i64) and (f32, f64) both land on float_to_double - so both
+                // filters run the same tolerance-aware double comparison. AVX2 implements neither
+                // conversion, which is why this must not escape the scalar backend.
+                numberTypeCode = F8_TYPE;
             }
             serializeNumber(offset, position, token, numberTypeCode, negated);
         }
@@ -2171,7 +2317,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // Single value: short-circuit, unrolled version of the below loop
                 // Two values: short-circuit, unrolled version of the below loop
                 if (isWidthSensitiveKey) {
-                    inKeyWidthOverride = inKeyElementWidth(inKey, predicateContext.inOperationNode.rhs);
+                    inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
                 }
                 traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
                 traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
@@ -2188,7 +2334,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // Read both the element and the key at this pairing's width so a coexisting
                     // LONG element cannot widen an overflowing INT-arith element the key wraps.
                     if (isWidthSensitiveKey) {
-                        inKeyWidthOverride = inKeyElementWidth(inKey, args.get(i));
+                        inKeyWidthOverride = inKeyElementWidth(args.get(i));
                     }
                     traverseAlgo.traverse(args.get(i), this);
                     traverseAlgo.traverse(args.getLast(), this);
@@ -2211,7 +2357,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         // Non-short-circuit mode: use traditional boolean ORs
         if (args.size() < 3) {
             if (isWidthSensitiveKey) {
-                inKeyWidthOverride = inKeyElementWidth(inKey, predicateContext.inOperationNode.rhs);
+                inKeyWidthOverride = inKeyElementWidth(predicateContext.inOperationNode.rhs);
             }
             traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
             traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
@@ -2224,7 +2370,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             // Read both the element and the key at this pairing's width (see the short-circuit
             // loop above and inKeyElementWidth).
             if (isWidthSensitiveKey) {
-                inKeyWidthOverride = inKeyElementWidth(inKey, args.get(i));
+                inKeyWidthOverride = inKeyElementWidth(args.get(i));
             }
             traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);
