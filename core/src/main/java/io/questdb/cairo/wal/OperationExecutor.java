@@ -273,7 +273,14 @@ public class OperationExecutor implements Closeable {
                     // let the calling code handle a distressed writer (mirrors TableWriter.apply).
                     tableWriter.rollback();
                     // A WAL-tolerable error is "skip this txn, mark it applied" (mirrors TableWriter.apply) ONLY on
-                    // the atomic routes, where NOTHING was durably committed for this delete. On the opt-in
+                    // the atomic routes. On the atomic route a WAL-tolerable error is reachable only BEFORE the
+                    // Parquet-convert commit (#1): the convert pre-pass may already have durably landed at the PRIOR
+                    // seqTxn S-1 (in-range partitions un-tiered to native), but everything after it - the replace
+                    // surgery and its housekeeping - raises only critical errnos (the T6 crash-window path relies on
+                    // this), so a WAL-tolerable error cannot reach this branch once commit #1 has landed. The skip is
+                    // therefore sound either way: either nothing was durably committed, or only commit #1's
+                    // data-preserving format change at S-1 persisted, which a re-run of txn S redoes idempotently as
+                    // a no-op (no rows lost). On the opt-in
                     // disk-bounded route, earlier windows already committed at the durable seqTxn S-1; finalizing at
                     // S here would mark a PARTIALLY-applied delete complete and it would never be retried (silent
                     // partial delete / data loss). Force not-applied and suspend instead, so ApplyWal2TableJob
