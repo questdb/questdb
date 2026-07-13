@@ -678,6 +678,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (writer.getEffectiveCommitMode() != CommitMode.ADAPTIVE) {
             return;
         }
+        // S5: role-aware skip. On a replica the adaptive durable epoch is redundant — the applied
+        // columns are a rebuildable cache of object-store truth (recovery = re-download + re-apply
+        // via the WalDownloader), so skip the per-batch fsyncMaterializedState + durable epoch
+        // copies. Fail-safe: the OSS default is ALWAYS_ON; only a live Enterprise replica installs
+        // REPLICA_SKIP. One volatile read on the hot apply path.
+        if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
+            return;
+        }
         final long intervalMs = config.getAdaptiveEpochIntervalMs();
         // A negative interval disables adaptive epochs entirely (operator opt-out / test isolation).
         if (intervalMs < 0) {
