@@ -3348,8 +3348,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Reclaim partition directories superseded across ALL windows in one drain, AFTER the single commit00
         // - draining earlier would unlink dirs the not-yet-durable txn still references. Per-window candidates
         // were accumulated in replaceRangeRemoveCandidates because processO3Block clears partitionRemoveCandidates
-        // per window. Append (do not clear the live list first) so any candidate commit00 itself queued still
-        // drains, then clear the accumulator for the next bracket on this writer.
+        // per window. The live partitionRemoveCandidates is normally empty here (each window's finally clears it
+        // after accumulating); append rather than replace is a strictly-safe merge that does not depend on that,
+        // then clear the accumulator for the next bracket on this writer.
         partitionRemoveCandidates.add(replaceRangeRemoveCandidates);
         replaceRangeRemoveCandidates.clear();
         housekeep(configuration.getMicrosecondClock().getTicks());
