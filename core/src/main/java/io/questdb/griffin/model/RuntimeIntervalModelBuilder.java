@@ -113,8 +113,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // A boundary that was set but never paired (e.g. the other BETWEEN bound failed to
         // translate) was never transferred into dynamicRangeList, so its compiled function is
         // still owned here and must be freed to avoid leaking the cursor factory on the rollback
-        // path. A completed pair leaves betweenBoundarySet=false with its functions owned by
-        // dynamicRangeList, so this never double-frees a transferred function.
+        // path. A completed pair leaves betweenBoundarySet=false after its completion helper
+        // either retains or frees every accepted function, so this never double-frees an owner.
         if (betweenBoundarySet) {
             Misc.free(betweenBoundaryFunc);
         }
@@ -328,10 +328,17 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             betweenBoundary = timestamp;
             betweenBoundarySet = true;
         } else {
-            if (betweenBoundaryFunc == null) {
+            final long previousBoundary = betweenBoundary;
+            final Function previousBoundaryFunc = betweenBoundaryFunc;
+            // Transfer the pending boundary to this completion path before applying it. This keeps
+            // clearBetweenParsing() from freeing the same function if intersectEmpty() runs below.
+            betweenBoundary = Numbers.LONG_NULL;
+            betweenBoundaryFunc = null;
+            betweenBoundarySet = false;
+            if (previousBoundaryFunc == null) {
                 // Constant interval
-                long lo = Math.min(timestamp, betweenBoundary);
-                long hi = Math.max(timestamp, betweenBoundary);
+                long lo = Math.min(timestamp, previousBoundary);
+                long hi = Math.max(timestamp, previousBoundary);
                 if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
                     if (!betweenNegated) {
                         intersectEmpty();
@@ -349,9 +356,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     }
                 }
             } else {
-                intersectBetweenSemiDynamic(betweenBoundaryFunc, timestamp);
+                intersectBetweenSemiDynamic(previousBoundaryFunc, timestamp);
             }
-            betweenBoundarySet = false;
         }
     }
 
@@ -360,12 +366,18 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             betweenBoundaryFunc = timestamp;
             betweenBoundarySet = true;
         } else {
-            if (betweenBoundaryFunc == null) {
-                intersectBetweenSemiDynamic(timestamp, betweenBoundary);
-            } else {
-                intersectBetweenDynamic(timestamp, betweenBoundaryFunc);
-            }
+            final long previousBoundary = betweenBoundary;
+            final Function previousBoundaryFunc = betweenBoundaryFunc;
+            // Transfer ownership of both accepted boundaries to the completion helper. The helper
+            // must either retain each function in dynamicRangeList or free it on a short circuit.
+            betweenBoundary = Numbers.LONG_NULL;
+            betweenBoundaryFunc = null;
             betweenBoundarySet = false;
+            if (previousBoundaryFunc == null) {
+                intersectBetweenSemiDynamic(timestamp, previousBoundary);
+            } else {
+                intersectBetweenDynamic(timestamp, previousBoundaryFunc);
+            }
         }
     }
 
@@ -543,19 +555,32 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     private void intersectBetweenDynamic(Function funcValue1, Function funcValue2) {
         if (isEmptySet()) {
+            Misc.free(funcValue1);
+            if (funcValue2 != funcValue1) {
+                Misc.free(funcValue2);
+            }
             return;
         }
 
-        short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
-        dynamicRangeList.add(funcValue1);
-        dynamicRangeList.add(funcValue2);
+        if (funcValue1 == funcValue2) {
+            // Retain one owner and evaluate it once when both boundaries share the same Function.
+            // Storing the same owner twice would make RuntimeIntervalModel.close() free it twice.
+            final short operation = betweenNegated ? IntervalOperation.SUBTRACT : IntervalOperation.INTERSECT;
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, operation, staticIntervals);
+            dynamicRangeList.add(funcValue1);
+        } else {
+            final short operation = betweenNegated ? IntervalOperation.SUBTRACT_BETWEEN : IntervalOperation.INTERSECT_BETWEEN;
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_SEPARATE_DYNAMIC, operation, staticIntervals);
+            dynamicRangeList.add(funcValue1);
+            dynamicRangeList.add(funcValue2);
+        }
         intervalApplied = true;
     }
 
     private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
         if (constValue == Numbers.LONG_NULL) {
+            Misc.free(funcValue);
             if (!betweenNegated) {
                 intersectEmpty();
             }
@@ -568,6 +593,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         if (isEmptySet()) {
+            Misc.free(funcValue);
             return;
         }
 

@@ -251,6 +251,71 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testBetweenSubqueryBoundsReleasedWhenIntervalAlreadyEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            createSchema();
+            seedData();
+
+            // The parser visits the rightmost AND terms first, so the contradictory constants
+            // empty the interval model before it compiles each BETWEEN boundary combination.
+            assertQuery("""
+                    SELECT ts FROM sensor
+                    WHERE ts BETWEEN (SELECT lo FROM bounds WHERE sel = 100)
+                                     AND (SELECT hi FROM bounds WHERE sel = 100)
+                      AND ts > '2022-01-01'
+                      AND ts < '2021-01-01'
+                    """).timestamp("ts").returns("ts\n");
+            assertQuery("""
+                    SELECT ts FROM sensor
+                    WHERE ts BETWEEN (SELECT lo FROM bounds WHERE sel = 100)
+                                     AND '2021-11-23T17:59:17.060338000Z'
+                      AND ts > '2022-01-01'
+                      AND ts < '2021-01-01'
+                    """).timestamp("ts").returns("ts\n");
+            assertQuery("""
+                    SELECT ts FROM sensor
+                    WHERE ts BETWEEN '2021-11-23T12:51:23.700716000Z'
+                                     AND (SELECT hi FROM bounds WHERE sel = 100)
+                      AND ts > '2022-01-01'
+                      AND ts < '2021-01-01'
+                    """).timestamp("ts").returns("ts\n");
+
+            // Reuse the parser after every empty-model ownership path.
+            assertSqlCursors(constantBounds, subqueryBounds);
+        });
+    }
+
+    @Test
+    public void testBetweenSubqueryBoundsReleasedWithNullBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            createSchema();
+            seedData();
+            String empty = "SELECT ts FROM sensor WHERE 1 = 2";
+            assertSqlCursors(
+                    empty,
+                    "SELECT ts FROM sensor WHERE ts BETWEEN " +
+                            "(SELECT lo FROM bounds WHERE sel = 100) AND NULL"
+            );
+            assertSqlCursors(
+                    empty,
+                    "SELECT ts FROM sensor WHERE ts BETWEEN NULL AND " +
+                            "(SELECT hi FROM bounds WHERE sel = 100)"
+            );
+            // NOT BETWEEN with NULL intentionally imposes no interval restriction.
+            assertSqlCursors(
+                    "SELECT ts FROM sensor",
+                    "SELECT ts FROM sensor WHERE ts NOT BETWEEN " +
+                            "(SELECT lo FROM bounds WHERE sel = 100) AND NULL"
+            );
+            assertSqlCursors(
+                    "SELECT ts FROM sensor",
+                    "SELECT ts FROM sensor WHERE ts NOT BETWEEN NULL AND " +
+                            "(SELECT hi FROM bounds WHERE sel = 100)"
+            );
+        });
+    }
+
     // A BETWEEN whose FIRST bound is a qualifying single-timestamp subquery but whose SECOND bound
     // is a non-qualifying subquery (wrong column count / non-timestamp) must not leak the first
     // bound's compiled cursor factory. The query errors (type mismatch), but the retained first
