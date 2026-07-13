@@ -580,9 +580,14 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     public void testPreventIntImplicitCastingToTimestampInSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (i int)");
+            execute("insert into tab values (1), (2), (3)");
 
-            assertQuery("select * from tab where i = (select max(i) from tab)")
-                    .fails(24, "left operand must be a TIMESTAMP, found: INT");
+            // int left operand routes to the dedicated int/cursor overload (=(IC)); it is a valid
+            // numeric comparison (never an implicit cast to TIMESTAMP). Rows are present so the
+            // assertion exercises the IC comparison itself, not merely that it compiles.
+            assertQuery("select * from tab where i = (select max(i) from tab)") // = 3
+                    .noLeakCheck()
+                    .returns("i\n3\n");
         });
     }
 
@@ -593,8 +598,11 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
                     ") timestamp(ts) partition by day");
 
+            // a VARCHAR left operand now re-routes to the numeric =(DC) overload, whose guard
+            // rejects a non-DOUBLE/FLOAT left operand, so the diagnostic reports the numeric
+            // candidate instead of the timestamp one (same tradeoff as the < / > overloads).
             assertQuery("select * from x where a != (select '1970-01-01T00:00:00.000000Z'::varchar)")
-                    .fails(22, "left operand must be a TIMESTAMP, found: VARCHAR");
+                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: VARCHAR");
         });
     }
 

@@ -42,7 +42,7 @@ import io.questdb.std.ObjList;
  * cursor scalar type, and delegates the direction-specific function construction to the concrete
  * factory.
  */
-abstract class AbstractLongCursorFunctionFactory implements FunctionFactory {
+public abstract class AbstractLongCursorFunctionFactory implements FunctionFactory {
 
     @Override
     public boolean isBoolean() {

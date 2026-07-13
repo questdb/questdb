@@ -41,7 +41,7 @@ import io.questdb.std.ObjList;
  * the scalar sub-query metadata and the left operand type, then delegates the direction-specific
  * function construction to the concrete factory.
  */
-abstract class AbstractDoubleCursorFunctionFactory implements FunctionFactory {
+public abstract class AbstractDoubleCursorFunctionFactory implements FunctionFactory {
 
     @Override
     public boolean isBoolean() {

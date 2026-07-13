@@ -53,7 +53,7 @@ import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
  * The per-row {@link #getBool(Record)} stays specialized in the concrete subclasses, so the hot
  * path is unaffected by this sharing.
  */
-abstract class AbstractScalarCursorFunction extends NegatableBooleanFunction implements BinaryFunction {
+public abstract class AbstractScalarCursorFunction extends NegatableBooleanFunction implements BinaryFunction {
     protected final Function leftFunc;
     private final RecordCursorFactory factory;
     private final Function rightFunc;
