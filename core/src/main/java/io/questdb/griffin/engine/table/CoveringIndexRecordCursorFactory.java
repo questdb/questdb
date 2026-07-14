@@ -34,7 +34,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
@@ -59,6 +58,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -1804,7 +1804,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
         private final RecordMetadata metadata;
-        private final BorrowedArray nullArray = new BorrowedArray();
         private final int[] queryColToIncludeIdx;
         private CoveringRowCursor cursor;
         private SymbolTable[] includeSymbolTables;
@@ -1832,8 +1831,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // ArrayView, not nothing: getArray() has callers that dereference it straight
                 // away (PGUtils, the record sinks), and they have no null to check.
             }
-            nullArray.ofNull();
-            return nullArray;
+            return ArrayConstant.NULL;
         }
 
         @Override

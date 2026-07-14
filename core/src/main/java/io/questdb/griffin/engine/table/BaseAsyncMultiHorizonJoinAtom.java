@@ -546,7 +546,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Clo
     @Override
     @TestOnly
     public long getSlotAcquireCount() {
-        return perWorkerLocks.getAcquireCount();
+        return perWorkerLocks.getSlotAcquireCount();
     }
 
     public MultiHorizonJoinSymbolTableSource getSymbolTableSource() {

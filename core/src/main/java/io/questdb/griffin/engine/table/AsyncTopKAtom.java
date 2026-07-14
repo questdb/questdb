@@ -302,7 +302,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     @Override
     @TestOnly
     public long getSlotAcquireCount() {
-        return perWorkerLocks.getAcquireCount();
+        return perWorkerLocks.getSlotAcquireCount();
     }
 
     public IntHashSet getSortKeyColumnIndexes() {

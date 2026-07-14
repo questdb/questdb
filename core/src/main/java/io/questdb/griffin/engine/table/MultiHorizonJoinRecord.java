@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -55,7 +55,6 @@ public class MultiHorizonJoinRecord implements Record {
     public static final int SOURCE_SEQUENCE = 1;
     public static final int SOURCE_SLAVE_BASE = 2;
 
-    private final BorrowedArray nullArray = new BorrowedArray();
     private final ObjList<Record> slaveRecords;
     private int[] columnIndices;
     private int[] columnSources;
@@ -74,8 +73,7 @@ public class MultiHorizonJoinRecord implements Record {
         if (src != null) {
             return src.getArray(columnIndices[col], columnType);
         }
-        nullArray.ofNull();
-        return nullArray;
+        return ArrayConstant.NULL;
     }
 
     @Override

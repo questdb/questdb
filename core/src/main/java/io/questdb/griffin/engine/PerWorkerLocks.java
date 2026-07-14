@@ -99,21 +99,6 @@ public class PerWorkerLocks {
     }
 
     /**
-     * Returns how many times a slot has been acquired since this instance was created. Unlike
-     * {@link #getAcquiredSlotCount()} this tally never goes down, so it tells a run where every
-     * worker released what it took from a run where no worker took a slot at all - both hold zero
-     * at the end.
-     */
-    @TestOnly
-    public long getAcquireCount() {
-        long count = 0;
-        for (int i = 0; i < workerCount; i++) {
-            count += (Integer.toUnsignedLong(locks.get(INTS_PER_SLOT * i)) + 1) >>> 1;
-        }
-        return count;
-    }
-
-    /**
      * Returns the number of slots currently held. Every acquired slot must be released, so this is
      * zero whenever no worker is inside a locked section. A non-zero count once all workers are done
      * means a slot leaked: there is no reset, so a leaked slot is lost for the lifetime of the owning
@@ -126,6 +111,21 @@ public class PerWorkerLocks {
             if (!isFree(locks.get(INTS_PER_SLOT * i))) {
                 count++;
             }
+        }
+        return count;
+    }
+
+    /**
+     * Returns how many times a slot has been acquired since this instance was created. Unlike
+     * {@link #getAcquiredSlotCount()} this tally never goes down, so it tells a run where every
+     * worker released what it took from a run where no worker took a slot at all - both hold zero
+     * at the end.
+     */
+    @TestOnly
+    public long getSlotAcquireCount() {
+        long count = 0;
+        for (int i = 0; i < workerCount; i++) {
+            count += (Integer.toUnsignedLong(locks.get(INTS_PER_SLOT * i)) + 1) >>> 1;
         }
         return count;
     }

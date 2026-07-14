@@ -33,7 +33,6 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -55,6 +54,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -1158,7 +1158,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
          * SAMPLE BY FILL, and the inherited UOE flags any upstream regression.
          */
         private class FillRecord implements Record {
-            private final BorrowedArray nullArray = new BorrowedArray();
 
             @Override
             public ArrayView getArray(int col, int columnType) {
@@ -1172,14 +1171,12 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                         // Buckets before a key's first row have nothing to carry forward. Hand out a
                         // NULL ArrayView, not a Java null: consumers from the array functions to the
                         // RecordChain an ORDER BY materializes into all read the array unguarded.
-                        nullArray.ofNull();
-                        yield nullArray;
+                        yield ArrayConstant.NULL;
                     }
                     case DISPATCH_CONSTANT -> dispatchConstant.getQuick(col).getArray(null);
                     default -> {
                         assert false : "unexpected dispatch code: " + currentDispatchCode[col];
-                        nullArray.ofNull();
-                        yield nullArray;
+                        yield ArrayConstant.NULL;
                     }
                 };
             }

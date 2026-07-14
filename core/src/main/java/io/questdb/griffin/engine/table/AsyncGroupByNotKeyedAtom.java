@@ -265,7 +265,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Reopen
     @Override
     @TestOnly
     public long getSlotAcquireCount() {
-        return perWorkerLocks.getAcquireCount();
+        return perWorkerLocks.getSlotAcquireCount();
     }
 
     public boolean hasNonBatchFunctions() {

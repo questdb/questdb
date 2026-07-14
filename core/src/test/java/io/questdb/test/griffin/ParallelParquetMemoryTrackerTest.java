@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
@@ -399,7 +400,10 @@ public class ParallelParquetMemoryTrackerTest extends AbstractCairoTest {
         // the circuit breaker stops them. The query timeout below is what turns that into a failed
         // assertion rather than a test that hangs.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1024 * 1024L);
-        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+        // Keep the timeout local to the breaker this test builds. Assigning the static
+        // circuitBreakerConfiguration would outlive the test: staticOverrides.reset() only runs
+        // @AfterClass, so every later test in the class would inherit the timeout below.
+        final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public long getQueryTimeout() {
                 return 30_000;

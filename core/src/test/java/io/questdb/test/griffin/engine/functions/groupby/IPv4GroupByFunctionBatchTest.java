@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -38,16 +37,12 @@ import io.questdb.griffin.engine.functions.groupby.MaxIPv4GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinIPv4GroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class IPv4GroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 654;
+public class IPv4GroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
     // Stands in for a row whose IPv4 column is NULL, as a column-top row reads.
     private static final Record NULL_IPv4_RECORD = new Record() {
         @Override
@@ -55,17 +50,6 @@ public class IPv4GroupByFunctionBatchTest {
             return Numbers.IPv4_NULL;
         }
     };
-    private long lastAllocated;
-    private long lastSize;
-
-    @After
-    public void tearDown() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
-        }
-    }
 
     @Test
     public void testCountIPv4Batch() {
@@ -231,12 +215,7 @@ public class IPv4GroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
-            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
-            // stored non-null has to survive such a batch. The stored-value term is what decides it:
-            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
-            // NULL is replaceable from below, which
-            // testLastNotNullIPv4BatchReplacesStoredNull pins from the other side.
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
             long ptr = allocateInts(ipv4("9.9.9.9"));
             function.computeBatch(value, ptr, 1, 100);
             Assert.assertEquals(ipv4("9.9.9.9"), function.getIPv4(value));
@@ -337,23 +316,6 @@ public class IPv4GroupByFunctionBatchTest {
         }
     }
 
-    private long allocateInts(int... values) {
-        if (values.length == 0) {
-            return 0;
-        }
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Integer.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (int value : values) {
-            Unsafe.putInt(addr, value);
-            addr += Integer.BYTES;
-        }
-        return lastAllocated;
-    }
-
     private int ipv4(String value) {
         return Numbers.parseIPv4Quiet(value);
     }
@@ -388,14 +350,5 @@ public class IPv4GroupByFunctionBatchTest {
         IntList argPositions = new IntList();
         argPositions.add(0);
         return (GroupByFunction) new LastNotNullIPv4GroupByFunctionFactory().newInstance(0, args, argPositions, null, null);
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }

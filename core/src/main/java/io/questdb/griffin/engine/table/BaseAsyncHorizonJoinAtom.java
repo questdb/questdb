@@ -474,7 +474,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     @Override
     @TestOnly
     public long getSlotAcquireCount() {
-        return perWorkerLocks.getAcquireCount();
+        return perWorkerLocks.getSlotAcquireCount();
     }
 
     @Override

@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
@@ -44,15 +43,11 @@ import io.questdb.griffin.engine.functions.groupby.LastGeoHashGroupByFunctionFac
 import io.questdb.griffin.engine.functions.groupby.LastNotNullGeoHashGroupByFunctionFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GeoHashGroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 543;
+public class GeoHashGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
     // Stands in for a row whose geohash column is NULL, as a column-top row reads.
     private static final Record NULL_GEO_RECORD = new Record() {
         @Override
@@ -75,17 +70,6 @@ public class GeoHashGroupByFunctionBatchTest {
             return GeoHashes.SHORT_NULL;
         }
     };
-    private long lastAllocated;
-    private long lastSize;
-
-    @After
-    public void tearDown() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
-        }
-    }
 
     @Test
     public void testCountGeoHashByteBatch() {
@@ -378,12 +362,7 @@ public class GeoHashGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
-            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
-            // stored non-null has to survive such a batch. The stored-value term is what decides it:
-            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
-            // NULL is replaceable from below, which
-            // testLastNotNullGeoHashBatchByteReplacesStoredNull pins from the other side.
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
             long ptr = allocateBytes((byte) 9);
             function.computeBatch(value, ptr, 1, 100);
             Assert.assertEquals(9, function.getGeoByte(value));
@@ -451,12 +430,7 @@ public class GeoHashGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
-            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
-            // stored non-null has to survive such a batch. The stored-value term is what decides it:
-            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
-            // NULL is replaceable from below, which
-            // testLastNotNullGeoHashBatchIntReplacesStoredNull pins from the other side.
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
             long ptr = allocateInts(9);
             function.computeBatch(value, ptr, 1, 100);
             Assert.assertEquals(9, function.getGeoInt(value));
@@ -504,12 +478,7 @@ public class GeoHashGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
-            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
-            // stored non-null has to survive such a batch. The stored-value term is what decides it:
-            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
-            // NULL is replaceable from below, which
-            // testLastNotNullGeoHashBatchLongReplacesStoredNull pins from the other side.
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
             long ptr = allocateLongs(9);
             function.computeBatch(value, ptr, 1, 100);
             Assert.assertEquals(9, function.getGeoLong(value));
@@ -542,12 +511,7 @@ public class GeoHashGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
-            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
-            // stored non-null has to survive such a batch. The stored-value term is what decides it:
-            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
-            // NULL is replaceable from below, which
-            // testLastNotNullGeoHashBatchShortReplacesStoredNull pins from the other side.
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
             long ptr = allocateShorts((short) 9);
             function.computeBatch(value, ptr, 1, 100);
             Assert.assertEquals(9, function.getGeoShort(value));
@@ -571,74 +535,6 @@ public class GeoHashGroupByFunctionBatchTest {
 
             Assert.assertEquals(7, function.getGeoShort(value));
         }
-    }
-
-    private long allocateBytes(byte... values) {
-        if (values.length == 0) {
-            return 0;
-        }
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = values.length;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (byte value : values) {
-            Unsafe.putByte(addr, value);
-            addr += Byte.BYTES;
-        }
-        return lastAllocated;
-    }
-
-    private long allocateInts(int... values) {
-        if (values.length == 0) {
-            return 0;
-        }
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Integer.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (int value : values) {
-            Unsafe.putInt(addr, value);
-            addr += Integer.BYTES;
-        }
-        return lastAllocated;
-    }
-
-    private long allocateLongs(long... values) {
-        if (values.length == 0) {
-            return 0;
-        }
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Long.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (long value : values) {
-            Unsafe.putLong(addr, value);
-            addr += Long.BYTES;
-        }
-        return lastAllocated;
-    }
-
-    private long allocateShorts(short... values) {
-        if (values.length == 0) {
-            return 0;
-        }
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Short.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (short value : values) {
-            Unsafe.putShort(addr, value);
-            addr += Short.BYTES;
-        }
-        return lastAllocated;
     }
 
     private GroupByFunction newFirstGeoHashFunction(Function columnFunction) {
@@ -675,14 +571,5 @@ public class GeoHashGroupByFunctionBatchTest {
         argPositions.add(0);
         return (GroupByFunction) new LastNotNullGeoHashGroupByFunctionFactory()
                 .newInstance(0, args, argPositions, null, null);
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }

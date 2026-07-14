@@ -2941,7 +2941,6 @@ public class ArrayTest extends AbstractCairoTest {
         });
     }
 
-
     @Test
     public void testLengthNull() throws Exception {
         assertMemoryLeak(() -> {
@@ -3693,7 +3692,6 @@ public class ArrayTest extends AbstractCairoTest {
                     33,
                     "dimLength must be an integer"
             );
-
 
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(10, 0, 1000000)",

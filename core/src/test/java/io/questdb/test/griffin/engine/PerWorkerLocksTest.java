@@ -58,21 +58,21 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         // two answers come from the same int - parity for held, value for the tally - so a release
         // that reset the slot to 0 instead of counting it up would read back 0 here.
         final PerWorkerLocks locks = new PerWorkerLocks(configuration, 4);
-        Assert.assertEquals(0, locks.getAcquireCount());
+        Assert.assertEquals(0, locks.getSlotAcquireCount());
 
         final int first = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        Assert.assertEquals(1, locks.getAcquireCount());
+        Assert.assertEquals(1, locks.getSlotAcquireCount());
         final int second = locks.acquireSlot(1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-        Assert.assertEquals(2, locks.getAcquireCount());
+        Assert.assertEquals(2, locks.getSlotAcquireCount());
 
         locks.releaseSlot(first);
         locks.releaseSlot(second);
         Assert.assertEquals(0, locks.getAcquiredSlotCount());
-        Assert.assertEquals(2, locks.getAcquireCount());
+        Assert.assertEquals(2, locks.getSlotAcquireCount());
 
         // Re-acquiring the same slot keeps counting.
         locks.releaseSlot(locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-        Assert.assertEquals(3, locks.getAcquireCount());
+        Assert.assertEquals(3, locks.getSlotAcquireCount());
         Assert.assertEquals(0, locks.getAcquiredSlotCount());
     }
 
@@ -182,7 +182,7 @@ public class PerWorkerLocksTest extends AbstractCairoTest {
         // Every acquire was released, and every one of them was counted: a lost CAS or a
         // double-counted acquire would show up here.
         Assert.assertEquals(0, locks.getAcquiredSlotCount());
-        Assert.assertEquals((long) threads * rounds, locks.getAcquireCount());
+        Assert.assertEquals((long) threads * rounds, locks.getSlotAcquireCount());
     }
 
     @Test

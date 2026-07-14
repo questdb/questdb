@@ -1595,9 +1595,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
-        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // navigateTo()/populateFrameMemory() decode the frame and can throw. See aggregate() for
+        // why that has to happen inside the try that releases the slot.
         try {
             final PageFrameMemory frameMemory;
             final boolean isParquetFrame = task.isParquetFrame();
@@ -1748,9 +1747,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
-        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // navigateTo()/populateFrameMemory() decode the frame and can throw. See aggregate() for
+        // why that has to happen inside the try that releases the slot.
         try {
             final PageFrameMemory frameMemory;
             final boolean isParquetFrame = task.isParquetFrame();
@@ -1931,9 +1929,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
-        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // navigateTo()/populateFrameMemory() decode the frame and can throw. See aggregate() for
+        // why that has to happen inside the try that releases the slot.
         try {
             final PageFrameMemory frameMemory;
             final boolean isParquetFrame = task.isParquetFrame();
@@ -2111,9 +2108,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
-        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // navigateTo()/populateFrameMemory() decode the frame and can throw. See aggregate() for
+        // why that has to happen inside the try that releases the slot.
         try {
             final PageFrameMemory frameMemory;
             final boolean isParquetFrame = task.isParquetFrame();
@@ -2378,9 +2374,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
-        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // navigateTo()/populateFrameMemory() decode the frame and can throw. See aggregate() for
+        // why that has to happen inside the try that releases the slot.
         try {
             final PageFrameMemory frameMemory;
             final boolean isParquetFrame = task.isParquetFrame();
@@ -2539,9 +2534,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
-        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // navigateTo()/populateFrameMemory() decode the frame and can throw. See aggregate() for
+        // why that has to happen inside the try that releases the slot.
         try {
             final PageFrameMemory frameMemory;
             final boolean isParquetFrame = task.isParquetFrame();
@@ -2699,9 +2693,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
-        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // navigateTo()/populateFrameMemory() decode the frame and can throw. See aggregate() for
+        // why that has to happen inside the try that releases the slot.
         try {
             final PageFrameMemory frameMemory;
             final boolean isParquetFrame = task.isParquetFrame();
@@ -2848,9 +2841,8 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final Function filter = atom.getMasterFilter(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledMasterFilter();
 
-        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
-        // inside the try that releases the slot: PerWorkerLocks has no reset and the atom
-        // outlives the query, so a leaked slot starves the pool.
+        // navigateTo()/populateFrameMemory() decode the frame and can throw. See aggregate() for
+        // why that has to happen inside the try that releases the slot.
         try {
             final PageFrameMemory frameMemory;
             final boolean isParquetFrame = task.isParquetFrame();

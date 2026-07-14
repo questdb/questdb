@@ -887,6 +887,24 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
+    /**
+     * Resolves a row's array entry to the address of its data, which starts with the shape header:
+     * one int per dimension. Returns 0 when the entry is NULL or the column is absent from this
+     * frame (a column top), which the array accessors map to their own NULL.
+     */
+    private long arrayDataAddr(int columnIndex, long rowIdx) {
+        final long auxAddr = auxPageAddresses.get(columnOffset + columnIndex);
+        if (auxAddr == 0) {
+            return 0;
+        }
+        final long auxEntryAddr = auxAddr + ArrayTypeDriver.getAuxVectorOffsetStatic(rowIdx);
+        if (Unsafe.getInt(auxEntryAddr + Long.BYTES) == 0) {
+            return 0;
+        }
+        final long dataOffset = Unsafe.getLong(auxEntryAddr) & ArrayTypeDriver.OFFSET_MAX;
+        return pageAddresses.get(columnOffset + columnIndex) + dataOffset;
+    }
+
     private ColumnTypeConverter.Fixed2VarConverter cacheTypeCastConverter(int columnIndex, int srcType, int dstType) {
         // The destination only affects the unsupported diagnostic in getFixedToVarConverter,
         // so the resolved singleton is the same for STRING and VARCHAR targets and one
@@ -1407,37 +1425,23 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     /**
-     * Reads one int out of the array's shape header, which sits at the start of the array's data
-     * and holds one int per dimension. Resolves the column the same way {@link #getArray} does, so
-     * a column top or a NULL entry reads as NULL rather than as a length.
+     * Reads one int out of the array's shape header. Resolves the column the same way
+     * {@link #getArray} does, so a column top or a NULL entry reads as NULL rather than as
+     * a length.
      */
     protected int getArrayDimLen0(int columnIndex, int dim, long rowIdx) {
-        final long auxAddr = auxPageAddresses.get(columnOffset + columnIndex);
-        if (auxAddr == 0) {
+        final long shapeAddr = arrayDataAddr(columnIndex, rowIdx);
+        if (shapeAddr == 0) {
             return Numbers.INT_NULL;
         }
-        final long auxEntryAddr = auxAddr + ArrayTypeDriver.getAuxVectorOffsetStatic(rowIdx);
-        if (Unsafe.getInt(auxEntryAddr + Long.BYTES) == 0) {
-            return Numbers.INT_NULL;
-        }
-        final long dataOffset = Unsafe.getLong(auxEntryAddr) & ArrayTypeDriver.OFFSET_MAX;
-        final long dataAddr = pageAddresses.get(columnOffset + columnIndex);
-        return Unsafe.getInt(dataAddr + dataOffset + (long) (dim - 1) * Integer.BYTES);
+        return Unsafe.getInt(shapeAddr + (long) (dim - 1) * Integer.BYTES);
     }
 
     protected double getArrayDouble1d2d0(int columnIndex, int columnType, int idx0, int idx1, long rowIdx) {
-        final long auxAddr = auxPageAddresses.get(columnOffset + columnIndex);
-        if (auxAddr == 0) {
+        final long shapeAddr = arrayDataAddr(columnIndex, rowIdx);
+        if (shapeAddr == 0) {
             return Double.NaN;
         }
-        final long auxEntryAddr = auxAddr + ArrayTypeDriver.getAuxVectorOffsetStatic(rowIdx);
-        final int sizeBytes = Unsafe.getInt(auxEntryAddr + Long.BYTES);
-        if (sizeBytes == 0) {
-            return Double.NaN;
-        }
-        final long dataOffset = Unsafe.getLong(auxEntryAddr) & ArrayTypeDriver.OFFSET_MAX;
-        final long dataAddr = pageAddresses.get(columnOffset + columnIndex);
-        final long shapeAddr = dataAddr + dataOffset;
         final int flatIndex;
         if (ColumnType.decodeArrayDimensionality(columnType) == 1) {
             if (idx0 >= Unsafe.getInt(shapeAddr)) {
@@ -1451,9 +1455,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             }
             flatIndex = idx0 * dimLen1 + idx1;
         }
-        // 1D and 2D double arrays: values always start at dataOffset + Double.BYTES
+        // 1D and 2D double arrays: values always start one Double.BYTES past the shape header
         // (1D: 4 bytes shape + 4 bytes padding; 2D: 8 bytes shape + 0 padding)
-        return Unsafe.getDouble(dataAddr + dataOffset + Double.BYTES + (long) flatIndex * Double.BYTES);
+        return Unsafe.getDouble(shapeAddr + Double.BYTES + (long) flatIndex * Double.BYTES);
     }
 
     protected BinarySequence getBin(long base, long offset, long dataLim, DirectByteSequenceView view) {

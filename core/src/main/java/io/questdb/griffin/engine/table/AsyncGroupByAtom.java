@@ -398,7 +398,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     @Override
     @TestOnly
     public long getSlotAcquireCount() {
-        return perWorkerLocks.getAcquireCount();
+        return perWorkerLocks.getSlotAcquireCount();
     }
 
     @Override

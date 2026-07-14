@@ -146,7 +146,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     @Override
     @TestOnly
     public long getSlotAcquireCount() {
-        return perWorkerLocks != null ? perWorkerLocks.getAcquireCount() : -1;
+        return perWorkerLocks != null ? perWorkerLocks.getSlotAcquireCount() : -1;
     }
 
     @Override

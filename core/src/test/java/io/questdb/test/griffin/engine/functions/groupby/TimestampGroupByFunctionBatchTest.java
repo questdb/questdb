@@ -24,17 +24,13 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.groupby.LastNotNullTimestampGroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,8 +39,7 @@ import org.junit.Test;
  * other types; TIMESTAMP had none, which left {@code LastNotNullTimestampGroupByFunction.computeBatch}
  * with no test of its own.
  */
-public class TimestampGroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 431;
+public class TimestampGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
     // Stands in for a row whose column is NULL, as a column-top row reads.
     private static final Record NULL_RECORD = new Record() {
         @Override
@@ -52,17 +47,6 @@ public class TimestampGroupByFunctionBatchTest {
             return Numbers.LONG_NULL;
         }
     };
-    private long lastAllocated;
-    private long lastSize;
-
-    @After
-    public void tearDown() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
-        }
-    }
 
     @Test
     public void testLastNotNullTimestampBatch() {
@@ -97,12 +81,7 @@ public class TimestampGroupByFunctionBatchTest {
         try (SimpleMapValue value = prepare(function)) {
             function.setNull(value);
 
-            // Frames reach a worker's slot out of order, so a batch can arrive at a LOWER rowId than
-            // the one the accumulator already holds. last_not_null wins by the highest rowId, so a
-            // stored non-null has to survive such a batch. The stored-value term is what decides it:
-            // the rowId comparison alone says no, and the accumulator is not empty. Only a stored
-            // NULL is replaceable from below, which
-            // testLastNotNullTimestampBatchReplacesStoredNull pins from the other side.
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
             long ptr = allocateLongs(99_000L);
             function.computeBatch(value, ptr, 1, 100);
             Assert.assertEquals(99_000L, function.getTimestamp(value));
@@ -118,10 +97,8 @@ public class TimestampGroupByFunctionBatchTest {
     public void testLastNotNullTimestampBatchReplacesStoredNull() {
         GroupByFunction function = newLastNotNullTimestampFunction();
         try (SimpleMapValue value = prepare(function)) {
-            // The row-by-row fallback for a frame with column tops calls computeFirst, which writes
-            // through unconditionally - NULL included - leaving a real rowId next to a NULL value.
-            // Frames reach a worker out of order, so a later frame's non-null at a LOWER rowId must
-            // still replace that stored NULL, as computeNext already does.
+            // computeFirst writes NULL through with a real rowId; a non-null at a lower rowId must still
+            // replace it. See the class javadoc.
             function.computeFirst(value, NULL_RECORD, 100);
 
             long ptr = allocateLongs(42_000L);
@@ -131,36 +108,10 @@ public class TimestampGroupByFunctionBatchTest {
         }
     }
 
-    private long allocateLongs(long... values) {
-        if (values.length == 0) {
-            return 0;
-        }
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Long.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (long value : values) {
-            Unsafe.putLong(addr, value);
-            addr += Long.BYTES;
-        }
-        return lastAllocated;
-    }
-
     private GroupByFunction newLastNotNullTimestampFunction() {
         return new LastNotNullTimestampGroupByFunction(
                 TimestampColumn.newInstance(COLUMN_INDEX, ColumnType.TIMESTAMP),
                 ColumnType.TIMESTAMP
         );
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }
