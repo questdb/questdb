@@ -1,9 +1,9 @@
 # PR #1087 — Finding #2 handoff: unify live-view startup and replay semantics
 
 Status: **OSS tracks 1-4, Enterprise track 5, and the OSS + ent fuzz halves of track 6 have
-landed. Only the restart/failure coverage tail remains.** The finding was deliberately left
-out of the Critical-findings fix commit (`fab9dff3a`), which addressed findings #1, #3, #4
-and #5.
+landed, as has the OSS seed restart/failure matrix. Only the replica-side restart/lag/promotion
+coverage under a finite boundary remains.** The finding was deliberately left out of the
+Critical-findings fix commit (`fab9dff3a`), which addressed findings #1, #3, #4 and #5.
 
 ## Where this stands (last updated 2026-07-14)
 
@@ -14,7 +14,7 @@ and #5.
 | 3. Initial bounded seed | DONE — same commit |
 | 4. Forward refresh and applied-base replay audit | DONE — `c1da9477c0` ("Floor live view replays at the START FROM bound") |
 | 5. Enterprise reconstruction and replication | DONE — OSS `3f203bb2a8` + ent `ee61c1dda` ("Reconstruct replica live views from the START FROM bound") |
-| 6. Regression coverage | Fuzz DONE on both sides — OSS `d333505d85`, ent `50800a3c2` (+ OSS fix `dc9a3ba641`). The restart/failure tail is open — see below |
+| 6. Regression coverage | Fuzz DONE on both sides — OSS `d333505d85`, ent `50800a3c2` (+ OSS fix `dc9a3ba641`). OSS seed restart/failure matrix DONE — `877c9c7dc9`. The replica restart/lag/promotion tail is open — see below |
 
 `41a7876bd9` makes event time the only membership rule on the primary: every view whose base
 has committed history CREATEs in SEEDING and seeds from its START FROM boundary, BEGINNING has
@@ -26,9 +26,16 @@ the same base rows for every start mode. `d333505d85` puts all three start modes
 first time, a boundary that CUTS the dataset — through the OSS fuzz generators, and found a real
 replay bug doing it (below).
 
-**Start here next:** the restart/failure half of the primary matrix and the replica
-restart/lag/promotion cases. There is no structural gap: the membership predicate is one
-expression, applied in one place per path, on both nodes. What is left is coverage.
+`877c9c7dc9` closes the primary's restart/failure matrix under a boundary that *cuts* the base —
+`.scp` resume, checkpoint-less re-sweep, the crash window just before the SEEDING-to-ACTIVE flip, an
+injected mid-seed failure, metadata drift, and IN MEMORY through the seed. It changed no production
+code: the paths were already correct, but every pre-existing seed restart test seeded from
+BEGINNING, which collapses the two coordinate spaces a finite boundary separates (details below).
+
+**Start here next:** the replica's restart / lag / promotion cases under a finite boundary, and the
+two-node explicit-timestamp parity test. Both are enterprise-side. There is no structural gap: the
+membership predicate is one expression, applied in one place per path, on both nodes. What is left
+is coverage.
 
 This is not a replica-only bug. The old OSS design used commit time for initial membership
 and event time for replay membership, so the primary could change its own result after an
@@ -472,14 +479,10 @@ drawn); 6 × both replica-lead fuzz classes; the ent deterministic LV suites.
 
 Still TODO:
 
-- Seed checkpoint (`.scp`) restore and a restart immediately *before* the SEEDING-to-ACTIVE
-  transition. The restart harness the earlier note asked for now exists — the two new
-  `LiveViewSmokeTest` restore tests remove the base WAL directory outright (`ff.rmdir` on
-  `<base>/wal1`) and rebuild the registry — so a checkpoint-less replay under a *finite* boundary is
-  a short hop from there; it just has not been written.
-- Base metadata drift and an injected mid-drain failure during seeding.
-- IN MEMORY views through the initial seed. (Fuzzed now — several arms combine `inMemory` with a
-  seeding pre-CREATE base under all three modes — but there is still no deterministic test.)
+- ~~Seed checkpoint (`.scp`) restore and a restart immediately *before* the SEEDING-to-ACTIVE
+  transition.~~ Landed — see the OSS seed restart/failure half below.
+- ~~Base metadata drift and an injected mid-drain failure during seeding.~~ Landed — same commit.
+- ~~IN MEMORY views through the initial seed.~~ Landed — same commit.
 - Explicit-timestamp primary/replica parity in a *two-node* test. The in-process replica fuzz now
   drives an explicit boundary through the replica's own reconstruction, and the predicate is shared,
   so what is left is the end-to-end pair (`LiveViewReplicationTest` covers NOW and BEGINNING).
@@ -488,6 +491,79 @@ Still TODO:
 - ~~Parser/SHOW CREATE round trips and rejection of omitted `START FROM`, old `BACKFILL`,
   malformed literals, duplicates, expressions, and NULL.~~ Landed with track 1.
 - ~~Fuzz: teach the OSS generators to pick all three start modes.~~ Landed — see above.
+
+### The OSS seed restart/failure half — DONE (`877c9c7dc9`)
+
+`LiveViewStartFromSeedRestartTest` (new, 5 tests) plus one test in `LiveViewInMemReadTest`. No
+production code changed: this commit is coverage, and it is coverage of paths that were already
+correct.
+
+**Why the existing coverage did not reach these.** `LiveViewSmokeTest` already carries eight seed
+restart tests (`testSeedRestartResumesFromCheckpoint`, `testSeedRestartWithoutCheckpointReSweeps`,
+`testSeedRestartWithUnappliedBlockDoesNotDuplicate`, `testSeedResumedSweepThenIncrementalDrain`,
+`testSeedAnchoredViewResumesAcrossRestart`, `testSeedFilteredViewResumesAcrossRestart`,
+`testSeedRestartRestoresO3DetectionWatermark`,
+`testSeedCrashBetweenActiveFlipAndCheckpointRetireRecoversActive`). **Every one of them seeds from
+BEGINNING**, whose boundary is LONG_NULL, and most assert only `count()`. BEGINNING collapses two
+coordinate spaces that a finite boundary separates:
+
+- the sweep's `dataOffset` — and so the `.scp` filename key, which *is* that offset — counts rows of
+  the **bounded** cursor `getCursorFromTimestamp` opens AT the boundary, having culled the partitions
+  below it and binary-searched into the first one;
+- the skip-write floor counts **LV output** rows already on disk.
+
+Under BEGINNING both equal "base rows swept". So a resume that skipped `dataOffset` rows of a
+*differently-based* cursor, or that read the floor in base-row terms, still lands on the right row
+and still passes. Under a boundary that cuts, four base rows sit below the bound and are row zero of
+nothing.
+
+The five new tests re-run that matrix under an explicit boundary cutting the base in half, asserting
+rows + `row_number()` + a running sum spanning the whole admitted set (a count cannot tell a
+duplicated row from a dropped one):
+
+- ~~`.scp` restore under a finite boundary.~~ Pins that the key is the bounded cursor's offset (2),
+  not the base's (6), and that one turn after the restart resumes at 3 rather than re-sweeping to 1.
+- ~~Checkpoint-less re-sweep under a finite boundary.~~ Pins that the skip-write floor is the LV
+  output row count (2), not the base rows scanned to produce it (6).
+- ~~Restart immediately *before* the SEEDING-to-ACTIVE transition.~~ Every admitted row is durable
+  and `.scp`-recorded, but the cursor's exhaustion has not been observed, so the flip has not run.
+  Also pins that the resume carries the `.scp`'s `maxTimestamp`: without it the view flips ACTIVE
+  with `latestSeenTs == LONG_NULL` and therefore **no head `.cp` at all**, silently routing the next
+  O3 commit to the head-miss replay instead of head-hit.
+- ~~Injected mid-drain failure during seeding.~~ A one-shot read fault on the second partition's
+  `x.d`, after the first partition's admitted rows are already fed. Pins both halves of the recovery:
+  the `windowStateDirty` flag in the seed loop (without it `handleRefreshFailure` never routes to the
+  SEEDING branch) and its `resetSeedResumeAttempted` (without it the retry re-feeds into un-cleared
+  accumulators). Either reverted and the sums come out inflated.
+- ~~Base metadata drift across the seed.~~
+
+**Negative control.** Restoring the seed's pre-bounded-cursor design — a full base scan with the
+sub-boundary rows dropped inside the feed loop — leaves **all eight BEGINNING seed restart tests
+green** and turns **four of the five new ones red**. That split is the coverage gap, measured. (The
+fifth, the drift test, survives: its O3 commit re-derives through `o3HeadMissReplay`'s own bounded
+scan, which heals the corrupted seed before the assertions run.)
+
+**Two things the drift test had to learn the hard way, and both are worth knowing.** The SEEDING
+branch of `recoverFromBaseMetadataDrift` (`:5367`) is **not** reachable by an ALTER landing mid-sweep:
+the sweep holds a pinned snapshot at the pre-ALTER metadata *and* a factory compiled against that
+same version, so the two agree and nothing throws. The sweep simply completes on the old snapshot.
+Nor does the drift fire on the next in-order row — the forward drain reads the base **WAL**, not the
+base table, so it never opens a versioned base reader at all. It takes an **out-of-order** commit,
+whose replay scans the applied base *through the cached factory*, to meet a reader at the new
+metadata and trip `TableReferenceOutOfDateException`. The first two versions of this test asserted
+convergence and passed while exercising **no drift whatsoever**; only adding
+`getRefreshFaultCount() > 0` exposed that. Any future test in this area should assert the fault count,
+not just the rows.
+
+**The IN MEMORY half** (`testSeededDiskPrefixStitchesWithRamLeadUnderStartFromBoundary`). Every other
+tier test builds its on-disk prefix with a FLUSH; this one's prefix is what the **seed** wrote, under
+a cutting boundary. Two behaviours it pins, neither previously asserted anywhere: the seed publishes
+**nothing** to the tier (it appends straight to the LV WAL and applies inline), and a flush publishes
+into the tier **incrementally** rather than restaging the resident window from disk — only a
+`rebuildInMemoryTier` does that. So the seeded rows sit in **no tier slot at all** even though the
+30m window covers them, and the read must stitch a RAM lead onto a disk prefix the tier never saw.
+The stitched read equals a from-scratch recompute over the admitted rows; forcing the tier off drops
+to the applied prefix.
 
 Use fluent `assertQuery(...).returns(...)`, deterministic clocks, and deterministic worker
 drains/hooks. Do not use timing sleeps or `returnsOnce(...)` for these stable results.
@@ -528,9 +604,13 @@ separate implementation tracks:
 6. ~~**Final integration/fuzz — ent:** the same treatment for the four ent fuzz generators, plus
    the submodule pin bump.~~ DONE (ent `50800a3c2`), and it paid for itself too: the empty-view
    (NOW) arm found the restored-view invalidation, fixed in OSS `dc9a3ba641`.
-7. **Restart/failure coverage (NEXT):** the remaining track 6 list above — the seeding restart
-   corners, metadata drift, IN MEMORY through the seed, and the replica's restart/lag/promotion
-   cases under a finite boundary.
+7. ~~**Restart/failure coverage — OSS:** the seeding restart corners, metadata drift, and IN MEMORY
+   through the seed.~~ DONE (`877c9c7dc9`). It changed no production code, but the negative control
+   quantifies the gap it closed: break the seed's bounded cursor and the eight pre-existing
+   BEGINNING seed restart tests all stay green while four of the five new ones fail.
+8. **Restart/failure coverage — ent (NEXT):** the replica's restart, lag and promotion cases under a
+   finite boundary, plus the two-node explicit-timestamp parity test. These are the last two entries
+   on the track 6 list.
 
 The persisted-model track defined the contract both refresh implementations consume, and
 enterprise parity did not need a second encoding: it needed the primary to stop having two
@@ -564,8 +644,10 @@ The work is complete when:
   and after O3/restart.~~ Primary half asserted by
   `LiveViewStartFromSeedTest.testNowSeedsPreCreateFutureRowsAndO3ReplayDoesNotChangeThem`; the
   primary/replica half by
-  `LiveViewReplicationTest.testReplicateLiveViewCreateDropRecreateSeedsBelowClock`. Restart
-  parity on the replica is still open (track 6).
+  `LiveViewReplicationTest.testReplicateLiveViewCreateDropRecreateSeedsBelowClock`. Restart on the
+  *primary* under a cutting boundary is now covered end to end by `LiveViewStartFromSeedRestartTest`
+  (`877c9c7dc9`), including the crash window just before the SEEDING-to-ACTIVE flip. Restart parity
+  on the **replica** is still open (track 6).
 - No applied-base path needs per-row commit provenance for live-view membership. *(Holds: no
   path reads seqTxn to decide membership any more.)*
 - ~~BEGINNING truly has no timestamp floor.~~ Done.
@@ -573,7 +655,7 @@ The work is complete when:
   nodes: `_lv` carries the start kind and the resolved boundary, and it replicates verbatim into
   the sequencer directory.
 - Existing WAL purge, checkpoint, refresh-failure, schema-change, and IN MEMORY guarantees
-  remain covered and green. *(811 live-view tests green, plus `WalPurgeJobTest`, `CheckpointTest`,
+  remain covered and green. *(818 live-view tests green, plus `WalPurgeJobTest`, `CheckpointTest`,
   `ShowCreateTableTest`, the mat-view suites. The initial purge floor for a seeding view moved
   one seqTxn lower — `seedTarget - 1` — which retains strictly more base WAL, never less. The
   refresh-failure contract changed once, in `dc9a3ba641`: a base WAL segment that stays missing for
