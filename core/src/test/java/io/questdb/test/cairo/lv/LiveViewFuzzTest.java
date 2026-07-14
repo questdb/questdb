@@ -54,6 +54,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -231,6 +233,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // which the (sym, bucket)-partitioned oracle recomputes exactly.
     private static final int ANCHORED_VARIANT_COUNT = 7;
     private static final int MAX_FRAME = 20;
+    // START FROM modes a run draws from. The mode decides only HOW the view resolves its
+    // event-time boundary at CREATE - every refresh path reads the resolved boundary and none
+    // of them reads the kind - so what actually varies across the three is the boundary VALUE
+    // they can produce:
+    //   BEGINNING  no floor at all (LONG_NULL), so every scan runs unbounded;
+    //   NOW        the CREATE-moment clock, which the harness keeps pinned below every
+    //              generated row: a FINITE floor that still admits the whole dataset, so the
+    //              seed sweep, the forward drain and both replays open their cursors AT a real
+    //              timestamp (partition culling, binary search) rather than from LONG_NULL;
+    //   TIMESTAMP  a literal cutting the dataset at a random row - the only mode that puts base
+    //              rows BELOW the bound, which is what exercises the seed's partial sweep, the
+    //              forward path's below-bound rejects, and the floor on every replay.
+    // The recompute oracle folds the same resolved boundary into its own WHERE, so a run's
+    // cross-check stays exact whichever mode it drew.
+    private static final int START_FROM_BEGINNING = 0;
+    private static final int START_FROM_MODES = 3;
+    private static final int START_FROM_NOW = 1;
+    private static final int START_FROM_TIMESTAMP = 2;
     // Sentinel i for phantom (rolled-back) rows: large and positive, so a leaked phantom
     // both survives a WHERE i>0 filter and stands out against the [-1000, 1000] real data.
     private static final long PHANTOM_SENTINEL = 999_999;
@@ -854,7 +874,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // prefix (the recompute with the trailing lead rows trimmed). All three sides
     // share the native ts-ascending order, so the comparison is byte-for-byte.
     // Run single-threaded after the worker is freed and the lead is built.
-    private static void assertLeadReadBack(String viewSql) throws SqlException {
+    private static void assertLeadReadBack(String oracleSql) throws SqlException {
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
         final long leadRows = instance.getLeadRowCount();
@@ -868,7 +888,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         StringSink lvOut = new StringSink();
         printSql("SELECT * FROM lv", lvOut);
         StringSink recompute = new StringSink();
-        printSql(viewSql, recompute);
+        printSql(oracleSql, recompute);
         Assert.assertEquals("Mode A read must equal the recompute", recompute.toString(), lvOut.toString());
 
         // Disk-only fallback content equals the applied prefix (recompute minus the lead).
@@ -1147,6 +1167,60 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return a;
     }
 
+    // The event-time boundary the run's start mode resolves to at CREATE, in the base's
+    // timestamp units. This is the value the view persists as its whole membership rule, and
+    // the value the recompute oracle folds into its WHERE.
+    //
+    // NOW reads the test clock, which every arm pins a day below the generated data and only
+    // ever advances by refresh cycles, so nothing between here and the CREATE moves it - the
+    // clock read here IS the boundary CREATE resolves (asserted by assertPersistedStartBound).
+    // An explicit literal cuts at a random row, endpoints included: cut 0 lands the boundary
+    // exactly ON the first row (which is inclusive, so the whole dataset still qualifies) and
+    // cut == rowCount lands it one tick above the last, so NO base row qualifies and the view
+    // seeds and drains empty.
+    private static long startBoundary(Rnd rnd, int startMode, long[] tsv, boolean nanosBase) {
+        return startBoundary(rnd, startMode, tsv, nanosBase, tsv.length);
+    }
+
+    // As above, but maxCut caps how many of the leading rows an explicit boundary may exclude.
+    // An arm whose assertion needs the view to be NON-EMPTY - one that snapshots the view's
+    // output and compares it back, or walks a gapless row_number() - passes a limit below
+    // rowCount, so a cut can thin the view but never empty it and leave the assertion vacuous.
+    private static long startBoundary(Rnd rnd, int startMode, long[] tsv, boolean nanosBase, int maxCut) {
+        return switch (startMode) {
+            case START_FROM_BEGINNING -> Numbers.LONG_NULL;
+            case START_FROM_NOW -> nanosBase ? currentMicros * 1000 : currentMicros;
+            case START_FROM_TIMESTAMP -> {
+                final int cut = rnd.nextInt(maxCut + 1);
+                yield cut < tsv.length ? tsv[cut] : tsv[tsv.length - 1] + 1;
+            }
+            default -> throw new IllegalArgumentException("startMode=" + startMode);
+        };
+    }
+
+    // The START FROM clause the run's view declares. BEGINNING and NOW are syntax; an explicit
+    // boundary renders as a quoted literal in the base's own precision, which is the precision
+    // CREATE parses it back with - so a NANO base keeps its sub-microsecond digits.
+    private static String startFromClause(int startMode, long boundary, boolean nanosBase) {
+        final StringSink sink = new StringSink();
+        sink.put("START FROM ");
+        switch (startMode) {
+            case START_FROM_BEGINNING -> sink.put("BEGINNING");
+            case START_FROM_NOW -> sink.put("NOW");
+            case START_FROM_TIMESTAMP -> {
+                sink.put('\'');
+                if (nanosBase) {
+                    NanosFormatUtils.appendDateTimeNSec(sink, boundary);
+                } else {
+                    MicrosFormatUtils.appendDateTimeUSec(sink, boundary);
+                }
+                sink.put('\'');
+            }
+            default -> throw new IllegalArgumentException("startMode=" + startMode);
+        }
+        return sink.put(' ').toString();
+    }
+
     private static int variantCount() {
         return DECIMAL_VARIANT + 1;
     }
@@ -1196,6 +1270,38 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return sb.toString();
     }
 
+    // The WHERE tail shared by a run's view SELECT and its recompute oracle. The two differ in
+    // exactly one term: the boundary.
+    //
+    // The VIEW passes LONG_NULL, because it must derive its lower bound from the START FROM
+    // clause rather than restate it in the SELECT - restating it would test the WHERE, not the
+    // membership rule. The ORACLE passes the resolved boundary, because a live view holds
+    // exactly the rows of its SELECT whose designated timestamp also clears that bound, and its
+    // window functions accumulate over that subset alone: a below-bound row must not enter the
+    // frame, must not consume a row_number(), and must not survive a replay. A BEGINNING run
+    // resolves to LONG_NULL, so its oracle is the view's SELECT unchanged.
+    private static String whereTail(boolean withWhere, long boundary) {
+        if (boundary == Numbers.LONG_NULL) {
+            return withWhere ? " WHERE i > 0" : "";
+        }
+        return " WHERE ts >= " + boundary + (withWhere ? " AND i > 0" : "");
+    }
+
+    // CREATE must have resolved and persisted exactly the boundary the run's oracle folds into
+    // its WHERE. Without this the oracle would silently drift from the view under test: a NOW
+    // that read a clock the harness did not pin, or a literal that lost precision on the way
+    // through the parser, would leave the recompute checking a different row set - and a view
+    // that agreed with the drifted boundary would still pass.
+    private void assertPersistedStartBound(String viewName, long boundary) {
+        LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        Assert.assertEquals(
+                "the view's persisted START FROM boundary must be the one the oracle recomputes with",
+                boundary,
+                instance.getDefinition().getViewLowerBoundTimestamp()
+        );
+    }
+
     // Builds a deterministic un-flushed lead on top of the already-applied state:
     // pins the flush clock to the current (un-advanced) test clock so the next
     // refresh publishes the inserted rows into the in-mem tier as the lead without
@@ -1221,8 +1327,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // uniqueness survives any sequence of replaces and the recompute oracle
     // stays sound. Rows are appended in random order half the time, so a
     // replace commit can also be intra-commit out-of-order. The band's low
-    // bound stays strictly above the global-min ts (tsv[0]), keeping every
-    // replace row above a seed run's floor.
+    // bound anchors at or above tsv[1], but nothing keeps it above the view's START FROM
+    // boundary: a run that drew an explicit bound routinely produces bands sitting entirely
+    // below it, or straddling it, which is exactly what the clamped-delete path must survive.
     private void commitReplaceRange(Rnd rnd, TableToken baseToken, long[] tsv, LongHashSet usedTs, int symCount) {
         final int rowCount = tsv.length;
         final int a = 1 + rnd.nextInt(rowCount - 1);
@@ -1679,9 +1786,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean restart,
             boolean seed
     ) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-seed view's
-        // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
-        // rows at or above it, so the clock must sit below every data timestamp.
+        // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
+        // CREATE-moment clock into the view's lower bound, and this harness wants that bound
+        // to admit the whole dataset. A run that wants a boundary CUTTING the data draws the
+        // explicit-timestamp mode instead, which cuts at a known row.
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
@@ -1697,21 +1805,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
 
-        final String viewSql = "SELECT " + anchoredViewProjection(variant) + " FROM base "
-                + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + bucket + ")";
-        final String oracleSql = "SELECT " + anchoredOracleProjection(variant, bucket) + " FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV anchored fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", restart=").$(restart).$(", seed=").$(seed)
-                .$(", bucket=").$(bucket).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
         // random symbols and values with occasional NULLs.
@@ -1736,10 +1832,26 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        // Seed captures pre-CREATE history: put the earliest rows before CREATE
-        // so the seed floor sits at the global-min ts and no post-CREATE O3 row
-        // falls below it. Non-seed: everything lands post-CREATE.
+        // Pre-CREATE history (the earliest rows by ts): a base with committed history at CREATE
+        // seeds under every start mode, and the boundary decides how much of it the sweep
+        // emits. The anchor map must come out of the seed agreeing with the recompute over the
+        // same bounded row set - a sub-boundary row leaking in would open its bucket early.
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT " + anchoredViewProjection(variant) + " FROM base "
+                + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION " + bucket + ")";
+        final String oracleSql = "SELECT " + anchoredOracleProjection(variant, bucket) + " FROM base"
+                + whereTail(false, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV anchored fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", restart=").$(restart).$(", preCount=").$(preCount)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", bucket=").$(bucket).$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -1754,9 +1866,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -1816,9 +1929,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean seed,
             boolean inMemory
     ) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-seed view's
-        // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
-        // rows at or above it, so the clock must sit below every data timestamp.
+        // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
+        // CREATE-moment clock into the view's lower bound, and this harness wants that bound
+        // to admit the whole dataset. A run that wants a boundary CUTTING the data draws the
+        // explicit-timestamp mode instead, which cuts at a known row.
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
@@ -1830,20 +1944,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
 
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV base-DDL fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", restart=").$(restart).$(", seed=").$(seed).$(", inMem=").$(inMemory)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
         // random symbols and values with occasional NULLs.
@@ -1868,10 +1971,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        // Seed captures pre-CREATE history: the earliest rows go before CREATE
-        // so the seed floor sits at the global-min ts and no post-CREATE O3 row
-        // falls below it. Non-seed: everything lands post-CREATE.
+        // Pre-CREATE history (the earliest rows by ts): committed history at CREATE puts the
+        // view in SEEDING under every start mode, and the boundary decides how much of it the
+        // sweep emits.
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV base-DDL fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", restart=").$(restart).$(", preCount=").$(preCount)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary).$(", inMem=").$(inMemory)
+                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Live unreferenced extras: names, their current type (0=INT, 1=LONG),
         // and a monotonic name counter surviving drops.
@@ -1892,9 +2009,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -1933,12 +2051,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the live view must equal the window query recomputed over
-        // the base table (whose unreferenced columns may have churned freely).
+        // The oracle: the live view must equal its own window query recomputed over the base
+        // table (whose unreferenced columns may have churned freely) under the run's START FROM
+        // boundary.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -1973,6 +2092,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String column = variant == 4 ? "x" : "i";
         final String otherColumn = variant == 4 ? "i" : "x";
 
+        // The one arm that stays on a single start mode. Its oracle is the view's own
+        // pre-invalidation output, snapshotted and compared back, so what it measures is that an
+        // invalidating DDL leaves the materialized rows untouched - a property that has nothing to
+        // do with WHICH rows the view holds. Drawing a boundary would only risk emptying the view
+        // and turning that comparison into two empty strings.
         final String viewSql = "SELECT " + projection(variant, n) + " FROM base";
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + (inMemory ? "IN MEMORY 60s " : "")
@@ -2103,12 +2227,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean restart,
             boolean inMemory
     ) throws Exception {
-        // Re-pin the clock a day below the data start on EVERY call (not just the
-        // first): this arm later advances the wall clock ABOVE the data to arm TTL
-        // (which evicts relative to min(maxTimestamp, wallClock)), so the shared
-        // per-test clock would otherwise sit above the next variant's data and
-        // push its view lower bound past the early rows. The lower bound is fixed
-        // at CREATE, below every row, so the forward-append path still emits all.
+        // Re-pin the clock a day below the data start on EVERY call (not just the first): this
+        // arm later advances the wall clock ABOVE the data to arm TTL (which evicts relative to
+        // min(maxTimestamp, wallClock)), so the shared per-test clock would otherwise sit above
+        // the next variant's data and push a START FROM NOW view's boundary past its early rows.
+        // Pinned here, the NOW boundary lands below every row and the run's own cut - if it drew
+        // an explicit boundary - is the only thing that excludes any.
         setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
 
         final int n = 1 + rnd.nextInt(MAX_FRAME);
@@ -2123,22 +2247,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final String ttlClause = "TTL 1 " + partUnit;
 
         final String projection = projection(variant, n);
-        final String where = withWhere ? " WHERE i > 0" : "";
-        final String viewSql = "SELECT " + projection + " FROM base" + where;
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
-                + "START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("DROP TABLE IF EXISTS shadow");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY "
                 + partUnit + " " + ttlClause + " WAL");
-
-        LOG.info().$("LV base-TTL fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", partUnit=").$(partUnit)
-                .$(", ttlClause=").$(ttlClause).$(", restart=").$(restart).$(", inMem=").$(inMemory)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order.
         // Phase-1 rows [0, splitPoint) span several partitions (a partition-width
@@ -2171,11 +2285,32 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
+        // The cut stays inside phase 1's first half, so the view always emits phase-1 rows
+        // for the eviction to freeze - a boundary above the whole phase would leave the
+        // freeze-and-continue assertion comparing one empty output against another.
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false, splitPoint / 2);
+        final String where = whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleWhere = whereTail(withWhere, boundary);
+        final String viewSql = "SELECT " + projection + " FROM base" + where;
+        final String oracleSql = "SELECT " + projection + " FROM base" + oracleWhere;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV base-TTL fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", partUnit=").$(partUnit)
+                .$(", ttlClause=").$(ttlClause).$(", restart=").$(restart).$(", inMem=").$(inMemory)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
         final StringSink sink = new StringSink();
         final StringSink preRemoval = new StringSink();
         LiveViewRefreshJob job = null;
         try {
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
             // Phase 1: O3 churn over an intact base, per-commit refresh.
@@ -2203,7 +2338,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
-                    "(" + viewSql + ") ORDER BY 1",
+                    "(" + oracleSql + ") ORDER BY 1",
                     "(lv) ORDER BY 1",
                     LOG,
                     true
@@ -2268,15 +2403,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the view must equal the window query recomputed over the
-        // LOGICAL dataset - every generated row, as if nothing was evicted -
-        // materialized into the shadow table in ts order.
+        // The oracle: the view must equal the window query recomputed over the LOGICAL dataset -
+        // every generated row, as if nothing was evicted - materialized into the shadow table in
+        // ts order, and bounded by the run's START FROM boundary, which the accumulators applied
+        // to the rows they walked.
         execute("CREATE TABLE shadow (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
         insertLogicalDataset("shadow", tsv, symIdx, iv, xv, xNull);
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(SELECT " + projection + " FROM shadow" + where + ") ORDER BY 1",
+                "(SELECT " + projection + " FROM shadow" + oracleWhere + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -2305,12 +2441,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean concurrentRefresh,
             boolean seed
     ) throws Exception {
-        // A concurrent refresh driver advances the flush clock in an unbounded loop
-        // while ingestion is in flight, so - unlike the single-threaded fuzz arms,
-        // which sit a day below the data - the clock is pinned a full YEAR below the
-        // data start. That keeps it under a non-seed view's CREATE-moment lower
-        // bound for the whole run (a 250ms/advance loop never climbs a year), so
-        // head-miss replay never drops a row the recompute keeps.
+        // A concurrent refresh driver advances the flush clock in an unbounded loop while
+        // ingestion is in flight, so - unlike the single-threaded fuzz arms, which sit a day
+        // below the data - the clock is pinned a full YEAR below the data start. A START FROM
+        // NOW view resolves its boundary from that clock, and the year of headroom keeps the
+        // boundary below every row for the whole run (a 250ms-per-advance loop never climbs a
+        // year), so only an explicit-boundary run excludes any row.
         setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
         final long dataStart = MicrosTimestampDriver.floor("2027-01-01T00:00:00.000000Z");
 
@@ -2321,19 +2457,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
 
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV concurrent-writer fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", writers=").$(numWriters).$(", symCount=").$(symCount)
-                .$(", stepMode=").$(stepMode).$(", concurrentRefresh=").$(concurrentRefresh)
-                .$(", seed=").$(seed).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
         // random symbols and values with occasional NULLs.
@@ -2356,18 +2482,28 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        // Seed captures pre-CREATE history: the earliest rows [0, preCount) go
-        // before CREATE so the seed floor sits at the global-min ts and no
-        // concurrent post-CREATE row falls below it. Non-seed: everything lands
-        // post-CREATE via the concurrent writers.
+        // Pre-CREATE history: the earliest rows [0, preCount), committed by a single writer in
+        // ts order. Committed history at CREATE puts the view in SEEDING under every start
+        // mode; the boundary decides how much of it the sweep emits.
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV concurrent-writer fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", writers=").$(numWriters).$(", symCount=").$(symCount)
+                .$(", stepMode=").$(stepMode).$(", concurrentRefresh=").$(concurrentRefresh)
+                .$(", preCount=").$(preCount).$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final TableToken baseToken = engine.verifyTableName("base");
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         LiveViewRefreshJob job = null;
         try {
-            // Pre-CREATE history (single-writer, in ts order): keeps the seed
-            // floor at the global-min ts.
             if (preCount > 0) {
                 try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
                     for (int k = 0; k < preCount; k++) {
@@ -2379,9 +2515,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -2444,13 +2581,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the live view must equal the window query recomputed over the
-        // base table. ORDER BY 1 (the unique ts) gives both sides a total order;
-        // genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
+        // The oracle: the live view must equal its own window query recomputed over the base
+        // table under the run's START FROM boundary. ORDER BY 1 (the unique ts) gives both sides
+        // a total order; genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -2479,8 +2616,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean seed,
             boolean removals
     ) throws Exception {
-        // Pin the clock a day below the data (see runFuzz): a non-seed view's
-        // lower bound is the CREATE moment and forward-append drops rows below it.
+        // Pin the clock a day below the data (see runFuzz): START FROM NOW resolves the
+        // CREATE-moment clock into the view's lower bound, and this harness wants that bound to
+        // admit the whole dataset. Only an explicit-boundary run excludes any row.
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
@@ -2493,20 +2631,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final boolean withWhere = rnd.nextInt(3) == 0;
 
         final String projection = projection(variant, n);
-        final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) "
                 + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
-
-        LOG.info().$("LV dedup fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", restart=").$(restart).$(", seed=").$(seed)
-                .$(", removals=").$(removals).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Distinct, strictly-increasing timestamp pool - fewer distinct values than
         // rows, so many emissions collide on one ts (additive across keys) and the
@@ -2542,11 +2671,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xNull[k] = rnd.nextInt(20) == 0;
             xv[k] = rnd.nextDouble() * 1000.0;
         }
-        // Seed floor guard: the seed lower bound is the base min ts at CREATE.
-        // ts is not monotonic in the emission index here, so pin emission 0 to the
-        // global-min ts (pool[0]) and force it pre-CREATE (preCount >= 1) - then no
-        // post-CREATE row falls below the floor and gets dropped, diverging the oracle.
-        tsv[0] = pool[0];
         // Force a replacement fraction: re-point some emissions onto an earlier
         // (ts, sym) so a real below-frontier dedup is guaranteed, exercising the
         // applied-reader replay path, not only the additive fast path.
@@ -2557,9 +2681,26 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             symIdx[dst] = symIdx[src];
         }
 
-        // Seed captures pre-CREATE history: preCount >= 1 keeps the global-min ts
-        // (emission 0) before CREATE. Non-seed: everything lands post-CREATE.
-        final int preCount = seed ? 1 + rnd.nextInt(rowCount) : 0;
+        // Pre-CREATE history: emissions [0, preCount). Unlike the other arms, ts is NOT
+        // monotonic in the emission index here (every row draws from the pool), so the
+        // pre-CREATE segment is an arbitrary slice of the timestamp range rather than its
+        // prefix - a post-CREATE emission below every seeded row is normal, and legal: the
+        // boundary is the only floor, and BEGINNING has none. An explicit boundary therefore
+        // cuts the POOL (which is sorted), not the emission array.
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, pool, false);
+        final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV dedup fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", preCount=").$(preCount)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", removals=").$(removals).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -2574,9 +2715,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -2611,13 +2753,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the live view equals the window recomputed over the applied
-        // (deduped) base. (ts, sym::string) is a total order because (ts, sym) is the
-        // dedup key; genericStringMatch tolerates SYMBOL-vs-STRING on the passthrough.
+        // The oracle: the live view equals its own window recomputed over the applied (deduped)
+        // base under the run's START FROM boundary. (ts, sym::string) is a total order because
+        // (ts, sym) is the dedup key; genericStringMatch tolerates SYMBOL-vs-STRING on the
+        // passthrough.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY ts, sym::string",
+                "(" + oracleSql + ") ORDER BY ts, sym::string",
                 "(lv) ORDER BY ts, sym::string",
                 LOG,
                 true
@@ -2722,26 +2865,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         } else {
             projection = projection(variant, n);
         }
-        final String viewSql = "SELECT " + projection + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMem ? "IN MEMORY 60s " : "")
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE"
                 + (isDecimal ? ", d " + decimalType : "")
                 + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", restart=").$(restart)
-                .$(", seed=").$(seed).$(", inMem=").$(inMem)
-                .$(", inMemReadBack=").$(inMemReadBack).$(", leadReadBack=").$(leadReadBack)
-                .$(", symbolReadBack=").$(symbolReadBack)
-                .$(", where=").$(withWhere).$(", decimalType=").$(decimalType)
-                .$(", sql=").$(viewSql).$();
 
         // Generate the logical dataset: strictly-unique, strictly-increasing
         // timestamps; random symbols and values with occasional NULLs.
@@ -2770,11 +2898,31 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
         }
 
-        // Seed captures pre-CREATE history. Put the EARLIEST rows (by ts)
-        // before CREATE so the seed floor sits at the global min ts and no
-        // post-CREATE O3 row falls below it - such a row would be rejected and
-        // diverge from the recompute. Non-seed: everything lands post-CREATE.
+        // Pre-CREATE history: the earliest preCount rows by ts. A base with any committed
+        // transaction at CREATE puts the view in SEEDING and runs the initial bounded sweep,
+        // whatever start mode it drew - so this is what decides whether a run seeds, and the
+        // boundary alone decides which of those rows the seed emits. (The old rule that the
+        // pre-CREATE segment had to be the earliest rows so no later row fell below the floor
+        // is gone with the floor it protected: BEGINNING now has no lower bound at all.)
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMem ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", restart=").$(restart)
+                .$(", preCount=").$(preCount).$(", startMode=").$(startMode)
+                .$(", boundary=").$(boundary).$(", inMem=").$(inMem)
+                .$(", inMemReadBack=").$(inMemReadBack).$(", leadReadBack=").$(leadReadBack)
+                .$(", symbolReadBack=").$(symbolReadBack)
+                .$(", where=").$(withWhere).$(", decimalType=").$(decimalType)
+                .$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -2791,9 +2939,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            // A base holding committed history at CREATE seeds under every start mode - the
+            // boundary decides how much of it the sweep emits, which for a literal cutting
+            // above the pre-CREATE segment is nothing at all (the empty-seed corner).
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -2855,7 +3007,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // fallback serves only the applied prefix (the recompute minus the
             // lead). Uses a direct SELECT * FROM lv (native ts order) rather than
             // the ORDER BY 1 wrapper, whose routing is not guaranteed to be Mode A.
-            assertLeadReadBack(viewSql);
+            assertLeadReadBack(oracleSql);
 
             if (restart) {
                 // Crash-before-flush: drop the in-memory registry (losing the RAM
@@ -2863,16 +3015,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // by draining the retained base WAL forward. The same cross-checks
                 // must hold on the recovered lead.
                 restartAndRecoverLead();
-                assertLeadReadBack(viewSql);
+                assertLeadReadBack(oracleSql);
             }
         } else {
-            // The oracle: the live view must equal the window query recomputed over
-            // the base table. ORDER BY 1 (the unique ts) gives both sides a total
-            // order; genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
+            // The oracle: the live view must equal its own window query recomputed over the
+            // base table under the run's START FROM boundary. ORDER BY 1 (the unique ts) gives
+            // both sides a total order; genericStringMatch tolerates SYMBOL-vs-STRING on
+            // passthrough.
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
-                    "(" + viewSql + ") ORDER BY 1",
+                    "(" + oracleSql + ") ORDER BY 1",
                     "(lv) ORDER BY 1",
                     LOG,
                     true
@@ -2943,8 +3096,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", symCount=").$(symCount).$(", stepMode=").$(stepMode).$(", o3=").$(o3).$();
 
         // Strictly-unique, strictly-increasing timestamps; no pre-CREATE history,
-        // so every view sees every row and each shares one oracle shape (a
-        // recompute over the full base).
+        // so the views differ only in their window shape and their START FROM
+        // boundary, each recomputing against its own.
         final long[] tsv = new long[rowCount];
         final int[] symIdx = new int[rowCount];
         final long[] iv = new long[rowCount];
@@ -2972,12 +3125,28 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // the purge test. Both segments are non-empty.
         final int splitPoint = rowCount - (1 + rnd.nextInt(Math.max(1, rowCount / 4)));
 
+        // Each view draws its OWN start mode and boundary, so one refresh worker maintains K
+        // views that disagree about which base rows belong to them while sharing one base WAL
+        // stream and one retention floor. The boundary is a membership rule, not a progress one:
+        // a view whose boundary excludes the final batch entirely must still consume its seqTxns
+        // and advance the floor with the others, or the purge stalls behind it.
+        final int[] startModes = new int[viewCount];
+        final long[] boundaries = new long[viewCount];
+        final String[] oracleSql = new String[viewCount];
+        for (int v = 0; v < viewCount; v++) {
+            startModes[v] = rnd.nextInt(START_FROM_MODES);
+            boundaries[v] = startBoundary(rnd, startModes[v], tsv, false);
+            oracleSql[v] = viewSql[v] + whereTail(false, boundaries[v]);
+        }
+
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
         try {
             for (int v = 0; v < viewCount; v++) {
                 final String inMem = rnd.nextBoolean() ? "IN MEMORY 60s " : "";
-                execute("CREATE LIVE VIEW " + viewNames[v] + " FLUSH EVERY 100ms " + inMem + "START FROM NOW AS " + viewSql[v]);
+                execute("CREATE LIVE VIEW " + viewNames[v] + " FLUSH EVERY 100ms " + inMem
+                        + startFromClause(startModes[v], boundaries[v], false) + "AS " + viewSql[v]);
+                assertPersistedStartBound(viewNames[v], boundaries[v]);
             }
             job = new LiveViewRefreshJob(0, engine, 1);
 
@@ -3013,12 +3182,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // Every view equals its own from-scratch recompute over the base.
+        // Every view equals its own from-scratch recompute over the base, under its own boundary.
         for (int v = 0; v < viewCount; v++) {
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
-                    "(" + viewSql[v] + ") ORDER BY 1",
+                    "(" + oracleSql[v] + ") ORDER BY 1",
                     "(" + viewNames[v] + ") ORDER BY 1",
                     LOG,
                     true
@@ -3046,9 +3215,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean seed,
             boolean inMemory
     ) throws Exception {
-        // Pin the wall clock (micros) a day below the ns data start. The view's
-        // lower bound is the CREATE moment converted to base (ns) units, so a
-        // wall clock below the data keeps it under every ns row timestamp.
+        // Pin the wall clock (micros) a day below the ns data start. A START FROM NOW view
+        // converts that CREATE moment into base (ns) units, so a wall clock below the data
+        // keeps its boundary under every ns row timestamp.
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
@@ -3063,20 +3232,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final long hourNs = 3_600_000_000_000L;
         final boolean withWhere = rnd.nextInt(3) == 0;
 
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP_NS, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR WAL");
-
-        LOG.info().$("LV nanos-base fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", restart=").$(restart).$(", seed=").$(seed)
-                .$(", inMem=").$(inMemory).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing nanosecond timestamps.
         final long[] tsv = new long[rowCount];
@@ -3100,7 +3258,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
+        // Every boundary here lives in NANOSECOND units: NOW scales the micros clock up by the
+        // base's driver, and an explicit literal keeps all nine fractional digits through the
+        // parser - so a run that cuts the dataset cuts it at an exact ns row timestamp, and a
+        // boundary silently truncated to micros would move the cut and fail the oracle.
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, true);
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, true)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV nanos-base fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", preCount=").$(preCount)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", inMem=").$(inMemory).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -3115,9 +3291,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -3147,12 +3324,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the live view must equal the window query recomputed over
-        // the ns base.
+        // The oracle: the live view must equal its own window query recomputed over the ns base
+        // under the run's START FROM boundary.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -3187,18 +3364,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
         final boolean withWhere = rnd.nextInt(3) == 0;
 
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
-                + "START FROM NOW AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV parquet-base fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", o3=").$(o3)
-                .$(", inMem=").$(inMemory).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps with a partition
         // boundary crossed every few rows, so the run has several settled
@@ -3221,10 +3389,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV parquet-base fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", o3=").$(o3)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", inMem=").$(inMemory).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
         try {
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
             final int[] order = segmentOrder(rnd, 0, rowCount, o3);
@@ -3258,12 +3441,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the live view must equal the window query recomputed over
-        // the base (whose partitions are now a parquet/native mix).
+        // The oracle: the live view must equal its own window query recomputed over the base
+        // (whose partitions are now a parquet/native mix) under the run's START FROM boundary.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -3293,18 +3476,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // common case; the no-WHERE runs cover the plain (non-pruned) skip.
         final boolean withWhere = rnd.nextInt(4) != 0;
 
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
-                + "START FROM BEGINNING AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV seed-parquet fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", inMem=").$(inMemory)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps crossing a partition
         // boundary every few rows, so the run has several settled partitions.
@@ -3325,6 +3499,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xNull[k] = rnd.nextInt(20) == 0;
             xv[k] = rnd.nextDouble() * 1000.0;
         }
+
+        // A finite boundary makes the sweep open the parquet cursor AT the bound rather than at
+        // the base's first row: whole partitions below it are culled and the first surviving one
+        // is binary-searched into. The per-turn skipRows() resume then has to land on the same
+        // row that culled-and-pruned scan next yields, which is the pairing this arm exists to
+        // check - so it is worth drawing all three modes here, not just BEGINNING.
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV seed-parquet fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", inMem=").$(inMemory)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -3349,6 +3542,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             convertPartitionsToParquet(firstDay, cutoff);
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
             driveSeedToCompletion(job, "lv");
             driveRefreshToQuiescence(job);
@@ -3359,7 +3553,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -3380,24 +3574,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // are read-validated too - then the run quiesces single-threaded and ends
     // on the exact recompute oracle.
     private void runReaderVsRefreshFuzz(Rnd rnd, int rowCount, boolean o3, boolean inMemory) throws Exception {
-        // The refresh driver advances the flush clock in an unbounded loop, so -
-        // like the concurrent-writer arm - the clock is pinned a full YEAR below
-        // the data start, keeping it under the non-seed view's CREATE-moment
-        // lower bound for the whole run.
+        // The refresh driver advances the flush clock in an unbounded loop, so - like the
+        // concurrent-writer arm - the clock is pinned a full YEAR below the data start, keeping
+        // a START FROM NOW view's CREATE-moment boundary below every row for the whole run.
         setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
         final long dataStart = MicrosTimestampDriver.floor("2027-01-01T00:00:00.000000Z");
-
-        final String viewSql = "SELECT ts, vs, vv, i, row_number() OVER () AS rn FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
-                + "START FROM NOW AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, vs STRING, vv VARCHAR, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV reader-vs-refresh fuzz: rows=").$(rowCount)
-                .$(", o3=").$(o3).$(", inMem=").$(inMemory).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps; the var-length values
         // derive from the ts, so a reader can validate any row in isolation.
@@ -3411,7 +3596,26 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             tsv[k] = ts;
         }
 
+        // The cut stays in the first half: the readers' prefix invariant (a gapless
+        // row_number() 1..N over a monotonic row count) is only worth asserting against a view
+        // that holds rows, and the run's vacuity guard fails outright on an empty one. A
+        // below-bound row that leaked into the view WOULD break the invariant, since it would
+        // renumber the rows a reader saw a moment earlier.
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false, rowCount / 2);
+        final String viewSql = "SELECT ts, vs, vv, i, row_number() OVER () AS rn FROM base";
+        final String oracleSql = viewSql + whereTail(false, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV reader-vs-refresh fuzz: rows=").$(rowCount)
+                .$(", o3=").$(o3).$(", inMem=").$(inMemory)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary).$(", sql=").$(viewSql).$();
+
         execute(createSql);
+        assertPersistedStartBound("lv", boundary);
 
         final TableToken baseToken = engine.verifyTableName("base");
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
@@ -3500,12 +3704,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the live view must equal the window query recomputed over
-        // the base table. ORDER BY 1 (the unique ts) gives both sides a total order.
+        // The oracle: the live view must equal its own window query recomputed over the base
+        // table under the run's START FROM boundary. ORDER BY 1 (the unique ts) gives both sides
+        // a total order.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -3544,9 +3749,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean seed,
             boolean inMemory
     ) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-seed view's
-        // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
-        // rows at or above it, so the clock must sit below every data timestamp.
+        // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
+        // CREATE-moment clock into the view's lower bound, and this harness wants that bound
+        // to admit the whole dataset. A run that wants a boundary CUTTING the data draws the
+        // explicit-timestamp mode instead, which cuts at a known row.
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
@@ -3559,23 +3765,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final boolean withWhere = rnd.nextInt(3) == 0;
 
         final String projection = projection(variant, n);
-        final String where = withWhere ? " WHERE i > 0" : "";
-        final String viewSql = "SELECT " + projection + " FROM base" + where;
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("DROP TABLE IF EXISTS shadow");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV removal fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", truncate=").$(truncate).$(", restart=").$(restart)
-                .$(", seed=").$(seed).$(", inMem=").$(inMemory)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
         // random symbols and values with occasional NULLs.
@@ -3606,6 +3800,26 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // rows and the continuation is always exercised.
         final int splitPoint = rowCount / 3 + rnd.nextInt(rowCount / 3);
         final int preCount = seed ? 1 + rnd.nextInt(splitPoint) : 0;
+        // The cut stays inside phase 1's first half, so the removal always has emitted view rows
+        // to freeze - a boundary above the whole phase would leave the freeze assertion
+        // comparing one empty output against another.
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false, splitPoint / 2);
+        final String where = whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleWhere = whereTail(withWhere, boundary);
+        final String viewSql = "SELECT " + projection + " FROM base" + where;
+        final String oracleSql = "SELECT " + projection + " FROM base" + oracleWhere;
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV removal fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", truncate=").$(truncate).$(", restart=").$(restart)
+                .$(", preCount=").$(preCount).$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", inMem=").$(inMemory)
+                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         final StringSink preRemoval = new StringSink();
@@ -3621,9 +3835,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -3655,7 +3870,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,
-                    "(" + viewSql + ") ORDER BY 1",
+                    "(" + oracleSql + ") ORDER BY 1",
                     "(lv) ORDER BY 1",
                     LOG,
                     true
@@ -3721,15 +3936,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the view must equal the window query recomputed over the
-        // LOGICAL dataset - every generated row, as if nothing was removed -
-        // materialized into the shadow table in ts order.
+        // The oracle: the view must equal the window query recomputed over the LOGICAL dataset -
+        // every generated row, as if nothing was removed - materialized into the shadow table in
+        // ts order, and bounded by the run's START FROM boundary, which the accumulators applied
+        // to the rows they walked.
         execute("CREATE TABLE shadow (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
         insertLogicalDataset("shadow", tsv, symIdx, iv, xv, xNull);
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(SELECT " + projection + " FROM shadow" + where + ") ORDER BY 1",
+                "(SELECT " + projection + " FROM shadow" + oracleWhere + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -3760,9 +3976,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             boolean seed,
             boolean inMemory
     ) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-seed view's
-        // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
-        // rows at or above it, so the clock must sit below every data timestamp.
+        // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
+        // CREATE-moment clock into the view's lower bound, and this harness wants that bound
+        // to admit the whole dataset. A run that wants a boundary CUTTING the data draws the
+        // explicit-timestamp mode instead, which cuts at a known row.
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
@@ -3774,20 +3991,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
 
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (inMemory ? "IN MEMORY 60s " : "")
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV replace-range fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", restart=").$(restart).$(", seed=").$(seed).$(", inMem=").$(inMemory)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
         // random symbols and values with occasional NULLs. Every dataset ts goes
@@ -3816,11 +4022,28 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             xv[k] = rnd.nextDouble() * 1000.0;
         }
 
-        // Seed captures pre-CREATE history. preCount >= 1 keeps the global-min
-        // ts (and thus the seed floor) pre-CREATE, so no replace row - all
-        // anchored strictly above tsv[0] - can land below the floor and get
-        // dropped, diverging the oracle. Non-seed: everything lands post-CREATE.
-        final int preCount = seed ? 1 + rnd.nextInt(rowCount) : 0;
+        // Pre-CREATE history (the earliest rows by ts), plus the run's start mode. A cutting
+        // boundary is worth drawing here specifically: a replace band can then land entirely
+        // BELOW the bound (the view must not react to a deletion of rows it never held) or
+        // STRADDLE it (the view must delete only the part of the band it did hold, clamped up to
+        // the bound). Both are the shape the two clamp bugs took - one on each node - so the
+        // oracle recomputing over the final applied base under the same bound is the check that
+        // would have caught them.
+        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + (inMemory ? "IN MEMORY 60s " : "")
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV replace-range fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", restart=").$(restart).$(", preCount=").$(preCount)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary).$(", inMem=").$(inMemory)
+                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final TableToken baseToken = engine.verifyTableName("base");
         final StringSink sink = new StringSink();
@@ -3836,9 +4059,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -3882,14 +4106,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the live view must equal the window query recomputed over
-        // the applied (post-replace) base. ORDER BY 1 (the unique ts) gives both
-        // sides a total order; genericStringMatch tolerates SYMBOL-vs-STRING on
+        // The oracle: the live view must equal its own window query recomputed over the applied
+        // (post-replace) base under the run's START FROM boundary. ORDER BY 1 (the unique ts)
+        // gives both sides a total order; genericStringMatch tolerates SYMBOL-vs-STRING on
         // passthrough.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -3919,18 +4143,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
 
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + (withWhere ? " WHERE i > 0" : "");
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV rolled-back fuzz: variant=").$(variant).$(", rows=").$(rowCount)
-                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", seed=").$(seed).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final long[] tsv = new long[rowCount];
         final int[] symIdx = new int[rowCount];
@@ -3952,6 +4167,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
 
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
+        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV rolled-back fuzz: variant=").$(variant).$(", rows=").$(rowCount)
+                .$(", n=").$(n).$(", symCount=").$(symCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", preCount=").$(preCount).$(", startMode=").$(startMode)
+                .$(", boundary=").$(boundary).$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+
         final TableToken baseToken = engine.verifyTableName("base");
         LiveViewRefreshJob job = null;
         try {
@@ -3967,8 +4195,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -4006,13 +4235,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Misc.free(job);
         }
 
-        // The oracle: the live view must equal the window query recomputed over the
-        // committed base. ORDER BY 1 (the unique ts) gives both sides a total order;
-        // genericStringMatch tolerates SYMBOL-vs-STRING on passthrough.
+        // The oracle: the live view must equal its own window query recomputed over the
+        // committed base under the run's START FROM boundary. ORDER BY 1 (the unique ts) gives
+        // both sides a total order; genericStringMatch tolerates SYMBOL-vs-STRING on
+        // passthrough.
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true
@@ -4041,9 +4271,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // cross-checked against the recompute, Mode B is confirmed engaged, and the
     // Mode B result is compared byte-for-byte against the forced disk-only path.
     private void runVarSizeFuzz(Rnd rnd, int rowCount, boolean o3, boolean restart, boolean seed) throws Exception {
-        // Pin the clock a day below the data, like runFuzz: a non-seed view's
-        // lower bound is the CREATE moment, and O3 head-miss replay only re-emits
-        // rows at or above it, so the clock must sit below every data timestamp.
+        // Pin the clock a day below the data, like runFuzz: START FROM NOW resolves the
+        // CREATE-moment clock into the view's lower bound, and this harness wants that bound
+        // to admit the whole dataset. A run that wants a boundary CUTTING the data draws the
+        // explicit-timestamp mode instead, which cuts at a known row.
         if (currentMicros < 0) {
             setCurrentMicros(MicrosTimestampDriver.floor("2025-12-31T00:00:00.000000Z"));
         }
@@ -4052,19 +4283,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
 
-        final String viewSql = "SELECT ts, vs, vv, vb, va, row_number() OVER () AS rn FROM base";
-        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s "
-                + (seed ? "START FROM BEGINNING " : "START FROM NOW ")
-                + "AS " + viewSql;
-
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("CREATE TABLE base (ts TIMESTAMP, vs STRING, vv VARCHAR, vb BINARY, va DOUBLE[]) "
                 + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-
-        LOG.info().$("LV var-size fuzz: rows=").$(rowCount).$(", stepMode=").$(stepMode)
-                .$(", o3=").$(o3).$(", restart=").$(restart).$(", seed=").$(seed)
-                .$(", sql=").$(viewSql).$();
 
         // Strictly-unique, strictly-increasing timestamps so ts is a total order;
         // each row's four var-length values are pre-rendered into tuple[k].
@@ -4083,10 +4305,23 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             tuple[k] = varSizeTuple(rnd);
         }
 
-        // Seed captures pre-CREATE history: the earliest rows go before CREATE
-        // so the seed floor sits at the global-min ts and no post-CREATE O3 row
-        // falls below it. Non-seed: everything lands post-CREATE.
+        // Pre-CREATE history (the earliest rows by ts) plus the run's start mode: a var-length
+        // seed has to write its passthrough columns through the tier's (data, aux) staging path
+        // just as the forward drain does, and a bounded seed exercises that with the cursor
+        // opened at the boundary rather than at the first row.
         final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        final int startMode = rnd.nextInt(START_FROM_MODES);
+        final long boundary = startBoundary(rnd, startMode, tsv, false);
+        final String viewSql = "SELECT ts, vs, vv, vb, va, row_number() OVER () AS rn FROM base";
+        final String oracleSql = viewSql + whereTail(false, boundary);
+        final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s "
+                + startFromClause(startMode, boundary, false)
+                + "AS " + viewSql;
+
+        LOG.info().$("LV var-size fuzz: rows=").$(rowCount).$(", stepMode=").$(stepMode)
+                .$(", o3=").$(o3).$(", restart=").$(restart).$(", preCount=").$(preCount)
+                .$(", startMode=").$(startMode).$(", boundary=").$(boundary)
+                .$(", sql=").$(viewSql).$();
 
         final StringSink sink = new StringSink();
         LiveViewRefreshJob job = null;
@@ -4101,9 +4336,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             execute(createSql);
+            assertPersistedStartBound("lv", boundary);
             job = new LiveViewRefreshJob(0, engine, 1);
 
-            if (seed) {
+            if (preCount > 0) {
                 driveSeedToCompletion(job, "lv");
             }
 
@@ -4149,7 +4385,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + viewSql + ") ORDER BY 1",
+                "(" + oracleSql + ") ORDER BY 1",
                 "(lv) ORDER BY 1",
                 LOG,
                 true

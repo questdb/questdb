@@ -2851,6 +2851,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        // The DATA trigger's authority to DELETE, expressed in the view's own coordinate space.
+        // A DATA commit authorises the replay to erase output at or above its lowest touched
+        // timestamp; a non-DATA / recovery trigger (LONG_NULL) authorises no deletion at all and
+        // leaves the frozen-prefix rule to govern (DROP PARTITION / TTL / TRUNCATE / restart).
+        //
+        // Clamping UP to the view's lower bound is what makes the trigger usable once a finite
+        // START FROM boundary is in play: a commit routinely reaches below the bound (its
+        // sub-boundary rows are simply not the view's), and the raw lateRowTs is then below every
+        // row the view could own. Abandoning the extension in that case - as this did - left the
+        // deletion floored at replayMinTs, the recompute's lowest SURVIVING row, so a replacement
+        // that dropped the lowest surviving row out of the view (a dedup upsert that fails the
+        // WHERE, say) put replayMinTs ABOVE the row it removed and the stale output row lived on.
+        // The bound is the lowest ts the view can hold, so it is the correct floor for the
+        // trigger, and for a BEGINNING view (bound == LONG_NULL == Long.MIN_VALUE) the clamp is
+        // an identity.
+        final long triggerLowTs = lateRowTs == Numbers.LONG_NULL
+                ? Numbers.LONG_NULL
+                : Math.max(lateRowTs, viewLowerBoundTimestamp);
         TableReader reader = waitForApply(baseToken, advanceTo);
         // The replay recomputes the whole view from the base reader's snapshot,
         // which reflects every base row applied up to reader.getSeqTxn() - not
@@ -2963,11 +2981,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // TTL / TRUNCATE - intended). But a below-frontier dedup
                             // replacement that drops the lowest result row via the filter
                             // leaves the base row present, so replayMinTs jumps above it
-                            // and the stale LV row would survive. Extend down to lateRowTs
-                            // (lowest triggering DATA-commit ts); removals are non-DATA and
-                            // excluded from it, so frozen prefixes stay safe.
-                            final long replaceLowTs = lateRowTs != Numbers.LONG_NULL && lateRowTs >= viewLowerBoundTimestamp
-                                    ? Math.min(replayMinTs, lateRowTs)
+                            // and the stale LV row would survive. Extend down to the
+                            // trigger ts (lowest triggering DATA-commit ts, clamped to the
+                            // view's bound); removals are non-DATA and excluded from it, so
+                            // frozen prefixes stay safe.
+                            final long replaceLowTs = triggerLowTs != Numbers.LONG_NULL
+                                    ? Math.min(replayMinTs, triggerLowTs)
                                     : replayMinTs;
                             fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                                     effectiveSeqTxn,
@@ -2977,36 +2996,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                     }
                 }
-            } else if (lateRowTs != Numbers.LONG_NULL && lateRowTs >= viewLowerBoundTimestamp) {
+            } else if (triggerLowTs != Numbers.LONG_NULL) {
                 // The probe found no surviving row, but this is a convergent
                 // DATA trigger (a dedup/replacement whose lowest touched ts is
-                // lateRowTs): the recompute genuinely empties the view from
-                // lateRowTs upward. Leaving the block a no-op strands the pre-O3
+                // triggerLowTs): the recompute genuinely empties the view from
+                // triggerLowTs upward. Leaving the block a no-op strands the pre-O3
                 // output rows on disk as ghosts - size() over-reports and reads
                 // return stale rows while the watermark advances past the commit
                 // that removed their base rows. Reset the window accumulators to
                 // identity (matching the from-scratch empty recompute) and emit
-                // a pure-delete REPLACE_RANGE over [lateRowTs, +inf) so the
-                // on-disk range is cleared. Rows below lateRowTs stay frozen,
-                // exactly as the surviving-row boundary above treats them.
+                // a pure-delete REPLACE_RANGE over [triggerLowTs, +inf) so the
+                // on-disk range is cleared. Rows below it stay frozen, exactly as
+                // the surviving-row boundary above treats them.
                 //
-                // A non-DATA / recovery trigger (lateRowTs == LONG_NULL, or one
-                // below the lower bound) keeps the no-op: without a convergent
-                // trigger ts the emptiness is a frozen prefix (DROP PARTITION /
-                // TTL / TRUNCATE / restart), not a deletion to propagate, and
-                // the pre-O3 accumulator state must survive.
+                // A non-DATA / recovery trigger (lateRowTs == LONG_NULL) keeps the
+                // no-op: without a convergent trigger ts the emptiness is a frozen
+                // prefix (DROP PARTITION / TTL / TRUNCATE / restart), not a deletion
+                // to propagate, and the pre-O3 accumulator state must survive.
                 clearWindowState(windowFactory, anchorWindow);
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     fencedLiveViewCommit(() -> walWriter.commitLiveViewWithReplaceRange(
                             effectiveSeqTxn,
-                            lateRowTs,
+                            triggerLowTs,
                             Long.MAX_VALUE
                     ));
                 }
                 deletedGhostRange = true;
                 LOG.info().$("live view O3 head-miss replay cleared emptied range [view=")
                         .$(viewName)
-                        .$(", deleteLowTs=").$(lateRowTs)
+                        .$(", deleteLowTs=").$(triggerLowTs)
                         .$(", effectiveSeqTxn=").$(effectiveSeqTxn).I$();
             }
         } finally {

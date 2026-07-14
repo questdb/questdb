@@ -209,6 +209,108 @@ public class LiveViewStartFromReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDedupReplacementSpanningTheBoundaryClearsTheEmptiedView() throws Exception {
+        // The same commit shape as the sibling test, but the replacement empties the view outright:
+        // the only row it held drops out of the filter, so the recompute produces nothing at all.
+        //
+        // The head-miss replay's zero-surviving-row branch clears the emptied range with a
+        // pure-delete REPLACE_RANGE, and it too keyed that off the raw trigger, refusing to fire
+        // for a trigger below the view's bound. So this commit cleared nothing and the view went
+        // on serving a row whose base row no longer passes its SELECT - while the watermark moved
+        // past the commit that removed it, making the ghost permanent.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+                    "DEDUP UPSERT KEYS(ts)");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-01-01T00:00:01.000000Z', 1)," +
+                    "('2026-01-01T00:00:03.000000Z', 3)");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:03.000000Z' AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 10)," +
+                        "('2026-01-01T00:00:03.000000Z', -3)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertLiveViewValid();
+            }
+
+            // No base row at or above the boundary passes x > 0 any more, so the view holds nothing.
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testDedupReplacementSpanningTheBoundaryDropsTheStaleRow() throws Exception {
+        // One commit that reaches BELOW the boundary and also replaces a row ABOVE it, with the
+        // replacement failing the view's WHERE - so the view's lowest row must leave the view
+        // while the base row itself stays put.
+        //
+        // The replay deletes and rewrites its output from the triggering commit's lowest touched
+        // timestamp, precisely so a replacement that drops a row out of the filter cannot strand
+        // it (the recompute's own lowest surviving row sits ABOVE such a row, so flooring the
+        // delete there would step over it). But the trigger here is 00:01 - the commit's
+        // sub-boundary row - and the replay refused to use a trigger below the view's bound at
+        // all, falling back to the lowest surviving row, 00:04. The dropped 00:03 row sat below
+        // that and survived as a ghost, duplicating rn=1 with the row that legitimately took it.
+        //
+        // A commit reaching below the boundary is routine once a boundary cuts the base, so the
+        // trigger belongs clamped UP to the boundary - the lowest timestamp the view can hold -
+        // not thrown away.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+                    "DEDUP UPSERT KEYS(ts)");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-01-01T00:00:01.000000Z', 1)," +
+                    "('2026-01-01T00:00:02.000000Z', 2)," +
+                    "('2026-01-01T00:00:03.000000Z', 3)," +
+                    "('2026-01-01T00:00:04.000000Z', 4)," +
+                    "('2026-01-01T00:00:05.000000Z', 5)");
+            drainWalQueue();
+
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM '2026-01-01T00:00:03.000000Z' AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveRefreshToQuiescence(job);
+                assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize().returns("count\n3\n");
+
+                // One commit, two dedup replacements: 00:01 sits below the boundary (so it only
+                // drags the commit's min timestamp down there), and 00:03 - the view's lowest row -
+                // comes back with a value its WHERE rejects.
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-01-01T00:00:01.000000Z', 10)," +
+                        "('2026-01-01T00:00:03.000000Z', -3)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertLiveViewValid();
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("ts\tx\trn\n" +
+                            "2026-01-01T00:00:04.000000Z\t4\t1\n" +
+                            "2026-01-01T00:00:05.000000Z\t5\t2\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testHeadHitReplayStaysAtOrAboveTheBoundary() throws Exception {
         // Head-hit is the one applied-base scan that does not floor at the boundary: it starts at
         // headMaxTs + 1, and relies on every head having been written from output the boundary was
