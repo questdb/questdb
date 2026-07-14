@@ -80,6 +80,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -1370,6 +1371,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @Test
     public void testReopenExtendFailureDoesNotTruncateKeyFile() throws Exception {
+        // Not on Windows: the discriminator relies on the buggy close() truncating the .pk to
+        // ceilPageSize(KEY_FILE_RESERVED). That boundary tracks Files.PAGE_SIZE -- 4K on Linux,
+        // 16K on Mac, but 64K on the Windows agents. The fixed 200-cycle chain builds a head
+        // entry around 37K, which sits past the 4K/16K page window (so Linux and Mac observe
+        // the truncation) but inside the 64K Windows page, where the data loss would not show.
+        Assume.assumeFalse(Os.isWindows());
+
         // C1: the reopen catch block in PostingIndexWriter.of(isInit=false) releases keyMem
         // WITHOUT truncation (keyMem.close(false)) when the (re)open throws before openExisting
         // has published the real regionLimit into the chain. Before that fix the catch fell into
