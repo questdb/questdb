@@ -38,8 +38,10 @@ import org.jetbrains.annotations.Nullable;
  * behavior and the concrete derived type via {@link #newPrincipalContext(CharSequence)}.
  */
 public abstract class AbstractPrincipalAwareSecurityContext implements SecurityContext {
-    // upper bound on the number of distinct principals cached by forPrincipal; beyond it, additional
-    // principals degrade to allocate-per-call instead of growing the cache without bound
+    // upper bound on the number of distinct principals cached by forPrincipal. The cache never evicts: the
+    // first MAX_CACHED_PRINCIPALS distinct principals hold it for the process lifetime, and once it is full
+    // every further principal re-derives (allocate-per-call) on each request instead of the cache growing
+    // without bound. Not an LRU -- saturation degrades the uncached tail, it does not reshuffle who is cached.
     private static final int MAX_CACHED_PRINCIPALS = 256;
 
     protected final boolean settingsReadOnly;
@@ -70,9 +72,10 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
      * connection, so derived contexts are cached by principal to avoid allocating a context and
      * copying the principal on every call. The cache keeps one context per distinct principal, so
      * concurrently active principals coexist instead of evicting each other; it is populated
-     * copy-on-write under the instance lock and read lock-free. It is bounded at
-     * {@value #MAX_CACHED_PRINCIPALS} entries, beyond which further principals degrade to
-     * allocate-per-call rather than growing without bound.
+     * copy-on-write under the instance lock and read lock-free. It never evicts and is bounded at
+     * {@value #MAX_CACHED_PRINCIPALS} entries: the first {@value #MAX_CACHED_PRINCIPALS} distinct principals
+     * hold the cache for the process lifetime, and once it is full every further principal re-derives
+     * (allocate-per-call) on each request rather than the cache growing without bound.
      * <p>
      * The method is {@code final} and routes instance creation through the overridable
      * {@link #newPrincipalContext(CharSequence)}. That does not by itself preserve a subclass's
@@ -144,7 +147,12 @@ public abstract class AbstractPrincipalAwareSecurityContext implements SecurityC
         }
         final String key = Chars.toString(principal);
         final SecurityContext context = newCheckedPrincipalContext(key);
-        final CharSequenceObjHashMap<SecurityContext> next = new CharSequenceObjHashMap<>();
+        // pre-size to the post-insert entry count so this copy-on-write rebuild does not rehash while
+        // putAll copies the existing entries. The rebuild runs at most MAX_CACHED_PRINCIPALS times per
+        // singleton over the process lifetime, but an unsized map (default capacity 16) rehashes up its
+        // whole ramp on every one, which is O(n^2) over the fill.
+        final CharSequenceObjHashMap<SecurityContext> next =
+                new CharSequenceObjHashMap<>(cache == null ? 16 : cache.size() + 1);
         if (cache != null) {
             next.putAll(cache);
         }
